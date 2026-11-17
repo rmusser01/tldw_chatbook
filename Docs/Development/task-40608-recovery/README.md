@@ -4,6 +4,8 @@ This directory preserves source patches and continuation state for the owner's c
 
 ## Windows checkpoint on November 17
 
+The next original Windows 10 replay, `g3` at `e392f69ef6`, reached composer initialization. The empty-draft check needed the staged attachment reader, and a resize requested expired provider display facts before Send. The real workspace registry and status projection passed 14 focused cases at `7e34957dfa`; the mounted progress-count regression passed on `e392f69ef6`. These results concern setup and UI correctness. Neither original journey has a timing on the process-backed candidate.
+
 The original Windows 10 replay `g2` at `e0e97c6ced` reached workspace creation. The Inspector tried to read project-instruction controls through the local session, and the left rail's mounted progress timer tried to construct a local runtime. Neither Send ran. The five targeted recovery and composition checks on that revision passed in `task62-rc1`. The next replay must exercise both fixes on the actual screen.
 
 Windows 10 run `task62-bt1` passed all seven selected checks on `cae8ce5789`. The two pre-mount checks performed an actual permission mutation with and without an ambient event loop. Each confirmed the applied mutation and retirement before return, reused the same PID on mount, and joined the original process on shutdown. The other five checks covered held readers, active-character facts, approval identity and refusal after source replacement. These are functional checks, and their durations are outside the journey timings.

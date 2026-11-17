@@ -3,6 +3,26 @@
 import pytest
 
 
+def test_selected_resize_waits_for_the_current_visit_publication(monkeypatch):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Console_Modules import execution_state
+
+    client = SimpleNamespace(_visit=4, _readiness_deadline=10.0)
+    screen = SimpleNamespace()
+    monkeypatch.setattr(execution_state, "selected_client", lambda _screen: client)
+    monkeypatch.setattr(execution_state, "time", SimpleNamespace(monotonic=lambda: 10.0))
+    refreshes = []
+    monkeypatch.setattr(execution_state, "refresh_selected_when_due", refreshes.append)
+    assert execution_state.defer_selected_resize(screen, "first")
+    assert execution_state.defer_selected_resize(screen, "latest")
+    assert screen._console_pending_process_resize == (client, 4, "latest")
+    assert refreshes == [screen, screen]
+    client._readiness_deadline = 10.5
+    assert not execution_state.defer_selected_resize(screen, "latest")
+    assert screen._console_pending_process_resize is None
+
+
 def test_detach_revokes_visit_before_missing_projection_row():
     from tldw_chatbook.Chat.console_execution_process import ConsoleExecutionClient
     from tldw_chatbook.Chat.console_execution_projection_view import ConsoleProjectionView

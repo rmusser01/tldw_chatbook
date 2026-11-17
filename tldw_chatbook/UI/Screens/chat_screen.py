@@ -12915,11 +12915,13 @@ class ChatScreen(BaseAppScreen):
         )
         pending_launch = self._pending_console_launch_context
         staged_context_state = self._build_console_staged_context_state(pending_launch)
-        if inspector_state is None:
-            inspector_state = self._build_console_inspector_state(pending_launch)
         workspace_context_state = (
             self._workspace._build_console_workspace_context_state()
         )
+        if inspector_state is None:
+            inspector_state = self._build_console_inspector_state(
+                pending_launch, workspace_context_state=workspace_context_state
+            )
         rail_state = self._build_console_rail_state(
             staged_context_state=staged_context_state,
             inspector_state=inspector_state,
@@ -22547,6 +22549,7 @@ class ChatScreen(BaseAppScreen):
         """
         band = console_rail_width_band(event.size.width)
         if band == self._last_console_workspace_width_band:
+            self._console_pending_process_resize = None
             return
         try:
             self.query_one("#console-workspace-grid")
@@ -22556,6 +22559,11 @@ class ChatScreen(BaseAppScreen):
             right_handle = self.query_one("#console-inspector-rail-handle")
         except QueryError:
             return
+        if getattr(self.app_instance, "console_execution_client", None) is not None:
+            from ..Console_Modules.execution_state import defer_selected_resize
+
+            if defer_selected_resize(self, event):
+                return
         self._last_console_workspace_width_band = band
         self._request_console_control_bar_sync()  # The header word is band-sized.
         focused = self.app.focused

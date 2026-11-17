@@ -240,6 +240,19 @@ def selected_workspace_surface(screen: ChatScreen):
     return surface
 
 
+def defer_selected_resize(screen: ChatScreen, event) -> bool:
+    """Keep the latest resize until this visit has a current display snapshot."""
+    client = selected_client(screen)
+    if client is None:
+        return False
+    if time.monotonic() < client._readiness_deadline:
+        screen._console_pending_process_resize = None
+        return False
+    screen._console_pending_process_resize = (client, client._visit, event)
+    refresh_selected_when_due(screen)
+    return True
+
+
 async def refresh_selected_view(screen: ChatScreen, *, checkpoint: str | None = None) -> bool:
     """Join the named projection and apply its original mounted surfaces."""
     from .execution_projection import apply_console_process_projection
@@ -262,6 +275,12 @@ async def refresh_selected_view(screen: ChatScreen, *, checkpoint: str | None = 
     if is_owned_project_modal(client, screen, visit):
         await present_selected_decision(screen, client, visit)
         return True
+    pending_resize = getattr(screen, "_console_pending_process_resize", None)
+    if pending_resize is not None:
+        screen._console_pending_process_resize = None
+        if pending_resize[0] is client and pending_resize[1] == visit and screen.is_current:
+            _require_methods(screen, _RESIZE_METHOD)
+            screen._adapt_console_workspace_to_width(pending_resize[2])
     if not await apply_console_process_sessions(
         screen, client, client.session_surface, visit=visit,
     ):
@@ -281,6 +300,8 @@ async def refresh_selected_view(screen: ChatScreen, *, checkpoint: str | None = 
     client.require_view(screen, visit)
     return True
 
+
+_RESIZE_METHOD = (("_adapt_console_workspace_to_width", _definition(ChatScreen._adapt_console_workspace_to_width)),)
 
 _REFRESH_METHODS = tuple(
     (name, _definition(getattr(ChatScreen, name)))
@@ -360,6 +381,8 @@ def refresh_selected_when_due(screen: ChatScreen) -> None:
         not screen.is_attached or (not screen.is_current and not modal_visible)
         or getattr(screen, "_console_sync_maintenance_paused", False)
         or screen._console_attach_reconcile_running
+        or (getattr(screen, "_console_attach_reconcile_worker", None) is not None
+            and not screen._console_attach_reconcile_worker.is_finished)
         or getattr(screen, "_console_process_draft_switch", None) is not None
     ):
         return

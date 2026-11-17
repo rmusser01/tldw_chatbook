@@ -50,6 +50,7 @@ class ConsoleBackendReadiness:
         self.at = 0.0
         self.context_summary = None
         self.context_key = None
+        self._context_facts = None
         self.agent_history = None
         self.agent_log_available = False
         self.agent_key = None
@@ -342,6 +343,26 @@ class ConsoleBackendReadiness:
             has_pending_attachments=bool(store.pending_attachments(session.id)),
         )
 
+    def _send_selection(self, session, loaded):
+        from .console_backend_send_selection import _CAPTURE, capture_send_selection
+
+        if capture_send_selection is not _CAPTURE[0] or not _definition_current(_CAPTURE):
+            raise RuntimeError("Console send selection builder changed")
+        return capture_send_selection(self.backend, session, loaded)
+
+    def _build_context_summary(
+        self, context_inputs, effective, readiness, window, tokenizer_ready, caps,
+    ):
+        from .console_backend_context_summary import (
+            ConsoleBackendContextInputs, build_backend_context_summary,
+        )
+
+        return build_backend_context_summary(ConsoleBackendContextInputs(
+            **context_inputs, summary_settings=effective, readiness=readiness,
+            context_window=window, tokenizer_ready=tokenizer_ready,
+            provider_token_caps=caps,
+        ))
+
     async def warm(
         self,
         identity: ControlIdentity,
@@ -381,9 +402,6 @@ class ConsoleBackendReadiness:
             )
             if current_context_key != self._context_key(session):
                 raise RuntimeError("Console context capture changed")
-        effect = backend.controls._begin_effect("display_readiness", self, source)
-        observations = []
-        self.pending = True
 
         def current() -> None:
             self._current(session, settings, identity.source_revision, source)
@@ -391,6 +409,47 @@ class ConsoleBackendReadiness:
                 raise RuntimeError("Console context inputs changed")
             if self._agent_key(session) != agent_key:
                 raise RuntimeError("Console Agent selection changed")
+
+        # A display/draft revision changes calculation inputs, not the native
+        # config/model/history facts. Reuse only a successfully retired read
+        # within its original age; this branch never renews that observation.
+        if (
+            self._context_facts is not None and self.value is not None
+            and self.key == key and time.monotonic() - self.at < 1.0
+            and self.agent_key == agent_key and self.history_key == self._history_key()
+            and backend.domain.sources.prompt_history._loaded
+        ):
+            from ..UI.Console_Modules import tokenizer_display
+
+            loaded, tokenizer_ready, window, caps, preparation = self._context_facts
+            if not settings.model or (
+                tokenizer_ready and preparation is not None
+                and tokenizer_display.preparation_current(preparation)
+            ):
+                with backend.store._preparation_lock:
+                    current()
+                    history_key = self._history_key()
+                    effective, readiness, *_ = self.value
+                    send_selection = self._send_selection(session, loaded)
+                    summary = self._build_context_summary(
+                        context_inputs, effective, readiness, window, tokenizer_ready, caps,
+                    )
+                    current()
+                    if self._key(session, settings, identity.source_revision) != key:
+                        raise RuntimeError("Console readiness derivation changed")
+                    if history_key != self._history_key():
+                        raise RuntimeError("Console prompt history publication changed")
+                    if time.monotonic() - self.at < 1.0:
+                        self.context_key, self.context_summary = current_context_key, summary
+                        self.send_selection = send_selection
+                        return self.value
+
+        # Failed or cancelled replacement reads cannot leave a reusable partial
+        # input set. Publish the next one only after the effect retires below.
+        self._context_facts = None
+        effect = backend.controls._begin_effect("display_readiness", self, source)
+        observations = []
+        self.pending = True
 
         def read():
             from .console_execution_retirement import _ReadResources
@@ -461,7 +520,7 @@ class ConsoleBackendReadiness:
                 current()
                 if preparation is not None and not tokenizer_display.preparation_current(preparation):
                     raise RuntimeError("Console tokenizer preparation changed")
-                return loaded, tokenizer_ready, window, caps, history, log_available
+                return loaded, tokenizer_ready, window, caps, history, log_available, preparation
 
         task = asyncio.current_task()
         history_retired = False
@@ -515,7 +574,7 @@ class ConsoleBackendReadiness:
                 ],
             }
             history_key = self._history_key()
-            loaded, tokenizer_ready, window, caps, history, log_available = await run_preparation_read(
+            loaded, tokenizer_ready, window, caps, history, log_available, preparation = await run_preparation_read(
                 read,
                 creator=self,
                 session_id=session.id,
@@ -530,6 +589,7 @@ class ConsoleBackendReadiness:
                 raise RuntimeError("Console readiness publication changed")
             if not all(item.confirmed() for item in observations):
                 raise RuntimeError("Console readiness native retirement is unproven")
+            context_facts = loaded, tokenizer_ready, window, caps, preparation
             # Original history, metadata and checked configuration reads have
             # retired. Derive presentation from captured and resident values.
             with backend.store._preparation_lock:
@@ -540,11 +600,7 @@ class ConsoleBackendReadiness:
                     settings,
                     app_config=loaded,
                 )
-                from .console_backend_send_selection import _CAPTURE, capture_send_selection
-
-                if capture_send_selection is not _CAPTURE[0] or not _definition_current(_CAPTURE):
-                    raise RuntimeError("Console send selection builder changed")
-                send_selection = capture_send_selection(backend, session, loaded)
+                send_selection = self._send_selection(session, loaded)
                 model = selection.explicit_model or selection.configured_model
                 effective = replace(settings, model=model, base_url=selection.base_url)
                 endpoint = key[6]
@@ -570,15 +626,9 @@ class ConsoleBackendReadiness:
                 provider_chip = ConsoleControlState.from_values(
                     provider=selection.provider, app_config=loaded,
                 ).provider_label
-                from .console_backend_context_summary import (
-                    ConsoleBackendContextInputs, build_backend_context_summary,
+                summary = self._build_context_summary(
+                    context_inputs, effective, readiness, window, tokenizer_ready, caps,
                 )
-
-                summary = build_backend_context_summary(ConsoleBackendContextInputs(
-                    **context_inputs, summary_settings=effective, readiness=readiness,
-                    context_window=window, tokenizer_ready=tokenizer_ready,
-                    provider_token_caps=caps,
-                ))
                 current()
                 value = effective, readiness, selection.provider, model, provider_chip
                 if history_key != self._history_key():
@@ -589,7 +639,6 @@ class ConsoleBackendReadiness:
                 self.history_key, self.prompt_history_payload = history_key, history_payload
                 self.send_selection = send_selection
                 self.key, self.value, self.at = key, value, at
-            return value
         finally:
             self.pending = False
             # Keep captured owners alive through all reads, then release them.
@@ -599,6 +648,9 @@ class ConsoleBackendReadiness:
             backend.controls._finish_effect(
                 effect, retired=history_retired and all(item.confirmed() for item in observations)
             )
+        if not settings.model or tokenizer_ready and preparation is not None:
+            self._context_facts = context_facts
+        return value
 
 
 _DEFINITIONS = tuple(
