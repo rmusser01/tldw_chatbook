@@ -644,6 +644,12 @@ def test_first_send_warmup_payload_stays_within_budget(tmp_path: Path, ratchet) 
     )
     assert hooks["added_modules"] > 0, "the hooks package was already resident"
 
+    # Served apps import their relay publisher during construction, before this pass.
+    assert not any(
+        "tldw_chatbook.Web_Server.served_relay_publisher" in row["modules"]
+        for row in census["entries"]
+    ), "the native first-send warm-up loaded the served-only relay publisher"
+
     heavy_rows = [(r["entry"], r["heavy"]) for r in census["entries"] if r["heavy"]]
     assert not census["heavy_added"], (
         f"the first-send warm-up imports heavy dependencies {census['heavy_added']} "
