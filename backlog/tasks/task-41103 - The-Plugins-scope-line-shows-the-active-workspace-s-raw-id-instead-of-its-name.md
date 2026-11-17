@@ -60,5 +60,7 @@ Filed in round 14 of the 2026-10-23 burn-down (closeout, 2026-11-15). Checked ag
 
 **Docs.** `Docs/User_Guide/plugins.md`: the scope-line bullet says the line shows the workspace by name ("Local Default" for the built-in one) and that a rename keeps the selection. The "scope line shows the workspace's ID" known issue is removed.
 
-**Files.** `tldw_chatbook/UI/Screens/plugins_screen.py`, `Tests/UI/test_plugins_browse.py`, `Docs/User_Guide/plugins.md`.
+**Review r15pb-rev1.** The page's screenshot `Docs/User_Guide/images/plugins/overview.svg` was regenerated with `scripts/capture_user_guide.py plugins` (through run.sh, on a fresh profile). Its scope line now reads "Activation in: Local Default", where it read "workspace-default"; no other painted line changed.
+
+**Files.** `tldw_chatbook/UI/Screens/plugins_screen.py`, `Tests/UI/test_plugins_browse.py`, `Docs/User_Guide/plugins.md`, `Docs/User_Guide/images/plugins/overview.svg`.
 <!-- SECTION:NOTES:END -->

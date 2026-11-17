@@ -115,15 +115,26 @@ print('CAPTURE_SIBLING_CONTINUITY_COMPLETE',owner,flush=True)
 
 
 def _wait_while_busy(process, *, idle, timeout):
-    """Wait until ``process`` exits; kill it once its process tree has used no
-    CPU for ``idle`` seconds (a hang), or at ``timeout`` (TASK-40306).
+    """Wait until ``process`` exits; kill it and its descendants once its process
+    tree has used no CPU for ``idle`` seconds (a hang), or at ``timeout``
+    (TASK-40306).
 
-    A fixed budget fails a loaded run that is only slow; a hung child stops
-    using CPU, however loaded the host is.
+    A fixed budget fails a loaded run that is only slow; a blocked child stops
+    using CPU, however loaded the host is. A hang that keeps polling (a lock
+    wait that retries every few milliseconds) keeps using CPU, so only
+    ``timeout`` stops it (TASK-41104).
     """
+    import contextlib
     import time
 
     import psutil
+
+    def cpu(member):
+        # A zombie or a just-exited descendant cannot be read; count the rest.
+        try:
+            return sum(member.cpu_times()[:2])
+        except psutil.Error:
+            return 0.0
 
     watched = psutil.Process(process.pid)
     started = still = time.monotonic()
@@ -135,10 +146,12 @@ def _wait_while_busy(process, *, idle, timeout):
             except subprocess.TimeoutExpired:
                 pass
             try:
-                tree = [watched, *watched.children(recursive=True)]
-                now_used = sum(sum(p.cpu_times()[:2]) for p in tree)
+                now_used = sum(
+                    cpu(member)
+                    for member in (watched, *watched.children(recursive=True))
+                )
             except psutil.Error:
-                now_used = used  # A child of the tree exited mid-read.
+                now_used = used  # The child itself exited mid-read.
             now = time.monotonic()
             if now_used != used:
                 used, still = now_used, now
@@ -146,13 +159,21 @@ def _wait_while_busy(process, *, idle, timeout):
                 raise subprocess.TimeoutExpired(process.args, round(now - started))
     finally:
         if process.poll() is None:
+            try:
+                descendants = watched.children(recursive=True)
+            except psutil.Error:
+                descendants = []
+            for member in descendants:
+                with contextlib.suppress(psutil.Error):
+                    member.kill()
             process.kill()
             process.wait()
 
 
 def _child(home, script, *arguments, timeout=70, selector=None, idle=None):
-    """Run ``script`` in a child; with ``idle``, ``timeout`` is only a cap and
-    the child fails once it stops using CPU for ``idle`` seconds."""
+    """Run ``script`` in a child; with ``idle``, the child also fails once it
+    stops using CPU for ``idle`` seconds, and ``timeout`` stays the only stop
+    for a hang that keeps polling."""
     repository = Path(__file__).resolve().parents[2]
     environment = dict(
         os.environ,
@@ -569,3 +590,42 @@ def test_child_wait_fails_only_an_idle_child(child):
         with pytest.raises(subprocess.TimeoutExpired):
             _wait_while_busy(process, idle=2, timeout=60)
         assert process.poll() is not None and time.monotonic() - started < 30
+
+
+def test_child_wait_kills_a_hung_childs_descendants():
+    """TASK-41104 review: killing a hung child also kills what it started, so a
+    hung restore leaves no process running past its test."""
+    import psutil
+
+    body = (
+        "import subprocess,sys\n"
+        "g=subprocess.Popen([sys.executable,'-c','import time;time.sleep(600)'])\n"
+        "print(g.pid,flush=True)\n"
+        "g.wait()\n"
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-c", body], stdout=subprocess.PIPE, text=True
+    )
+    grandchild = psutil.Process(int(process.stdout.readline()))
+    try:
+        with pytest.raises(subprocess.TimeoutExpired):
+            _wait_while_busy(process, idle=2, timeout=60)
+        _gone, alive = psutil.wait_procs([grandchild], timeout=10)
+        assert not alive, "the hung child's own child is still running"
+    finally:
+        if grandchild.is_running():
+            grandchild.kill()
+
+
+def test_child_wait_counts_a_busy_child_beside_a_zombie_descendant():
+    """TASK-41104 review: a descendant whose CPU cannot be read (an unreaped
+    zombie) must not hide the busy child's CPU and get it killed as idle."""
+    body = (
+        "import subprocess,sys,time\n"
+        "z=subprocess.Popen([sys.executable,'-c','pass'])\n"
+        "end=time.monotonic()+8\n"
+        "while time.monotonic()<end:pass\n"
+        "z.wait()\n"
+    )
+    process = subprocess.Popen([sys.executable, "-c", body])
+    assert _wait_while_busy(process, idle=2, timeout=60) == 0

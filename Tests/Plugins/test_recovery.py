@@ -1834,22 +1834,31 @@ print('PLUGIN_RESTORE_REVIEW_COMPLETE',flush=True)
 """
 
 
-# TASK-41104: a child fails once its process tree uses no CPU for this long (a
-# hang, at any load; TASK-40306). The wall limits below are only backstops.
+# TASK-41104: a child whose process tree uses no CPU for this long has hung
+# (TASK-40306), at any load. A hang that keeps polling (every restore lock wait
+# retries every 0.01-0.05 s) keeps using CPU, so only the child's cap stops it.
 _RESTORE_CHILD_IDLE = 60
-# Each child's wall cap: 2x the whole test's slowest macOS qualification run,
-# which every child's own time is under (66-310 s in 24 runs carrying 314eb9c4d2,
-# 43698619087-43737692261; slowest 310 s in run 43698653112).
-_RESTORE_CHILD_CAP = 620
+# Each child's wall cap, from its slowest local run (shared 18-core host, load
+# 13-127; the children's CPU stays ~95 s in all, so the rest is contention). The
+# short children took at most 41 s (seed), 28 s and 20 s: about 4x the seed's.
+# The two restores took at most 359 s (first) and 355 s (again): about 2x. The
+# qualification lane records each child's CI time (below) to tighten these from.
+_RESTORE_CHILD_CAPS = {
+    "plugins": 160,
+    "first": 720,
+    "unchanged": 160,
+    "again": 710,
+    "changed": 160,
+}
 
 
 @platform_support.managed_runtime
-# The children's sum: 2x the slowest loaded local run (TASK-41104, shared 18-core
-# host: 552-646 s at load 77-127, of which the children used 94-96 s of CPU; the
-# old 480 s failed at load 74-99). A hung child fails in about a minute at any
-# load, so this bound only stops a busy hang. CI's macOS qualification job (20-29
-# of its 30 minutes) may stop one first.
-@pytest.mark.timeout(1300)
+# The caps' sum plus a minute for the parent, so a stuck child always fails on
+# its own cap, by name: 1970 s, 2.4x the slowest loaded local run (831 s at load
+# 81-102; the old 480 s failed at load 74-99 while every child was busy). CI's
+# macOS qualification job (20-29 of its 30 minutes) may stop a polling hang in
+# a restore child before its cap does.
+@pytest.mark.timeout(sum(_RESTORE_CHILD_CAPS.values()) + 60)
 def test_plugin_backup_restores_in_place_and_waits_for_authority_recovery(
     tmp_path, record_testsuite_property
 ):
@@ -1879,7 +1888,7 @@ def test_plugin_backup_restores_in_place_and_waits_for_authority_recovery(
                 home,
                 script,
                 *arguments,
-                timeout=_RESTORE_CHILD_CAP,
+                timeout=_RESTORE_CHILD_CAPS[name],
                 selector=selector,
                 idle=_RESTORE_CHILD_IDLE,
             )
@@ -1895,7 +1904,7 @@ def test_plugin_backup_restores_in_place_and_waits_for_authority_recovery(
         print(*(line for line in output.splitlines() if line.startswith("PHASE")), sep="\n")
         return output
 
-    # A hung child fails by name once it stops using CPU; the test's limit bounds the sum.
+    # A hung child fails by name: once it stops using CPU, or at its cap if it polls.
     assert "PLUGIN_SEED_COMPLETE" in run(_PLUGIN_SEED, "plugins")
     assert "PLUGIN_REPLACEMENT_COMPLETE" in run(_PLUGIN_BACKUP_RESTORE, "first")
     unchanged = run(_PLUGIN_REOPEN, "unchanged")
