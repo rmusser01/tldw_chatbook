@@ -1062,6 +1062,20 @@ async def test_a_ticking_elapsed_alone_repaints_the_transcript():
 
 
 @pytest.mark.asyncio
+async def test_a_line_no_row_can_show_never_reopens_the_pipeline():
+    """A ticking line that no row is eligible to show must not run the
+    message pipeline once a second (TASK-41313)."""
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    screen, _transcript = _sync_stub("⚙ read_file · 4s", effective="")
+    await ChatScreen._sync_native_console_transcript(screen)
+    screen._agent.console_turn_activity.return_value = "⚙ read_file · 5s"
+    await ChatScreen._sync_native_console_transcript(screen)
+
+    assert screen._message._native_console_messages.call_count == 1
+
+
+@pytest.mark.asyncio
 async def test_published_token_usage_repaints_once_per_changed_scalar():
     """Repeated chunk observations cannot churn the DOM until publication changes."""
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
@@ -1070,6 +1084,8 @@ async def test_published_token_usage_repaints_once_per_changed_scalar():
     await ChatScreen._sync_native_console_transcript(screen)
     await ChatScreen._sync_native_console_transcript(screen)
     assert transcript.refresh_messages.await_count == 1
+    # The unchanged line kept the gate shut: the pipeline ran once, not twice.
+    assert screen._message._native_console_messages.call_count == 1
 
     changed = "Generating… · 2s · ~11 local output tok"
     screen._agent.console_turn_activity.return_value = changed

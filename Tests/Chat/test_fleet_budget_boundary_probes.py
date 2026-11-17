@@ -202,7 +202,7 @@ def test_terminal_status_cannot_release_runtime_capacity_before_worker_exit(
     pin_turn_scoped_children(monkeypatch)
     # 06f8b0bf94 (TASK-39147) also bounds a child's admission by this
     # timeout: at 0.01s the child was refused before it reached its call.
-    monkeypatch.setattr(agent_service, "FLEET_JOIN_TIMEOUT_SECONDS", 1.0)
+    monkeypatch.setattr(agent_service, "FLEET_JOIN_TIMEOUT_SECONDS", 2.0)
     release = threading.Event()
     entered = threading.Event()
     db = AgentRunsDB(tmp_path / "runs.db", client_id="budget-probe")

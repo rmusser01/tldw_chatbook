@@ -30,7 +30,7 @@ _, LIVE_SCREEN_LINE_CEILING, LIVE_SCREEN_METHOD_CEILING = _SCREEN_SIZE_BUDGETS[
 #: Re-pinned 2026-11-12 with the row (measured on dev 4b90eb860b).
 #: Re-pinned 2026-11-14 with the row, raised for TASK-40716 unproven-cleanup retention.
 #: Re-pinned 2026-11-18 with the row (rebased onto dev 45b1949ca3).
-LIVE_RATCHET_ROW = ("ChatScreen", 24_571, 742)
+LIVE_RATCHET_ROW = ("ChatScreen", 24_574, 742)
 MAX_DELEGATE_LINES = 5
 
 MOVE_METHODS = frozenset(

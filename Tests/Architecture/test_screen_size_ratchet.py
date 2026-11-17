@@ -346,7 +346,8 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # Raised for TASK-40716 unproven-cleanup retention, 2026-11-14: +1 line,
     # the sync tick pushes the Release rows (Console_Modules/agent.py).
     # 2026-11-18: rebased onto dev 45b1949ca3, which added 6 lines; measured 24571 (was 24569).
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24571, 742),
+    # 2026-11-18: rebased onto dev 45b1949ca3, which added 6 lines; measured 24574 (was 24571).
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24574, 742),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

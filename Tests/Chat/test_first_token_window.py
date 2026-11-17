@@ -542,6 +542,40 @@ def test_an_unpublished_send_already_streaming_text_is_not_waiting(
     assert "20s" in line
 
 
+def test_the_streaming_check_copies_the_session_once_per_transcript_change(
+    monkeypatch,
+) -> None:
+    """TASK-41313: the 0.2s tick reads the line on every pass, and past the
+    first-token hint that check copies the whole session. It may read the
+    session again only after the store's display revision has moved."""
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.UI.Console_Modules import agent as agent_module
+
+    clock = [1000.0]
+    monkeypatch.setattr(
+        agent_module, "time", SimpleNamespace(monotonic=lambda: clock[0])
+    )
+    view = _waiting_view("llama_cpp")
+    row = SimpleNamespace(
+        role=ConsoleMessageRole.ASSISTANT, status="streaming", content="The"
+    )
+    reads, revision = [], [7]
+    store = view._controller.store
+    store.read_only_messages_for_session = lambda _sid: reads.append(1) or [row]
+    store.display_projection_revision = lambda _sid: revision[0]
+
+    view.console_turn_activity()
+    clock[0] += 20.0
+    for _ in range(3):
+        assert view.console_turn_activity().startswith(_WAITING)
+    assert len(reads) == 1
+
+    row.content = "Sure -- here is the start of a real, streaming answer."
+    revision[0] += 1
+    assert not view.console_turn_activity().startswith(_WAITING)
+    assert len(reads) == 2
+
+
 def _thinking(text: str):
     from tldw_chatbook.Chat.thinking_blocks import (
         DisplayableThinkingBlock,

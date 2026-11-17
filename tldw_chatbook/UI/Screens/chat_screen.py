@@ -17006,12 +17006,15 @@ class ChatScreen(BaseAppScreen):
                 logger.warning("Console effective-memory presentation selection failed")
         if region := self._console_transcript_region_or_none():
             region.sync_recovery()
-        # The turn-activity line's clock and abandon action move with time, not
-        # the store: they join the gate, or a quiet tool call froze them ~3s.
-        turn_activity_feed = None if transcript is None else (
-            self._agent.console_turn_activity(),
-            self._agent.console_turn_activity_abandon_action(),
-        )
+        # The SHOWN turn-activity line moves with time, not the store: it joins
+        # the gate, or a quiet tool call froze it ~3s (re-applied after set_messages).
+        activity_line = activity_action = activity_shown = None
+        if transcript is not None:
+            activity_line = self._agent.console_turn_activity()
+            activity_action = self._agent.console_turn_activity_abandon_action()
+            activity_shown = transcript.apply_turn_activity(
+                activity_line, action=activity_action
+            )
         if store is not None:
             session_id = store.active_session_id
             try:
@@ -17092,7 +17095,7 @@ class ChatScreen(BaseAppScreen):
                 (ack := getattr(self, "_console_send_ack", None))
                 and ack.pending_row_id(session_id),
                 run_activity,
-                turn_activity_feed,
+                (activity_shown, activity_shown and activity_action),
                 delete_arm,
                 # Existing finite context publication must reopen a quiet
                 # transcript after cold preparation, without holding chunks.
@@ -17162,7 +17165,7 @@ class ChatScreen(BaseAppScreen):
             # is what joins the refresh key below -- so an idle transcript
             # can never repaint once a second off a stale run snapshot.
             turn_activity = transcript.apply_turn_activity(
-                turn_activity_feed[0], action=turn_activity_feed[1]
+                activity_line, action=activity_action
             )
             # TASK-35100: the same poll tick feeds the tok/s tracker from
             # the messages this sync just pushed and drives its chip.
