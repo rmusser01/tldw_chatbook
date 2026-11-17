@@ -5946,12 +5946,12 @@ class ConsoleChatController:
     ) -> None:
         """Publish one rollback-preserved owner before any queue can advance."""
 
+        kept = self._preflight_block_copies.pop(assistant_message_id, None)
         self.store.mark_dispatch_recovery_needed(
             session_id,
             assistant_message_id,
             generation_token=generation_token,
         )
-        kept = self._preflight_block_copies.pop(assistant_message_id, None)
         self._set_run_state(
             ConsoleRunState.blocked(kept)  # TASK-33621.3: the block's own cause.
             if kept is not None

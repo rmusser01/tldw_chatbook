@@ -1370,11 +1370,15 @@ class ConsoleAgentController:
         )
 
     def resync_held_tool_slots(self) -> None:
-        """Repaint the held-slots segment and Release rows after a release."""
+        """Repaint the held-slots segment and Release rows after a release.
+
+        Forced: abandoning a record changes nothing the TASK-34958 transcript
+        gate reads, so an ordinary pass would skip it while the Console idles.
+        """
         self.run_worker(
-            self._sync_native_console_chat_ui_accessor(),
+            self._screen._sync_native_console_transcript(force=True),
             exclusive=True,
-            group="console-sync",
+            group="console-held-slots",
         )
 
     def release_unproven_tool_slot(self, message_id: str) -> bool:

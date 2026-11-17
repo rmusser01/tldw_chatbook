@@ -111,12 +111,14 @@ def unproven_cleanup_rows(
                     del cards[card]
         cards.setdefault(message.id, set()).update(held)
         records = [record for key in held for record in retained[key]]
-        pre_run = message.role is ConsoleMessageRole.ASSISTANT and not any(
-            record.run_id for record in records
-        )
+        # A retried reply can also hold its retry run's records; that run
+        # explains itself, so only run-less (pre-run) records are named here.
+        pre_run = [record for record in records if not record.run_id]
         rows[message.id] = (
             all(record.abandoned for record in records),
-            _explanation(records) if pre_run else "",
+            _explanation(pre_run)
+            if pre_run and message.role is ConsoleMessageRole.ASSISTANT
+            else "",
         )
     return rows
 

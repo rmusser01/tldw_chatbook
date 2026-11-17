@@ -160,3 +160,41 @@ async def test_the_console_sync_counts_held_slots_on_the_status_line():
             await console._sync_native_console_transcript(force=True)
             await pilot.pause()
             assert not chips.segment_visible("held-slots")
+
+
+async def test_a_release_resync_hides_the_segment_while_the_console_idles():
+    """The card's and the list's resync must repaint with no run ticking.
+
+    Abandoning a record bumps nothing the transcript gate reads, so an
+    unforced pass would return before the held-slots push.
+    """
+    from Tests.UI.test_console_library_auto_outcome import _automatic_console, _build
+    from Tests.UI.test_console_send_acknowledgement import eager_tasks
+    from tldw_chatbook.Agents.execution_capacity import WorkOrigin
+
+    host, _gateway = _build()
+    async with host.run_test(size=(160, 40)) as pilot:
+        with eager_tasks():
+            console, controller, _composer = await _automatic_console(host, pilot)
+            capacity = controller._hooks_v2_runtime.execution_capacity
+            owner = capacity.begin_execution(
+                origin=WorkOrigin.MANUAL, conversation_id="undo"
+            )
+            retention = owner.reserve_tool().retain_unproven("Undo")
+            owner.finish_root()
+            chips = console.query_one("#console-status-chips", ConsoleStatusChips)
+            await console._sync_native_console_transcript(force=True)
+            await pilot.pause()
+            assert chips.segment_text("held-slots") == "Held tool slots: 1"
+            for _ in range(200):
+                if console._console_transcript_sync_timer is None:
+                    break
+                await pilot.pause(0.05)
+            assert console._console_transcript_sync_timer is None, "still ticking"
+            assert retention.abandon()
+            console._agent.resync_held_tool_slots()
+            for _ in range(100):
+                if not chips.segment_visible("held-slots"):
+                    break
+                await pilot.pause(0.05)
+            assert not chips.segment_visible("held-slots")

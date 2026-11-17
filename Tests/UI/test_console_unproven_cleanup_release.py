@@ -470,3 +470,41 @@ def test_a_user_raw_cli_markers_release_row_renders_under_it():
     keys = [row.key for row in transcript._transcript_rows()]
     assert keys.index("cleanup-release:raw-cli-1") == keys.index("message:raw-cli-1") + 1
 
+
+def test_a_retried_reply_that_also_retains_still_names_its_pre_run_cleanup():
+    """The retry's own run explains itself; the row keeps the pre-run name."""
+    from tldw_chatbook.Agents.execution_capacity import (
+        CleanupUnprovenRefused,
+        RuntimeCapacity,
+        WorkOrigin,
+    )
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+    from tldw_chatbook.Chat.console_unproven_cleanup import (
+        explain_pre_run_stop,
+        release_unproven_tool_slot,
+        unproven_cleanup_rows,
+    )
+
+    capacity = RuntimeCapacity()
+    owner = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="c")
+    owner.reserve_tool().retain_unproven("a remote SSH read")
+    try:
+        owner.reserve_tool()
+    except CleanupUnprovenRefused as refused:
+        error = refused
+    controller = _runtime_controller(capacity, _preflight_block_copies={})
+    reply = ConsoleChatMessage(
+        id="reply", role=ConsoleMessageRole.ASSISTANT, content="", status="failed"
+    )
+    explain_pre_run_stop(controller, "reply", error)
+    retry = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="c")
+    retry.bind_run("retry-run")
+    retry.reserve_tool().retain_unproven("fs_read")
+    ConsoleChatController._record_run_assistant_message(controller, "retry-run", reply)
+
+    assert controller.run_terminal_rows == {"reply": {owner.execution_id, "retry-run"}}
+    assert unproven_cleanup_rows(controller, [reply]) == {"reply": (False, _SSH_STOP)}
+    assert release_unproven_tool_slot(controller, "reply")
+    assert capacity.snapshot().tool_workers == 0
+    assert unproven_cleanup_rows(controller, [reply]) == {"reply": (True, _SSH_STOP)}
+

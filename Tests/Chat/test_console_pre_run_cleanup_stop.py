@@ -7,6 +7,7 @@ owner retained its cleanup.
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 
 import pytest
@@ -96,3 +97,26 @@ async def test_an_unrelated_setup_failure_keeps_the_recovery_prompt(
         "Response recovery failed. Try again or discard."
     )
     assert controller.run_terminal_rows == {}
+
+
+@pytest.mark.asyncio
+async def test_a_failed_recovery_mark_leaves_no_stop_copy_behind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A later, unrelated failure after "Try again" must not inherit the copy."""
+    _db, store, controller, _gateway = _controller(tmp_path)
+    _owner, refused = _refused_setup()
+
+    async def stream(**_kwargs):
+        raise refused
+
+    def unavailable(*_args, **_kwargs):
+        raise RuntimeError("recovery mark unavailable")
+
+    monkeypatch.setattr(controller, "_stream_assistant_response", stream)
+    monkeypatch.setattr(store, "mark_dispatch_recovery_needed", unavailable)
+    with contextlib.suppress(Exception):
+        await controller.submit_draft("go", session_id="session-1")
+
+    assert controller._preflight_block_copies == {}
+
