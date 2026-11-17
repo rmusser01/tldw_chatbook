@@ -138,7 +138,19 @@ async def _spawn_turn(
         monkeypatch.setattr(
             ConsoleTraceService, "prepare_current_surface_delta", changed_parent_history
         )
-    if tamper_child_route:
+    if tamper_child_route == "missing":
+        from tldw_chatbook.Chat.console_agent_bridge import (
+            ConsoleAgentTraceRequestFactory,
+        )
+
+        original_build = ConsoleAgentTraceRequestFactory.build
+
+        def parent_shaped(factory, *args, **kwargs):
+            # A child request built as if it were the parent's: no turn named.
+            return original_build(factory, *args, **{**kwargs, "child": False})
+
+        monkeypatch.setattr(ConsoleAgentTraceRequestFactory, "build", parent_shaped)
+    elif tamper_child_route:
         from tldw_chatbook.Chat.console_agent_bridge import (
             ConsoleAgentTraceRequestFactory,
         )
@@ -402,12 +414,14 @@ async def test_a_child_cannot_spawn_a_grandchild(tmp_path, monkeypatch):
     assert all("spawn_subagent" not in tools for tools in child_tools), why
 
 
+@pytest.mark.parametrize("tamper", [True, "missing"], ids=["drifted", "missing"])
 async def test_a_child_route_naming_another_turn_is_refused_before_dispatch(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, tamper
 ):
-    """The adapter re-derives the spawning turn and refuses a drifted route."""
+    """The adapter re-derives the spawning turn and refuses a drifted or
+    missing one, through the real ``chat_call_impl`` path."""
     facts = await _spawn_turn(
-        tmp_path, monkeypatch, "Say child done.", tamper_child_route=True
+        tmp_path, monkeypatch, "Say child done.", tamper_child_route=tamper
     )
     why = str(vars(facts))
     assert [kind for kind, _ in facts.wire].count("subagent") == 0, why
