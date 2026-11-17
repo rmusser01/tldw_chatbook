@@ -608,7 +608,8 @@ class _BackendService:
             self._pending_turn_locations()
         try:
             receipt = self.backend.dispatch(message)
-        except Exception:
+        except Exception as error:
+            self._failure(message.operation, "admission", error)
             self.emit(
                 message.identity,
                 "failed",

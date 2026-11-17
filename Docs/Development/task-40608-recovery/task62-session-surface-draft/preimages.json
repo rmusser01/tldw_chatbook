@@ -1,0 +1,12 @@
+[
+  {
+    "path": "tldw_chatbook/Chat/console_execution_session_surface.py",
+    "exists": false,
+    "sha256": null
+  },
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/execution_sessions.py",
+    "exists": false,
+    "sha256": null
+  }
+]
