@@ -3,7 +3,7 @@ id: TASK-41133
 title: "Trace credential masking leftovers: a credentials-v3 projection for whsec_ and gsk_, and compound labels such as client_secret= in shared bundle text"
 status: Done
 created_date: 2026-11-15 02:20
-updated_date: 2026-11-17 16:53
+updated_date: 2026-11-17 19:20
 assignee:
 - '@claude'
 labels:
@@ -427,3 +427,10 @@ AC #3 was added for it.
   - probe2, probe_labels and probe3-7: as before.
   - `probe_equiv` (rev9 corpus 4870): 0 diffs.
   - Adversarial: the slowest case is 0.36 s CPU.
+- **Rev9 evidence:**
+  - Covering run (`-n 4`, 41 files with UI, now including `test_trace_responsive.py` and `test_console_chat_controller_exchanges.py`, load 42-84): 9 failed, 1960 passed in 48 min. That is the 8 base failures plus `Tests/test_logging_pipeline_single_pass.py::test_production_wiring_drops_debug_before_evaluating_lazy_arguments`.
+    - That test is a wall-time bound: it measured 2.39 µs against a 2.0 µs limit.
+    - Run alone, it passed 3/3 at head and 3/3 in `fu-r15-base`. So it is a load flake.
+  - Serial with lane flags: the recovered-suites slice (20 targets) gives 642 passed in 328 s at load 68-77; `Tests/Utils/test_log_sanitizer.py` gives 209 passed.
+  - `Tests/CI` gives 1640 passed, 1 skipped. The module ratchet gives 207 passed, and the ruff gate is OK.
+  - `./scripts/preflight.sh` passes (rc 0, load 52-80).
