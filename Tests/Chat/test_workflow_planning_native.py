@@ -153,22 +153,3 @@ def test_native_runtime_waits_for_original_maintenance_operation_return(tmp_path
         script=Path(__file__).with_name("workflow_planning_probe.py").read_text(),
         timeout=60,
     )
-
-
-@pytest.mark.parametrize(
-    "mode",
-    [
-        "executor-replaced",
-        "reader-replaced",
-        "executor-hash-replaced",
-        "executor-resolver-replaced",
-    ],
-)
-def test_native_planning_refuses_replaced_receivers_without_effects(tmp_path, mode):
-    _run(
-        tmp_path,
-        mode,
-        "success",
-        script=Path(__file__).with_name("workflow_planning_probe.py").read_text(),
-        timeout=60,
-    )

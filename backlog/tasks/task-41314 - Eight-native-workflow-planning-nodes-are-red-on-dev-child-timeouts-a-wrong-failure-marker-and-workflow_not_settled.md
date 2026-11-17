@@ -34,7 +34,7 @@ Filed from the 2026-11-13..16 burn-down. TASK-40718 (PR #3543) found the same 8 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 Each of the 8 nodes is classified as test drift (naming the commit) or a product defect (fixed, with the test red first), and the classification is recorded in the task notes
-- [ ] #2 All 8 nodes pass on dev at `-n 4`, or are retargeted with the reason recorded
+- [x] #2 All 8 nodes pass on dev at `-n 4`, or are retargeted with the reason recorded
 - [ ] #3 The file runs on a PR lane, or the task notes record why it should not
 <!-- AC:END -->
 
@@ -52,7 +52,13 @@ ADR required: no. The cause of all three groups is ADR-356 (TASK-39147), which i
 
 All 8 nodes are test drift. None is a product defect. Evidence: full child logs on the base tree (`fbf1c9ea74`), and the same probe run on the pre-rebuild original lineage `e08627ac38` (local `dev`), where all 8 pass in 22-46 s. The replayed PR #3480 commits before its integration commit cannot run: `68adde3960` fails at import (`config.py` reads `get_canvas_execution_enabled` as a bare name; `console_agent_bridge` names an undefined `code_review_provider`).
 
-**(a) `refuses_replaced_receivers` ×4: drift from `06f8b0bf94` (TASK-39147, ADR-356 decision 4), merged to dev by PR #3480 (`e10ce63fe8`). Left red pending an owner decision.** This is not load. Run alone with a 300 s budget at load 30-52, `executor-replaced`, `reader-replaced` and `executor-resolver-replaced` still hang. The planning `fs_list`/`fs_read` calls now reach an MCP approval round, and the private App is not running (`on_pending_rounds_changed` -> `call_from_thread`: "App is not running"), so the round never resolves. `executor-hash-replaced` finishes in 31 s, but the replaced `__hash__` ran and wrote its file. The old refusal compared implementation-identity pins (`_INPUT_FUNCTIONS`, `resolve_workspace_path` among them; the 11-03 ruling records "47 actual pre/post pins equal"). ADR-356 removed those pins on purpose ("they do not provide a security boundary against arbitrary in-process code"). No retarget keeps the property. The options are to delete the 4 params as superseded, or to reverse ADR-356 for receivers.
+**(a) `refuses_replaced_receivers` ×4: drift from `06f8b0bf94` (TASK-39147, ADR-356 decision 4), merged to dev by PR #3480 (`e10ce63fe8`). Deleted by owner decision (2026-11-17).** This is not load. Run alone with a 300 s budget at load 30-52, `executor-replaced`, `reader-replaced` and `executor-resolver-replaced` still hang. The planning `fs_list`/`fs_read` calls now reach an MCP approval round, and the private App is not running (`on_pending_rounds_changed` -> `call_from_thread`: "App is not running"), so the round never resolves. `executor-hash-replaced` finishes in 31 s, but the replaced `__hash__` ran and wrote its file. The old refusal compared implementation-identity pins (`_INPUT_FUNCTIONS`, `resolve_workspace_path` among them; the 11-03 ruling records "47 actual pre/post pins equal"). ADR-356 removed those pins on purpose ("they do not provide a security boundary against arbitrary in-process code"). No retarget keeps the property.
+
+Owner decision, 2026-11-17: delete the 4 params as superseded by ADR-356 decision 4. Authority now comes from runtime-owned registration and current state, not from code identity (`06f8b0bf94`). The params were the whole of `test_native_planning_refuses_replaced_receivers_without_effects`, so that function is deleted too. The probe code that only those modes used is removed as well:
+- the receiver replacement in `provider()`;
+- their tool-call response branch (`tools` keeps it);
+- their end-of-run receipt assertions;
+- their entries in the no-plan set.
 
 **(b) `required-write`, `required-return`, `late-source-return`: drift from `06f8b0bf94` (ADR-356 decision 6, TASK-39147 AC #9). Retargeted.** Each failure lands after positive physical return. `run_planning` then calls `_retire_returned_planning`, which retires the owner once and records `recovery_required`. The child's own assertion (`primary_owner.is_admitted`) failed before it could print the marker. These three now run in `test_native_planning_returned_required_failure_hands_custody_to_recovery`. It asserts:
 - the recovery receipt holds the same owner, claim and original error (so the failure is not hidden);
@@ -70,6 +76,8 @@ All 8 nodes are test drift. None is a product defect. Evidence: full child logs 
 - Rerun alone at load 62-72, worker-tail and repair-instruction pass. `test_native_runtime_waits_for_original_maintenance_operation_return` times out alone on base too. It is outside this task.
 
 **Preflight and Architecture.** `./scripts/preflight.sh` passes. On head, the serial `Tests/Architecture` run had 7 failed / 1414 passed at load 50-95. Three of those fail on base too: `test_reviewed_diagnostic_changes_are_metadata_only` and the two `test_timer_path_static_update_inventory` nodes. The other four (`test_task_15103_review_ledger_*`) pass when rerun alone on head (45 passed).
+
+**After the deletion.** The whole file on head at `-n 4`: 27 passed, 0 failed in 283 s at load 50-107, maintenance-tail included.
 
 **AC #3 is not ticked.** Workflow files are not edited here. The lane is recorded in the hand-off.
 

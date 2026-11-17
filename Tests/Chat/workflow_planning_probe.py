@@ -160,55 +160,6 @@ async def exercise():
                 == "accepted"
             )
         calls.append(owner)
-        if (
-            mode
-            in {
-                "executor-replaced",
-                "reader-replaced",
-                "executor-hash-replaced",
-                "executor-resolver-replaced",
-            }
-            and len(calls) == 1
-        ):
-            import inspect
-
-            from tldw_chatbook.Tools import local_tool_impls
-
-            def changed_receiver(*_args, **_kwargs):
-                (root / "changed-receiver-wrote.txt").write_text(
-                    "forbidden planning effect"
-                )
-                raise AssertionError("changed receiver invoked")
-
-            if mode in {"executor-replaced", "executor-hash-replaced"}:
-                _, native_provider = (
-                    prepared.native.service.registry.resolve_owner_for_name("fs_list")
-                )
-                handler = native_provider._path_specs_by_alias[binding.alias][
-                    "fs_list"
-                ].handler
-                executor = inspect.getclosurevars(handler).nonlocals[
-                    "workspace_executor"
-                ]
-                if mode == "executor-hash-replaced":
-                    type(executor).__hash__ = changed_receiver
-                else:
-                    executor.execute = changed_receiver
-            elif mode == "executor-resolver-replaced":
-                from tldw_chatbook.Tools import workspace_tool_executor
-
-                original_resolver = workspace_tool_executor.resolve_workspace_path
-
-                def changed_resolver(*_args, **_kwargs):
-                    (root / "changed-receiver-wrote.txt").write_text(
-                        "forbidden planning effect"
-                    )
-                    print("F_CHANGED_EXECUTOR_RESOLVER_ENTERED", flush=True)
-                    return original_resolver(*_args, **_kwargs)
-
-                workspace_tool_executor.resolve_workspace_path = changed_resolver
-            else:
-                local_tool_impls._read_bounded_bytes = changed_receiver
         if mode == "system-context":
             received_system.append(
                 required_system in json.dumps(kwargs, ensure_ascii=False)
@@ -243,17 +194,7 @@ async def exercise():
             result["choices"][0]["message"]["content"] = (
                 "```json\n" + json.dumps(data) + "\n```"
             )
-        if (
-            mode
-            in {
-                "tools",
-                "executor-replaced",
-                "reader-replaced",
-                "executor-hash-replaced",
-                "executor-resolver-replaced",
-            }
-            and len(calls) == 1
-        ):
+        if mode == "tools" and len(calls) == 1:
             result["choices"][0]["message"] = {
                 "content": None,
                 "tool_calls": [
@@ -819,28 +760,6 @@ async def exercise():
             )
         if mode == "system-oversize":
             assert not calls, "oversized mandatory system context reached MODEL"
-        if mode in {
-            "executor-replaced",
-            "reader-replaced",
-            "executor-hash-replaced",
-            "executor-resolver-replaced",
-        }:
-            assert len(calls) == 1
-            assert not (root / "changed-receiver-wrote.txt").exists(), (
-                "changed receiver performed an effect"
-            )
-            with owned_goal_storage(service):
-                receipt = service.db.automatic_work.read_workflow_attempt(
-                    attempt.id, owner_id=attempt.owner_id
-                )
-            assert receipt.state == "completed" and receipt.outcome == "failed"
-            assert (
-                prepared._planning_physical_returned
-                and prepared._planning_terminal_returned
-            )
-            assert prepared.primary_owner._root_finished
-            assert prepared.primary_claim.id not in runtime.worktree_activity._claims
-            print("F_CHANGED_RECEIVER_REFUSED_WITH_REQUIRED_RETURN", flush=True)
         assert not compaction_calls, "planning scheduled optional compaction"
         assert not factory_calls, "planning invoked an optional tool-service factory"
         assert len(calls) == (
@@ -857,10 +776,6 @@ async def exercise():
             "maintenance-tail",
             "wrapper-changed",
             "wrapper-unavailable",
-            "executor-replaced",
-            "reader-replaced",
-            "executor-hash-replaced",
-            "executor-resolver-replaced",
         }:
             assert not result.plans, "invalid or cancelled planning published a plan"
         else:
