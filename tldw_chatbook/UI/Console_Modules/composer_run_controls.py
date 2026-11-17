@@ -923,6 +923,10 @@ def consume_visible_agent_handoff(self: Any, store: Any, composer: Any) -> None:
 
 def _publish_console_authored_draft(self, draft: str, token: tuple[int, int]) -> bool:
     """Publish authored identity synchronously, before queued widget messages."""
+    from .execution_state import publish_authored_draft, selected_client
+
+    if selected_client(self) is not None:
+        return publish_authored_draft(self, draft, token)
     session_id = self._console_visible_draft_session_id
     store = self._console_chat_store
     if session_id is None or store is None:

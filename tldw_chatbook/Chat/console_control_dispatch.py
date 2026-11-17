@@ -241,6 +241,7 @@ class ConsoleProjection:
     messages: tuple = field(repr=False)
     run_state: Any
     decision: Any = field(repr=False)
+    marker_revision: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -449,7 +450,6 @@ class ConsoleLocalControls:
         self._gateway._console_local_controls = self
 
     async def _read_projection(self, identity):
-        import time
         from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
         from tldw_chatbook.UI.Console_Modules import composer_run_controls
 
@@ -458,7 +458,7 @@ class ConsoleLocalControls:
         view = self._runtime.view
         association = self._domain.presentation.association
         self._domain.presentation.require_association(association)
-        projection_started = time.monotonic()
+        prepared_transcript = None
         if view is None:
             from .console_backend_presentation import ConsoleBackendPresentation
 
@@ -479,6 +479,7 @@ class ConsoleLocalControls:
 
             if type(self._domain.presentation) is ConsoleBackendPresentation:
                 await self._domain.presentation.prepare_readiness(identity)
+                prepared_transcript = await self._domain.presentation.prepare_transcript(identity)
         else:
             if (
                 type(view) is not ChatScreen
@@ -504,20 +505,27 @@ class ConsoleLocalControls:
             session = self._store._sessions.get(identity.session_id)
             if session is None or session.incarnation_id != identity.incarnation_id:
                 raise RuntimeError("Console projection session changed")
+            messages = tuple(self._store.read_only_messages_for_session(session.id))
+            marker_revision = None
+            if prepared_transcript is not None:
+                messages, marker_revision = self._domain.presentation.project_transcript(
+                    identity, prepared_transcript, messages
+                )
             projection = ConsoleProjection(
                 revision,
                 session.id,
                 session.incarnation_id,
                 self._store.display_projection_revision(session.id),
-                tuple(self._store.read_only_messages_for_session(session.id)),
+                messages,
                 self._controller.run_state_for(session.id),
                 self._controller.pending_decision_projection(session.id),
+                marker_revision,
             )
             from .console_backend_presentation import ConsoleBackendPresentation
 
             if type(self._domain.presentation) is ConsoleBackendPresentation:
                 self._domain.presentation.capture_projection_view(
-                    self, identity, projection, started_at=projection_started
+                    self, identity, projection
                 )
             return projection
 
@@ -2027,15 +2035,4 @@ def finish_admitted_display(full):
         or effect.owner.selection is not full.selection
         or asyncio.current_task() is not effect.owner.selection.task
     ):
-        raise ConsoleDisplayPhaseRefused("Original display effect registration changed")
-    record[3](controls, effect, retired=False)
-    raise ConsoleDisplayPhaseRefused("Admitted display control definition changed")
-
-
-# Fixed original release-tail methods; the retained result is not a callback.
-from .console_domain_services import _definition as _reservation_definition
-
-_RESERVATION_METHODS = tuple(
-    (name, _reservation_definition(vars(ConsoleLocalControls)[name]))
-    for name in ("_settle_released_reservation", "_finish_effect")
-)
+        raise ConsoleDisplayPhaseRefused("Original display 

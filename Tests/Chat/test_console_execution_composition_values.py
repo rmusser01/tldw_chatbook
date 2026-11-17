@@ -23,6 +23,7 @@ def _encode(session):
         pending_interrupt_copy="Waiting for review",
         blocked_turn_reason="recovery needed",
         is_stop_allowed=True,
+        acknowledgement_idle=False,
         chat_start_prepared=False,
         change_tracking_enabled=True,
         tools_published=False, builtin_tool_count=None, mcp_tool_count=None,
@@ -43,6 +44,7 @@ def test_composition_retains_fresh_none_and_detaches_original_policy():
     assert result.pending_approval_count == 2
     assert result.blocked_turn_reason == "recovery needed"
     assert result.is_stop_allowed and not result.chat_start_prepared
+    assert result.acknowledgement_idle is False
     assert result.selected_tool_count == 0 and not result.tools_published
     assert not result.staged_evidence_present
     assert result.staged_evidence_revision == 0
@@ -70,6 +72,7 @@ def test_composition_refuses_stale_row_unknown_fields_and_authority_objects():
         dict(payload, library_policy=session.library_policy_holder),
         dict(payload, controller=object()),
         dict(payload, is_stop_allowed=1),
+        dict(payload, acknowledgement_idle=1),
     ):
         with pytest.raises(ConsoleProtocolError):
             decode_session_composition(changed, row)

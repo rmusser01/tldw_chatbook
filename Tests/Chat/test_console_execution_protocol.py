@@ -33,6 +33,18 @@ def envelope(operation, payload, *, kind="command"):
     }
 
 
+def test_original_turn_checkpoints_remain_distinct_from_retirement():
+    for kind, flag in (("input_projected", "draft_committed"), ("terminal", "accepted")):
+        message = decode_message(envelope("ReceiveTurn", {"turn_id": "turn", flag: False}, kind=kind))
+        assert encode_message(message)["payload"][flag] is False
+        with pytest.raises(ConsoleProtocolError):
+            decode_message(envelope("ReceiveTurn", {"turn_id": "turn", flag: True, "retired": True}, kind=kind))
+        with pytest.raises(ConsoleProtocolError):
+            decode_message(envelope("ReadProjection", {"turn_id": "turn", flag: True}, kind=kind))
+        with pytest.raises(ConsoleProtocolError):
+            decode_message(envelope("ReceiveTurn", {"turn_id": "turn", flag: 1}, kind=kind))
+
+
 def attachment(identifier, content):
     return {
         "attachment_id": identifier,

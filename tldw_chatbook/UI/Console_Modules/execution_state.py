@@ -356,3 +356,27 @@ _MOUNT_UI_METHODS = tuple(
         "_record_ui_timer_created",
     )
 )
+
+
+_AUTHORED_INPUT_METHODS = tuple(
+    (name, _definition(getattr(ConsoleExecutionClient, name)))
+    for name in (
+        "publish_authored_inputs", "_join_authored_inputs", "_authored_inputs_finished",
+        "retain_authored_press", "release_authored_press", "submit_authored_turn",
+        "_submit_authored_turn", "submit",
+    )
+)
+
+
+def require_authored_owner(screen: ChatScreen, client: ConsoleExecutionClient, visit: int) -> None:
+    """Recheck exact input methods and the actual visit after an observer wait."""
+    if selected_client(screen) is not client or client is None or client._visit != visit:
+        raise RuntimeError("Console process input owner is unavailable")
+    _require_methods(client, _AUTHORED_INPUT_METHODS)
+
+
+def publish_authored_draft(screen: ChatScreen, draft: str, token: tuple[int, int]) -> bool:
+    """Send the actual widget edit to the selected original input command."""
+    client = selected_client(screen)
+    require_authored_owner(screen, client, client._visit)
+    return client.publish_authored_inputs(screen, client._visit, draft, token)

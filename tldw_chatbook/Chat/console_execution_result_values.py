@@ -185,6 +185,7 @@ _OPERATIONS = {
     controls.Shutdown: "Shutdown",
     controls.ApplySourceRevision: "ApplySourceRevision",
     controls.FenceSource: "FenceSource",
+    controls.SetWorkspaceBindingAccess: "SetWorkspaceBindingAccess",
     controls.ApplySettings: "ApplySettings",
 }
 
@@ -246,6 +247,27 @@ def encode_control_applied(
         payload = {"source": result.source, "revision": result.revision}
     elif type(command) is controls.ApplySettings:
         payload = _live_commit(command, result)
+    elif type(command) is controls.SetWorkspaceBindingAccess:
+        from .console_control_publication import ConsoleWorkspacePublication
+        from tldw_chatbook.Workspaces.models import WorkspaceRuntimeBinding
+
+        _exact(result, ConsoleWorkspacePublication)
+        _exact(command.fence, controls.SourceFence)
+        _exact(result.binding, WorkspaceRuntimeBinding)
+        if (
+            result.fence is not command.fence
+            or result.sources is not command.fence.previous_sources
+            or result.binding.binding_id != command.binding_id
+            or result.binding.metadata.get("access")
+            != ("rw" if command.allow_write else "ro")
+        ):
+            _fail("workspace publication does not match original command")
+        payload = {
+            "binding_id": result.binding.binding_id,
+            "workspace_id": result.binding.workspace_id,
+            "access": result.binding.metadata["access"],
+            "source_revision": result.fence.revision,
+        }
     else:
         _exact(result, bool)
         payload = {"applied": result}

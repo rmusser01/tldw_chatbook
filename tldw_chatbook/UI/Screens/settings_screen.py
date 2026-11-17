@@ -4336,6 +4336,7 @@ class SettingsScreen(BaseAppScreen):
         self._settings_workspaces_result = ""
         self._settings_workspace_lifecycle_result: tuple[str, str, str] | None = None
         self._settings_workspace_first_bind_intent: object | None = None
+        self._settings_workspace_access_request: object | None = None
         self._settings_workspace_first_bind_modal: object | None = None
         self._settings_workspace_folder_result: tuple[str, str | None, str] | None = (
             None
@@ -5223,6 +5224,7 @@ class SettingsScreen(BaseAppScreen):
                     state.screen = None
         self._tool_profile_review_intent = None
         self._settings_workspace_first_bind_intent = None
+        self._settings_workspace_access_request = None
         if self._subscription_readiness_timer is not None:
             self._subscription_readiness_timer.stop()
             self._subscription_readiness_timer = None
@@ -27734,6 +27736,12 @@ class SettingsScreen(BaseAppScreen):
         if current is None:
             return
         allow_write = current.metadata.get("access") != "rw"
+        client = getattr(self.app_instance, "console_execution_client", None)
+        if client is not None:
+            self._settings_workspace_process_folder_access(
+                client, registry, workspace_id, binding_id, allow_write
+            )
+            return
         try:
             registry.set_folder_binding_access(binding_id, allow_write=allow_write)
         except WorkspaceRegistryServiceError as exc:
@@ -27746,6 +27754,65 @@ class SettingsScreen(BaseAppScreen):
             binding_id,
         )
         self._refresh_settings_workspaces_pane()
+
+    def _settings_workspace_process_folder_access(
+        self, client, registry, workspace_id: str, binding_id: str, allow_write: bool
+    ) -> None:
+        """Retain the selected owner's write; publish only to this Settings intent."""
+        from ...Chat.console_execution_workspace import set_workspace_binding_access
+
+        request = self._settings_workspace_access_request = object()
+        revision = self._category_swap_revision
+        visit = self._task
+
+        def current() -> bool:
+            return (
+                self._settings_workspace_access_request is request
+                and self.is_mounted
+                and self._task is visit
+                and self.app.screen is self
+                and self._active_category_id() == SettingsCategoryId.WORKSPACES
+                and self._category_swap_revision == revision
+                and self._settings_selected_workspace_id == workspace_id
+                and self.app_instance.console_execution_client is client
+                and self.app_instance.workspace_registry_service is registry
+            )
+
+        if not current():
+            return
+        try:
+            operation = set_workspace_binding_access(
+                client, workspace_id, binding_id, allow_write=allow_write
+            )
+        except Exception as error:
+            logger.warning("Console workspace access refused (%s)", type(error).__name__)
+            self._set_workspace_folder_result(
+                "Folder access change was not confirmed.", binding_id
+            )
+            return
+
+        async def finish() -> None:
+            try:
+                await asyncio.shield(operation)
+            except Exception as error:
+                logger.warning("Console workspace access failed (%s)", type(error).__name__)
+                if current():
+                    self._set_workspace_folder_result(
+                        "Folder access change was not confirmed.", binding_id
+                    )
+                return
+            if current():
+                self._set_workspace_folder_result(
+                    "Folder access: read-write."
+                    if allow_write
+                    else "Folder access: read-only.",
+                    binding_id,
+                )
+                self._refresh_settings_workspaces_pane()
+
+        self.app.run_worker(
+            finish(), group="settings-workspace-folder-access", exclusive=True
+        )
 
     @on(Button.Pressed, ".settings-workspace-folder-remove")
     def _settings_workspace_remove_folder(self, event: Button.Pressed) -> None:

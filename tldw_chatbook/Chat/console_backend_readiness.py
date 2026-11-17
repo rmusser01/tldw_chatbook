@@ -55,6 +55,7 @@ class ConsoleBackendReadiness:
         self.agent_key = None
         self.prompt_history_payload = None
         self.history_key = None
+        self.send_selection = None
 
     def _current(self, session, settings, revision, source) -> None:
         backend = self.backend
@@ -187,6 +188,12 @@ class ConsoleBackendReadiness:
             bool(controller._submit_tasks_for_session(session.id)),
             snapshot._cache_key(controller, session.id), id(snapshot.value),
             backend.runtime.snapshot_console_staged_evidence(session.id)[1],
+            (
+                session.identity_revision, session.assistant_kind, session.assistant_name,
+                session.character_name, session.persona_system_template,
+                session.character_system_template, session.user_display_name_override,
+                session.workspace_id, session.ephemeral,
+            ),
         )
 
     def _capture_context(self, session) -> dict:
@@ -434,6 +441,11 @@ class ConsoleBackendReadiness:
                     settings,
                     app_config=loaded,
                 )
+                from .console_backend_send_selection import _CAPTURE, capture_send_selection
+
+                if capture_send_selection is not _CAPTURE[0] or not _definition_current(_CAPTURE):
+                    raise RuntimeError("Console send selection builder changed")
+                send_selection = capture_send_selection(backend, session, loaded)
                 model = selection.explicit_model or selection.configured_model
                 effective = replace(settings, model=model, base_url=selection.base_url)
                 endpoint = key[6]
@@ -476,6 +488,7 @@ class ConsoleBackendReadiness:
                 self.agent_key, self.agent_history = agent_key, history
                 self.agent_log_available = log_available
                 self.history_key, self.prompt_history_payload = history_key, history_payload
+                self.send_selection = send_selection
                 self.key, self.value, self.at = key, value, at
             return value
         finally:

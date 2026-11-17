@@ -472,6 +472,16 @@ def _acknowledged_text(screen: Any, stash: Any, session_id: str) -> str | None:
     text = classified.text
     if classified.kind == "raw" or not text.strip() or text.lstrip().startswith("/"):
         return None
+    from .execution_state import selected_client
+
+    client = selected_client(screen)
+    if client is not None:
+        composition = client.session_composition
+        return (
+            text
+            if composition.session_id == session_id and composition.acknowledgement_idle
+            else None
+        )
     controller = getattr(screen, "_console_chat_controller", None)
     if controller is None:
         return None
@@ -555,6 +565,10 @@ def request_visible_send(
             send is scheduled; ``False`` releases the capture unsent.
     """
     if screen._session.refuse_send_from_unbound_composer():  # TASK-33622.7
+        return
+    from .execution_send import request_send
+
+    if request_send(screen, guard):
         return
     from ...Chat.console_parent_settings import retain_parent_visible_send
 
@@ -756,6 +770,12 @@ def _flight(screen: Any) -> _SendFlight:
 def capture_visible_send_inputs(screen: Any, session_id: str, stash: Any) -> Any:
     """Retain stock resident inputs at the press, before acknowledgement paint."""
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from .execution_state import selected_client
+
+    if selected_client(screen) is not None:
+        from .execution_send import capture_inputs
+
+        return capture_inputs(screen, session_id, stash)
 
     store = getattr(screen, "_console_chat_store", None)
     if type(store) is not ConsoleChatStore:
@@ -772,6 +792,12 @@ def _record_draft(screen: Any, request: _Request) -> bool:
     """Mirror the captured draft into its chat; False if the chat is gone."""
     if request.stash is None:
         return True
+    from .execution_state import selected_client
+
+    if selected_client(screen) is not None:
+        from .execution_send import record_draft
+
+        return record_draft(screen, request)
     try:
         screen._ensure_console_chat_store().set_session_draft(
             request.session_id, request.stash.text
@@ -1091,9 +1117,15 @@ async def _mount_row(
         ):
             _request_resync(screen)  # The shown tab's own sync derives its rows.
         else:
-            rows = screen._change_review_projection.project(
-                screen._message._native_console_messages()
-            )
+            from .execution_state import selected_client
+
+            client = selected_client(screen)
+            if client is None:
+                rows = screen._change_review_projection.project(
+                    screen._message._native_console_messages()
+                )
+            else:
+                rows = client._projection.messages
             widget.set_messages(ack.project(session_id, rows), session_id=session_id)
             screen._last_native_transcript_refresh_key = None
             await widget.refresh_messages()
@@ -1188,7 +1220,9 @@ async def paint_acknowledgement(screen: Any, session_id: str) -> _RowMount | Non
         QUEUE_REASON_PREPARING,
         SEND_LABEL_SENDING,
     )
+    from .execution_state import selected_client
 
+    client = selected_client(screen)
     if screen._console_chat_store.active_session_id != session_id:
         return None
     widget = screen.query_one("#console-native-transcript")
@@ -1208,7 +1242,15 @@ async def paint_acknowledgement(screen: Any, session_id: str) -> _RowMount | Non
     # Tabs before the row: a relabelled tab is drawn a frame after the change,
     # and the hand-off waits only for the mounted row (live warm send, tabs
     # last: the dot first appeared after admission).
-    await screen._sync_console_native_session_tabs()
+    if client is None:
+        await screen._sync_console_native_session_tabs()
+    else:
+        from .execution_sessions import apply_console_process_sessions
+
+        if not await apply_console_process_sessions(
+            screen, client, client.session_surface, visit=client._visit
+        ):
+            return None
     # TASK-38948 (owner ruling 2026-11-10): "Sending…" leads the row by one
     # frame. Mounting the row with the rest made the Sending frame a full
     # first-message reflow and render (Sending loop CPU median 56 ms against

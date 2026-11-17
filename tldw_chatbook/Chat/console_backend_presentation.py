@@ -33,6 +33,8 @@ class ConsoleBackendPresentation:
 
         self.view_lifecycle = ConsoleBackendViewLifecycle(self)
         self._projection_views = {}
+        self._marker_projection = None
+        self._marker_session = None
         from .console_backend_readiness import ConsoleBackendReadiness
 
         self.readiness = ConsoleBackendReadiness(backend)
@@ -97,7 +99,66 @@ class ConsoleBackendPresentation:
         self.require_association(self.association)
         await self.readiness.warm(identity)
 
-    def capture_projection_view(self, controls, identity, projection, *, started_at: float) -> None:
+    def _require_marker_projection(self, identity, projection) -> None:
+        from types import MethodType
+        from .console_domain_services import _definition_current
+
+        self.require_association(self.association)
+        self.backend._require_owner_loop()
+        session = self._controller.store._sessions.get(identity.session_id)
+        if (
+            session is not self._marker_session
+            or session is None
+            or session.incarnation_id != identity.incarnation_id
+            or projection is not self._marker_projection
+            or type(projection) is not _MarkerProjection
+            or _marker_module.ConsoleChangeReviewProjection is not _MarkerProjection
+        ):
+            raise RuntimeError("Console marker projection owner changed")
+        for name, record in _MARKER_METHODS:
+            method = getattr(projection, name, None)
+            if (
+                type(method) is not MethodType or method.__self__ is not projection
+                or method.__func__ is not record[0]
+                or not _definition_current(record)
+            ):
+                raise RuntimeError("Console marker projection definition changed")
+
+    async def prepare_transcript(self, identity):
+        """Prepare original Change Review markers before the message snapshot."""
+        self.require_association(self.association)
+        session = self._controller.store._sessions.get(identity.session_id)
+        if session is None or session.incarnation_id != identity.incarnation_id:
+            raise RuntimeError("Console marker session changed")
+        if self._marker_session is not session:
+            self._marker_projection = _MarkerProjection(
+                runtime_accessor=lambda: self._runtime,
+                conversation_id_accessor=lambda: session.persisted_conversation_id,
+            )
+            self._marker_session = session
+        projection = self._marker_projection
+        self._require_marker_projection(identity, projection)
+        if not await projection.prepare():
+            raise RuntimeError("Console marker preparation became obsolete")
+        self._require_marker_projection(identity, projection)
+        selected = projection._selection()
+        # The stock worker owns saved marker reads. Never fall through to the
+        # original synchronous/custom reader on this process presentation path.
+        if selected[1] is not None and selected[4] is not None and not projection._prepared_stock:
+            raise RuntimeError("Console marker worker source is unavailable")
+        return projection, selected
+
+    def project_transcript(self, identity, prepared, messages):
+        projection, selected = prepared
+        self._require_marker_projection(identity, projection)
+        if not projection._same_selection(selected, projection._selection()):
+            raise RuntimeError("Console marker publication changed")
+        rows = tuple(projection.project(list(messages)))
+        if not projection._same_selection(selected, projection._selection()):
+            raise RuntimeError("Console marker publication changed")
+        return rows, selected[5]
+
+    def capture_projection_view(self, controls, identity, projection) -> None:
         """Retain inert row facts at the original synchronous projection boundary."""
         from .console_control_dispatch import (
             ConsoleLocalControls,
@@ -180,11 +241,12 @@ class ConsoleBackendPresentation:
                     self.readiness.agent_projection(store._sessions[identity.session_id])
                 ),
                 "prompt_history": self.readiness.prompt_history_payload,
+                "send_selection": self.readiness.send_selection,
                 "provider_label": provider,
                 "control_provider_label": provider_chip,
                 "model": model,
                 "remaining_seconds": max(0.0, 1.0 - (captured_at - self.readiness.at)),
-                "projection_elapsed_seconds": captured_at - started_at,
+                "captured_at_monotonic": captured_at,
             },
             "composition": composition,
             "workspace": encode_workspace_surface(ConsoleWorkspaceSurface(
@@ -267,14 +329,20 @@ class ConsoleBackendPresentation:
         counts = counts_owner.snapshot(controller, session.id)
         launch, staged_revision, sent_notice = self._runtime.snapshot_console_staged_evidence(session.id)
         pending = controller.has_pending_approval_round(session.id)
+        activity = controller.activity_for(session.id)
+        blocked = _COMPOSITION_COPY[1][2][0](controller)
         return encode_session_composition(
             session,
             pending_approval_count=controller.pending_round_count(session.id),
             pending_interrupt_copy=(
                 _COMPOSITION_COPY[0][2][0](controller, session.id) if pending else ""
             ),
-            blocked_turn_reason=_COMPOSITION_COPY[1][2][0](controller),
+            blocked_turn_reason=blocked,
             is_stop_allowed=controller.is_stop_allowed,
+            acknowledgement_idle=not (
+                activity.accepted_live_turn or activity.occupies_slot or activity.queued_count
+                or controller.run_state_for(session.id).is_stop_allowed or blocked
+            ),
             chat_start_prepared=controller._chat_start.is_prepared(session.id),
             change_tracking_enabled=controller._agent_bridge.change_tracking_enabled,
             tools_published=counts.published,
@@ -384,6 +452,39 @@ class ConsoleBackendPresentation:
             raise RuntimeError("Backend commit plan association changed")
         service.publish_commit_plan(source.identity, pending)
 
+    def project_received_input(self, record, *, draft_committed: bool) -> None:
+        """Publish the original input CAS checkpoint for its exact received turn."""
+        import asyncio
+        from .console_control_dispatch import require_control_source
+        from .console_execution_worker import _BackendService
+
+        self.require_association(self.association)
+        self.backend._require_owner_loop()
+        source = require_control_source(self._runtime)
+        controls = self.backend.controls
+        entry = controls._turns.get(record.turn_id)
+        service = self.backend._worker_service
+        if (
+            type(draft_committed) is not bool
+            or entry is None or entry[0] is not source.identity
+            or entry[1] is not record or entry[2] is not asyncio.current_task()
+            or self._runtime._turn_custody.get(record.turn_id) is not record
+            or record.session_id != source.identity.session_id
+            or type(service) is not _BackendService
+            or service.backend is not self.backend
+        ):
+            raise RuntimeError("Backend received input checkpoint changed")
+        retained = self.backend.adapter._receipts.get(source.identity.request_id)
+        if (
+            retained is None or retained[0].operation != "ReceiveTurn"
+            or retained[0].payload["turn_id"] != record.turn_id
+            or retained[1].work is not entry[2]
+        ):
+            raise RuntimeError("Backend received input receipt changed")
+        service.emit(retained[0].identity, "input_projected", "ReceiveTurn", {
+            "turn_id": record.turn_id, "draft_committed": draft_committed,
+        })
+
     # These exact original bodies only inspect a qualified viewless owner and
     # the real local FULL/checkpoint. They do not discover an App or issue I/O.
     capture_display = ConsolePresentationPort.capture_display
@@ -470,7 +571,7 @@ _COMPOSITION_CONTROLLER_METHODS = tuple(
     for name in (
         "has_pending_approval_round", "pending_round_count", "pending_round_kinds",
         "trace_call_recovery_preparation", "context_compaction_hold", "preparation_outcome",
-        "activity_for", "run_marker_for", "streaming_session_id",
+        "activity_for", "run_marker_for", "streaming_session_id", "run_state_for",
     )
 )
 _COMPOSITION_START_METHODS = (("is_prepared", _definition(_CompositionStart.is_prepared)),)
@@ -494,6 +595,15 @@ from .console_runtime import ConsoleRuntime as _CompositionRuntime
 from .console_chat_store import ConsoleChatSession as _CompositionSession
 
 _CHARACTER_READER = _definition(_CompositionSession.local_character_id)
+
+from tldw_chatbook.UI.Console_Modules import transcript as _marker_module
+
+_MarkerProjection = _marker_module.ConsoleChangeReviewProjection
+_MARKER_METHODS = tuple(
+    (name, _definition(value))
+    for name, value in vars(_MarkerProjection).items()
+    if type(value) is FunctionType and name != "_same_selection"
+)
 
 _COMPOSITION_RUNTIME_METHODS = tuple(
     (name, _definition(getattr(_CompositionRuntime, name)))

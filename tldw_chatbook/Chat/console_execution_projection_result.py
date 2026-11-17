@@ -199,19 +199,20 @@ def _readiness(value, row) -> tuple:
     from .console_execution_readiness_values import decode_settings_readiness
     from .console_execution_context_summary_values import decode_context_summary
 
+    readiness_fields = {
+        "effective_settings", "state", "provider_label", "control_provider_label", "model",
+        "remaining_seconds", "captured_at_monotonic", "context_summary", "agent_rail", "prompt_history",
+    }
     if (
         type(value) is not dict
-        or set(value) != {
-            "effective_settings", "state", "provider_label", "control_provider_label", "model",
-            "remaining_seconds", "projection_elapsed_seconds", "context_summary", "agent_rail", "prompt_history",
-        }
+        or set(value) not in (readiness_fields, readiness_fields | {"send_selection"})
         or type(value["provider_label"]) is not str
         or type(value["control_provider_label"]) is not str
         or value["model"] is not None and type(value["model"]) is not str
         or row.settings is None
     ):
         raise ConsoleProtocolError("invalid_projection_readiness")
-    for name in ("remaining_seconds", "projection_elapsed_seconds"):
+    for name in ("remaining_seconds", "captured_at_monotonic"):
         number = value[name]
         if type(number) not in (int, float) or not math.isfinite(number) or number < 0:
             raise ConsoleProtocolError("invalid_projection_readiness_clock")
@@ -227,13 +228,19 @@ def _readiness(value, row) -> tuple:
         raise ConsoleProtocolError("projection_readiness_settings_changed")
     from .console_execution_agent_rail_values import decode_agent_rail_projection
     from .console_execution_prompt_history import decode_prompt_history
+    from .console_execution_protocol import _SELECTION, _detach
+
+    send_selection = value.get("send_selection")
+    if "send_selection" in value:
+        _SELECTION(_detach(send_selection, "send_selection", 0, set()), "send_selection")
 
     return (
         effective, readiness, value["provider_label"], value["model"],
-        value["remaining_seconds"], value["projection_elapsed_seconds"],
+        value["remaining_seconds"], value["captured_at_monotonic"],
         value["control_provider_label"], decode_context_summary(value["context_summary"]),
         decode_agent_rail_projection(value["agent_rail"]),
         decode_prompt_history(value["prompt_history"]),
+        send_selection,
     )
 
 

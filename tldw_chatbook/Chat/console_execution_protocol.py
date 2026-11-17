@@ -1036,6 +1036,12 @@ _APPLIED = {
     "PermissionAction": _PERMISSION_RESULT,
     "CancelTurn": _APPLIED_BOOL,
     "FenceSource": _record(source=_SOURCE, revision=_REVISION),
+    "SetWorkspaceBindingAccess": _record(
+        binding_id=_NONEMPTY,
+        workspace_id=_NONEMPTY,
+        access=_enum("ro", "rw"),
+        source_revision=_REVISION,
+    ),
     "ApplySourceRevision": _record(source_revision=_REVISION),
     "CommitPlanAck": _APPLIED_BOOL,
     "CloseIntake": _APPLIED_BOOL,
@@ -1077,6 +1083,12 @@ def _validate_message(identity, kind, operation, payload):
                     "payload.pressed_inputs",
                     "pressed identity or attachment order changed",
                 )
+        return
+    if kind == "input_projected" and operation == "ReceiveTurn":
+        _record(turn_id=_TURN_ID, draft_committed=_boolean)(payload, "payload")
+        return
+    if kind == "terminal" and operation == "ReceiveTurn":
+        _record(turn_id=_TURN_ID, accepted=_boolean)(payload, "payload")
         return
     if kind == "commit_planned" and operation == "ReceiveTurn":
         _COMMIT_PLANNED(payload, "payload")

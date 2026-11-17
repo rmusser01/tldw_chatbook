@@ -1161,6 +1161,16 @@ def project_received_input(self, record, *, draft_committed=False) -> None:
         generation = request._pressed_attachment_generation
     else:
         return
+    service = self._execution_service
+    domain = service.domain_services if service is not None else None
+    if domain is not None:
+        from .console_backend_presentation import ConsoleBackendPresentation
+
+        presentation = domain.presentation
+        if type(presentation) is ConsoleBackendPresentation:
+            presentation.require_association(presentation.association)
+            presentation.project_received_input(record, draft_committed=draft_committed)
+            return
     if self._attached_generation != generation:
         return
     project = getattr(self.view, "_project_console_received_input", None)

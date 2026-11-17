@@ -15038,12 +15038,14 @@ class ChatScreen(BaseAppScreen):
             from ..Console_Modules.execution_state import prepare_first_compose
 
             self._console_process_compose_error = None
+            self._console_process_prepare_failed = False
             try:
                 await prepare_first_compose(self)
             except Exception as error:
                 # Preserve BaseAppScreen's original generator error panel.
                 # Cancellation remains cancellation and is never rendered here.
                 self._console_process_compose_error = error
+                self._console_process_prepare_failed = True
             await super()._compose()
             return
         from ...Chat.console_parent_settings import (
@@ -15697,6 +15699,9 @@ class ChatScreen(BaseAppScreen):
         """Initialize the native Console screen."""
         # No super().on_mount(): the dispatcher already invokes
         # BaseAppScreen.on_mount separately for this Mount event.
+        if getattr(self, "_console_process_prepare_failed", False):
+            # The error panel has no attached Console visit or mounted controls.
+            return
 
         self.app_instance._console_h3_image_edit_screen = self
         self._apply_focus_chrome()
@@ -16197,7 +16202,7 @@ class ChatScreen(BaseAppScreen):
         """Release Console-native resources owned by this screen."""
         selected_client = getattr(self.app_instance, "console_execution_client", None)
         selected_teardown_view = None
-        if selected_client is not None:
+        if selected_client is not None and not getattr(self, "_console_process_prepare_failed", False):
             from ..Console_Modules.execution_state import detach_selected_view
 
             # The process stays App-owned. Revoke this exact visit before the
@@ -18822,6 +18827,14 @@ class ChatScreen(BaseAppScreen):
             each with its own toast or system row, and while a worker owns the
             Send's hook review (TASK-33621.28).
         """
+        from ..Console_Modules.execution_state import selected_client
+
+        if selected_client(self) is not None:
+            from ..Console_Modules.execution_send import dispatch_send
+
+            return await dispatch_send(
+                self, session_id=session_id, pending_send_token=pending_send_token,
+            )
         received_inputs = None
         from tldw_chatbook.Chat.console_parent_settings import wait_parent_settings
 
@@ -23657,7 +23670,8 @@ class ChatScreen(BaseAppScreen):
         if getattr(self.app_instance, "console_execution_client", None) is not None:
             from ..Console_Modules.execution_state import detach_selected_view
 
-            detach_selected_view(self)
+            if not getattr(self, "_console_process_prepare_failed", False):
+                detach_selected_view(self)
             self._console_attach_reconciled = False
             self._console_attach_sync_complete = False
             self._console_attach_runtime_reconciled = False
@@ -23744,6 +23758,8 @@ class ChatScreen(BaseAppScreen):
     def on_screen_resume(self) -> None:
         """Called when returning to this screen."""
         if getattr(self.app_instance, "console_execution_client", None) is not None:
+            if getattr(self, "_console_process_prepare_failed", False):
+                return
             from ..Console_Modules.execution_state import resume_selected_view
 
             resume_selected_view(self)

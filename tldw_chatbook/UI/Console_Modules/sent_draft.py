@@ -157,6 +157,21 @@ def refused_for(screen: Any, session_id: str) -> str:
     return REFUSED_FOR_OTHER_CHAT.format(chat=chat_label(store, session_id))
 
 
+def take_out_visible_sent_draft(composer, stash, notify, *, verb="sent") -> bool:
+    """Apply the original visible composer transfer without a storage receiver."""
+    stash = as_typed(stash)
+    composer.spend_captured_draft(stash)
+    committed = commit_capture(composer, stash)
+    if not committed and stash is not None:
+        live = composer.capture_draft_snapshot()
+        if stash.text in composer.draft_text():
+            composer.retire_captured_drafts()
+            notify(SENT_DRAFT_KEPT.format(verb=verb))
+        elif live.generation == stash.generation:
+            composer.retire_captured_drafts()
+    return committed
+
+
 def take_out_sent_draft(
     session_id: str,
     stash: ConsoleDraftStash | None,
@@ -206,24 +221,14 @@ def take_out_sent_draft(
                 transferred_revision=snapshot.draft_revision,
             )
 
-    if composer is not None:
-        composer.spend_captured_draft(stash)
     if composer is not None and visible_session_id == session_id:
-        committed = commit_capture(composer, stash)
-        if not committed and stash is not None:
-            live = composer.capture_draft_snapshot()
-            if stash.text in composer.draft_text():
-                # The user's edit stays; the text in it already went. Retire
-                # every capture of it, so no held press sends it again.
-                composer.retire_captured_drafts()
-                notify(SENT_DRAFT_KEPT.format(verb=verb))
-            elif live.generation == stash.generation:
-                # Edited in place: a later press on it is a new capture.
-                composer.retire_captured_drafts()
+        committed = take_out_visible_sent_draft(composer, stash, notify, verb=verb)
         _save_draft(store, session_id, composer.draft_text())
         if committed:
             note_transfer()
         return
+    if composer is not None:
+        composer.spend_captured_draft(stash)
     if stash is None:
         return
     try:

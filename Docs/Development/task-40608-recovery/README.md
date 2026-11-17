@@ -2,6 +2,12 @@
 
 This directory preserves source patches and continuation state for the owner's crash-recovery request on 2026-11-16. The initial source checkpoint is `03be283bb0229b904bea306fd05583ae589fe91f`; draft PR: https://github.com/rmusser01/tldw_chatbook/pull/3575. These patch files preserve an earlier integration draft; consult the live code and current result below before using them. Do not apply them wholesale over newer code.
 
+## Windows checkpoint on November 17
+
+The raw-command constructor fix let the selected Chat screen open. The next native run passed both raw-draft checks and identified a missing prompt-history owner during its first checked display read. Commit `c9b381ba6e` wires the backend domain and controller to the same history object. Its local rerun reached a pending ReadProjection at the 10-second mount limit and subsequently reported expired readiness. The next change uses the same-host monotonic capture timestamp and charges elapsed transport and decoding against the original one-second freshness limit. The process selector is still disabled in production.
+
+The selected Send and Settings access paths now have implementation and focused tests in the branch. Native compatibility and both original journey timings remain open.
+
 ## Required outcome
 
 Keep every existing storage, permission, currentness, approval, persistence, and retirement check. Both unchanged README and approved-edit journeys must finish below five seconds in every candidate of three sequential pairs, also retaining the original 30% comparison. Order: B1,C1,C2,B2,B3,C3. Subtract only actual measured human approval wait. The final pairs have not started; TASK-40608 remains In Progress.

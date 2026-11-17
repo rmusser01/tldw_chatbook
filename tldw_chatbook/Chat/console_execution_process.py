@@ -52,9 +52,22 @@ class ConsoleProcessReceipt:
     applied: asyncio.Future[Mapping[str, Any]]
     retired: asyncio.Future[bool]
     potentially_committed: bool = False
+    turn_id: str | None = None
     events: list[ConsoleWireMessage] = field(default_factory=list, repr=False)
     projection_message: ConsoleWireMessage | None = field(default=None, repr=False)
     changed: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
+
+
+@dataclass(eq=False, slots=True)
+class _ConsoleInputPress:
+    view: Any
+    visit: int
+    key: tuple[str, str]
+    entry: tuple
+    inputs: Mapping[str, Any]
+    source_revision: int
+    task: asyncio.Task | None = None
+    receipt: ConsoleProcessReceipt | None = None
 
 
 class _ConsoleFrameInput:
@@ -168,6 +181,16 @@ class ConsoleProcessProfile:
             raise ValueError("Console process profile paths must be absolute")
 
 
+def _projection_readiness_deadline(requested_at, captured_at, remaining, now) -> float:
+    """Keep the backend observation's original expiry on the same host clock."""
+    if not requested_at <= captured_at <= now or not 0.0 <= remaining <= 1.0:
+        raise ConsoleChannelLost("Console readiness clock is outside the request")
+    deadline = captured_at + remaining
+    if now >= deadline:
+        raise ConsoleChannelLost("Console readiness expired before adoption")
+    return deadline
+
+
 class ConsoleExecutionClient:
     """Own one process generation; never create a parent Console store."""
 
@@ -199,6 +222,10 @@ class ConsoleExecutionClient:
         self._disposed = False
         self._attachment_id = secrets.token_hex(16)
         self._view_checkpoints: set[asyncio.Task] = set()
+        self._input_press = None
+        self._deferred_inputs = []
+        self._authored_inputs = {}
+        self._input_tasks: set[asyncio.Task] = set()
         self._view: Any = None
         self._visit = 0
         self._projection = None
@@ -216,12 +243,14 @@ class ConsoleExecutionClient:
         self.control_provider_label = None
         self._readiness_deadline = 0.0
         self.session_composition = None
+        self.send_selection = None
         self._projection_sequence = 0
         self._initial_session_task: asyncio.Task | None = None
         self._initial_conversation_id: str | None = None
         self._resume_view_request = None
         self._view_preparation = None
         self._opening_sessions: set[asyncio.Task] = set()
+        self._workspace_operations: set[asyncio.Task] = set()
 
     def attach_view(self, view: Any) -> int:
         """Bind the actual screen visit without constructing a parent graph."""
@@ -440,6 +469,183 @@ class ConsoleExecutionClient:
                 raise ConsoleProtocolError("turn_receipt_changed")
             await receipt.changed.wait()
 
+    def publish_authored_inputs(self, view, visit: int, draft: str, token: tuple[int, int]) -> bool:
+        """Queue the actual widget edit; Applied alone publishes its revision."""
+        from .console_execution_projection_values import _settings
+
+        self.require_view(view, visit)
+        if (type(draft) is not str or type(token) is not tuple or len(token) != 2
+            or any(type(item) is not int or item < 0 for item in token)):
+            raise ConsoleProtocolError("invalid_authored_input_identity")
+        row = self.projection_view.session(self.projection_view.active_session_id)
+        if view._console_visible_draft_session_id != row.id:
+            return False
+        key = (row.id, row.incarnation_id)
+        if self._input_press is not None:
+            self._deferred_inputs.append((view, visit, key, self._source_revision, draft, token))
+            return True
+        previous = self._authored_inputs.get(key)
+        if previous is not None and previous[:2] == (draft, token):
+            return True
+        receipt = self.submit("UpdateInputs", {
+            "draft": draft, "authored_token": list(token),
+            "expected_settings_revision": row.settings_revision,
+            "expected_settings": _settings(row.settings, False),
+            "expected_attachment_ids": list(self.pressed_inputs["attachment_ids"]),
+            "remove_attachment_ids": [], "prefill": None,
+        }, session_id=row.id, incarnation_id=row.incarnation_id)
+        entry = (draft, token, receipt)
+        self._authored_inputs[key] = entry
+        work = self._join_authored_inputs(view, visit, key, entry)
+        try:
+            task = asyncio.create_task(work, name="console_execution_authored_input")
+        except BaseException as error:
+            work.close()
+            # The actual issued receipt remains retained; never invent rollback.
+            self._fail(error)
+            raise
+        self._input_tasks.add(task)
+        task.add_done_callback(self._authored_inputs_finished)
+        return True
+
+    async def _join_authored_inputs(self, view, visit, key, entry) -> None:
+        receipt = entry[2]
+        try:
+            applied = await asyncio.shield(receipt.applied)
+        except ConsoleRemoteFailure as error:
+            if error.stage == "admission":
+                # No original command receipt was returned. Keep the unresolved
+                # physical receipt retained, without waiting forever or claiming
+                # a positive retirement for this refused edit.
+                if receipt.received.done() and not receipt.received.cancelled():
+                    receipt.received.exception()
+                raise
+            if await asyncio.shield(receipt.retired) is not True:
+                raise ConsoleChannelLost("Console authored input retirement is unproven") from error
+            raise
+        else:
+            if await asyncio.shield(receipt.retired) is not True:
+                raise ConsoleChannelLost("Console authored input retirement is unproven")
+        if (self._view is view and self._visit == visit
+            and self._authored_inputs.get(key) is entry
+            and view._console_visible_draft_session_id == key[0]
+            and self.projection_view.active_session_id == key[0]
+            and self.projection_view.session(key[0]).incarnation_id == key[1]):
+            from tldw_chatbook.UI.Console_Modules.execution_state import require_authored_owner
+
+            require_authored_owner(view, self, visit)
+            view._session._console_visible_draft_revision = applied["draft_revision"]
+
+    def _authored_inputs_finished(self, task: asyncio.Task) -> None:
+        self._input_tasks.discard(task)
+        if task.cancelled():
+            self._fail(ConsoleChannelLost("Console input observer cancelled"))
+        else:
+            # A normal stale-settings refusal stays on its exact receipt;
+            # the next press must join that receipt and preserve its draft.
+            error = task.exception()
+            if isinstance(error, ConsoleChannelLost):
+                self._fail(error)
+
+    def retain_authored_press(self, view, visit: int, draft: str, token: tuple[int, int], *, inputs=None):
+        """Retain one actual press before later edits enter the command channel."""
+        from .console_execution_protocol import _PROJECTED_INPUTS, _detach
+
+        self.require_view(view, visit)
+        if self._input_press is not None:
+            raise ConsoleProtocolError("authored_press_already_pending")
+        row = self.projection_view.session(self.projection_view.active_session_id)
+        key = (row.id, row.incarnation_id)
+        retained = _detach(self.pressed_inputs if inputs is None else inputs, "pressed_inputs", 0, set())
+        _PROJECTED_INPUTS(retained, "pressed_inputs")
+        if (retained["session_id"], retained["incarnation_id"]) != key:
+            raise ConsoleProtocolError("authored_press_session_changed")
+        if not self.publish_authored_inputs(view, visit, draft, token):
+            raise ConsoleProtocolError("authored_press_session_changed")
+        press = _ConsoleInputPress(
+            view, visit, key, self._authored_inputs[key],
+            retained, self._source_revision,
+        )
+        self._input_press = press
+        return press
+
+    def release_authored_press(self, press) -> None:
+        """Release only this press; original later widget edits keep FIFO order."""
+        if type(press) is not _ConsoleInputPress or self._input_press is not press:
+            raise ConsoleProtocolError("authored_press_changed")
+        self._input_press = None
+        queued, self._deferred_inputs = self._deferred_inputs, []
+        for view, visit, key, revision, draft, token in queued:
+            # Detached edits have no authority to change the new visit. Their
+            # actual composer still owns the text; never replay into another chat.
+            if (
+                self._view is view and self._visit == visit
+                and self._source_revision == revision
+                and self.projection_view.active_session_id == key[0]
+                and self.projection_view.session(key[0]).incarnation_id == key[1]
+            ):
+                self.publish_authored_inputs(view, visit, draft, token)
+
+    def submit_authored_turn(self, press, selection: dict, turn_id: str) -> asyncio.Task:
+        """Retain admission independently of the UI task observing this press."""
+        from .console_execution_protocol import _detach
+
+        if type(press) is not _ConsoleInputPress or self._input_press is not press:
+            raise ConsoleProtocolError("authored_press_changed")
+        self.require_view(press.view, press.visit)
+        if press.task is not None:
+            raise ConsoleProtocolError("authored_press_already_dispatched")
+        # Caller values are detached now, before a later UI callback can edit them.
+        selection = _detach(_detach(selection, "selection", 0, set(), thaw=False), "selection", 0, set(), thaw=True)
+        work = self._submit_authored_turn(press, selection, turn_id)
+        try:
+            task = asyncio.create_task(work, name="console_execution_pressed_admission")
+        except BaseException:
+            work.close()
+            self.release_authored_press(press)
+            raise
+        press.task = task
+        self._input_tasks.add(task)
+        task.add_done_callback(self._authored_inputs_finished)
+        return task
+
+    async def _submit_authored_turn(self, press, selection, turn_id):
+        from .console_execution_protocol import _detach
+
+        try:
+            revision = await asyncio.shield(press.entry[2].applied)
+            if await asyncio.shield(press.entry[2].retired) is not True:
+                raise ConsoleChannelLost("Console pressed input retirement is unproven")
+            from tldw_chatbook.UI.Console_Modules.execution_state import require_authored_owner
+
+            require_authored_owner(press.view, self, press.visit)
+            if self._input_press is not press or self._source_revision != press.source_revision:
+                raise ConsoleChannelLost("Console pressed input source changed")
+            row = self.projection_view.session(self.projection_view.active_session_id)
+            if (row.id, row.incarnation_id) != press.key:
+                raise ConsoleChannelLost("Console pressed input session changed")
+            inputs = _detach(press.inputs, "pressed_inputs", 0, set(), thaw=True)
+            inputs["draft"], token = press.entry[:2]
+            inputs["authored_token"] = list(token)
+            receipt = self.submit("ReceiveTurn", {
+                "turn_id": turn_id,
+                "draft_revision": revision["draft_revision"],
+                "selection": selection,
+                "expected_settings_revision": inputs["settings_revision"],
+                "expected_attachment_revision": inputs["attachment_revision"],
+                "expected_prefill_revision": inputs["prefill_revision"],
+                "pressed_inputs": inputs,
+            }, session_id=press.key[0], incarnation_id=press.key[1])
+            press.receipt = receipt
+            # Received follows the original claim, not merely transport parsing.
+            # Later edits may enter only after this claim or its known refusal.
+            await asyncio.shield(receipt.received)
+            return receipt
+        finally:
+            if self._input_press is press:
+                self.release_authored_press(press)
+
+
     async def read_projection(
         self, session_id: str, incarnation_id: str, *, _preparation=None,
         _checkpoint: str | None = None,
@@ -507,7 +713,7 @@ class ConsoleExecutionClient:
         session_surface = decode_session_surface_projection(
             projection_view, payload["session_view"]["session_surface"],
         )
-        effective, readiness, provider, model, remaining, elapsed, provider_chip, context_summary, agent_rail, prompt_history = decode_projection_readiness(
+        effective, readiness, provider, model, remaining, captured_at, provider_chip, context_summary, agent_rail, prompt_history, send_selection = decode_projection_readiness(
             payload, projection_view
         )
         composition = (
@@ -516,12 +722,9 @@ class ConsoleExecutionClient:
                 projection_view.session(projection_view.active_session_id),
             ) if projection_view.active_session_id is not None else None
         )
-        # Durations, not clock epochs, cross the channel. Including the actual
-        # command duration preserves a cold read's lifetime while charging all
-        # transport/queue/serialization delay conservatively to its remaining age.
-        deadline = requested_at + elapsed + remaining
-        if time.monotonic() >= deadline:
-            raise ConsoleChannelLost("Console readiness expired before adoption")
+        deadline = _projection_readiness_deadline(
+            requested_at, captured_at, remaining, time.monotonic(),
+        )
         if view is not None:
             self.require_view(view, visit)
         self._projection = value
@@ -536,6 +739,7 @@ class ConsoleExecutionClient:
         self.provider_model_display = provider, model, projection_view.session(session_id).settings
         self._readiness_deadline = deadline
         self.session_composition = composition
+        self.send_selection = send_selection
         self.pressed_inputs = payload["session_view"]["pressed_inputs"]
         self._projection_sequence = receipt.identity.sequence
         return value
@@ -719,6 +923,7 @@ class ConsoleExecutionClient:
             self._loop.create_future(),
             self._loop.create_future(),
         )
+        receipt.turn_id = message.payload["turn_id"] if operation == "ReceiveTurn" else None
         self._requests[identity.request_id] = receipt
         self._sent_sequence = identity.sequence
         assert self._channel is not None
@@ -851,6 +1056,14 @@ class ConsoleExecutionClient:
                     receipt.received.set_exception(error)
                 receipt.applied.set_exception(error)
             else:
+                if message.kind in {"input_projected", "terminal"}:
+                    if (
+                        receipt.operation != "ReceiveTurn"
+                        or not receipt.received.done()
+                        or message.payload["turn_id"] != receipt.turn_id
+                        or any(item.kind == message.kind for item in receipt.events)
+                    ):
+                        raise ConsoleProtocolError("unexpected_turn_checkpoint")
                 if message.kind == "commit_planned":
                     if receipt.operation != "ReceiveTurn":
                         raise ConsoleProtocolError("plan_without_received_turn")
@@ -933,9 +1146,20 @@ class ConsoleExecutionClient:
                         *(asyncio.shield(task) for task in opening),
                         return_exceptions=True,
                     )
+                while self._input_tasks:
+                    input_tasks = tuple(self._input_tasks)
+                    await asyncio.gather(
+                        *(asyncio.shield(task) for task in input_tasks), return_exceptions=True,
+                    )
                 checkpoints = tuple(self._view_checkpoints)
                 if checkpoints:
                     await asyncio.gather(*(asyncio.shield(task) for task in checkpoints))
+                workspace_operations = tuple(self._workspace_operations)
+                if workspace_operations:
+                    await asyncio.gather(
+                        *(asyncio.shield(task) for task in workspace_operations),
+                        return_exceptions=True,
+                    )
                 for operation in ("CloseIntake", "Drain", "Shutdown"):
                     receipt = self.submit(operation, {})
                     await asyncio.shield(receipt.received)
@@ -974,6 +1198,12 @@ class ConsoleExecutionClient:
             if opening:
                 await asyncio.gather(
                     *(asyncio.shield(task) for task in opening),
+                    return_exceptions=True,
+                )
+            workspace_operations = tuple(self._workspace_operations)
+            if workspace_operations:
+                await asyncio.gather(
+                    *(asyncio.shield(task) for task in workspace_operations),
                     return_exceptions=True,
                 )
             closed = False

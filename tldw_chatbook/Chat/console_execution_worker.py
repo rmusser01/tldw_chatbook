@@ -718,16 +718,29 @@ class _BackendService:
             CloseIntake,
             CommitPlanAck,
             Drain,
+            FenceSource,
             OpenSession,
             ResolveDecision,
+            SetWorkspaceBindingAccess,
             Shutdown,
             UpdateInputs,
         )
 
         result = None
         applied = False
+        source_retired = False
         try:
             result = await asyncio.shield(receipt.applied)
+            if type(command) is FenceSource:
+                # The original finish_source_fence drained actual finite effects;
+                # validate its exact issued fence before exporting that outcome.
+                self.backend.controls._require_source_publication(result)
+                source_retired = True
+            elif type(command) is SetWorkspaceBindingAccess:
+                # This original publication exists only after its native Registry
+                # scope and preparation-read producer have physically retired.
+                self.backend.controls._require_publication(result)
+                source_retired = True
             self.applied(message.identity, command, result)
             applied = True
         except BaseException as error:
@@ -759,6 +772,8 @@ class _BackendService:
                 retired = await asyncio.shield(receipt.retired)
                 if type(retired) is not bool:
                     raise ConsoleProtocolError("invalid_original_retirement")
+            elif type(command) in (FenceSource, SetWorkspaceBindingAccess):
+                retired = source_retired
             elif type(command) is Drain:
                 # The original drain's successful return follows all original
                 # native/Task checks. A bare task-done flag is never this proof.
@@ -798,6 +813,26 @@ class _BackendService:
         except BaseException as error:
             self._failure(message.operation, "retirement", error)
             retired = False
+        if message.operation == "ReceiveTurn" and applied:
+            from .console_execution_retirement import ConsoleTurnRetirement, _definitions_current
+
+            terminal = receipt.turn_retirement
+            if (
+                type(terminal) is ConsoleTurnRetirement
+                and terminal.controls is self.backend.controls
+                and terminal.identity is command.identity
+                and terminal.turn_id == command.turn_id
+                and terminal.logical_closed
+                and type(terminal.accepted) is bool
+                and _definitions_current()
+            ):
+                # This is the original custody callback's result. Physical
+                # retirement remains the separate receipt immediately below.
+                self.emit(message.identity, "terminal", "ReceiveTurn", {
+                    "turn_id": command.turn_id, "accepted": terminal.accepted,
+                })
+            else:
+                retired = False
         self.emit(
             message.identity,
             "retired",
