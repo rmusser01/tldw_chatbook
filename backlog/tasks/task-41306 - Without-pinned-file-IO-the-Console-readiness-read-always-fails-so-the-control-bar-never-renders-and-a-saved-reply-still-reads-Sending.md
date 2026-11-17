@@ -24,7 +24,7 @@ Filed from the 2026-11-13..16 burn-down. TASK-40714 (PR #3541) found it and left
 **Why.** TASK-40714 lets a Send run when the MCP store is unbound, which is every Windows install. The next step on Windows then fails. In TASK-40714's whole-process probe (`raw_participants._pinned_io_available` patched to False at import), the reply was saved, but the readiness display never warmed, the control bar never rendered, and the transcript still read "Sending…". This is likely the next Windows blocker after TASK-40714. It has not been reproduced on real Windows.
 
 **Evidence.**
-- `UI/Console_Modules/console_spend_projection.py:346-348` (`ConsoleReadinessConfigProjection.for_screen` → `read_current`): `participant = raw._states[active].participant`, then `raw.participant_identity(participant)`.
+- `UI/Console_Modules/console_spend_projection.py:346-348` (`ConsoleReadinessConfigProjection.for_screen` at :260 → its nested `read_current` at :267): `participant = raw._states[active].participant`, then `raw.participant_identity(participant)`.
 - Without pinned I/O, the config operation has no installed participant. `participant_identity` (`Backup_Recovery/raw_participants.py:152-162`) then raises `RecoveryRequired("raw_participant_not_installed")` on every read.
 - `_pinned_io_available` (`raw_participants.py:281-289`) needs the POSIX guards, `O_DIRECTORY`, `O_NOFOLLOW` and `dir_fd` support for open/stat/mkdir/rename/unlink, so it is False on Windows.
 - The checked display proof in the same file reads `raw.participant_identity(proof.participant)` at `:939`. It is not yet known whether it fails the same way.
