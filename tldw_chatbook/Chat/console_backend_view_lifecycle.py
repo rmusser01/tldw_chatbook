@@ -36,10 +36,31 @@ class _MountSeed:
     owners: tuple
     attempted: bool = False
     task: asyncio.Task[int] | None = None
+    receipt: object | None = None
 
 
-async def _retire_seed(task: asyncio.Task[int]) -> bool:
+def _seed_retired(receipt) -> bool:
+    from .console_backend_seed_retirement import ConsoleBackendSeedRead, _METHODS
+
+    record = dict(_METHODS)["confirmed"]
+    return bool(
+        type(receipt) is ConsoleBackendSeedRead
+        and getattr_static(receipt, "confirmed", None) is record[0]
+        and _definition_current(record)
+        and record[0](receipt)
+    )
+
+
+async def _retire_seed(task: asyncio.Task[int], receipt) -> bool:
     """Join the actual seed task without forwarding observer cancellation."""
+    from .console_backend_seed_retirement import ConsoleBackendSeedRead
+
+    if (
+        type(receipt) is not ConsoleBackendSeedRead or receipt.task is not task
+        or _seed_retired is not _SEED_RETIRED[0]
+        or not _definition_current(_SEED_RETIRED)
+    ):
+        raise RuntimeError("Backend fleet seed receipt changed")
     cancelled = False
     if task.get_loop() is not asyncio.get_running_loop():
         raise RuntimeError("Backend fleet seed owner loop changed")
@@ -50,9 +71,14 @@ async def _retire_seed(task: asyncio.Task[int]) -> bool:
             cancelled = True
         except BaseException:
             break
-    if task.cancelled():
+    if (
+        _seed_retired is not _SEED_RETIRED[0]
+        or not _definition_current(_SEED_RETIRED)
+        or not _SEED_RETIRED[0](receipt)
+    ):
         raise RuntimeError("Backend fleet seed retirement is unproven")
-    task.result()
+    if not task.cancelled():
+        task.result()
     return cancelled
 
 
@@ -70,7 +96,7 @@ class ConsoleBackendViewLifecycle:
         self._current_values: tuple[str, int, str] | None = None
         self._current_owners: tuple | None = None
         self._seeds: dict[tuple[str, int], _MountSeed] = {}
-        self._tasks: list[asyncio.Task[int]] = []
+        self._tasks: list[tuple[asyncio.Task[int], object]] = []
         self._draining = False
         self._drained = False
         self._drain_error: BaseException | None = None
@@ -87,6 +113,8 @@ class ConsoleBackendViewLifecycle:
             )
             or _retire_seed is not _RETIRE[0]
             or not _definition_current(_RETIRE)
+            or _seed_retired is not _SEED_RETIRED[0]
+            or not _definition_current(_SEED_RETIRED)
             or ConsoleBackendViewSuperseded is not _SUPERSEDED
         ):
             raise RuntimeError("Backend view lifecycle definitions changed")
@@ -225,15 +253,13 @@ class ConsoleBackendViewLifecycle:
         self._current = checkpoint
         self._current_values = (attachment_id, visit, action)
         self._current_owners = owners
-        # A completed original task has already returned through its owned DB
-        # callback. Keep pending, cancelled, or failed tasks until drain proves
-        # their outcome; do not accumulate settled historical visit owners.
+        # Optional seed failures return zero. Only the independent exact native
+        # receipt, including the real executor producer, permits owner release.
         settled = {
-            task
-            for task in self._tasks
-            if task.done() and not task.cancelled() and task.exception() is None
+            task for task, receipt in self._tasks
+            if task.done() and _SEED_RETIRED[0](receipt)
         }
-        self._tasks = [task for task in self._tasks if task not in settled]
+        self._tasks = [(task, receipt) for task, receipt in self._tasks if task not in settled]
         self._seeds = {
             seed_key: seed
             for seed_key, seed in self._seeds.items()
@@ -262,19 +288,22 @@ class ConsoleBackendViewLifecycle:
                 if any(
                     session.persisted_conversation_id for session in store.sessions()
                 ):
-                    # Incremental fresh-mount boundary: the original producer
-                    # swallows optional errors, including native-close failure.
-                    # Until its exact retirement receipt is integrated, do not
-                    # issue it or infer native success from its returned zero.
-                    raise RuntimeError("Saved Console mount seed retirement is unqualified")
+                    if (
+                        start_backend_view_seed is not _START[0]
+                        or not _definition_current(_START)
+                    ):
+                        raise RuntimeError("Backend fleet seed producer changed")
+                    _START[0](self, seed)
             seed.attempted = True
         if seed.task is not None:
             try:
                 await asyncio.shield(seed.task)
             except asyncio.CancelledError:
-                await _RETIRE[0](seed.task)
+                await _RETIRE[0](seed.task, seed.receipt)
                 raise
             _CHECK[0](self, checkpoint)
+            if not _SEED_RETIRED[0](seed.receipt):
+                raise RuntimeError("Backend fleet seed native retirement is unproven")
         # Stale seed work may finish and update the original coordinator, but
         # only the exact current visit/action can publish visibility afterward.
         _CHECK[0](self, checkpoint)
@@ -295,6 +324,8 @@ class ConsoleBackendViewLifecycle:
             )
             or _retire_seed is not _RETIRE[0]
             or not _definition_current(_RETIRE)
+            or _seed_retired is not _SEED_RETIRED[0]
+            or not _definition_current(_SEED_RETIRED)
             or ConsoleBackendViewSuperseded is not _SUPERSEDED
         ):
             raise RuntimeError("Backend view lifecycle drain definitions changed")
@@ -305,9 +336,9 @@ class ConsoleBackendViewLifecycle:
         self._draining = True
         cancelled = False
         error = None
-        for task in self._tasks:
+        for task, receipt in self._tasks:
             try:
-                cancelled |= await _RETIRE[0](task)
+                cancelled |= await _RETIRE[0](task, receipt)
             except BaseException as failure:
                 if error is None:
                     error = failure
@@ -329,6 +360,7 @@ _METHODS = tuple(
 _REQUIRE = dict(_METHODS)["_require_owner"]
 _CHECK = dict(_METHODS)["_require_checkpoint"]
 _RETIRE = _definition(_retire_seed)
+_SEED_RETIRED = _definition(_seed_retired)
 _SUPERSEDED = ConsoleBackendViewSuperseded
 _PRESENTATION_METHODS = tuple(
     (name, _definition(getattr(ConsoleBackendPresentation, name)))
@@ -362,3 +394,7 @@ _HOST_METHODS = tuple(
         "_remount_session_kinds",
     )
 )
+
+from .console_backend_seed_retirement import start_backend_view_seed
+
+_START = _definition(start_backend_view_seed)

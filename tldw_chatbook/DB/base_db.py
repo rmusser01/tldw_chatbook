@@ -21,6 +21,7 @@ import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Collection, Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Union
 from weakref import WeakValueDictionary
@@ -40,6 +41,12 @@ TRACE_GC_DELETE_GUARD_FUNCTION = "console_trace_gc_delete_authorized"
 # Thread-local, like the handles it governs (asyncio.to_thread copies
 # contextvars, which would leak an owner into another thread's handle).
 _OPERATION_OWNERS = threading.local()
+
+# Selected Console observation belongs only to its actual issuing Task. Child
+# tasks and to_thread context copies retain the stock callback contract.
+_CONSOLE_SEED_READ: ContextVar[tuple[asyncio.Task[Any], object] | None] = ContextVar(
+    "console_seed_read", default=None
+)
 
 
 @contextmanager
@@ -175,6 +182,15 @@ async def run_owned_db_call[**_CallParameters, _CallResult](
         with operation_owned_connection(database), core_operation(database):
             return operation(*args, **kwargs)
 
+    seed_read = _CONSOLE_SEED_READ.get()
+    if seed_read is not None and seed_read[0] is asyncio.current_task():
+        from tldw_chatbook.Chat.console_backend_seed_retirement import (
+            observe_seed_owned_db_call,
+        )
+
+        return await observe_seed_owned_db_call(
+            seed_read[1], database, operation, invoke, args, kwargs,
+        )
     return await asyncio.to_thread(invoke)
 
 

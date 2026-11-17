@@ -39,6 +39,12 @@ async def test_actual_fresh_view_supersession_no_seed_and_repeated_guarded_drain
     seed_entries = []
     try:
         backend.start()
+        from tldw_chatbook.Chat.prompt_history import PromptHistory
+
+        history = backend.domain.sources.prompt_history
+        assert type(history) is PromptHistory
+        assert backend.runtime.ensure_prompt_history() is history
+        assert backend.controller.prompt_history is history
         lifecycle = backend.presentation.view_lifecycle
         assert type(lifecycle) is ConsoleBackendViewLifecycle
         session = backend.store.create_session(title="Fresh lifecycle")

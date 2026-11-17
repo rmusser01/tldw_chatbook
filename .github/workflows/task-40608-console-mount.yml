@@ -37,4 +37,4 @@ jobs:
           $testRoot = python -c "from pathlib import Path; from Tests.Backup_Recovery.run_platform_product import _create_private_root; print(_create_private_root(Path()))"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $env:TEMP = $env:TMP = $testRoot
-          python -m Tests.windows_private_fixture_runner -p pytest_asyncio.plugin -p pytest_timeout -q Tests/Chat/test_console_execution_attachment.py Tests/Chat/test_console_execution_composition_values.py Tests/Chat/test_console_backend_view_lifecycle.py Tests/Chat/test_console_execution_mounted.py
+          python -m Tests.windows_private_fixture_runner -p pytest_asyncio.plugin -p pytest_timeout -q Tests/Chat/test_console_execution_attachment.py Tests/Chat/test_console_execution_composition_values.py Tests/Chat/test_console_backend_view_lifecycle.py Tests/Chat/test_console_execution_mounted.py Tests/Chat/test_console_backend_seed_retirement.py

@@ -54,6 +54,7 @@ class ConsoleExecutionBackend:
         from .console_backend_presentation import ConsoleBackendPresentation
         from .console_domain_services import ConsoleDomainServices, ConsoleDomainSources
         from .console_execution_worker import _BackendCommandAdapter
+        from .prompt_history import PromptHistory
         from .console_scratch_space import ConsoleScratchSpaceManager
         from .console_settings_durability import ConsoleSettingsDurabilityOwner
         from .console_chat_controller import (
@@ -86,6 +87,7 @@ class ConsoleExecutionBackend:
             settings_durability_owner=ConsoleSettingsDurabilityOwner(),
             skill_wiring_source=app_service_wiring,
             conversation_scope_service=profile.conversation_scope_service,
+            prompt_history=PromptHistory(),
         )
         self.domain = ConsoleDomainServices.__new__(ConsoleDomainServices)
         ConsoleDomainServices.__init__(
