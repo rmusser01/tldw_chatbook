@@ -4283,3 +4283,29 @@ def test_an_mlx_refusal_names_mlx_lm_and_carries_its_key(dispatch, monkeypatch):
 
     assert str(caught.value).startswith("MLX-LM API URL: ")
     assert caught.value.provider == dispatch
+
+
+@pytest.mark.asyncio
+async def test_an_eval_never_retries_an_endpoint_refusal():
+    """Review r15ep-rev1 I-2: Evals retried a contract refusal as an API
+    error and reported it as a connection failure; nothing can succeed on a
+    retry, so it fails at once, non-retryable, with the contract's reason."""
+    from tldw_chatbook.Evals.eval_runner import ErrorHandler
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local as local_calls
+
+    attempts: list[int] = []
+
+    async def operation():
+        attempts.append(1)
+        local_calls._refuse_a_refused_endpoint("vLLM", "http://127.1:8000/v1")
+
+    with pytest.raises(Exception) as caught:
+        await ErrorHandler(max_retries=3, retry_delay=0.001).with_retry(
+            operation, "s1", provider="vllm"
+        )
+
+    context = caught.value.context
+    assert attempts == [1]
+    assert context.is_retryable is False
+    assert _contract_reason("vllm", "http://127.1:8000/v1") in context.message
+    assert "connect" not in context.message.lower()

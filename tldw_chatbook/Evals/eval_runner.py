@@ -46,6 +46,7 @@ from tldw_chatbook.Provider_Contract import (
     ChatProviderError as EvalProviderError,
     ChatAPIError as EvalAPIError,
     ChatAuthenticationError as EvalAuthenticationError,
+    ChatConfigurationError as EvalConfigurationError,
     ChatRateLimitError as EvalRateLimitError,
 )
 from .eval_errors import (
@@ -54,6 +55,7 @@ from .eval_errors import (
     DatasetLoadingError,
     APIError,
     ExecutionError,
+    ModelConfigurationError,
     ErrorContext,
     ErrorCategory,
     ErrorSeverity,
@@ -1259,6 +1261,15 @@ class ErrorHandler:
                 logger.error(f"Authentication error for {provider}: {e}")
                 # Don't retry auth errors
                 raise APIError.authentication_failed(provider or "unknown")
+
+            except EvalConfigurationError as e:
+                # A provider configuration refusal (an endpoint the contract
+                # refuses, a missing model) fails the same way on every
+                # retry, and nothing was sent (TASK-41131 review I-2).
+                logger.error(f"Configuration error for {provider}: {type(e).__name__}")
+                raise ModelConfigurationError.provider_refused(
+                    provider or "unknown", str(e)
+                ) from None
 
             except (EvalAPIError, EvalProviderError) as e:
                 logger.warning(f"API error for sample {sample_id}: {e}")
