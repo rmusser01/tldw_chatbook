@@ -1509,6 +1509,8 @@ class TraceGarbageCollector:
                     WHERE julianday(retention.retain_until) > julianday('now')
                    UNION ALL
                    -- A spawned child's own segment lives while its owner does.
+                   -- (Both branches join on link.owner_id, a non-key column with no
+                   -- index: links are few and the join is a scan, so no plan pin.)
                    SELECT link.segment_id, NULL
                      FROM console_trace_child_segments AS link
                      JOIN console_trace_owners AS owner

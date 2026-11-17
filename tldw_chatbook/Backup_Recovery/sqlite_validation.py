@@ -505,7 +505,7 @@ class _Restrictions:
                     )
                 if self.child_segments_migration and source is None:
                     # TASK-41310: one link table, its three guards, and the
-                    # five owner guards recreated with the child link.
+                    # seven owner guards recreated with the child link.
                     table = "console_trace_child_segments"
                     recreated = {
                         "console_trace_calls_owner_lineage": "console_trace_calls",
@@ -518,6 +518,12 @@ class _Restrictions:
                         ),
                         "console_trace_response_links_owner_guard": (
                             "console_trace_response_links"
+                        ),
+                        "console_trace_owners_empty_root_guard": (
+                            "console_trace_owners"
+                        ),
+                        "console_trace_segments_parent_owner_guard": (
+                            "console_trace_segments"
                         ),
                     }
                     triggers = {
