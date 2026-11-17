@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import re
 import secrets
 import sqlite3
@@ -28,6 +29,7 @@ from .key_protector import (
     _serialize_material,
     decode_keyring_material,
 )
+from .runtime_policy import GLOBAL_POLICY_ID, AgentAuthority
 
 # Any other stored value (a recovery marker, say) names no usable account.
 KEY_ACCOUNT = re.compile(r"personal-context:[0-9a-z_]{1,128}")
@@ -57,8 +59,9 @@ KEY_MISMATCH = "personal_context_key_mismatch"
 # TASK-41121, owner decision 2026-11-15 ("no": damaged objects other than
 # records must not block the restored-profile review). Each kind re-encryption
 # removes when no key reads a version of it, with the local row that names that
-# version (table, id column, version column). A current manifest or scope never
-# goes: every record needs them, so a damaged one refuses by name.
+# version (table, id column, version column). A damaged current manifest never
+# reaches it (the key does not authenticate). Owner decisions 2026-11-16: a
+# damaged current scope is rebuilt, and a dropped agent access setting is Off.
 _DROPPABLE = {
     "record": None,
     "proposal": None,
@@ -70,7 +73,27 @@ _DROPPABLE = {
     "scope_binding": ("local_scope_bindings", "scope_id", "encrypted_binding_version"),
     "runtime_policy": ("local_runtime_policy", "scope_id", "encrypted_policy_version"),
 }
-DAMAGED_SCOPE = "personal_context_damaged_scope"
+# The review counts an older (not current) version of these kinds apart.
+_HISTORY = frozenset({"manifest", "scope", "scope_binding", "runtime_policy"})
+REBUILT_SCOPE_RECORDS = "rebuilt_scope_records"
+RECOVERED_SCOPE_LABEL = "Recovered scope"
+
+
+def _key(row) -> tuple[str, str, str]:
+    return (row["object_type"], row["object_id"], row["version_id"])
+
+
+def _is_current(connection, row) -> bool:
+    """Whether a version (a row, or an ``(type, id, version)`` key) is its head."""
+    key = row if isinstance(row, tuple) else _key(row)
+    return (
+        connection.execute(
+            "SELECT 1 FROM object_heads WHERE object_type = ? "
+            "AND object_id = ? AND version_id = ?",
+            key,
+        ).fetchone()
+        is not None
+    )
 
 
 def _locked(message: str, reason: str) -> ProfileLockedError:
@@ -251,37 +274,56 @@ class RepositoryKeyCustody:
             connection.execute("BEGIN")
             try:
                 rows = connection.execute("SELECT * FROM encrypted_objects").fetchall()
-                return dict(
-                    Counter(
-                        row["object_type"]
-                        for row in rows
-                        if self._reads(connection, row) is None
+                damaged = [
+                    (self._damage_kind(connection, row), _key(row))
+                    for row in rows
+                    if self._reads(connection, row) is None
+                ]
+                counts = Counter(kind for kind, _ in damaged)
+                rebuilt = {key[1] for kind, key in damaged if kind == "scope"}
+                if rebuilt:
+                    counts[REBUILT_SCOPE_RECORDS] = len(
+                        self._scope_records(connection, rebuilt)
+                        - {key for _, key in damaged}
                     )
-                )
+                return dict(counts)
             finally:
                 connection.rollback()
 
     def _reads(self, connection, row) -> bytes | None:
         """The row's plaintext, or None when it fails authentication and its
-        kind can go (``_DROPPABLE``). A damaged current manifest or scope, or
-        an unknown kind, still refuses."""
+        kind can go (``_DROPPABLE``). A damaged current manifest, or an unknown
+        kind, still refuses."""
         from .repository import ProfileIntegrityError
 
         try:
             return self._decrypt_row_authenticated(row)
         except ProfileIntegrityError:
             kind = row["object_type"]
-            if kind not in _DROPPABLE:
-                raise
-            if kind in ("manifest", "scope") and connection.execute(
-                "SELECT 1 FROM object_heads WHERE object_type = ? "
-                "AND object_id = ? AND version_id = ?",
-                (kind, row["object_id"], row["version_id"]),
-            ).fetchone():
-                if kind == "scope":
-                    raise _locked("A current scope is damaged.", DAMAGED_SCOPE) from None
+            if kind not in _DROPPABLE or (
+                kind == "manifest" and _is_current(connection, row)
+            ):
                 raise
             return None
+
+    @staticmethod
+    def _damage_kind(connection, row) -> str:
+        """What the review calls a damaged row: ``<kind>_history`` for an
+        older version of a kind that keeps history (review r15pc-rev1)."""
+        kind = row["object_type"]
+        if kind in _HISTORY and not _is_current(connection, row):
+            return kind + "_history"
+        return kind
+
+    @staticmethod
+    def _scope_records(connection, scope_ids) -> set[tuple[str, str, str]]:
+        """The current record versions in these scopes."""
+        rows = connection.execute(
+            "SELECT o.object_type, o.object_id, o.version_id, o.scope_id "
+            "FROM object_heads h JOIN encrypted_objects o "
+            "USING (object_type, object_id, version_id) WHERE h.object_type = 'record'"
+        ).fetchall()
+        return {tuple(row)[:3] for row in rows if row["scope_id"] in scope_ids}
 
     def reencrypt_profile(
         self,
@@ -326,13 +368,16 @@ class RepositoryKeyCustody:
                 rows = connection.execute(
                     "SELECT * FROM encrypted_objects"
                 ).fetchall()
-                damaged = []
+                damaged, kinds, scopes = [], Counter(), {}
                 for row in rows:
-                    key = (row["object_type"], row["object_id"], row["version_id"])
+                    key = _key(row)
                     plaintext = self._reads(connection, row)
                     if plaintext is None:
                         damaged.append(key)
+                        kinds[self._damage_kind(connection, row)] += 1
                         continue
+                    if key[0] == "scope":
+                        scopes[key[1:]] = plaintext
                     sealed = cipher.encrypt(plaintext, self._aad(*key))
                     connection.execute(
                         "UPDATE encrypted_objects SET algorithm = ?, nonce = ?, "
@@ -347,14 +392,33 @@ class RepositoryKeyCustody:
                             *key,
                         ),
                     )
-                if Counter(key[0] for key in damaged) != Counter(expected_damaged or {}):
+                expected = Counter(expected_damaged or {})
+                expected.pop(REBUILT_SCOPE_RECORDS, None)
+                if kinds != expected:
                     raise ProfileLockedError("Damaged objects changed since review.")
+                rebuilt = self._rebuilt_scopes(connection, damaged, scopes)
+                off = [
+                    key[1]
+                    for key in damaged
+                    if key[0] == "runtime_policy"
+                    and key[1] != GLOBAL_POLICY_ID
+                    and _is_current(connection, key)
+                ]
                 self._remove_damaged(connection, damaged)
                 connection.execute(
                     "UPDATE profile_meta SET key_account = ? WHERE singleton = 1",
                     (account,),
                 )
                 self._authenticate_keys(connection, new)
+                # Written under the new key, in the same transaction.
+                self._rebuild_scopes(connection, rebuilt)
+                for scope_id in off:
+                    self._put_local_body(
+                        connection,
+                        "runtime_policy",
+                        scope_id,
+                        {"version": 1, "authority": AgentAuthority.OFF.value},
+                    )
         except BaseException:
             self._keys = old
             with suppress(Exception):
@@ -406,6 +470,134 @@ class RepositoryKeyCustody:
                 "AND object_id = ? AND version_id = ?",
                 key,
             )
+
+    def _rebuilt_scopes(self, connection, damaged, scopes) -> dict:
+        """Each damaged current scope and the kind its rebuild takes.
+
+        The kind is sealed in the damaged version, so it comes from a readable
+        older version of the scope, else a workspace mapping (only workspaces
+        have one), else global when no readable current scope is global.
+        """
+        from tldw_profile_core import ProfileScope, ScopeKind
+
+        ids = sorted(
+            key[1]
+            for key in damaged
+            if key[0] == "scope" and _is_current(connection, key)
+        )
+        kinds: dict[str, ScopeKind] = {}
+        for (scope_id, _version), plaintext in scopes.items():
+            kinds[scope_id] = ProfileScope.model_validate_json(plaintext).kind
+        has_global = any(
+            kinds.get(scope_id) is ScopeKind.GLOBAL
+            for (scope_id, version) in scopes
+            if _is_current(connection, ("scope", scope_id, version))
+        )
+        rebuilt = {}
+        for scope_id in ids:
+            kind = kinds.get(scope_id)
+            if kind is None and connection.execute(
+                "SELECT 1 FROM local_scope_bindings WHERE scope_id = ? UNION ALL "
+                "SELECT 1 FROM local_unlinked_scopes WHERE scope_id = ?",
+                (scope_id, scope_id),
+            ).fetchone():
+                kind = ScopeKind.WORKSPACE
+            if kind is None:
+                # ponytail: two damaged unmapped scopes and no readable global
+                # one cannot be told apart; the first by id becomes global.
+                kind = ScopeKind.WORKSPACE if has_global else ScopeKind.GLOBAL
+            has_global = has_global or kind is ScopeKind.GLOBAL
+            rebuilt[scope_id] = kind
+        return rebuilt
+
+    def _rebuild_scopes(self, connection, rebuilt) -> None:
+        """Owner decision 2026-11-16 ("Rebuild the scope"): a fresh version of
+        each damaged current scope under its own id, so its records stay
+        attached. Its own settings reset: its agent access goes back to the
+        default, and a workspace keeps its mapping under "Recovered scope"."""
+        from tldw_profile_core import ProfileScope
+
+        from .repository import _now, _uuid
+
+        if not rebuilt:
+            return
+        (profile_id,) = connection.execute(
+            "SELECT profile_id FROM profile_meta WHERE singleton = 1"
+        ).fetchone()
+        for scope_id, kind in rebuilt.items():
+            now = _now()
+            self._insert_scope(
+                connection,
+                ProfileScope(
+                    scope_id=scope_id,
+                    profile_id=profile_id,
+                    kind=kind,
+                    version_id=_uuid("scope-version"),
+                    created_at=now,
+                    updated_at=now,
+                ),
+                expected_version_id=None,
+            )
+            for table, object_type in (
+                ("local_runtime_policy", "runtime_policy"),
+                ("local_scope_bindings", "scope_binding"),
+            ):
+                body = self._local_body(connection, table, object_type, scope_id)
+                connection.execute(
+                    f"DELETE FROM {table} WHERE scope_id = ?",  # nosec B608 - fixed names
+                    (scope_id,),
+                )
+                connection.execute(
+                    "DELETE FROM object_heads WHERE object_type = ? AND object_id = ?",
+                    (object_type, scope_id),
+                )
+                if object_type == "scope_binding" and body is not None:
+                    self._put_local_body(
+                        connection,
+                        object_type,
+                        scope_id,
+                        {**body, "label": RECOVERED_SCOPE_LABEL},
+                    )
+
+    def _local_body(self, connection, table, object_type, scope_id):
+        """The current local body for a scope (already under the new key), or
+        None when there is none."""
+        column = _DROPPABLE[object_type][2]
+        row = connection.execute(
+            f"SELECT o.* FROM {table} t JOIN encrypted_objects o "  # nosec B608 - fixed names
+            f"ON o.object_type = ? AND o.object_id = t.scope_id "
+            f"AND o.version_id = t.{column} WHERE t.scope_id = ?",
+            (object_type, scope_id),
+        ).fetchone()
+        return None if row is None else json.loads(self._decrypt_row_authenticated(row))
+
+    def _put_local_body(self, connection, object_type, scope_id, body) -> None:
+        """Name a fresh version of a scope's local body, as ``_commit_local_body``
+        does, inside the caller's transaction."""
+        from .repository import _uuid
+
+        table, _, column = _DROPPABLE[object_type]
+        version_id = _uuid(f"{object_type}-version")
+        self._insert_encrypted(
+            connection,
+            object_type=object_type,
+            object_id=scope_id,
+            version_id=version_id,
+            scope_id=scope_id,
+            value=body,
+        )
+        connection.execute(
+            "DELETE FROM object_heads WHERE object_type = ? AND object_id = ?",
+            (object_type, scope_id),
+        )
+        connection.execute(
+            "INSERT INTO object_heads VALUES (?, ?, ?)", (object_type, scope_id, version_id)
+        )
+        connection.execute(
+            f"INSERT INTO {table}(scope_id, {column}) VALUES (?, ?) "  # nosec B608 - fixed names
+            f"ON CONFLICT(scope_id) DO UPDATE SET {column} = excluded.{column}",
+            (scope_id, version_id),
+        )
 
     def _reencryption_source(self, connection, keys) -> str:
         """The live account holding exactly ``keys``; never mid-link."""

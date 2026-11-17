@@ -75,6 +75,7 @@ _DESCRIPTIONS = {
     "profile_promote": "Propose promoting workspace context to the global profile.",
 }
 _CATALOGS = {
+    AgentAuthority.OFF: (),
     AgentAuthority.READ_ONLY: ("profile_search", "profile_get"),
     AgentAuthority.PROPOSE: (
         "profile_search",

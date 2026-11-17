@@ -713,7 +713,8 @@ def reencrypt_profile(repository, *, expected_damaged=None) -> str:
     from tldw_chatbook.Backup_Recovery.service_storage import default_control_root
 
     control = default_control_root()
-    copies = _copies_naming(control)
+    listed = _listed(control)
+    copies = None if listed is None else _copies_naming(listed)
 
     def kept(account: str) -> None:
         with suppress(Exception):  # unrecorded, the entry only stays (as before)
@@ -731,19 +732,23 @@ def reencrypt_profile(repository, *, expected_damaged=None) -> str:
 _KEPT = re.compile(r"personal-context-kept-[0-9a-f]{32}\.json")
 
 
-def _copies_naming(control_root: Path) -> frozenset[str] | None:
-    """Recovery copies that may name a Personal Context account; None if unknown.
+def _listed(control_root: Path):
+    """The listed recovery copies, or None when they cannot be listed."""
+    from tldw_chatbook.Backup_Recovery.recovery_copies import list_recovery_copies
+
+    try:
+        return list_recovery_copies(control_root)
+    except Exception:  # noqa: BLE001 - unreadable copies count as naming it
+        return None
+
+
+def _copies_naming(copies) -> frozenset[str]:
+    """Recovery copies that may name a Personal Context account.
 
     Copies are encrypted, so which account one names cannot be read. One whose
     ciphertext is gone (deleted) or that captured no Personal Context
     repository names none; one whose evidence cannot be read may.
     """
-    from tldw_chatbook.Backup_Recovery.recovery_copies import list_recovery_copies
-
-    try:
-        copies = list_recovery_copies(control_root)
-    except Exception:  # noqa: BLE001 - unreadable copies count as naming it
-        return None
     return frozenset(
         copy.operation_id
         for copy in copies
@@ -769,29 +774,43 @@ def _record_kept(control_root: Path, account: str, database, copies) -> None:
 
 
 def _names_account(database: Path, account: str) -> bool:
-    """Whether the database names ``account``; True when it cannot tell."""
+    """Whether a live database may name ``account``: the recorded one, or the
+    current default one. A missing recorded database may have moved, so it
+    counts (review r15pc-rev1); so does any read that cannot tell."""
     from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
+    from .paths import get_personal_context_db_path
+
     if not database.exists():
-        return False
-    try:
-        with closing(
-            connect_private_sqlite(
-                "recovery.personal_context.repository", database, read_only=True
-            )
-        ) as connection:
-            row = connection.execute(
-                "SELECT 1 FROM profile_meta WHERE key_account = ?", (account,)
-            ).fetchone()
-    except (OSError, ValueError, sqlite3.Error):
         return True
-    return row is not None
+    try:
+        paths = dict.fromkeys((database, get_personal_context_db_path()))
+        for path in paths:
+            if not path.exists():
+                continue
+            with closing(
+                connect_private_sqlite(
+                    "recovery.personal_context.repository", path, read_only=True
+                )
+            ) as connection:
+                if connection.execute(
+                    "SELECT 1 FROM profile_meta WHERE key_account = ?", (account,)
+                ).fetchone():
+                    return True
+    except Exception:  # noqa: BLE001 - could not tell: keep the account
+        return True
+    return False
 
 
 def forget_kept_keys(control_root: Path) -> None:
     """After a recovery copy is deleted, delete each kept account that no
     remaining copy may name and no live database names (TASK-41120).
 
+    A record lists the copies that existed at re-encryption. A copy made later
+    captured the database while it named the new account, and a later rollback
+    to it that finds a deleted account reinstalls the key that copy escrowed
+    (TASK-41122), so later copies need no record. While any copy's evidence
+    cannot be read (its listed id is not the one recorded), nothing is deleted.
     Never raises: the copy is already gone, and an entry left behind holds
     only an old key that reads no live row.
     """
@@ -802,10 +821,15 @@ def forget_kept_keys(control_root: Path) -> None:
     from .repository_keys import KEY_ACCOUNT
 
     with suppress(Exception):
-        remaining = _copies_naming(control_root)
+        listed = _listed(control_root)
         protector = _device_protector()
-        if remaining is None or protector is None:
+        if (
+            listed is None
+            or protector is None
+            or any(copy.status == "recovery_required" for copy in listed)
+        ):
             return
+        remaining = _copies_naming(listed)
         with pinned_directory(control_root) as parent:
             for name in sorted(native_os.listdir(parent)):
                 if not _KEPT.fullmatch(name):

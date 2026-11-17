@@ -2119,10 +2119,28 @@ def _every_kind(tmp_path, record_factory, proposal_factory):
         }
     )
     repo.commit_scope(workspace, expected_version_id=None)
-    repo.commit_scope_binding(
-        workspace.scope_id, {"version": 1, "local_workspace_id": "w", "label": "W"}
+    first = repo.commit_scope_binding(  # with an older mapping version
+        workspace.scope_id, {"version": 1, "local_workspace_id": "w", "label": "V"}
     )
-    repo.commit_runtime_policy(workspace.scope_id, {"version": 1, "authority": "read_only"})
+    repo.commit_scope_binding(
+        workspace.scope_id,
+        {"version": 1, "local_workspace_id": "w", "label": "W"},
+        expected_version_id=first,
+    )
+    first = repo.commit_runtime_policy(  # and an older agent access version
+        workspace.scope_id, {"version": 1, "authority": "direct_write"}
+    )
+    repo.commit_runtime_policy(
+        workspace.scope_id,
+        {"version": 1, "authority": "read_only"},
+        expected_version_id=first,
+    )
+    repo.commit_record_version(
+        record_factory(
+            manifest.profile_id, record_id="record-ws", version_id="record-ws-version-1"
+        ).model_copy(update={"scope_id": workspace.scope_id}),
+        expected_version_id=None,
+    )
     protector = KeyringProfileKeyProtector(backend)
     restored = "personal-context:recovery_" + "e" * 32
     protector.install(restored, protector.load(_stored_account(db_path)))
@@ -2164,31 +2182,42 @@ def _damage_object(db_path, key) -> None:
 
 
 def _pick(db_path, kind) -> tuple[str, str, str]:
-    """One version of ``kind``; for a manifest or scope, an older (not current) one."""
+    """One version of ``kind``; ``<kind>_history`` picks an older (not
+    current) one, and a bare local kind the current one."""
+    object_type = kind.removesuffix("_history")
+    current = {"scope_binding": True, "runtime_policy": True}.get(kind)
+    if kind.endswith("_history"):
+        current = False
     with closing(sqlite3.connect(db_path)) as connection:
-        rows = connection.execute(
-            "SELECT object_type, object_id, version_id FROM encrypted_objects o "
-            "WHERE object_type = ? AND NOT (? IN ('manifest', 'scope') AND EXISTS ("
-            "SELECT 1 FROM object_heads h WHERE h.object_type = o.object_type "
-            "AND h.object_id = o.object_id AND h.version_id = o.version_id)) "
-            "ORDER BY rowid",
-            (kind, kind),
-        ).fetchall()
+        rows = [
+            row
+            for row in connection.execute(
+                "SELECT object_type, object_id, version_id, EXISTS (SELECT 1 FROM "
+                "object_heads h WHERE h.object_type = o.object_type AND h.object_id "
+                "= o.object_id AND h.version_id = o.version_id) FROM encrypted_objects "
+                "o WHERE object_type = ? ORDER BY rowid",
+                (object_type,),
+            )
+            if current is None or bool(row[3]) is current
+        ]
     assert rows, kind
-    return rows[0]
+    return rows[0][:3]
 
 
 @pytest.mark.parametrize(
     "kind",
     [
         "proposal",
-        "manifest",
-        "scope",
+        "manifest_history",
+        "scope_history",
         "outbox",
         "undo",
         "record_link",
         "scope_binding",
-        "runtime_policy",
+        # Review r15pc-rev1: an older version counts as one, and the current
+        # one stays.
+        "scope_binding_history",
+        "runtime_policy_history",
     ],
 )
 def test_reencryption_removes_a_damaged_object_of_each_removable_kind(
@@ -2236,40 +2265,129 @@ def test_reencryption_removes_a_damaged_object_of_each_removable_kind(
     assert _pointers(db_path) == {
         table: rows - named[table] for table, rows in pointers.items()
     }
-    assert any(named.values()), named
+    assert any(named.values()) or kind.endswith("_history"), named
     fresh = _keyring_repo(db_path, backend)
     assert fresh.damaged_versions() == {}
     assert sorted(r.record_id for r in fresh.list_records()) == records
     assert fresh.get_manifest() is not None
 
 
-def test_a_damaged_current_scope_refuses_reencryption_by_name(
-    tmp_path, record_factory, proposal_factory
-) -> None:
-    """A current scope cannot go without leaving its records with no scope (and
-    the profile with no global scope), so re-encryption refuses, names the kind,
-    and changes nothing (NEEDS_CONTEXT, reported to the owner)."""
-    db_path, backend = _every_kind(tmp_path, record_factory, proposal_factory)
+def _scope_record_heads(db_path, scope_id) -> list[str]:
     with closing(sqlite3.connect(db_path)) as connection:
-        head = connection.execute(
-            "SELECT object_type, object_id, version_id FROM object_heads "
-            "WHERE object_type = 'scope'"
-        ).fetchone()
-    _damage_object(db_path, head)
-    data = db_path.read_bytes()
-    repo = _keyring_repo(db_path, backend)
+        return sorted(
+            row[0]
+            for row in connection.execute(
+                "SELECT h.object_id FROM object_heads h JOIN encrypted_objects o "
+                "USING (object_type, object_id, version_id) "
+                "WHERE h.object_type = 'record' AND o.scope_id = ?",
+                (scope_id,),
+            )
+        )
 
-    for attempt in (repo.damaged_versions, lambda: repo.reencrypt_profile(
-        keep_old_account=False, expected_damaged={"scope": 1}
-    )):
-        with pytest.raises(ProfileLockedError) as refused:
-            attempt()
-        assert refused.value.reason_code == repository_keys.DAMAGED_SCOPE
-    assert db_path.read_bytes() == data
+
+@pytest.mark.parametrize("kind", ["global", "workspace"])
+def test_a_damaged_current_scope_is_rebuilt_with_its_records(
+    tmp_path, record_factory, proposal_factory, kind
+) -> None:
+    """TASK-41121, owner decision 2026-11-16 ("Rebuild the scope"): the review
+    counts the damaged current scope and its records; re-encryption gives the
+    scope a fresh version under its own id and kind, its records stay attached,
+    listed and readable, and its own settings reset (agent access to the
+    default; a workspace keeps its mapping, renamed "Recovered scope"). With a
+    rebuilt global scope, context building still works."""
+    from tldw_chatbook.Personal_Context.runtime_policy import AgentAuthority
+
+    db_path, backend = _every_kind(tmp_path, record_factory, proposal_factory)
+    service = PersonalContextService(_keyring_repo(db_path, backend))
+    scope = next(
+        s
+        for s in service.list_scopes()
+        if s.kind is (ScopeKind.GLOBAL if kind == "global" else ScopeKind.WORKSPACE)
+    )
+    listed = sorted(
+        r.record_id for r in service.list_records(scope_ids=(scope.scope_id,))
+    )
+    heads = _scope_record_heads(db_path, scope.scope_id)
+    assert listed
+    _damage_object(db_path, ("scope", scope.scope_id, scope.version_id))
+    counts = {"scope": 1, "rebuilt_scope_records": len(heads)}
+    assert _keyring_repo(db_path, backend).damaged_versions() == counts
+
+    _keyring_repo(db_path, backend).reencrypt_profile(
+        keep_old_account=False, expected_damaged=counts
+    )
+
+    service = PersonalContextService(_keyring_repo(db_path, backend))
+    rebuilt = service._repo().get_scope(scope.scope_id)
+    assert rebuilt.kind is scope.kind and rebuilt.version_id != scope.version_id
+    assert _scope_record_heads(db_path, scope.scope_id) == heads
+    assert (
+        sorted(r.record_id for r in service.list_records(scope_ids=(scope.scope_id,)))
+        == listed
+    )
+    assert service.get_scope_authority(scope.scope_id) is AgentAuthority.PROPOSE
+    if kind == "workspace":
+        assert service.list_workspace_bindings()[scope.scope_id] == {
+            "version": 1,
+            "local_workspace_id": "w",
+            "label": "Recovered scope",
+        }
+        return
+    service.set_runtime_enabled(True)
+    view = service.authorized_context_view()
+    assert {r.record_id for r in view.records} & set(listed)
+
+
+@pytest.mark.parametrize("scope_kind", ["workspace", "global"])
+def test_a_dropped_agent_access_setting_is_off(
+    tmp_path, record_factory, proposal_factory, scope_kind
+) -> None:
+    """TASK-41121, owner decision 2026-11-16 ("Revert to Off"): a damaged
+    current agent access setting is replaced by Off, so agents get no access to
+    that scope until the user sets it again; it is not Propose."""
+    from tldw_chatbook.Personal_Context.runtime_policy import (
+        AgentAuthority,
+        PersonalContextAuthorityError,
+    )
+
+    db_path, backend = _every_kind(tmp_path, record_factory, proposal_factory)
+    service = PersonalContextService(_keyring_repo(db_path, backend))
+    scope = next(
+        s
+        for s in service.list_scopes()
+        if s.kind
+        is (ScopeKind.GLOBAL if scope_kind == "global" else ScopeKind.WORKSPACE)
+    )
+    if scope_kind == "global":
+        service.set_scope_authority(scope.scope_id, AgentAuthority.DIRECT_WRITE)
+    version = service._repo().get_runtime_policy_version(scope.scope_id)
+    _damage_object(db_path, ("runtime_policy", scope.scope_id, version))
+    assert _keyring_repo(db_path, backend).damaged_versions() == {"runtime_policy": 1}
+
+    _keyring_repo(db_path, backend).reencrypt_profile(
+        keep_old_account=False, expected_damaged={"runtime_policy": 1}
+    )
+
+    service = PersonalContextService(_keyring_repo(db_path, backend))
+    assert service.get_scope_authority(scope.scope_id) is AgentAuthority.OFF
+    with pytest.raises(PersonalContextAuthorityError):
+        service.require_agent_authority(scope.scope_id, AgentAuthority.READ_ONLY)
+    service.set_scope_authority(scope.scope_id, AgentAuthority.READ_ONLY)
+    assert service.get_scope_authority(scope.scope_id) is AgentAuthority.READ_ONLY
 
 
 @pytest.mark.parametrize(
-    "copy", ["deleted", "no_personal_context", "names_live_database"]
+    "copy",
+    [
+        "deleted",
+        "no_personal_context",
+        "names_live_database",
+        # Review r15pc-rev1: a recorded database that is gone may have moved,
+        # and a copy whose evidence cannot be read lists under another id.
+        "database_moved",
+        "names_current_database",
+        "unreadable_copy",
+    ],
 )
 def test_a_kept_account_goes_only_when_no_copy_or_live_database_names_it(
     tmp_path, record_factory, monkeypatch, copy
@@ -2282,7 +2400,7 @@ def test_a_kept_account_goes_only_when_no_copy_or_live_database_names_it(
     from types import SimpleNamespace
 
     from tldw_chatbook.Backup_Recovery import credentials, recovery_copies, service_storage
-    from tldw_chatbook.Personal_Context import recovery
+    from tldw_chatbook.Personal_Context import paths, recovery
 
     db_path, backend, protector, restored, _records = _restored_profile(
         tmp_path, record_factory
@@ -2290,32 +2408,53 @@ def test_a_kept_account_goes_only_when_no_copy_or_live_database_names_it(
     control = tmp_path / "control"
     control.mkdir(mode=0o700)
     monkeypatch.setattr(service_storage, "default_control_root", lambda: control)
+    # The profile's current database is elsewhere (it holds no profile).
+    monkeypatch.setattr(
+        paths, "get_personal_context_db_path", lambda: tmp_path / "current.db"
+    )
     monkeypatch.setattr(
         credentials, "_credential_store", lambda: SimpleNamespace(_keyring=backend)
     )
     listed = {
         "deleted": _copy(status="missing"),
         "no_personal_context": _copy(owner="config"),
-        "names_live_database": _copy(),
-    }[copy]
+    }.get(copy, _copy())
     monkeypatch.setattr(recovery_copies, "list_recovery_copies", lambda _root: (listed,))
 
     account = recovery.reencrypt_profile(_keyring_repo(db_path, backend))
 
-    if copy != "names_live_database":
+    if copy in ("deleted", "no_personal_context"):
         assert (_KEYRING_SERVICE, restored) not in backend.values
         assert not list(control.iterdir())
         return
     assert (_KEYRING_SERVICE, restored) in backend.values
-    monkeypatch.setattr(
-        recovery_copies,
-        "list_recovery_copies",
-        lambda _root: (replace(listed, status="missing"),),
-    )
-    _set_stored_account(db_path, restored)  # a live database names it
+    gone = (replace(listed, status="missing"),)
+    if copy == "unreadable_copy":
+        unreadable = replace(
+            listed, operation_id="operation-" + "a" * 64, status="recovery_required"
+        )
+        monkeypatch.setattr(
+            recovery_copies, "list_recovery_copies", lambda _root: (*gone, unreadable)
+        )
+    else:
+        monkeypatch.setattr(recovery_copies, "list_recovery_copies", lambda _root: gone)
+    if copy == "names_live_database":
+        _set_stored_account(db_path, restored)  # a live database names it
+    if copy == "database_moved":
+        moved = db_path.with_name("moved.db")
+        db_path.rename(moved)
+    if copy == "names_current_database":
+        current = tmp_path / "current.db"
+        current.write_bytes(db_path.read_bytes())
+        _set_stored_account(current, restored)
     recovery.forget_kept_keys(control)
     assert (_KEYRING_SERVICE, restored) in backend.values
+    if copy == "database_moved":
+        moved.rename(db_path)
+    if copy == "names_current_database":
+        current.unlink()
     _set_stored_account(db_path, account)
+    monkeypatch.setattr(recovery_copies, "list_recovery_copies", lambda _root: gone)
     recovery.forget_kept_keys(control)
     assert (_KEYRING_SERVICE, restored) not in backend.values
     assert (_KEYRING_SERVICE, account) in backend.values

@@ -43,7 +43,7 @@ from ...Personal_Context.recovery import (
     approve_restore_review,
     restore_review,
 )
-from ...Personal_Context.repository_keys import DAMAGED_SCOPE
+from ...Personal_Context.repository_keys import REBUILT_SCOPE_RECORDS
 from ...Personal_Context.runtime_policy import AgentAuthority
 from ...Personal_Context.service import (
     PersonalContextService,
@@ -154,31 +154,45 @@ _RESTORE_REVIEW_COPY = {
 _DAMAGED_NOUNS = {
     "record": ("record", "records"),
     "proposal": ("proposal", "proposals"),
-    "manifest": ("older profile version", "older profile versions"),
-    "scope": ("older scope version", "older scope versions"),
+    "manifest_history": ("older profile version", "older profile versions"),
+    "scope_history": ("older scope version", "older scope versions"),
     "outbox": ("queued sync change", "queued sync changes"),
     "undo": ("undo entry", "undo entries"),
     "record_link": ("record link", "record links"),
     "scope_binding": ("workspace mapping", "workspace mappings"),
+    "scope_binding_history": (
+        "older workspace mapping version",
+        "older workspace mapping versions",
+    ),
     "runtime_policy": ("agent access setting", "agent access settings"),
+    "runtime_policy_history": (
+        "older agent access setting version",
+        "older agent access setting versions",
+    ),
 }
-# TASK-41121 AC#2: a damaged current scope cannot be removed (NEEDS_CONTEXT).
-_DAMAGED_SCOPE_COPY = (
-    "A damaged scope can't be read, and removing it would leave its records "
-    "without a scope, so the restored profile was not re-encrypted or confirmed. "
-    "Restore Personal Context again from another backup, or roll the restore "
-    "back in Backup & Restore > Recovery copies."
-)
 
 
 def _damaged_copy(counts: dict[str, int]) -> str:
+    """The review's damage line; owner decisions 2026-11-14 to 2026-11-16."""
+    sentences = []
+    if scopes := counts.get("scope"):
+        kept = counts.get(REBUILT_SCOPE_RECORDS, 0)
+        sentences.append(
+            f"{scopes} damaged scope{'s' if scopes != 1 else ''} will be rebuilt; "
+            f"{'its' if scopes == 1 else 'their'} {kept} "
+            f"record{'s are' if kept != 1 else ' is'} kept"
+        )
     parts = [
         f"{counts[kind]} damaged {nouns[counts[kind] != 1]}"
         for kind, nouns in _DAMAGED_NOUNS.items()
         if counts.get(kind)
     ]
-    listed = parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
-    return listed + " can't be read and will be removed"
+    if parts:
+        listed = parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+        sentences.append(listed + " can't be read and will be removed")
+    if counts.get("runtime_policy"):
+        sentences.append("Agent access there is Off until you set it again")
+    return ". ".join(sentences)
 
 
 def _bounded_label(value: object, *, limit: int = 80) -> str:
@@ -563,6 +577,7 @@ class PersonalContextSettingsPanel(Vertical):
                 yield Static(scope.label, classes="settings-input-label")
                 yield Select(
                     (
+                        ("Off", AgentAuthority.OFF.value),
                         ("Read only", AgentAuthority.READ_ONLY.value),
                         ("Propose changes", AgentAuthority.PROPOSE.value),
                         ("Direct write", AgentAuthority.DIRECT_WRITE.value),
@@ -1539,12 +1554,7 @@ class PersonalContextSettingsPanel(Vertical):
             self.app.call_from_thread(self._mutation_key_collision)
         except ProfileConflictError:
             self.app.call_from_thread(self._mutation_conflict)
-        except Exception as error:
-            if getattr(error, "reason_code", None) == DAMAGED_SCOPE:
-                self.app.call_from_thread(
-                    self.notify, _DAMAGED_SCOPE_COPY, severity="error", markup=False
-                )
-                return
+        except Exception:
             if reload_removed_on_failure:
                 try:
                     snapshot = self._require_service().settings_snapshot()

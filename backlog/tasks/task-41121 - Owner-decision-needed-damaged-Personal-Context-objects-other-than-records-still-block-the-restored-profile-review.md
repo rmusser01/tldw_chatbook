@@ -1,10 +1,10 @@
 ---
 id: TASK-41121
 title: "Owner decision needed: damaged Personal Context objects other than records still block the restored-profile review"
-status: In Progress
+status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-16 21:23'
+updated_date: '2026-11-17 00:35'
 created_date: 2026-11-15 02:20
 labels:
 - follow-up
@@ -34,7 +34,7 @@ Filed in round 14 of the 2026-10-23 burn-down (closeout, 2026-11-15). Checked ag
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 The owner's decision on damaged non-record objects (for example: drop them with a count, keep the profile read-only, or another option) is recorded verbatim in the notes
-- [ ] #2 The restored-profile review follows that decision, and when re-encryption is refused for a damaged object, the user is told which kind of object and what they can do instead of the generic failure copy
+- [x] #2 The restored-profile review follows that decision, and when re-encryption is refused for a damaged object, the user is told which kind of object and what they can do instead of the generic failure copy
 - [x] #3 Tests cover each object kind the decision names, red before the change
 <!-- AC:END -->
 
@@ -65,11 +65,26 @@ Owner decision 2026-11-15: "no"
 - **Lane.** The new tests sit in the files their TASK-40140 neighbours use (`test_repository.py`, `test_restore_data_groups.py`, `test_settings_personal_context.py`), none of which a PR lane runs whole; no census entry added (round-15 rule: the shard count is the coordinator's decision).
 - **Files.** `tldw_chatbook/Personal_Context/{repository_keys.py,service.py,recovery.py}`, `tldw_chatbook/Widgets/Settings_Widgets/personal_context_panel.py`, `Tests/Personal_Context/test_repository.py`, `Tests/UI/test_settings_personal_context.py`, `Docs/User_Guide/settings/personal-context-profile.md`.
 
-**AC#2 stays open, and the task In Progress:** every removable kind follows the decision, and the scope refusal names the kind and what to do, but a damaged current scope still blocks the review until the owner rules.
+**Superseded by the owner's 2026-11-16 decisions below.** The first round shipped a refusal for a damaged current scope, with copy naming it (NEEDS_CONTEXT), and reverted a dropped workspace agent access setting to the default, Propose. Fix round 1 replaces both.
 
-**NEEDS_CONTEXT (owner): a damaged current scope.** Options and consequences:
-1. Keep refusing (what ships): the review cannot be confirmed; the user restores Personal Context from another backup or rolls the restore back. Nothing is lost silently.
-2. Remove the scope and every record, proposal, mapping and agent setting in it: the review completes, and that scope's content is lost (it is unreachable today anyway). For the global scope this still leaves a profile with no global scope, which breaks context building, unless a new empty global scope is created (a further product choice).
-3. Remove only the scope version: its records stay stored but can never be listed or edited (inconsistent), and the global case breaks context building.
+**Owner decisions 2026-11-16 (relayed by the coordinator):**
+- Damaged current scope: "Rebuild the scope (Recommended)." Replace a damaged current scope with a fresh one: global stays global, a named scope becomes "Recovered scope"; its records stay and are re-attached; the scope's own settings reset to defaults; the review states it before Confirm ("1 damaged scope will be rebuilt; its N records are kept").
+- Dropped workspace agent-access setting: "Revert to Off (Recommended)." The workspace's agent access becomes Off, with no access until the user sets it again, not Propose; the review says so.
 
-**Concern for the owner (not a block).** Removing a damaged workspace agent access setting reverts that workspace to the default, Propose; a damaged one was read as "denied" before. The review says the setting will be removed before confirming.
+**2026-11-16, fix round 1 (review r15pc-rev1 and the owner decisions).**
+- **Rebuild.** A damaged current scope now counts as `scope` (plus `rebuilt_scope_records`, the current records in it that are not themselves damaged; display only, not compared) and no longer raises, so `damaged_object_counts()` reaches the panel. In the re-encryption transaction, after the new key is adopted, `_rebuild_scopes` writes a fresh version of the scope under its own id (`_insert_scope`), so its records stay attached with no rewrite. The kind is sealed in the damaged version, so it comes from a readable older version of the scope, else from a workspace mapping or unlinked row (only workspaces have one), else global when no readable current scope is global. The scope's own settings reset: its agent access row goes (default, Propose), and a readable mapping is rewritten with the same workspace id and the label "Recovered scope". The global scope's label is "Global" anyway. Ceiling (`ponytail:` in `_rebuilt_scopes`): two damaged unmapped scopes and no readable global one cannot be told apart, and the first by id becomes global.
+- **Off.** `AgentAuthority.OFF` (rank 0: allows nothing; `profile_tool_provider` offers no tools; the Settings authority select now lists "Off" first). A dropped current agent access setting of a scope is replaced, in the same transaction, by `{"version": 1, "authority": "off"}`. The global on/off setting (`GLOBAL_POLICY_ID`) is still dropped, which means off. If a rebuilt scope's own agent access row was itself damaged, it is Off, not the default.
+- **History counts (review finding 5).** An older version of a manifest, scope, workspace mapping or agent access setting counts as `<kind>_history` ("older … version"); the current one stays.
+- **Review copy.** For example: "1 damaged scope will be rebuilt; its 3 records are kept. 1 damaged agent access setting can't be read and will be removed. Agent access there is Off until you set it again". The DAMAGED_SCOPE refusal, its panel branch and copy are gone.
+- **Tests.**
+  - `Tests/Personal_Context/test_repository.py::test_a_damaged_current_scope_is_rebuilt_with_its_records[global|workspace]`: counts, rebuild under the same id and kind, the same record heads attached, `list_records` for the scope unchanged, agent access default, the workspace mapping relabelled; for global, `authorized_context_view()` returns its records.
+  - `test_a_dropped_agent_access_setting_is_off[workspace|global]`: Off, `require_agent_authority(…, READ_ONLY)` refuses, and the user can set it again.
+  - `test_reencryption_removes_a_damaged_object_of_each_removable_kind` now also has `scope_binding_history` and `runtime_policy_history`; its manifest and scope cases are `*_history`.
+  - UI: two new copy cases in `test_restored_profile_review_shows_and_removes_the_damaged_count`; `test_a_damaged_current_scope_refusal_names_the_kind` is removed with the refusal.
+- **Red.** With the round-0 source (`git diff > patch`, checkout, run, re-apply), all 8 new repository cases failed. The two rebuilds raised `ProfileLockedError: A current scope is damaged.` The four history cases failed on the count assertion (e.g. `{'scope_binding': 1} == {'scope_binding_history': 1}`). The Off cases failed because `AgentAuthority.OFF` did not exist. Negative controls on the new code, each reverted: skipping the Off write gives `PROPOSE is OFF`, false for both Off cases; skipping the relabel fails the workspace mapping assertion (`'W' … == 'Recovered scope'`). Green: 26 passed (`-k` set of re-encryption and damage tests).
+- **Files.** `tldw_chatbook/Personal_Context/{repository_keys.py,runtime_policy.py}`, `tldw_chatbook/Agents/profile_tool_provider.py`, `tldw_chatbook/Widgets/Settings_Widgets/personal_context_panel.py`, `Tests/Personal_Context/test_repository.py`, `Tests/UI/test_settings_personal_context.py`, `Docs/User_Guide/settings/personal-context-profile.md` (the damage paragraph and an **Off** line under Agent authority).
+- **Fix-round covering runs (load 60-108, `-n 4` unless noted).**
+  - `Tests/Personal_Context`: 714 passed. The 20 setup errors were all `test_memory_baseline.py` fixtures hitting the 300 s pytest timeout; that file, rerun with `Tests/Agents/test_profile_tool_provider.py` and `test_profile_tool_scope.py` at `--timeout=1500`, gave 99 passed.
+  - `test_settings_personal_context.py` + `test_personal_context_proposal_review.py`: 108 passed. The one failure is the base-failing `test_production_settings_inspects_private_and_deleted_metadata[size0]` (TASK-41120 notes).
+  - Restore scenarios `reviewed`, `lost_keyring`, `remove` and `test_recovery_copies.py`: 9 passed (`-n 2`). `link` hit the 300 s child budget at load 95, then passed serially in 232 s at load 60.
+  - The owner-inventory node passed, as did the ruff gate, the size ratchet (207 passed), the markup census and preflight.

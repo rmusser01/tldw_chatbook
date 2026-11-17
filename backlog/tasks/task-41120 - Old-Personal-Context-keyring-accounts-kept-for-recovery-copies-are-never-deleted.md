@@ -4,7 +4,7 @@ title: "Old Personal Context keyring accounts kept for recovery copies are never
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-16 21:23'
+updated_date: '2026-11-17 00:35'
 created_date: 2026-11-15 02:20
 labels:
 - follow-up
@@ -54,3 +54,10 @@ Filed in round 14 of the 2026-10-23 burn-down (closeout, 2026-11-15). Checked ag
 - **Covering runs (2026-11-15/16, `-n 4` unless noted).** All 12 `test_replace_restore_makes_personal_context_readable_and_rolls_back` scenarios: 12 passed under the default 300 s child budget at load 7-45 (46-173 s each). `Tests/Personal_Context` + `Tests/UI/test_settings_personal_context.py` + `Tests/UI/test_personal_context_proposal_review.py`: 803 passed, 6 failed, 1 error at load 100-117; on rerun all pass except `test_production_settings_inspects_private_and_deleted_metadata[size0]`, a 5 s provenance wait that also fails on base with the same command at load 85. `test_recovery_copies.py`, `test_later_rollback.py`, `test_recovery_service.py`, `test_credentials.py`, `test_later_rollback_credential_ui.py`, `Tests/DB/test_private_sqlite_inventory.py`, the rest of `test_restore_data_groups.py`: 235 passed, 1 setup error (`test_f9_later_rollback_requires_explicit_credential_review`: a pip-install timeout under load; serially it fails "real exec expected", identically on base). `test_restore_plan.py`: 119 passed. `Tests/Architecture/test_module_size_ratchet.py` 207 passed; ruff gate, markup census and preflight pass.
 - **Lane.** The new tests sit in the files their TASK-40140 neighbours use (`test_repository.py`, `test_restore_data_groups.py`, `test_settings_personal_context.py`), none of which a PR lane runs whole; no census entry added (round-15 rule: the shard count is the coordinator's decision).
 - **Files.** `tldw_chatbook/Personal_Context/{recovery.py,repository_keys.py}`, `tldw_chatbook/Backup_Recovery/recovery_copies.py`, `Tests/Personal_Context/test_repository.py`, `Tests/Backup_Recovery/test_restore_data_groups.py`, `Docs/User_Guide/settings/personal-context-profile.md`.
+
+**2026-11-16, fix round 1 (review r15pc-rev1).**
+- **Owner inventory (critical).** `test_every_persistence_source_symbol_has_reviewed_owner_row` was red on the two new producers. `backlog/docs/backup-recovery-owner-inventory.md`'s Personal Context table now has `_names_account | connect_private_sqlite` (qualified, read-only) and `forget_kept_keys | os.unlink` (generic_boundary, backup_control). Its prose describes the `personal-context-kept-<hex>.json` record, its frozen copy list, and the TASK-41122 reinstall that covers later copies. Green: 1 passed, 315 s serial, `--timeout=1500`, load 84-108.
+- **Moved database (important).** `_names_account` treats a missing recorded database as naming the account (it may have moved), checks the current `get_personal_context_db_path()` too, and counts any error as naming it (inside pytest's isolation that path raises, so the tests pin it).
+- **Frozen copy list (minor).** The `forget_kept_keys` docstring and the inventory prose state the reliance on the newer copy's escrow and the TASK-41122 reinstall.
+- **Unreadable copy (minor).** A `recovery_required` copy lists as `operation-<sha256>`, not the recorded id, so `forget_kept_keys` now deletes nothing while any listed copy is `recovery_required`.
+- **Tests.** New cases `database_moved`, `names_current_database` and `unreadable_copy` in `test_a_kept_account_goes_only_when_no_copy_or_live_database_names_it`. Each keeps the account while the condition holds, then deletes it once the condition clears. Red on the round-0 `recovery.py` (only that file checked out): all three failed `assert … in backend.values` (the account was deleted). Green: 6 passed.

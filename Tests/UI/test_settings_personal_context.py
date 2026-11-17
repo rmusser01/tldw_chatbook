@@ -2296,8 +2296,6 @@ class _RestoredProfileService(_ProfileServiceStub):
 
     def reencrypt_after_restore(self, *, expected_damaged=None) -> str:
         self.steps.append(("reencrypt", expected_damaged) if expected_damaged else "reencrypt")
-        if isinstance(self.fail_reencrypt, Exception):
-            raise self.fail_reencrypt
         if self.fail_reencrypt:
             raise RuntimeError("private-key-detail-that-must-never-render")
         return "personal-context:profile_" + "f" * 32
@@ -2411,10 +2409,23 @@ async def test_restored_profile_review_reencrypts_before_it_approves(
         ({"record": 2}, "2 damaged records can't be read and will be removed"),
         # TASK-41121, owner decision 2026-11-15: other kinds, counted by kind.
         (
-            {"scope_binding": 1, "record": 2, "undo": 2, "manifest": 1},
+            {"scope_binding": 1, "record": 2, "undo": 2, "manifest_history": 1},
             "2 damaged records, 1 damaged older profile version, 2 damaged undo "
             "entries and 1 damaged workspace mapping can't be read and will be "
             "removed",
+        ),
+        # Owner decisions 2026-11-16: a damaged scope is rebuilt with its
+        # records, and a lost agent access setting is Off.
+        (
+            {"scope": 1, "rebuilt_scope_records": 3, "runtime_policy": 1},
+            "1 damaged scope will be rebuilt; its 3 records are kept. 1 damaged "
+            "agent access setting can't be read and will be removed. Agent access "
+            "there is Off until you set it again",
+        ),
+        (
+            {"scope": 2, "rebuilt_scope_records": 1, "scope_binding_history": 1},
+            "2 damaged scopes will be rebuilt; their 1 record is kept. 1 damaged "
+            "older workspace mapping version can't be read and will be removed",
         ),
     ],
 )
@@ -2526,44 +2537,3 @@ async def test_a_refused_review_reloads_the_damaged_count(monkeypatch) -> None:
         await pilot.pause()
         assert service.steps == [("reencrypt", {"record": 1})]
         assert damaged_line() == "2 damaged records can't be read and will be removed"
-
-
-@pytest.mark.asyncio
-async def test_a_damaged_current_scope_refusal_names_the_kind(monkeypatch) -> None:
-    """TASK-41121 AC#2: a damaged current scope cannot be removed, so
-    re-encryption refuses; the notice names the kind and what to do instead of
-    the generic failure copy, and the review stays offered."""
-    import tldw_chatbook.Widgets.Settings_Widgets.personal_context_panel as module
-    from tldw_chatbook.Personal_Context import recovery
-    from tldw_chatbook.Personal_Context.repository_keys import DAMAGED_SCOPE
-
-    refusal = ProfileLockedError("private-scope-detail-that-must-never-render")
-    refusal.reason_code = DAMAGED_SCOPE
-    service = _RestoredProfileService(_ready_snapshot(), fail_reencrypt=refusal)
-    monkeypatch.setattr(module, "restore_review", lambda path: recovery.REVIEW_AVAILABLE)
-    monkeypatch.setattr(
-        module, "approve_restore_review", lambda path: service.steps.append("approve")
-    )
-    panel = PersonalContextSettingsPanel(service)
-    notices: list[str] = []
-    monkeypatch.setattr(panel, "notify", lambda message, **_: notices.append(message))
-
-    class _PanelHost(ConsolidatedCSSApp):
-        def compose(self):
-            yield panel
-
-    host = _PanelHost()
-    async with host.run_test(size=(100, 40)) as pilot:
-        await host.workers.wait_for_complete()
-        await pilot.pause()
-        await pilot.click("#personal-context-restore-review")
-        await host.workers.wait_for_complete()
-        await pilot.pause()
-        await host.workers.wait_for_complete()
-        await pilot.pause()
-        assert service.steps == ["reencrypt"]
-        assert notices[-1].startswith("A damaged scope can't be read"), notices
-        assert "Restore Personal Context again from another backup" in notices[-1]
-        assert not any(n.startswith("The profile change could not") for n in notices)
-        assert "private-scope-detail" not in " ".join(notices)
-        assert panel.query("#personal-context-restore-review")
