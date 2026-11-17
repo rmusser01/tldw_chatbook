@@ -89,4 +89,10 @@ Recommendation: (a). The reply went only to the original database, nothing was w
 
 Files: `Tests/console_provider_doubles.py`, `Tests/Chat/test_console_first_send_survivor_native.py`.
 
-**Verification (2026-11-17, branch fu/41315-storage-sources-first-send).** `./scripts/preflight.sh` passed. `Tests/Architecture` (serial): 3 failed, 1418 passed. The same 3 also fail on base fbf1c9ea74 (`test_reviewed_diagnostic_changes_are_metadata_only`, plus two in `test_timer_path_static_update_inventory.py`). Covering files at `-n 4`, base = head: `test_console_skill_substitution.py` 39/39, `test_console_ordinary_tree_widening.py` 17/17, `test_native_v2_command_events.py` 35/35, `test_native_v2_mcp_events.py` 37 pass / 6 fail with the same 6 failing on both. The machine was shared throughout (load 50-117).
+**Verification (2026-11-17, branch fu/41315-storage-sources-first-send; load 50-107).** `./scripts/preflight.sh` passed. Base for each comparison is fbf1c9ea74, `-n 4`.
+- `test_console_agent_storage_sources.py`: 22/22, no hang. On base it was 23 failed / 1 passed, with teardown hangs.
+- `test_console_first_send_survivor_native.py`: 7/8; `retains_changed_original_source` is waiting on the decision.
+- `test_console_ordinary_tree.py`: head 70 passed / 5 failed, no hang. Base: 41 passed / 33 failed, then hung. Every head failure also fails on base.
+- `test_console_skill_substitution.py`: 39/39 on both. `test_console_ordinary_tree_widening.py`: 17/17 on both. `test_unproven_tool_cleanup_run.py`: 11/11 on both.
+- `test_console_ordinary_receipt_native.py`, `test_console_ssh_custody.py` and `test_native_v2_mcp_events.py`: every node that failed only on head passes alone on head. The leftovers time out or hang on base too: receipt `[queued]` fails alone on both, and passive-context `[disk]` hangs alone on both.
+- `Tests/Architecture` (serial): 6 failed / 1415 passed. Three of the failures also fail on base (`test_reviewed_diagnostic_changes_are_metadata_only` and two in `test_timer_path_static_update_inventory.py`). The other three, `test_task_15103_review_ledger_*`, hit the 300 s timeout while three Architecture runs shared the machine. Re-run alone with a longer timeout, all three pass on both head and base (about 148 s each).

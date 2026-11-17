@@ -65,3 +65,11 @@ Outcome: all 22 nodes pass at `-n 4`. AC #3 (PR lane) is left for the lane PR.
 **AC #3.** Not ticked, because this task does not edit workflows. `Tests/Chat/test_console_agent_storage_sources.py` should join `pr-fast-lane-admission` ("Run admission-sensitive suites"). It finishes in about 2 minutes at `-n 4` with no hang.
 
 Files: `tldw_chatbook/Agents/activation.py`, `tldw_chatbook/Agents/hooks_v2/native_commands.py`, `tldw_chatbook/Agents/ordinary_tree.py`, `tldw_chatbook/Agents/agent_native_execution.py`, `Tests/Chat/test_console_agent_storage_sources.py`, `Tests/Chat/test_console_skill_substitution.py` (cherry-pick), `Tests/Chat/test_console_ordinary_tree_widening.py` (cherry-pick).
+
+**Verification (2026-11-17, branch fu/41315-storage-sources-first-send; load 50-107).** `./scripts/preflight.sh` passed. Base for each comparison is fbf1c9ea74, `-n 4`.
+- `test_console_agent_storage_sources.py`: 22/22, no hang. On base it was 23 failed / 1 passed, with teardown hangs.
+- `test_console_first_send_survivor_native.py`: 7/8; `retains_changed_original_source` is waiting on the decision.
+- `test_console_ordinary_tree.py`: head 70 passed / 5 failed, no hang. Base: 41 passed / 33 failed, then hung. Every head failure also fails on base.
+- `test_console_skill_substitution.py`: 39/39 on both. `test_console_ordinary_tree_widening.py`: 17/17 on both. `test_unproven_tool_cleanup_run.py`: 11/11 on both.
+- `test_console_ordinary_receipt_native.py`, `test_console_ssh_custody.py` and `test_native_v2_mcp_events.py`: every node that failed only on head passes alone on head. The leftovers time out or hang on base too: receipt `[queued]` fails alone on both, and passive-context `[disk]` hangs alone on both.
+- `Tests/Architecture` (serial): 6 failed / 1415 passed. Three of the failures also fail on base (`test_reviewed_diagnostic_changes_are_metadata_only` and two in `test_timer_path_static_update_inventory.py`). The other three, `test_task_15103_review_ledger_*`, hit the 300 s timeout while three Architecture runs shared the machine. Re-run alone with a longer timeout, all three pass on both head and base (about 148 s each).
