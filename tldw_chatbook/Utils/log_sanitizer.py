@@ -553,50 +553,90 @@ CREDENTIAL_VALUE_PATTERNS = (
 )
 
 
-#: A compound credential label (TASK-41133) and its value: quoted whole, or
-#: bare up to whitespace, a quote, or a ``&``/``;``/``,`` that starts another
-#: field (or ends the text), so a value is never cut short (review r15tr-rev1:
-#: ``Tr0ub4dor&3``). Labels may repeat separators (pydantic's ``APP__X``).
-_CREDENTIAL_LABEL_ASSIGNMENT = re.compile(
+#: A compound credential label (TASK-41133). Labels may repeat separators
+#: (pydantic's ``APP__X``).
+_COMPOUND_LABEL = re.compile(
     r"""
     (?<![A-Za-z0-9_.-])
     (?P<label_quote>["']?)
     (?P<label>[A-Za-z0-9]+(?:[_.-]+[A-Za-z0-9]+)+)
     (?P=label_quote)
     [ \t]*[:=][ \t]*
-    (?:
-        (?P<quote>["'])(?P<quoted>[^"'\r\n]+)(?P=quote)
-      |
-        ["']?
-        (?P<bare>(?:[^\s"'&;,]|[&;,](?![\s"']|$|[A-Za-z0-9_.-]+[ \t]*[:=]))+)
-    )
     """,
     re.VERBOSE,
 )
-#: What a value under such a label must not look like: a path, reference or
-#: placeholder (``/etc/...``, ``./x``, ``~/x``, ``$VAR``, ``<token>``,
-#: ``{secret}``, ``%(x)s``, ``:symbol``, ``[credential redacted]``), a call,
-#: index or time (``b64encode(``, ``os.environ[``, ``10:00``), a date or
-#: number, or a dotted name (``config.provider2.key``).
-_NON_CREDENTIAL_START = ("/", ".", "~", "$", "<", "{", "%", ":", "*", "[", "(")
-_CALL_INDEX_OR_TIME = re.compile(r"[A-Za-z0-9_.-]+[(\[:]")
+#: A field delimiter that ends a bare value: followed by whitespace, a quote,
+#: the end, or another ``name=`` field. Any other ``&``/``;``/``,`` belongs to
+#: the value, so a value is never cut inside itself (``Tr0ub4dor&3``).
+_BARE_VALUE_CHARACTER = r"""(?:[^\s"'&;,]|[&;,](?![\s"']|$|[A-Za-z0-9_.-]+[ \t]*[:=]))"""
+#: The value after a label: quoted whole (any character but its own quote, so
+#: ``"Tr0ub4d0r's ..."`` and a passphrase with spaces), or bare. Values over
+#: 2048 characters are not read, which keeps a scan of adversarial text linear.
+_LABEL_VALUE = re.compile(
+    rf"""
+    (?P<quote>["'])(?P<quoted>(?:(?!(?P=quote))[^\r\n]){{1,2048}}+)(?P=quote)
+    |
+    ["']?(?P<bare>{_BARE_VALUE_CHARACTER}{{1,2048}}+)(?!{_BARE_VALUE_CHARACTER})
+    """,
+    re.VERBOSE,
+)
+#: What a value under such a label must not look like (review r15tr-rev1 and
+#: rev2): a relative or home path, a reference or placeholder (``$VAR``,
+#: ``<token>``, ``{secret}``, ``%(x)s``, ``:symbol``, ``****``,
+#: ``[credential redacted]``), a lowercase absolute path (``/etc/ssl/x``),
+#: a call or index (``b64encode(``, ``os.environ[``), a URL, a time or a
+#: date, a dotted name of short identifiers (``config.provider2.key``), a
+#: lowercase identifier (``client_secret_2``, ``token_v2``) or a run of
+#: capitalised words (``YourClientSecretHere``).
+_NON_CREDENTIAL_START = ("./", "../", "~/", "$", "<", "{", "%", ":", "*", "[", "(")
+_LOWERCASE_PATH = re.compile(r"(?:/[a-z0-9_.-]+)+/?")
+_CALL_OR_INDEX = re.compile(r"[A-Za-z0-9_.-]+[(\[]")
+_URL_SCHEME = re.compile(r"[a-z][a-z0-9+.-]*://", re.IGNORECASE)
+_TIME = re.compile(r"(?<!\d)\d{1,2}:\d{2}(?!\d)")
 _DATE_OR_NUMBER = re.compile(r"[0-9][0-9:./-]*(?:T[0-9:.]+Z?)?")
-_DOTTED_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+")
+_DOTTED_NAME = re.compile(
+    r"[A-Za-z_][A-Za-z0-9_]{0,19}(?:\.[A-Za-z_][A-Za-z0-9_]{0,19})+"
+)
+_LOWERCASE_IDENTIFIER = re.compile(r"[a-z]+[0-9]*(?:_(?:[a-z]+[0-9]*|[0-9]+))*")
+_WORD_RUN = re.compile(r"(?:[A-Z]?[a-z]+)(?:[A-Z][a-z]+)+")
+_WORD = re.compile(r"[A-Z]?[a-z]+")
 
 
-def _credential_shaped(value: str) -> bool:
+def _trim_bare_value(value: str) -> str:
+    """Drop a trailing full stop or unbalanced closing bracket from a bare value."""
+    while value:
+        last = value[-1]
+        opener = {")": "(", "]": "[", "}": "{"}.get(last)
+        if last == "." or (
+            opener is not None and value.count(last) > value.count(opener)
+        ):
+            value = value[:-1]
+            continue
+        return value
+    return value
+
+
+def _credential_shaped(value: str, *, quoted: bool) -> bool:
     """Whether a labelled value looks like a credential rather than text.
 
     It must hold a digit (6+ characters) or mixed case (16+); a ``-`` or
     ``/`` alone does not count, so ``your-client-secret`` stays readable.
-    An all-letter, one-case secret does too.
+    Only a quoted value may hold spaces (a passphrase).
     """
     if (
         value.startswith(_NON_CREDENTIAL_START)
-        or any(character.isspace() for character in value)
-        or _CALL_INDEX_OR_TIME.match(value)
+        or (not quoted and any(character.isspace() for character in value))
+        or _LOWERCASE_PATH.fullmatch(value)
+        or _CALL_OR_INDEX.match(value)
+        or _URL_SCHEME.match(value)
+        or _TIME.search(value)
         or _DATE_OR_NUMBER.fullmatch(value)
         or _DOTTED_NAME.fullmatch(value)
+        or _LOWERCASE_IDENTIFIER.fullmatch(value)
+        or (
+            _WORD_RUN.fullmatch(value)
+            and 3 * len(_WORD.findall(value)) <= len(value)
+        )
     ):
         return False
     if any(character.isdigit() for character in value):
@@ -615,7 +655,9 @@ def mask_credential_labels(text: str, marker: str = REDACTION_MARKER) -> str:
     ``refresh_token:``, ``X-Auth-Token:``); PII labels such as ``user_name=``
     are left alone. Logs mask every value under such a label; a shared Trace
     bundle, which must keep code and docs, masks only a credential-shaped
-    value, and always the whole of it (TASK-41133).
+    value, and always the whole of it (TASK-41133). A value that is not
+    masked is scanned again, so a label nested in it (a URL, JSON text, a
+    query string) is found too.
 
     Args:
         text: Text that may hold ``label=value`` or ``label: value`` pairs.
@@ -624,18 +666,27 @@ def mask_credential_labels(text: str, marker: str = REDACTION_MARKER) -> str:
     Returns:
         The text with those values replaced and everything else unchanged.
     """
-
-    def mask(match: re.Match[str]) -> str:
-        group = "bare" if match.group("quoted") is None else "quoted"
-        if not (
-            _is_credential_label(match.group("label"))
-            and _credential_shaped(match.group(group))
-        ):
-            return match.group()
-        start, end = match.span(group)
-        return text[match.start() : start] + marker + text[end : match.end()]
-
-    return _CREDENTIAL_LABEL_ASSIGNMENT.sub(mask, text)
+    parts: list[str] = []
+    position = 0
+    while (label := _COMPOUND_LABEL.search(text, position)) is not None:
+        value = (
+            _LABEL_VALUE.match(text, label.end())
+            if _is_credential_label(label.group("label"))
+            else None
+        )
+        if value is not None:
+            quoted = value.group("quoted") is not None
+            group = "quoted" if quoted else "bare"
+            candidate = value.group(group) if quoted else _trim_bare_value(value.group(group))
+            if _credential_shaped(candidate, quoted=quoted):
+                start = value.start(group)
+                parts.extend((text[position:start], marker))
+                position = start + len(candidate)
+                continue
+        parts.append(text[position : label.end()])
+        position = label.end()
+    parts.append(text[position:])
+    return "".join(parts)
 
 
 def _sanitize_diagnostic_text(text: str) -> str:

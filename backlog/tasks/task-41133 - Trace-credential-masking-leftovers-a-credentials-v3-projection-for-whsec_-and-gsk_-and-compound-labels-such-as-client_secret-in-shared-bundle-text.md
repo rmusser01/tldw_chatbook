@@ -56,7 +56,17 @@ The rule comment beside `_CREDENTIAL_PROJECTIONS` now names both of these, so th
 - User names: `user_name=`, `username:`.
 - Labels that are not credentials: `max_tokens`, `next_page_token`.
 
-Known limits: an all-letter, one-case value, a value under 6 characters, a purely numeric or date-shaped value, a dotted name and a value starting with `/`, `.`, `~` or `$` are all kept. Simple labels were left to the existing export rule, as the criterion is about compound ones.
+Known limits, after review r15tr-rev2. Under a compound credential label the bundle still keeps:
+- a value with a digit but under 6 characters (`hu3er`);
+- a value with no digit, unless it has mixed case and is 16+ characters (all-lowercase or all-uppercase letters, hex without digits, `AbCdEfGhIjKlMnO`);
+- a purely numeric or date-shaped value (`12345678`, `2024-01-01`), or one holding a time (`10:00`);
+- a value starting with `./`, `../`, `~/`, `$`, `<`, `{`, `%`, `:`, `*`, `[` or `(` (bcrypt `$2b$...`, `$ecret...`), or a lowercase absolute path (`/etc/ssl/x`);
+- a value that starts like a call or index (`P4ssw0rd(1)`), or like a URL;
+- a dotted name whose segments are identifiers of up to 20 characters;
+- a lowercase identifier whose segments end in digits (`hunter2`, `secret1`, `client_secret_2`), and a run of capitalised words (`YourClientSecretHere`);
+- a value over 2048 characters, a quoted value split by a line break, and JSON-escaped quotes (`\"client_secret\": ...`, which logs do not mask either).
+
+Simple labels (`api_key=`, `token:`) stay with the export's older rule, and `?key=` in a URL is not masked. A UUID under a credential label (`session_token=550e8400-...`) is masked, because a session token's value is a credential.
 
 **Review r15tr-rev1.** The first rule missed real values and over-masked look-alikes, and it could leave a partial mask (`db_password=Tr0ub4dor&3` came out as `[credential redacted]&3`).
 - **Value extent.** A value is now quoted whole, or bare up to whitespace, a quote, or a `&`/`;`/`,` that starts another field (`name=`) or ends the text. So a value is never cut inside itself. Labels may repeat separators (pydantic's `APP__CLIENT_SECRET`).
@@ -87,3 +97,26 @@ Known limits: an all-letter, one-case value, a value under 6 characters, a purel
   - 8 of the 11 fail the same way with the base source swapped in.
   - The other 3 pass at HEAD on their own: a bug-report child timing, a logging timing assertion (13.4 s against 2 s), and an sdist release check that timed out at 300 s.
   - Serial with lane flags: `Tests/Utils/test_log_sanitizer.py` 209 passed; the recovered-suites slice 310 passed.
+
+**Review r15tr-rev2.**
+- **Nested labels.** The rev1 rule took a value whole and never looked inside it, so `client_secret=...` inside another compound label's value (a JSON string, a URL fragment, a query string, a pipe list) went unmasked. `mask_credential_labels` now finds each label prefix and reads a value only for a credential label. When it does not mask, it continues right after the label, so any value is scanned again. That is the reviewer's recursion done iteratively, which stays clear of Python's recursion limit on chained labels.
+- **Key formats.** Now masked:
+  - Values starting with `/`, `.` or `~`. Only `./`, `../`, `~/` and lowercase `/seg/seg` paths are kept.
+  - Values with a `:`. Only times (`\d{1,2}:\d{2}`) and URLs are kept, so the Telegram `123456789:AAH...` token and `Tr0ub4dor:3x` are masked.
+  - Long dotted tokens (`ya29.<long>`).
+- **Quoted values** may hold the other quote and spaces, so `"Tr0ub4d0r's..."` and a quoted passphrase are masked whole.
+- **Bare values** drop an unbalanced trailing `)`/`]`/`}` and a trailing `.`, so the bracket or full stop is kept and only the secret is masked. Lowercase identifiers and capitalised word runs are kept.
+- **Quadratic regex (pre-existing).** The export's URL user-info rule (`\b[a-z][a-z0-9+.-]*://...`) took 121 s of CPU on a 200 KB dash-separated text. It gains `(?<![a-z0-9+.-])`, as `_URL_CREDENTIAL_USERINFO` has.
+- **Bounded reads.** A value over 2048 characters is not read (possessive `{1,2048}+`), so chained credential labels scan in linear time.
+- **Red first** (load 31-40): 67 nodes.
+  - 14 new `_LOG_SANITIZER_SHAPES` × 3 profiles: six nested texts from probe4/probe5, then base64 `/`, Azure `.`, `~`, Telegram, colon password, dotted token, apostrophe and passphrase.
+  - 7 look-alikes × 3 profiles.
+  - 3 bracket and full-stop cases.
+  - The 200 KB dash-separated timing case, which took about 2 min before failing.
+- **Negative controls**, each reverted:
+  - No rescan turns the 18 nested nodes red.
+  - No trimming turns the 3 bracket cases red.
+  - No identifier and word-run rules turn the 21 look-alike nodes red.
+  - No length cap turns the chained-credential-labels timing case red (7 min 47 s).
+- **Probes** (run.sh): probe3, probe4 and probe5 give the outcomes above. The adversarial inputs run in 0.05-0.12 s; the dash-label input took 121 s before. probe2 and probe_labels are unchanged from rev1. `probe_equiv.py` gives corpus 4097, 0 diffs, and the pattern tuples are equal, so logs are byte-identical to base.
+- The bracket and timing nodes are pinned in recovered-suites.

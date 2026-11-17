@@ -316,8 +316,11 @@ _CREDENTIAL_VALUE_RES = (
     # floor. The body takes no "_", so sk_live_mode_enabled stays readable.
     re.compile(r"\b[rs]k_(?:live|test)_[A-Za-z0-9]{8,}", re.IGNORECASE),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
+    # Review r15tr-rev2: the lookbehind keeps a match from starting inside a
+    # scheme-like run; without it a dash-separated run was quadratic (198 s
+    # on 200 KB), so a shared bundle could hang its import.
     re.compile(
-        r"\b[a-z][a-z0-9+.-]*://[^/\s:@]+:[^/\s@]+@",
+        r"\b(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*://[^/\s:@]+:[^/\s@]+@",
         re.IGNORECASE,
     ),
     re.compile(

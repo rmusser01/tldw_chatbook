@@ -6,6 +6,7 @@ import ast
 import copy
 import hashlib
 import json
+import time
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 
@@ -517,6 +518,60 @@ _LOG_SANITIZER_SHAPES = {
         "0g" + _FAKE,
     ),
     "label-pydantic-env": ("APP__CLIENT" + "_SECRET=" + _FAKE + "abc123", _FAKE + "abc123"),
+    # Review r15tr-rev2: a credential label inside another compound label's
+    # value (a URL, JSON text, a query string, a pipe list) is still masked.
+    "label-nested-url-fragment": (
+        "redirect" + "_url=https://app/cb#access" + "_token=ya29.a0Af-" + _FAKE
+        + "x12&token_type=Bearer",
+        "a0Af-" + _FAKE,
+    ),
+    "label-nested-json-url": (
+        '{"next' + '_page_url": "https://graph.example.com/v1/feed?access'
+        + "_token=EAAG" + _FAKE + 'x12&limit=25"}',
+        "EAAG" + _FAKE,
+    ),
+    "label-nested-quoted-query": (
+        '"query' + '_string": "client_id=x&client' + "_secret=GOCSPX-" + _FAKE + 'aB12"',
+        "GOCSPX-" + _FAKE,
+    ),
+    "label-nested-pipe": (
+        "request" + "_id=abc123|client" + "_secret=GOCSPX-" + _FAKE + "aB12",
+        "GOCSPX-" + _FAKE,
+    ),
+    "label-nested-error-description": (
+        '{"error' + '_description": "client' + "_secret=GOCSPX-" + _FAKE
+        + 'aB12 is invalid"}',
+        "GOCSPX-" + _FAKE,
+    ),
+    "label-nested-help-text": (
+        '{"help' + '_text": "Set refresh' + "_token: 1//0g" + _FAKE + 'x12 in config"}',
+        "1//0g" + _FAKE,
+    ),
+    # Review r15tr-rev2: key formats that start with "/", "." or "~", hold a
+    # ":", or are a long dotted token; a quoted value with "'" or spaces.
+    "label-base64-slash-start": (
+        "aws" + "_secret_access_key=/K7MDENGbPxRfiCY" + _FAKE + "Ab12+xyz",
+        "K7MDENGbPxRfiCY" + _FAKE,
+    ),
+    "label-azure-dot-start": ("client" + "_secret=.8Q~" + _FAKE + "ab12cd34ef", "8Q~" + _FAKE),
+    "label-tilde-start": ("client" + "_secret=~8Q" + _FAKE + "ab12cd34ef", "8Q" + _FAKE),
+    "label-telegram": (
+        "telegram" + "_api_token=123456789:AAH" + _FAKE + "dqTcvCH1vGWJxfSeof",
+        "AAH" + _FAKE,
+    ),
+    "label-colon-password": ("db" + "_password=Tr0ub4dor:3x" + _FAKE, "3x" + _FAKE),
+    "label-dotted-token": (
+        "access" + "_token=ya29.a0AfB_byC" + _FAKE + "abc123def",
+        "byC" + _FAKE,
+    ),
+    "label-apostrophe-quoted": (
+        "db" + "_password: \"Tr0ub4d0r's" + _FAKE + '"',
+        "s" + _FAKE,
+    ),
+    "label-passphrase-quoted": (
+        "db" + '_password: "correct horse 42 battery ' + _FAKE + '"',
+        "horse 42 battery",
+    ),
 }
 
 
@@ -619,7 +674,66 @@ _LABEL_LOOK_ALIKE_TEXTS = (
     "refresh" + "_token: :refresh_token_v2",
     "access" + "_token=None, max_retries=3",
     "client" + "_secret: https://vault.example.com/v1/oauth",
+    # Review r15tr-rev2: identifiers, keyword arguments, a sentence's full stop
+    # and word-run names.
+    "client" + "_secret=client_secret_2",
+    "access" + "_token=token_v2",
+    "fetch(refresh" + "_token=refresh_token2)",
+    "f(client" + "_secret=secret1, refresh" + "_token=tok_v2)",
+    "Set the refresh" + "_token: rotated2024.",
+    "client" + "_secret=ClientSecretFromVaultConfig",
+    "client" + "_secret=YourClientSecretHere",
 )
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        (
+            "{client" + "_secret: GOCSPX-" + _FAKE + "aB12}",
+            "{client" + "_secret: [credential redacted]}",
+        ),
+        (
+            "(db" + "_password=P@ss" + _FAKE + "1)",
+            "(db" + "_password=[credential redacted])",
+        ),
+        (
+            "Use refresh" + "_token: 1//0g" + _FAKE + "x12.",
+            "Use refresh" + "_token: [credential redacted].",
+        ),
+    ],
+    ids=("yaml-flow-brace", "parenthesised", "full-stop"),
+)
+def test_a_masked_label_value_keeps_its_closing_bracket_and_full_stop(
+    text: str, expected: str
+) -> None:
+    """Review r15tr-rev2: an unbalanced closing bracket or a sentence's full
+    stop after a value is text, not part of the secret."""
+    assert trajectory_export._credential_text(text) == (expected, True)
+
+
+#: Review r15tr-rev2: adversarial texts of about 200 KB. The export's URL
+#: user-info rule took 198 s on the dash-separated one (quadratic), so a shared
+#: bundle could hang its import.
+_ADVERSARIAL_TEXTS = {
+    "dash-label": "a" + "-a" * 100_000 + "=x1y2z3w4",
+    "chained-credential-labels": ("client" + "_secret=") * 15_000,
+    "chained-labels": "a_b=" * 50_000,
+    "commas": "a_b=x" + ",a" * 100_000,
+    "unclosed-quote": "client" + '_secret="' + "x" * 200_000,
+    "many-assignments": " a_b=c1d2e3f4" * 16_000,
+}
+
+
+@pytest.mark.parametrize("name", sorted(_ADVERSARIAL_TEXTS))
+def test_adversarial_bundle_text_is_masked_in_bounded_time(name: str) -> None:
+    """Measured as this thread's CPU time, so machine load does not count."""
+    text = _ADVERSARIAL_TEXTS[name]
+    started = time.thread_time()
+
+    trajectory_export._credential_text(text)
+
+    assert time.thread_time() - started < 2.0, name
 
 
 @pytest.mark.parametrize("profile", ["safe_summary", "redacted_diagnostic", "full_trace"])
