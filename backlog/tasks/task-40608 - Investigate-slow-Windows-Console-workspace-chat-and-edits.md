@@ -77,6 +77,8 @@ Task56's constructor extraction is implemented and passes independent source/qua
 
 Task62's measured preparation follow-up uses the [bounded sensitive database-path configuration-read amendment](../decisions/126-complete-local-backup-and-recovery.md#task-40608--bounded-sensitive-database-path-configuration-reads). ADR required: yes; amend ADR126. Group only the qualified original database-path getter cohort inside one original configuration operation, keeping every getter/native check, custom behavior and post-retirement memo rules. Verify causal admission counts and refusal/override controls before measuring the original accepted backend path again. The same UI integration and final sub-five journey requirements remain open.
 
+The [installed hook-member grouping amendment](../decisions/126-complete-local-backup-and-recovery.md#task-40608--grouped-installed-hook-permission-members) applies the existing CONFIG/MCP batch to the hook scope's four declared members. ADR required: yes; amend ADR126. Preserve every member check and original reader, verify companion refusal and retained ownership on failed cleanup, then measure the actual backend without profiling alongside the container-reader change.
+
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes

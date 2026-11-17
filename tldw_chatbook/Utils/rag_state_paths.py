@@ -78,3 +78,18 @@ def default_rag_profiles_dir() -> Path:
     from .. import config
 
     return _resolve_rag_profiles_dir(config.get_user_data_dir)
+
+
+# Definition-time inputs only; no path result or storage authority is retained.
+from .definition_records import capture_definitions as _capture_definitions
+
+_SENSITIVE_CONTAINER_SOURCE = (
+    globals(), os, Path,
+    _capture_definitions(tuple(
+        (globals(), name, globals()[name]) for name in (
+            "_explicit_rag_setting", "_cleaned_path_setting",
+            "_resolve_chroma_persist_directory", "_resolve_rag_profiles_dir",
+            "default_chroma_persist_directory", "default_rag_profiles_dir",
+        )
+    )),
+)

@@ -1446,7 +1446,9 @@ def scope(
                 ))
                 state.holds.append(storage._holds.get(state.leases[-1]._key))
             attempt.check()
-        elif route in config_files.ROUTES or (route == mcp_sources.ROUTE and installed):
+        elif route in config_files.ROUTES or (
+            route in {mcp_sources.ROUTE, "hook_permissions"} and installed
+        ):
             # All declared members must pass the same ordinary scope checks.
             # Check every member together rather than reopening its control tree
             # once per lock, backup and temporary file on each guarded read.

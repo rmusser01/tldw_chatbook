@@ -589,6 +589,63 @@ def _direct_child_rule_container_dirs() -> tuple[Path, ...]:
         An accessor that raises is skipped rather than failing the whole
         check, as elsewhere in this module.
     """
+    import sys
+
+    from .. import config as _config
+    from . import rag_state_paths as rag
+    from .definition_records import definitions_current
+
+    source = getattr(_config, "_SENSITIVE_DB_PATH_SOURCE", None)
+    rag_source = getattr(rag, "_SENSITIVE_CONTAINER_SOURCE", None)
+    if source is None or rag_source is None:
+        return _collect_container_dirs()
+    owner, life, paths, _names, definitions = source
+    namespace, rag_os, rag_path, rag_definitions = rag_source
+    package = sys.modules["tldw_chatbook"]
+    operation = life.operation
+
+    def current():
+        return (
+            _config is owner
+            and sys.modules.get("tldw_chatbook") is package
+            and vars(package).get("config") is owner
+            and sys.modules.get("tldw_chatbook.config") is owner
+            and _config._SENSITIVE_DB_PATH_SOURCE is source
+            and _config._config_participants is life
+            and sys.modules.get(life.__name__) is life
+            and _config.profile_paths is paths
+            and life.profile_paths is paths
+            and sys.modules.get(paths.__name__) is paths
+            and sys.modules.get(rag.__name__) is rag
+            and vars(rag) is namespace
+            and rag._SENSITIVE_CONTAINER_SOURCE is rag_source
+            and rag.os is rag_os
+            and rag.Path is rag_path
+            and definitions_current(definitions)
+            and definitions_current(rag_definitions)
+            and all(function is original and function.__code__ is code
+                    for function, (original, code) in zip(
+                        (_direct_child_rule_container_dirs, _collect_container_dirs, _debug),
+                        _SENSITIVE_CONTAINER_ORIGINAL, strict=True,
+                    ))
+        )
+
+    if not current():
+        return _collect_container_dirs()
+
+    def require_current():
+        if not current():
+            raise life.bootstrap.RecoveryRequired("sensitive_container_sources_changed")
+
+    with operation(_config):
+        require_current()
+        result = _collect_container_dirs(require_current)
+    require_current()
+    return result
+
+
+def _collect_container_dirs(check=None) -> tuple[Path, ...]:
+    """Run every original reader, preserving additive accessor failures."""
     from .. import config as _config
     from .rag_state_paths import (
         default_chroma_persist_directory,
@@ -597,27 +654,50 @@ def _direct_child_rule_container_dirs() -> tuple[Path, ...]:
 
     resolved: list[Path] = []
 
+    if check is not None:
+        check()
     try:
         resolved.append(_config.get_user_data_dir())
     except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
+        if check is not None:
+            check()
         _debug(f"sensitive_paths: could not resolve user data dir: {exc}")
 
+    if check is not None:
+        check()
     try:
         resolved.append(_config._get_effective_config_path().parent)
     except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
+        if check is not None:
+            check()
         _debug(f"sensitive_paths: could not resolve effective config dir: {exc}")
 
+    if check is not None:
+        check()
     try:
         resolved.append(default_chroma_persist_directory())
     except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
+        if check is not None:
+            check()
         _debug(f"sensitive_paths: could not resolve chroma persist dir: {exc}")
 
+    if check is not None:
+        check()
     try:
         resolved.append(default_rag_profiles_dir())
     except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
+        if check is not None:
+            check()
         _debug(f"sensitive_paths: could not resolve rag profiles dir: {exc}")
 
     return tuple(resolved)
+
+
+_SENSITIVE_CONTAINER_ORIGINAL = tuple(
+    (function, function.__code__) for function in (
+        _direct_child_rule_container_dirs, _collect_container_dirs, _debug,
+    )
+)
 
 
 def _db_sidecar_paths(db_path: Path) -> tuple[Path, ...]:
