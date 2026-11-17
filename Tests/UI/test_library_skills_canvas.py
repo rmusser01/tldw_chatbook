@@ -1654,6 +1654,7 @@ class _FailOnceSkillsScopeService(_FakeSkillsScopeService):
         return await super().list_skills(**kwargs)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_skills_retry_recovers_transient_list_failure():
     """`handle_library_skills_retry` had ZERO coverage anywhere in the four
@@ -1683,6 +1684,12 @@ async def test_library_skills_retry_recovers_transient_list_failure():
                 break
         assert isinstance(retry_button, Button)
 
+        status = str(screen.query_one("#library-skills-pager-status", Static).content)
+        assert "Couldn't load Skills. Check the local Library and retry." in status
+        assert "temporary skills list outage" not in status
+        assert not screen.query(".library-skill-row")
+        assert host.seen_routes == []
+
         retry_button.press()
         for _ in range(30):
             await pilot.pause()
@@ -1690,6 +1697,8 @@ async def test_library_skills_retry_recovers_transient_list_failure():
                 break
         assert screen.query_one("#library-skill-row-code-review", Button)
         assert not screen.query("#library-skills-retry")
+        assert _active_library_screen(host) is screen
+        assert host.seen_routes == []
 
 
 @pytest.mark.asyncio

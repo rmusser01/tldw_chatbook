@@ -140,6 +140,11 @@ def test_core_browser_collection_installs_required_chromium_before_pytest() -> N
     assert "continue-on-error" not in block
 
 
+def test_comprehensive_core_installs_web_test_dependencies() -> None:
+    block = _core_tests_job_block()
+    assert 'pip install -e ".[embeddings_rag,websearch,chunker,web]"' in block
+
+
 def test_pytest_ui_marker_is_registered_for_ci_marker_selection() -> None:
     pyproject = (PROJECT_ROOT / "pyproject.toml").read_text()
 
