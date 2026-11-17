@@ -1,4 +1,6 @@
-"""The Linux observation borrows setup headroom without losing final checks."""
+"""Every persona rollback child keeps its own idle check and backstop
+(TASK-41115): a slow setup no longer shrinks or cancels the later
+observation, and the final checks still run."""
 
 # Only instantiate TimeoutExpired; no process is started.
 import subprocess  # nosec B404
@@ -39,42 +41,49 @@ def _observe(monkeypatch, platform, elapsed, *, missing=None, failure=None):
     return calls
 
 
-@pytest.mark.parametrize("platform,elapsed,later", [
-    ("linux", 0, 650), ("linux", 50, 600), ("linux", 500, 150),
-    ("linux", 610, 40), ("darwin", 50, 600), ("win32", 50, 900),
+@pytest.mark.parametrize("platform,elapsed", [
+    ("linux", 0), ("linux", 610), ("linux", 3000), ("darwin", 50), ("win32", 50),
 ])
-def test_later_observation_spends_only_remaining_setup_headroom(
-    tmp_path, monkeypatch, platform, elapsed, later
+def test_each_child_keeps_its_idle_check_and_backstop(
+    tmp_path, monkeypatch, platform, elapsed
 ):
+    """However long setup took, on every platform (elapsed 610 s left the old
+    shared 860 s budget 40 s for the later child; 3000 s refused it)."""
     calls = _observe(monkeypatch, platform, elapsed)
     workflow.test_native_nested_persona_pack_survives_reopen_and_later_rollback(tmp_path)
     idle = workflow._HANG_SECONDS
-    # TASK-40306/41115: the fixture's children and the later child fail only
-    # once idle, under their caps; the final observations keep fixed budgets.
     assert calls == [
         ("seed-persona", 600, idle),
         ("seed-persona", 600, idle),
         ("persona-capture", 600, idle),
         ("persona-replacement", 600, idle),
         ("persona-reopen", 600, idle),
-        ("persona-later", later, idle),
-        ("persona-restored-reopen", 300 if platform == "win32" else 90, None),
-        ("persona-restored-capture", 480 if platform == "win32" else 120, None),
+        ("persona-later", 900, idle),
+        ("persona-restored-reopen", 300, idle),
+        ("persona-restored-capture", 480, idle),
     ]
 
 
-@pytest.mark.parametrize("elapsed", [650, 651])
-def test_exhausted_observation_budget_starts_no_later_child(tmp_path, monkeypatch, elapsed):
-    calls = _observe(monkeypatch, "linux", elapsed)
-    with pytest.raises(TimeoutError, match="persona_rollback_test_budget_exhausted"):
-        workflow.test_native_nested_persona_pack_survives_reopen_and_later_rollback(tmp_path)
-    assert len(calls) == 5
+def test_the_test_timeout_covers_every_child_backstop():
+    """The pytest mark must outlast the children's summed backstops, or it
+    would cut a slow but working run short instead of the idle checks."""
+    mark = next(
+        mark
+        for mark in workflow.test_native_nested_persona_pack_survives_reopen_and_later_rollback.pytestmark
+        if mark.name == "timeout"
+    )
+    backstops = 5 * 600 + (
+        workflow._LATER_BACKSTOP
+        + workflow._RESTORED_REOPEN_BACKSTOP
+        + workflow._RESTORED_CAPTURE_BACKSTOP
+    )
+    assert mark.args[0] > backstops
 
 
 @pytest.mark.parametrize("missing", [
     "persona-later", "persona-restored-reopen", "persona-restored-capture",
 ])
-def test_redistribution_still_requires_every_native_completion_marker(
+def test_every_native_completion_marker_is_still_required(
     tmp_path, monkeypatch, missing
 ):
     calls = _observe(monkeypatch, "linux", 50, missing=missing)
@@ -89,4 +98,4 @@ def test_later_child_timeout_is_preserved_without_running_final_checks(tmp_path,
     with pytest.raises(subprocess.TimeoutExpired) as caught:
         workflow.test_native_nested_persona_pack_survives_reopen_and_later_rollback(tmp_path)
     assert caught.value is original
-    assert calls[-1] == ("persona-later", 600, workflow._HANG_SECONDS)
+    assert calls[-1] == ("persona-later", 900, workflow._HANG_SECONDS)

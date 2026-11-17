@@ -4,7 +4,7 @@ title: "The persona later-rollback test's reopen child fails 'database is locked
 status: In Progress
 assignee: ['@claude']
 created_date: 2026-11-15 02:20
-updated_date: 2026-11-17 04:28
+updated_date: 2026-11-17 04:59
 labels:
 - follow-up
 - backup
@@ -79,3 +79,21 @@ Two lanes of `twenty.sh` (the whole file, `-n 4`, 1-minute load sampled every 30
 | B-1 | 918 | 38.3-67.5 (56.9) | 1 failed, 22 passed |
 
 In both runs the one failure was the main test, `test_native_nested_persona_pack_survives_reopen_and_later_rollback`: its `persona-later` child reached the cap the test computes from its fixed 860 s budget (`timed out after 299 seconds`) while still busy. Setup had used the rest of the 860 s. No reopen child failed: the 5 fixture builds in each run (the module fixture on 4 workers, plus the main test's own) all passed `add_note`. The runs were stopped after the first pair because the budget fails the file at this load whatever the lock does. AC#2 is not met: it needs the main test's 860 s budget (and its 900 s pytest timeout) made load-tolerant, as TASK-40306 did for the child budgets. `test_persona_observation_budget.py` pins that arithmetic and would change with it.
+
+### Coordinator ruling on AC#2 (2026-11-16): load-tolerant main test budget
+
+**Budget.** `test_native_nested_persona_pack_survives_reopen_and_later_rollback` no longer shares one fixed 860 s budget, which shrank the later child to whatever setup left and refused it once setup passed 650 s. Each child after the fixture now fails only once idle (`_wait_while_busy`, 60 s), under a wall backstop about twice its loaded run:
+- later child: 900 s (it outlasted the 299 s left over, while busy, at load 38-68);
+- restored reopen: 300 s;
+- restored capture: 480 s (the capture child outlasted a fixed 120 s at load 83-106).
+
+The fixture's five children were already 600 s each. The test's timeout mark is 4800 s on every platform, above the 4680 s sum of backstops; Windows had 4200 s before. `test_persona_observation_budget.py` now pins:
+- each child's backstop and idle check whatever setup took (elapsed 0, 610 and 3000 s, three platforms);
+- that the mark covers the summed backstops;
+- the completion markers and the preserved later timeout.
+
+With the old fixed budget restored, 7 of its 10 tests fail: the call pins (`('persona-later', 40.0, 60)` against 900), `TimeoutError: persona_rollback_test_budget_exhausted` at elapsed 3000, and the later-timeout pin (`('persona-later', 600.0, 60)`). They pass with the change.
+
+**Loaded run (`-n 4`, whole file):** 23 passed in 1040 s, 1-minute load 39.8-69.2 (mean 57.7 over 34 samples), 2026-11-16 20:40-20:58.
+
+**AC#2 stays open.** Owner/coordinator ruling: no local 20-run now. It closes on evidence from 20 passing runs of this file in the `backup-owner-suites-dev` push-to-dev job after merge (TASK-40307's job, which runs this file whole), or from a quiet-window local run (`$FU/r15ac/twenty.sh`).

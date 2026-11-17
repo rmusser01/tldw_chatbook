@@ -1,7 +1,6 @@
 """Native rollback retires only a committed incoming nested Persona pack."""
 
 import sys
-import time
 
 import pytest
 
@@ -369,35 +368,36 @@ def _prepare_native(tmp_path):
     return tmp_path / "target"
 
 
-# Windows child ceilings reuse existing seed/F9/later/open observations;
-# The enclosing bounds exceed all seed/capture/recovery/reopen child ceilings.
-@pytest.mark.timeout(4200 if sys.platform == "win32" else 900)
+#: TASK-41115: each child after the fixture fails only once idle, under a wall
+#: backstop about twice its loaded run. At load 38-68 the later child outlasted
+#: the 299 s left of the old shared 860 s budget while busy, and the capture
+#: child its fixed 120 s at load 83-106 (2026-11-16).
+_LATER_BACKSTOP, _RESTORED_REOPEN_BACKSTOP, _RESTORED_CAPTURE_BACKSTOP = 900, 300, 480
+
+
+# Above the sum of every child backstop: the fixture's five (600 s each) and
+# the three below.
+@pytest.mark.timeout(4800)
 def test_native_nested_persona_pack_survives_reopen_and_later_rollback(tmp_path):
-    started = time.monotonic()
     home = _prepare_native(tmp_path)
-    later_timeout = 900
-    if sys.platform != "win32":
-        # Reuse unspent setup allowance within the original 860s child budget;
-        # reserve the final 90s reopen and 120s capture observations.
-        later_timeout = started + 860 - time.monotonic() - (90 + 120)
-        if later_timeout <= 0:
-            raise TimeoutError("persona_rollback_test_budget_exhausted")
     output = _child(
-        home, _LATER, "persona-later", timeout=later_timeout, idle=_HANG_SECONDS
+        home, _LATER, "persona-later", timeout=_LATER_BACKSTOP, idle=_HANG_SECONDS
     )
     assert "NATIVE_NESTED_PERSONA_LATER_COMPLETE" in output
     output = _child(
         home,
         _RESTORED_REOPEN,
         "persona-restored-reopen",
-        timeout=300 if sys.platform == "win32" else 90,
+        timeout=_RESTORED_REOPEN_BACKSTOP,
+        idle=_HANG_SECONDS,
     )
     assert "NATIVE_PERSONA_ORDINARY_RESTORED_REOPEN_COMPLETE" in output
     output = _child(
         home,
         _CAPTURE.replace("incoming.tldw-backup.zip", "after-later.tldw-backup.zip"),
         "persona-restored-capture",
-        timeout=480 if sys.platform == "win32" else 120,
+        timeout=_RESTORED_CAPTURE_BACKSTOP,
+        idle=_HANG_SECONDS,
     )
     assert "NATIVE_PERSONA_CAPTURE_COMPLETE" in output
 
