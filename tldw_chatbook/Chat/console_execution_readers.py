@@ -7,6 +7,7 @@ expose published values and one explicitly requested original history read.
 from __future__ import annotations
 
 import asyncio
+import base64
 import inspect
 from dataclasses import dataclass
 from types import FunctionType, MethodType
@@ -104,6 +105,36 @@ class ConsoleStoreReader:
 
     def messages_for_session(self, session_id):
         return self._current().messages_for_session(session_id)
+
+    def pending_attachments(self, session_id):
+        """Return detached staged values only for this publication's active row."""
+        from .attachment_core import PendingAttachment
+        from .console_execution_protocol import _PROJECTED_INPUTS, _detach
+
+        view = self._current()
+        row = view.session(session_id)
+        inputs = _detach(self._client.pressed_inputs, "pressed_inputs", 0, set())
+        _PROJECTED_INPUTS(inputs, "pressed_inputs")
+        if (
+            view.active_session_id != session_id
+            or inputs["session_id"] != session_id
+            or inputs["incarnation_id"] != row.incarnation_id
+            or inputs["settings_revision"] != row.settings_revision
+            or tuple(item["attachment_id"] for item in inputs["attachments"])
+            != inputs["attachment_ids"]
+        ):
+            raise ConsoleProjectionUnavailable("Console attachment publication changed")
+        return [
+            PendingAttachment(
+                attachment_id=item["attachment_id"], file_path=item["file_path"],
+                display_name=item["display_name"], file_type=item["file_type"],
+                insert_mode=item["insert_mode"],
+                data=None if item["data"] is None else base64.b64decode(item["data"], validate=True),
+                mime_type=item["mime_type"], text_content=item["text_content"],
+                original_size=item["original_size"], processed_size=item["processed_size"],
+            )
+            for item in inputs["attachments"]
+        ]
 
     def session_fingerprint(self, session_id):
         return self._current().session_fingerprint(session_id)
