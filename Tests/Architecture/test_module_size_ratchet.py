@@ -84,7 +84,7 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Chat/console_agent_reply.py": 1164,
     "tldw_chatbook/Chat/console_settings_persistence.py": 788,
     "tldw_chatbook/Chat/console_memory_banner.py": 207,
-    "tldw_chatbook/Chat/console_trace_maintenance_runtime.py": 193,
+    "tldw_chatbook/Chat/console_trace_maintenance_runtime.py": 185,
     "tldw_chatbook/DB/prompt_export.py": 241,
     # PR3346 pre-merge review: exact existing save and screen-derivation owners.
     "tldw_chatbook/UI/Library_Modules/prompt_save_ack.py": 548,

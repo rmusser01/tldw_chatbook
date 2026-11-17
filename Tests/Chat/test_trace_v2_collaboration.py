@@ -495,7 +495,7 @@ _LOG_SANITIZER_SHAPES = {
     # TASK-41133: compound labels logs mask, with values no token rule knows
     # (each label split, so no committed line holds a whole assignment).
     "label-client-secret-query": (
-        "?client_id=app&client" + "_secret=GOCSPX-" + _FAKE + "&grant_type=code",
+        "?client_id=app&client" + "_secret=GOCSPX-" + _FAKE + "a1B2&grant_type=code",
         "GOCSPX-" + _FAKE,
     ),
     "label-refresh-token-yaml": ("refresh" + "_token: 1//0g" + _FAKE, "1//0g" + _FAKE),
@@ -503,6 +503,20 @@ _LOG_SANITIZER_SHAPES = {
     "label-header": ("X-Auth" + "-Token: " + _FAKE + "5150", _FAKE + "5150"),
     "label-env": ("AWS_SECRET" + "_ACCESS_KEY=wJalr/" + _FAKE, "wJalr/" + _FAKE),
     "label-password": ("db" + "_password=hunter2" + _FAKE, "hunter2" + _FAKE),
+    # Review r15tr-rev1: punctuation, URL encoding and pydantic's ``__`` must be
+    # masked whole, with no tail left after a ``&`` or ``%`` inside the value.
+    "label-password-punct": ("db" + "_password=P@ssw0rd!" + _FAKE, "P@ssw0rd!" + _FAKE),
+    "label-password-json-punct": (
+        '{"db' + '_password": "Tr0ub4dor&3' + _FAKE + '"}',
+        "Tr0ub4dor&3" + _FAKE,
+    ),
+    "label-password-amp-tail": ("db" + "_password=Tr0ub4dor&3" + _FAKE, "&3" + _FAKE),
+    "label-password-pct-tail": ("db" + "_password=abcdefgh1%2F" + _FAKE, "%2F" + _FAKE),
+    "label-refresh-urlencoded": (
+        "grant_type=refresh_token&client_id=x&refresh" + "_token=1%2F%2F0g" + _FAKE,
+        "0g" + _FAKE,
+    ),
+    "label-pydantic-env": ("APP__CLIENT" + "_SECRET=" + _FAKE + "abc123", _FAKE + "abc123"),
 }
 
 
@@ -583,6 +597,52 @@ _LOOK_ALIKE_TEXTS = (
     "max_tokens=4096, next_page_token=CAESBggDEAEYAQ",
     "client_secret=[credential redacted]",
 )
+
+
+#: Review r15tr-rev1: values under credential labels that are not credentials:
+#: placeholders, a Kubernetes secret name, paths, code, dates, references.
+#: Several also name a credential word a payload key may not hold, so their
+#: test puts them in values only.
+_LABEL_LOOK_ALIKE_TEXTS = (
+    "client" + "_secret=your-client-secret",
+    "refresh" + "_token: YOUR-REFRESH-TOKEN",
+    "client" + "_secret=xxxxxxxx-xxxx",
+    "client" + "_secret=oauth-client-secret",
+    "private" + "_key=/etc/ssl/private/server.key",
+    "client" + "_secret=/run/secrets/client_secret",
+    "private" + "_key=./keys/id_rsa2",
+    "secret" + "_key=base64.b64encode(os.urandom(32))",
+    "db" + "_password=hashlib.sha256(raw).hexdigest()",
+    "the secret" + "_key: 2024-01-01 rotated",
+    "refresh" + "_token: 2024-11-16T10:00:00Z expiry",
+    "client" + "_secret=$CLIENT_SECRET_2",
+    "refresh" + "_token: :refresh_token_v2",
+    "access" + "_token=None, max_retries=3",
+    "client" + "_secret: https://vault.example.com/v1/oauth",
+)
+
+
+@pytest.mark.parametrize("profile", ["safe_summary", "redacted_diagnostic", "full_trace"])
+@pytest.mark.parametrize("text", _LABEL_LOOK_ALIKE_TEXTS)
+def test_label_look_alikes_survive_a_shared_bundle_and_an_older_one_imports(
+    text: str, profile: str
+) -> None:
+    """Review r15tr-rev1: the compound-label rule masked these, and an older
+    bundle holding one (an OAuth how-to) was refused on import."""
+    assert trajectory_export._credential_text(text) == (text, False)
+
+    snapshot = _snapshot(
+        _record(content_preview=f"See {text}", payload={"result": f"run {text}"})
+    )
+    payload = _build(snapshot, profile, confirm_full=profile == "full_trace")
+
+    assert not any(
+        item["reason"] in {"credential", "credential_key"}
+        for item in payload["manifest"]["redaction_provenance"]
+    )
+    older = _build(_snapshot())
+    older["events"][0]["payload"]["result"] = text
+    trajectory_import.load_imported_trace(_resign(older))
 
 
 @pytest.mark.parametrize("profile", ["safe_summary", "redacted_diagnostic", "full_trace"])

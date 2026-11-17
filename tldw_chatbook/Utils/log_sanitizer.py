@@ -452,10 +452,11 @@ def trace_credential_key_spans(text: str) -> list[tuple[int, int]]:
 
 
 def sanitize_trace_credentials_v2(text: str) -> str:
-    """The credentials-v2 trace projection: v1 plus bare `sk_`/`rk_` keys.
+    """The stored credentials-v2 trace projection: v1 plus bare `sk_`/`rk_` keys.
 
-    New traces are stored under it, and every read, export and share of a
-    stored trace re-applies it whatever the trace's version (TASK-39123).
+    Traces stored between TASK-39123 and TASK-41133 carry it. Readers that
+    compare with or index into such a trace ask for it, then re-apply the
+    current projection.
 
     Args:
         text: The string to sanitize.
@@ -552,25 +553,59 @@ CREDENTIAL_VALUE_PATTERNS = (
 )
 
 
-#: A compound credential label (TASK-41133) and a credential-shaped value:
-#: one run of 8 or more token characters holding a digit or one of
-#: ``~+/=-``, bare or quoted whole. Code (``client_secret=client_secret``,
-#: ``os.environ[...]``), placeholders (``<token>``, ``${SECRET}``) and prose
-#: stay readable; an all-letter secret does too.
+#: A compound credential label (TASK-41133) and its value: quoted whole, or
+#: bare up to whitespace, a quote, or a ``&``/``;``/``,`` that starts another
+#: field (or ends the text), so a value is never cut short (review r15tr-rev1:
+#: ``Tr0ub4dor&3``). Labels may repeat separators (pydantic's ``APP__X``).
 _CREDENTIAL_LABEL_ASSIGNMENT = re.compile(
     r"""
     (?<![A-Za-z0-9_.-])
     (?P<label_quote>["']?)
-    (?P<label>[A-Za-z0-9]+(?:[_.-][A-Za-z0-9]+)+)
+    (?P<label>[A-Za-z0-9]+(?:[_.-]+[A-Za-z0-9]+)+)
     (?P=label_quote)
     [ \t]*[:=][ \t]*
-    (?P<value_quote>["']?)
-    (?P<value>(?=[A-Za-z0-9_.~+/=-]*[0-9~+/=-])[A-Za-z0-9_.~+/=-]{8,})
-    (?P=value_quote)
-    (?![A-Za-z0-9_.~+/=-])
+    (?:
+        (?P<quote>["'])(?P<quoted>[^"'\r\n]+)(?P=quote)
+      |
+        ["']?
+        (?P<bare>(?:[^\s"'&;,]|[&;,](?![\s"']|$|[A-Za-z0-9_.-]+[ \t]*[:=]))+)
+    )
     """,
     re.VERBOSE,
 )
+#: What a value under such a label must not look like: a path, reference or
+#: placeholder (``/etc/...``, ``./x``, ``~/x``, ``$VAR``, ``<token>``,
+#: ``{secret}``, ``%(x)s``, ``:symbol``, ``[credential redacted]``), a call,
+#: index or time (``b64encode(``, ``os.environ[``, ``10:00``), a date or
+#: number, or a dotted name (``config.provider2.key``).
+_NON_CREDENTIAL_START = ("/", ".", "~", "$", "<", "{", "%", ":", "*", "[", "(")
+_CALL_INDEX_OR_TIME = re.compile(r"[A-Za-z0-9_.-]+[(\[:]")
+_DATE_OR_NUMBER = re.compile(r"[0-9][0-9:./-]*(?:T[0-9:.]+Z?)?")
+_DOTTED_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+")
+
+
+def _credential_shaped(value: str) -> bool:
+    """Whether a labelled value looks like a credential rather than text.
+
+    It must hold a digit (6+ characters) or mixed case (16+); a ``-`` or
+    ``/`` alone does not count, so ``your-client-secret`` stays readable.
+    An all-letter, one-case secret does too.
+    """
+    if (
+        value.startswith(_NON_CREDENTIAL_START)
+        or any(character.isspace() for character in value)
+        or _CALL_INDEX_OR_TIME.match(value)
+        or _DATE_OR_NUMBER.fullmatch(value)
+        or _DOTTED_NAME.fullmatch(value)
+    ):
+        return False
+    if any(character.isdigit() for character in value):
+        return len(value) >= 6
+    return (
+        len(value) >= 16
+        and any(character.islower() for character in value)
+        and any(character.isupper() for character in value)
+    )
 
 
 def mask_credential_labels(text: str, marker: str = REDACTION_MARKER) -> str:
@@ -579,8 +614,8 @@ def mask_credential_labels(text: str, marker: str = REDACTION_MARKER) -> str:
     The labels are the ones diagnostics mask (``client_secret=``,
     ``refresh_token:``, ``X-Auth-Token:``); PII labels such as ``user_name=``
     are left alone. Logs mask every value under such a label; a shared Trace
-    bundle, which must keep code and docs, uses this credential-shaped form
-    (TASK-41133).
+    bundle, which must keep code and docs, masks only a credential-shaped
+    value, and always the whole of it (TASK-41133).
 
     Args:
         text: Text that may hold ``label=value`` or ``label: value`` pairs.
@@ -591,9 +626,13 @@ def mask_credential_labels(text: str, marker: str = REDACTION_MARKER) -> str:
     """
 
     def mask(match: re.Match[str]) -> str:
-        if not _is_credential_label(match.group("label")):
+        group = "bare" if match.group("quoted") is None else "quoted"
+        if not (
+            _is_credential_label(match.group("label"))
+            and _credential_shaped(match.group(group))
+        ):
             return match.group()
-        start, end = match.span("value")
+        start, end = match.span(group)
         return text[match.start() : start] + marker + text[end : match.end()]
 
     return _CREDENTIAL_LABEL_ASSIGNMENT.sub(mask, text)

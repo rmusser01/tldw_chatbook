@@ -11,7 +11,7 @@ from types import ModuleType, SimpleNamespace
 import pytest
 from loguru import logger
 
-from Tests.Chat.test_console_trace_maintenance_parking import fake_maintenance_module
+from Tests.Chat.test_console_trace_maintenance_parking import _until, fake_maintenance_module
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_exchange_capture import (
     CaptureDetail,
@@ -1083,7 +1083,8 @@ async def test_runtime_starts_legacy_maintenance_only_after_ui_ready(
     app._ui_ready = True
     await asyncio.sleep(0)
     assert started == []
-    await asyncio.sleep(0.07)
+    # TASK-41134: poll a deadline; a fixed 70 ms failed under load.
+    await _until(lambda: started)
     assert len(started) == 1
     assert provider_states == [True]
 
@@ -1288,7 +1289,8 @@ async def test_runtime_retries_legacy_maintenance_after_unexpected_failure(
     )
 
     runtime._schedule_legacy_trace_maintenance(object(), object)
-    await asyncio.sleep(0.08)
+    # TASK-41134: poll a deadline; a fixed 80 ms failed under load.
+    await _until(lambda: attempts >= 2)
 
     assert attempts >= 2
     await runtime.dispose()
