@@ -70,6 +70,11 @@ def provider_resolution(
 
     if visible_copy is None:
         visible_copy = "" if ready else DEFAULT_BLOCKED_COPY
+    # A child run reads these directly (`console_streaming_request`'s
+    # sub-agent continuation target, bf1886c95c); the real resolution
+    # defaults both to None.
+    extra.setdefault("continuation_protocol", None)
+    extra.setdefault("api_mode", None)
     resolution = SimpleNamespace(
         ready=ready,
         provider=provider,

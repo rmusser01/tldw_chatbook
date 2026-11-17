@@ -122,7 +122,9 @@ async def exercise():
         threading.setprofile_all_threads(observe_publication)
     turn_id = runtime.accept_received_intent(intent, _configuration_preparation=source)
     task = runtime._turn_custody[turn_id].task
-    async with asyncio.timeout(12):
+    # Hang detectors, not speed limits: four private apps at load 75-90 need
+    # 40-70 s for the whole journey, most of it before the child (TASK-41316).
+    async with asyncio.timeout(60):
         while not child_entered.is_set() and not task.done():
             await asyncio.sleep(.01)
     assert child_entered.is_set(), task.result() if task.done() else 'child did not enter'
@@ -245,9 +247,9 @@ async def exercise():
 try:
     with user_fixture_default_owner():
         selected = Path(os.environ['TLDW_CONFIG_PATH']).absolute()
-        selected.write_text('[general]\nusers_name="fix1"\n[first_run]\nsetup_completed=true\n[_first_run]\nsetup_completed=true\n[splash_screen]\nenabled=false\n[chat_defaults]\nprovider="llama_cpp"\nmodel="m"\n', encoding='utf-8')
+        selected.write_text('[general]\nusers_name="fix1"\n[first_run]\nsetup_completed=true\n[_first_run]\nsetup_completed=true\n[splash_screen]\nenabled=false\n[chat_defaults]\nprovider="llama_cpp"\nmodel="m"\n[tools]\nfull_agent_tools_enabled=true\n', encoding='utf-8')
         selected.chmod(0o600)
-        asyncio.run(asyncio.wait_for(exercise(), timeout=35))
+        asyncio.run(asyncio.wait_for(exercise(), timeout=120))
 except BaseException:
     (Path(os.environ['XDG_DATA_HOME']) / 'subagent-hook-release').touch()
     traceback.print_exc(file=sys.__stderr__)
@@ -257,15 +259,15 @@ except BaseException:
 
 
 def test_runtime_first_send_keeps_original_surviving_child(tmp_path):
-    _run(tmp_path, "fix1_survivor", "native", script=_SCRIPT, timeout=45)
+    _run(tmp_path, "fix1_survivor", "native", script=_SCRIPT, timeout=150)
 
 
 def test_runtime_first_send_waits_for_late_subagent_stop(tmp_path):
-    _run(tmp_path, "fix1_survivor", "late_nonstop", script=_SCRIPT, timeout=50)
+    _run(tmp_path, "fix1_survivor", "late_nonstop", script=_SCRIPT, timeout=150)
 
 
 def test_runtime_first_send_fences_new_received_intake_during_publication(tmp_path):
-    _run(tmp_path, "fix1_survivor", "admission", script=_SCRIPT, timeout=50)
+    _run(tmp_path, "fix1_survivor", "admission", script=_SCRIPT, timeout=150)
 
 
 def test_runtime_first_send_retains_changed_original_source(tmp_path):
@@ -293,7 +295,7 @@ def test_runtime_first_send_retains_changed_original_source(tmp_path):
             stdout=output,
             stderr=subprocess.STDOUT,
             text=True,
-            timeout=45,
+            timeout=150,
             check=False,
         )
     text = log.read_text(encoding="utf-8", errors="replace")
@@ -303,7 +305,7 @@ def test_runtime_first_send_retains_changed_original_source(tmp_path):
 
 def test_runtime_first_send_saves_through_a_wrapped_config_writer(tmp_path):
     """TASK-40719: a delegating wrapper is no reason to drop the save (ADR-356 rule 4)."""
-    _run(tmp_path, "fix1_survivor", "writer_wrapped", script=_SCRIPT, timeout=50)
+    _run(tmp_path, "fix1_survivor", "writer_wrapped", script=_SCRIPT, timeout=150)
 
 
 @pytest.mark.parametrize("failure", ["body", "cleanup", "handle"])
