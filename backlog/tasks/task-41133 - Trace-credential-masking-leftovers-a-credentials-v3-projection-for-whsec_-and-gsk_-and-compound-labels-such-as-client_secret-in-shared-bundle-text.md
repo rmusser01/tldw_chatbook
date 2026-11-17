@@ -3,7 +3,7 @@ id: TASK-41133
 title: "Trace credential masking leftovers: a credentials-v3 projection for whsec_ and gsk_, and compound labels such as client_secret= in shared bundle text"
 status: Done
 created_date: 2026-11-15 02:20
-updated_date: 2026-11-17 09:20
+updated_date: 2026-11-17 10:20
 assignee:
 - '@claude'
 labels:
@@ -254,4 +254,10 @@ Simple labels (`api_key=`, `token:`) stay with the export's older rule. A traili
   - probe2, probe_labels, probe3, probe4-7 and probe11: as in rev5.
   - `probe_equiv` (rev6 corpus 4626): 0 diffs.
   - Slowest adversarial case: 0.32 s CPU (load 26).
+- **Lane.** `test_a_masked_run_stops_before_the_next_field` and `test_runs_after_a_value_scan_in_linear_time` are pinned in the recovered-suites lane (workflow and `RECOVERED_SUITES_TARGETS`).
+- **Rev6 evidence:**
+  - Covering run (`-n 4`, 39 files with UI, load 28-45): 8 failed, 1775 passed in 22 min. These are the 8 that fail at base.
+  - Serial with lane flags: the recovered-suites slice (17 targets) gives 542 passed in 83 s at load 30-33; `Tests/Utils/test_log_sanitizer.py` gives 209 passed.
+  - `Tests/CI` gives 1640 passed, 1 skipped (load 30), after the lane edits. The module ratchet gives 207 passed, and the ruff gate is OK.
+  - `./scripts/preflight.sh` passes (rc 0, load 33-45).
 
