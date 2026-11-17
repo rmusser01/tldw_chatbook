@@ -1735,6 +1735,13 @@ class ConsoleAgentController:
 
     def progress_state(self) -> tuple[int, dict[str, int]]:
         """Body-free active and navigation counts from one runtime snapshot."""
+        from .execution_state import selected_client, selected_workspace_surface
+
+        surface = selected_workspace_surface(self._screen)
+        if surface is not None:
+            client = selected_client(self._screen)
+            counts = {item.owner_id: item.count for item in surface.progress_counts}
+            return counts.get(client.projection_view.active_session_id, 0), counts
         bridge = self._ensure_console_agent_bridge()
         read_counts = getattr(bridge, "progress_counts", None)
         counts = read_counts() if callable(read_counts) else {}
