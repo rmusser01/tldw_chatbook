@@ -334,7 +334,12 @@ for label in ('alpha','beta'):
  inventory=preview_capture((profile/'config.toml',),options={'staging_parent':fixture})
  assert inventory.complete,inventory.issues
  names=tuple(key for key in _capture_names(authority,inventory) if key!=UNBOUND_NAMESPACE)
- bind_profile(root,profile/'config.toml',names,root/'admission')
+ # As replacement.py binds: inside a 30 s maintenance session over the unbound
+ # namespace and the profile's own. Without one, bind_profile gives the
+ # unbound namespace 0.1 s, which a loaded host misses
+ # (close_unenrolled_clients_and_restart, TASK-41116).
+ with authority.maintenance((UNBOUND_NAMESPACE,*names),30) as session:
+  bind_profile(root,profile/'config.toml',names,root/'admission',session=session)
 assert not blocked_attempts()
 print('BOUND_BOTH',flush=True)
 """
@@ -768,9 +773,10 @@ def _capture_two_profiles(tmp_path, installed_package=None):
 
 
 # TASK-41116 review r15bt-rev1: at -n 4 and load 67-110 these two capture
-# nodes ran 393 s and 403 s to completion, past the job's 300 s per-test
-# limit; this is 2x the 403 s.
-@pytest.mark.timeout(810)
+# nodes ran 332-403 s to completion, past the job's 300 s per-test limit; the
+# limit is about 2x the slowest case recorded in the owner job's files (417 s,
+# test_restore_data_groups).
+@pytest.mark.timeout(840)
 def test_two_known_profiles_complete_capture_preserves_native_state_and_resumes(
     tmp_path,
 ):
@@ -878,9 +884,10 @@ def _isolated_environment(root, environment):
 
 
 # TASK-41116 review r15bt-rev1: at -n 4 and load 67-110 these two capture
-# nodes ran 393 s and 403 s to completion, past the job's 300 s per-test
-# limit; this is 2x the 403 s.
-@pytest.mark.timeout(810)
+# nodes ran 332-403 s to completion, past the job's 300 s per-test limit; the
+# limit is about 2x the slowest case recorded in the owner job's files (417 s,
+# test_restore_data_groups).
+@pytest.mark.timeout(840)
 def test_two_captured_profiles_plan_shared_concrete_roots_for_isolated_restore(
     tmp_path,
 ):

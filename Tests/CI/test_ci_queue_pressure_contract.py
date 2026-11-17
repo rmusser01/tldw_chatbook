@@ -723,8 +723,6 @@ BACKUP_OWNER_SUITE_TARGETS = (
 #: Red at dev 26b2e677dd, outside TASK-40306's five files; TASK-40307's notes
 #: give each node's first error. Remove a node when it is fixed.
 BACKUP_OWNER_SUITES_DESELECTED = (
-    "Tests/Backup_Recovery/test_complete_roundtrip.py::test_two_known_profiles_complete_capture_preserves_native_state_and_resumes",
-    "Tests/Backup_Recovery/test_complete_roundtrip.py::test_two_captured_profiles_plan_shared_concrete_roots_for_isolated_restore",
     "Tests/Backup_Recovery/test_complete_roundtrip.py::test_two_captured_profiles_restore_and_open_with_native_content",
     "Tests/Backup_Recovery/test_later_rollback_credential_ui.py::test_f9_later_rollback_requires_explicit_credential_review",
     "Tests/Backup_Recovery/test_inventory.py::test_normal_config_and_pure_resolvers_agree",
