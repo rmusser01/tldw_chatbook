@@ -599,6 +599,8 @@ _LONG_SESSION = _fake(2300, _B64URL)
 _LONG_YAML = _fake(2300, _B64URL)
 _LONG_CONCAT = _fake(1500) + _fake(1500)
 _AZURE = "abc8Q~" + _fake(30, string.ascii_letters + string.digits)
+_LONG_SIGNATURE = _fake(3000, _B64URL)
+_P8 = "Xk9mP2vL7wQ8"  # probe8's fake secret body
 
 #: name -> (text, the secret that must not survive, in whole or in part).
 _MUST_MASK: dict[str, tuple[str, str]] = {
@@ -730,6 +732,79 @@ _MUST_MASK: dict[str, tuple[str, str]] = {
         for value in ("CorrectHorseBatteryStaple", "MySuperSecretPassphrase", "TrustNoOneEverAgain")
     },
     "azure-trailing-dot": ("client" + _L + "secret=" + _AZURE + ".", _AZURE),
+    # rev4: moved from the keep table by the exact rev4 rules (a strict label;
+    # a call whose argument is a call; an index whose argument is a number).
+    "strict-label-call-argument": (
+        "secret" + _L + "key=base64.b64encode(os.urandom(32))",
+        "base64.b64encode(os.urandom(32))",
+    ),
+    "strict-label-date": ("the secret" + _L + "key: 2024-01-01 rotated", "2024-01-01"),
+    "numeric-index": ("refresh" + _L + "token=tokens[0]", "tokens[0]"),
+    # rev4 (probe8)
+    **{
+        f"probe8-{label}-{value}": (label + "=" + value, value)
+        for label, value in (
+            ("db" + _L + "password", "password_123"),
+            ("db" + _L + "password", "Password_123"),
+            ("db" + _L + "password", "Password-2024"),
+            ("db" + _L + "password", "Secret_2024"),
+            ("db" + _L + "password", "secret_key_2024"),
+            ("db" + _L + "password", "token_token"),
+            ("db" + _L + "password", "SecretPassword1"),
+            ("db" + _L + "password", "AccessKey2024"),
+            ("db" + _L + "password", "AuthToken123"),
+            ("client" + _L + "secret", "Secret_Key_99"),
+            ("client" + _L + "secret", "ApiSecret2024"),
+            ("admin" + _L + "password", "AdminPassword1"),
+            ("admin" + _L + "password", "Admin_Password_2024"),
+            ("root" + _L + "password", "RootPassword123"),
+            ("db" + _L + "password", "DbPassword2024"),
+            ("mysql_root" + _L + "password", "MysqlRoot2024Password"),
+            ("client" + _L + "secret", "Client_Secret_2024"),
+            ("db" + _L + "password", "Welcome(123)"),
+            ("db" + _L + "password", "Admin[2024]"),
+            ("db" + _L + "password", "Password(1)!"),
+            ("db" + _L + "password", "letmein(99)"),
+            ("db" + _L + "password", "Summer12:30!"),
+            ("db" + _L + "password", "1234-5678"),
+            ("db" + _L + "password", "12.34.56"),
+            ("db" + _L + "password", "pass:/word123"),
+            ("db" + _L + "password", "changeme"),
+            ("db" + _L + "password", "Your_Pass_2024!"),
+            ("db" + _L + "password", "$hunter22"),
+            ("db" + _L + "password", "%Passw0rd%"),
+            ("db" + _L + "password", "{Secret123}"),
+            ("db" + _L + "password", "[Hunter Pass]"),
+        )
+    },
+    "probe8-secret-call": ("client" + _L + "secret=secret(" + _P8 + "!)", "secret(" + _P8),
+    "probe8-time-inside": ("client" + _L + "secret=ab12:34" + _P8, "ab12:34" + _P8),
+    "probe8-drive-like": ("client" + _L + "secret=c:/" + _P8, "c:/" + _P8),
+    "probe8-angle-token": ("client" + _L + "secret=<" + _P8 + ">", _P8),
+    "probe8-home-token": ("client" + _L + "secret=~/" + _P8, _P8),
+    "probe8-prose-word": ("client" + _L + "secret: letmein then rotate", "letmein"),
+    "probe8-jwt-prose": ("jwt" + _L + "secret: supersecret for dev", "supersecret"),
+    "probe8-app-prose": ("app" + _L + "secret=monkey and the id is 4", "monkey"),
+    "probe8-webhook-prose": ("webhook" + _L + "secret: whsecret in staging", "whsecret"),
+    "probe8-jwt-quoted": ('"jwt' + _L + 'secret": "this is my secret 123"', "this is my secret 123"),
+    "probe8-quoted-token": ('"client' + _L + 'secret": "' + _P8 + ' zR4"', _P8),
+    "probe8-quoted-tokens": ('"session' + _L + 'token": "abc123XYZdef ghi456"', "abc123XYZdef"),
+    "probe8-jwt-env-passphrase": ("JWT" + _L + 'SECRET="correct horse battery staple"', "correct horse battery staple"),
+    "probe8-yaml-block": ("client" + _L + "secret: |\n  " + _P8 + "abcdef", _P8),
+    "probe8-cli-flag": ("--client-secret=" + _P8, _P8),
+    "probe8-spaced-colon-tab": ("CLIENT" + _L + "SECRET :\t" + _P8, _P8),
+    # rev4 (probe9): each pins a rule the reviewer loosened
+    "quoted-letters-only": ('{"client' + _L + 'secret": "AbCdEfGhIjKlMnOpQr"}', "AbCdEfGhIjKlMnOpQr"),
+    "snake-with-other-word": ("client" + _L + "secret=acme_prod_2024", "acme_prod_2024"),
+    "long-signed-url": (
+        "client" + _L + "secret=https://storage.example.com/o?sig=" + _LONG_SIGNATURE,
+        _LONG_SIGNATURE,
+    ),
+    "scheme-inside-value": ("client" + _L + "secret=Pa55word://host", "Pa55word://host"),
+    "date-prefixed-value": ("client" + _L + "secret=2024-01-01" + _P8, "2024-01-01" + _P8),
+    "upper-snake-password": ("db" + _L + "password=SUMMER_2024", "SUMMER_2024"),
+    "call-password": ("db" + _L + "password=Hunter2()", "Hunter2()"),
+    "junk-dotted-prefix": ("client" + _L + "secret=hunter2!.client_secret", "hunter2!"),
 }
 
 #: name -> text that must survive a shared bundle unchanged.
@@ -742,10 +817,9 @@ _MUST_KEEP: dict[str, str] = {
     "path-etc": "private" + _L + "key=/etc/ssl/private/server.key",
     "path-run": "client" + _L + "secret=/run/secrets/client_secret",
     "path-relative": "private" + _L + "key=./keys/id_rsa2",
-    "code-base64": "secret" + _L + "key=base64.b64encode(os.urandom(32))",
     "code-hashlib": "db" + _L + "password=hashlib.sha256(raw).hexdigest()",
     "code-boto3": "aws" + _L + "secret_access_key=boto3.session.Session().get_credentials()",
-    "date": "the secret" + _L + "key: 2024-01-01 rotated",
+    "date": "the refresh" + _L + "token: 2024-01-01 rotated",
     "iso-time": "refresh" + _L + "token: 2024-11-16T10:00:00Z expiry",
     "version-label": "api" + _L + "key_version=v2.10.3-rc1",
     "name-label": "client" + _L + "secret_name=my-secret-2024-prod",
@@ -787,11 +861,15 @@ _MUST_KEEP: dict[str, str] = {
     "code-attribute": "client" + _L + "secret=settings.oauth.client_secret_v2",
     "code-private-attribute": "client" + _L + "secret=self._client_secret2",
     "code-json-index": "access" + _L + "token=resp.json()['access_token']",
-    "code-index": "refresh" + _L + "token=tokens[0]",
+    "code-index-name": "refresh" + _L + "token=tokens[name]",
     "constant-name": "api" + _L + "secret=SECRET_KEY_V2",
     "constant-name-password": "db" + _L + "password=DB_PASSWORD_2",
     "pascal-name": "client" + _L + "secret=ClientSecret2",
     "code-call": "client" + _L + "secret=getClientSecret2()",
+    # rev4 (probe8): a URL's ?key= value judged as an api_key value.
+    "url-key-placeholder": "https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&callback=init",
+    "url-key-constant": "https://x.example/api?key=API" + _L + "KEY",
+    "url-key-template": "https://x.example/api?key={api" + _L + "key}",
 }
 
 
@@ -889,14 +967,35 @@ _ADVERSARIAL_TEXTS = {
     "trailing-dots": ("db" + "_password=a1" + "." * 2000 + " ") * 100,
     "quoted-runs": ('"client' + '_secret": "' + "x" * 2047 + '" ') * 100,
     "nested-labels": ("a_b=" + "client" + "_secret=") * 15_000,
+    "quoted-prose-1mb": ('"client' + '_secret": "a b" ') * 40_000,
 }
+
+
+def test_escape_quoted_values_scan_in_linear_time() -> None:
+    """Review r15tr-rev4: each escape-quoted value scanned to the end of its
+    line, so one long line of them was quadratic (0.84 s at 800 KB). Four
+    times the text must take well under 16 times the CPU time."""
+    from tldw_chatbook.Utils.log_sanitizer import mask_credential_labels
+
+    def cpu(repeats: int) -> float:
+        text = ("client" + '_secret=\\"x\\" ') * repeats
+        best = float("inf")
+        for _ in range(3):
+            started = time.thread_time()
+            mask_credential_labels(text)
+            best = min(best, time.thread_time() - started)
+        return best
+
+    small, large = cpu(25_000), cpu(100_000)
+    assert large < 8 * small, (small, large)
 
 
 @pytest.mark.parametrize("name", sorted(_ADVERSARIAL_TEXTS))
 def test_adversarial_bundle_text_is_masked_in_bounded_time(name: str) -> None:
     """Measured as this thread's CPU time, so machine load does not count.
-    The slowest case measured 0.075 s (review r15tr-rev3, best of three
-    at load 74), so 2 s leaves over 20x headroom."""
+    The slowest 200 KB case measured 0.104 s and the 920 KB quoted-prose
+    case 0.368 s (review r15tr-rev4, best of three at load 57), so 2 s
+    leaves over 5x headroom."""
     text = _ADVERSARIAL_TEXTS[name]
     started = time.thread_time()
 

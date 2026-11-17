@@ -56,14 +56,21 @@ The rule comment beside `_CREDENTIAL_PROJECTIONS` now names both of these, so th
 - User names: `user_name=`, `username:`.
 - Labels that are not credentials: `max_tokens`, `next_page_token`.
 
-Known limits, after review r15tr-rev3 (mask by default). Under a compound credential label the bundle keeps only the allowlist, so these are the remaining ways a real secret could be kept:
-- it holds a time (`12:34`), is a date or version (`2024-01-01`, `1.2.3`), or starts with a URL scheme (`x:/`);
-- it reads as a call or index whose callee is dotted or has no digit inside a word (`f(x)`, `tokens[0]`);
-- it is an identifier holding every word of its label, or a compound one made only of credential words (`password_123`, `secret_key_2024`);
-- it matches a placeholder, reference or known-root path (`your-...`, `$lowercase_var`, `{name}`, `/home/...`);
-- under a secret, token or key label (not a password label), it is a quoted value with a space, or a lowercase word of up to 12 letters that a lowercase sentence continues.
+Known limits, after review r15tr-rev4. Under a compound credential label the bundle keeps only the allowlist, so these are the remaining ways a real secret could be kept:
+- Under any label:
+  - a placeholder (`your-word`, `example`, `none`, all-`x`/`*`);
+  - an UPPER_SNAKE reference (`$SECRET`, `%SECRET%`, `${secret_name}`);
+  - a known-root path with no random-looking segment;
+  - a dotted name of conventional segments, or a dotted call or index chain whose arguments are empty, quoted or names;
+  - an UPPER_SNAKE constant holding every label word.
+- Under other labels only (not password or user-chosen secret labels):
+  - `changeme`;
+  - a non-dotted call;
+  - a value that is wholly a time or an ISO date, or starts with `scheme://` or `file:/`;
+  - a conventional name holding every label word (`ClientSecret2024`), or a snake name of credential words only;
+  - a quoted sentence with no letter-and-digit word, or a function word that a sentence continues.
 
-Simple labels (`api_key=`, `token:`) stay with the export's older rule, which also masks look-alikes such as `api_key=config.provider2.key` and `X-Request-Token: abc`. A trailing full stop after a masked value stays visible (`[credential redacted].`).
+Simple labels (`api_key=`, `token:`) stay with the export's older rule. A trailing full stop after a masked value stays visible. Masked by design although they are not secrets: a URL's `?key=python` or `?key=photos/2024/cat.jpg`, `tokens[0]`, and a date or code under a password or user-chosen secret label.
 
 **Review r15tr-rev1.** The first rule missed real values and over-masked look-alikes, and it could leave a partial mask (`db_password=Tr0ub4dor&3` came out as `[credential redacted]&3`).
 - **Value extent.** A value is now quoted whole, or bare up to whitespace, a quote, or a `&`/`;`/`,` that starts another field (`name=`) or ends the text. So a value is never cut inside itself. Labels may repeat separators (pydantic's `APP__CLIENT_SECRET`).
@@ -153,4 +160,32 @@ Simple labels (`api_key=`, `token:`) stay with the export's older rule, which al
   - Covering run (`-n 4`, 39 files, load 22-52): 8 failed, 1651 passed. These are the same 8 that fail at base.
   - Serial with lane flags: the recovered-suites slice (14 targets) gives 418 passed in 37 s at load 20-26; `Tests/Utils/test_log_sanitizer.py` gives 209 passed.
   - `Tests/CI` gives 1640 passed, 1 skipped; the module ratchet 207 passed; the ruff gate is OK.
+
+**Review r15tr-rev4 (allowlist tightened as the reviewer specified).**
+- **Strict labels.** Password labels (`password`, `passphrase`, `passwd`, `pwd`) and user-chosen secret labels (`secret`, `secret_key`, `jwt_secret`, `app_secret`, `webhook_secret`, `session_secret`, `signing_secret`, `cookie_secret`) keep only:
+  - placeholders other than `changeme`;
+  - references (`$VAR` and `%VAR%` UPPER_SNAKE only, so `$hunter22` and `%Passw0rd%` are masked);
+  - known-root paths;
+  - dotted code;
+  - UPPER_SNAKE constants holding every label word (`DB_PASSWORD_2`).
+- **Identifiers.** A name must be lower_snake, UPPER_SNAKE, lower-kebab or camelCase, so `Password_123`, `Client_Secret_2024` and `Password-2024` are not names. The credential-words-only branch takes snake names only, not capitalised words.
+- **Prose.** A quoted sentence counts only when no word holds a letter and a digit. A bare word counts only if it is in the function-word list (`it`, `see`, `the`, ...).
+- **Loose shapes:**
+  - A call or index must be the whole value, balanced, with empty, quoted or name arguments. It is read whole, quotes included (`resp.json()['access_token']`).
+  - Times and ISO dates must be the whole value.
+  - Schemes: lowercase `scheme://` or `file:/` only.
+  - `your[-_][A-Za-z_-]+` only.
+  - `{...}` and `{{...}}` only around a snake or dotted name; `<...>` only with no letter-and-digit word.
+  - Bracketed markers only as the exact markers this code emits.
+- **Other fixes.**
+  - A YAML block scalar (`client_secret: |`) is its indented lines.
+  - Escape-quoted values find their closing quote within a line end cached per line, so the scan is linear: 0.84 s at 800 KB before, a 4x text now under 8x the time. The ratio test is red without the cache (12.5x).
+  - `?key=` values are judged as `api_key` values (`mask_url_query_keys` reuses `_trimmed_end`), so `?key=YOUR_API_KEY`, `?key=API_KEY` and `?key={api_key}` are kept.
+- **Tables.** `_MUST_MASK` now has 143 rows and `_MUST_KEEP` 57.
+  - Every probe8 secret was added to must-mask. probe8's look-alikes are the five `?key=` URLs; the three that fit the allowlist were added to must-keep.
+  - Moved to must-mask by the exact rules: `secret_key=base64.b64encode(os.urandom(32))` (strict label; a call argument), `the secret_key: 2024-01-01` (strict label) and `tokens[0]` (numeric argument). Must-keep gained a non-strict date row and a `tokens[name]` row in their place.
+- **probe9 gate.** The reviewer's probe9 stops at its first loosening, because rev4 replaced the prose-length rule it edits.
+  - An adapted probe9 (same method) runs the reviewer's 5 loosenings whose code is unchanged (verbatim), its 3 others by intent on the rev4 code, and one loosening for each of the 16 rules rev4 added: 24 in all. Each turns at least one must-mask row red, after rows were added for them (including `long-signed-url` for "no overflow masking").
+- **Red first.** Against the rev3 source, 54 of the round's nodes were red: 50 must-mask, 3 must-keep (the `?key=` look-alikes) and the linear-scan ratio.
+- **Logs.** `probe_equiv.py` gives corpus 4457, 0 diffs.
 

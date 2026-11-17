@@ -573,32 +573,61 @@ _BARE_VALUE = re.compile(
     r"""(?:[^\s"'&;,]|[&;,](?![\s"']|$|[A-Za-z0-9_.-]+[ \t]*[:=]))*+"""
 )
 #: Placeholders and templates that may hold spaces, read whole: ``<your
-#: token>``, ``{{ secrets.X }}``, ``${{ secrets.X }}``, ``%(secret)s``, and a
-#: bracketed marker such as ``[credential redacted]`` or a shared bundle's
-#: ``[local path withheld]`` (after ``./`` it keeps the leading dot).
+#: token>``, ``{{ secrets.X }}``, ``${{ secrets.X }}``, ``%(secret)s``, and the
+#: bracketed markers this code emits (a shared bundle keeps the ``.`` before
+#: ``[local path withheld]`` when it replaces ``./path``).
 _TEMPLATE_VALUE = re.compile(
     r"<[^<>\r\n]{1,256}>|\$?\{\{[^{}\r\n]{0,256}\}\}|%\([A-Za-z_]\w*\)[sdr]"
     r"|(?:\.{1,2}|~)?\[[A-Za-z][A-Za-z ]{0,62}\]"
 )
+#: A code expression read whole, quotes included: a name chain with at least
+#: one call or index (``resp.json()['access_token']``, ``os.environ["X"]``).
+_CODE_NAME = r"[A-Za-z_][A-Za-z0-9_]*"
+_CODE_ARGUMENT = (
+    rf"""(?:{_CODE_NAME}(?:\.{_CODE_NAME})*|"[^"\r\n]*"|'[^'\r\n]*')?"""
+)
+_CODE_VALUE = re.compile(
+    rf"""{_CODE_NAME}(?:\.{_CODE_NAME})*"""
+    rf"""(?:\({_CODE_ARGUMENT}\)|\[{_CODE_ARGUMENT}\])"""
+    rf"""(?:\.{_CODE_NAME}|\({_CODE_ARGUMENT}\)|\[{_CODE_ARGUMENT}\])*"""
+)
+_CODE_VALUE_END = re.compile(r"""[\s,;&)\]}"']|\.(?:\s|$)|$""")
+#: A YAML block scalar indicator; its value is the indented lines after it.
+_YAML_BLOCK = re.compile(r"[|>][-+]?[ \t]*(?:\r\n|\r|\n)")
+_INDENTED_LINES = re.compile(r"(?:[ \t]+[^\r\n]*(?:\r\n|\r|\n|$))+")
 #: Longer values are masked whole, never examined (review r15tr-rev3).
 _MAX_EXAMINED_VALUE = 2048
 
-# The look-alike allowlist (review r15tr-rev3 ruling): a labelled value is
-# masked unless it is one of these.
+# The look-alike allowlist (review r15tr-rev3 ruling, tightened in rev4): a
+# labelled value is masked unless it is one of these.
+_EMITTED_MARKERS = (
+    "[credential redacted]",
+    "[credential key redacted]",
+    "[identifier redacted]",
+    "[local path withheld]",
+    "[redacted]",
+    REDACTION_MARKER,
+)
 _PLACEHOLDER = re.compile(
     r"""(?ix)
-    your[-_].* | changeme | change[-_]me | example | placeholder
-    | \**redacted\** | none | null | nil | undefined | true | false
-    | [x*]{3,} | [x*]+(?:[-_.][x*]+)+ | <.+> | \$?\{\{.*\}\} | %\([a-z_]\w*\)[sdr]
-    | (?:\.{1,2}|~)?\[[a-z][a-z\ ]*\]
+    your[-_][a-z_-]+ | example | placeholder | redacted | none | null | nil
+    | undefined | true | false | [x*]{3,} | [x*]+(?:[-_.][x*]+)+
     """
 )
+_LETTER_DIGIT_WORD = re.compile(r"[A-Za-z][A-Za-z0-9]*[0-9]|[0-9][A-Za-z0-9]*[A-Za-z]")
+_UPPER_SNAKE = r"_*[A-Z]+[0-9]*(?:_(?:[A-Z]+[0-9]*|[0-9]+))*"
+_LOWER_SNAKE = r"_*[a-z]+[0-9]*(?:_(?:[a-z]+[0-9]*|[0-9]+))*"
+_LOWER_KEBAB = r"[a-z]+[0-9]*(?:-(?:[a-z]+[0-9]*|[0-9]+))+"
+_CAMEL = r"_*[A-Za-z][a-z]+(?:[A-Z][a-z]+)*[0-9]*"
+_SNAKE_NAME = re.compile(rf"{_LOWER_SNAKE}|{_UPPER_SNAKE}|{_LOWER_KEBAB}")
+_CONVENTIONAL_NAME = re.compile(rf"{_LOWER_SNAKE}|{_UPPER_SNAKE}|{_LOWER_KEBAB}|{_CAMEL}")
+_DOTTED_NAME = re.compile(
+    rf"(?:{_LOWER_SNAKE}|{_UPPER_SNAKE}|{_CAMEL})(?:\.(?:{_LOWER_SNAKE}|{_UPPER_SNAKE}|{_CAMEL}))+"
+)
+_TEMPLATE_NAME = re.compile(rf"{_LOWER_SNAKE}|{_UPPER_SNAKE}|{_DOTTED_NAME.pattern}")
 _REFERENCE = re.compile(
-    r"""(?x)
-    \$(?:[A-Z_][A-Z0-9_]*|[a-z_][a-z0-9_]*)
-    | \$\{(?:[A-Z_][A-Z0-9_]*|[a-z_][a-z0-9_]*)\}
-    | %[A-Za-z_][A-Za-z0-9_]*%
-    | \{[A-Za-z_][\w.]*\}
+    rf"""(?x)
+    \$(?:{_UPPER_SNAKE}) | %(?:{_UPPER_SNAKE})% | \$\{{(?:{_UPPER_SNAKE}|{_LOWER_SNAKE})\}}
     """
 )
 _PATH_ROOTS = (
@@ -606,21 +635,36 @@ _PATH_ROOTS = (
     "/srv/", "/root/", "/mnt/", "/private/", "/Volumes/", "./", "../", "~/",
 )
 _DRIVE_PATH = re.compile(r"[A-Za-z]:\\")
-_URL_SCHEME = re.compile(r"[a-z][a-z0-9+.-]*:/", re.IGNORECASE)
-_TIME = re.compile(r"(?<!\d)\d{1,2}:\d{2}(?!\d)")
-_DATE = re.compile(r"[0-9]{1,4}(?:[-./][0-9]{1,4})+(?:T[0-9:.]+Z?)?")
-#: A call or an index: ``b64encode(``, ``os.environ[``, ``tokens[0]``. A
-#: callee with a digit inside a word (``P4ssw0rd(1)``) is not code unless
-#: it is dotted (``base64.b64encode(``).
-_CALL_OR_INDEX = re.compile(r"(?P<callee>[A-Za-z_][\w.]*)[(\[]")
-_IDENTIFIER = re.compile(r":?[A-Za-z_][\w-]*(?:\.[A-Za-z_][\w-]*)*")
-_IDENTIFIER_WORD = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
+#: A random-looking path segment: upper, lower and digits, or a long run of
+#: letters and digits (``~/Xk9mP2vL7wQ8`` is a secret, ``id_rsa2`` is not).
+_RANDOM_SEGMENT = re.compile(
+    r"(?=[A-Za-z0-9]*[a-z])(?=[A-Za-z0-9]*[A-Z])(?=[A-Za-z0-9]*[0-9])[A-Za-z0-9]{6,}"
+    r"|(?=[A-Za-z0-9]*[A-Za-z])(?=[A-Za-z0-9]*[0-9])[A-Za-z0-9]{12,}"
+)
+_URL_SCHEME = re.compile(r"[a-z][a-z0-9+.-]*://|file:/")
+_TIME = re.compile(r"\d{1,2}:\d{2}(?::\d{2})?")
+_ISO_DATE = re.compile(
+    r"\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?"
+)
 #: Words a code identifier for a credential may hold besides its label's.
 _CREDENTIAL_WORDS = frozenset(
     {"secret", "key", "token", "password", "passphrase", "credential", "api",
      "auth", "access", "refresh", "client", "session"}
 )
 _PASSWORD_LABEL_WORDS = frozenset({"password", "passphrase", "passwd", "pwd"})
+#: Labels whose value a person chooses, read as strictly as a password's.
+_USER_CHOSEN_SECRET_LABELS = frozenset(
+    {"secret", "secret_key", "jwt_secret", "app_secret", "webhook_secret",
+     "session_secret", "signing_secret", "cookie_secret"}
+)
+#: The only bare words that a sentence continuing after them makes prose
+#: (``client_secret: see section 4.2``).
+_PROSE_FUNCTION_WORDS = frozenset(
+    {"a", "an", "the", "it", "is", "see", "set", "use", "in", "on", "at", "to",
+     "from", "for", "of", "by", "via", "as", "and", "or", "not", "this", "that",
+     "here", "below", "above"}
+)
+_IDENTIFIER_WORD = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
 
 
 def _words(name: str) -> list[str]:
@@ -634,14 +678,15 @@ def _words(name: str) -> list[str]:
 
 
 def _code_identifier(value: str, label_words: set[str]) -> bool:
-    """A name built from the label's words: ``client_secret_2``, ``token_v2``,
-    ``YourClientSecretHere``, ``settings.oauth.client_secret_v2``.
+    """A conventional name built from the label's words (review r15tr-rev4).
 
-    The last dotted segment counts. It holds every word of the label, or it is
-    compound (``_``, ``-`` or a capital) and every word is a credential word.
-    ``password123``, ``summer2024`` and ``CorrectHorseBatteryStaple`` are not.
+    The last dotted segment counts and must be lower_snake, UPPER_SNAKE,
+    lower-kebab or camelCase (so ``Client_Secret_2024`` is not a name). It
+    holds every word of the label (``client_secret_2``,
+    ``YourClientSecretHere``), or it is a compound snake name made only of
+    credential words (``token_v2``, ``SECRET_KEY_V2``).
     """
-    if not _IDENTIFIER.fullmatch(value):
+    if not _CONVENTIONAL_NAME.fullmatch(value.lstrip(":")) and not _DOTTED_NAME.fullmatch(value):
         return False
     last = value.lstrip(":").rsplit(".", 1)[-1]
     words = _words(last)
@@ -649,47 +694,81 @@ def _code_identifier(value: str, label_words: set[str]) -> bool:
         return False
     if label_words <= set(words):
         return True
-    compound = "_" in last.strip("_") or "-" in last or len(words) > 1
+    compound = bool(_SNAKE_NAME.fullmatch(last)) and bool(re.search(r"[_-]", last.strip("_")))
     return compound and set(words) <= label_words | _CREDENTIAL_WORDS
+
+
+def _template_or_marker(value: str) -> bool:
+    """A template whose name is a variable, or a marker this code emits."""
+    inner = None
+    if value.startswith("<") and value.endswith(">"):
+        return not _LETTER_DIGIT_WORD.search(value)
+    if value.startswith(("{{", "${{")) and value.endswith("}}"):
+        inner = value[value.index("{{") + 2 : -2].strip()
+    elif value.startswith("%(") and len(value) > 3:
+        inner = value[2 : value.rfind(")")]
+    elif value.startswith("{") and value.endswith("}"):
+        inner = value[1:-1]
+    if inner is not None:
+        return bool(_TEMPLATE_NAME.fullmatch(inner))
+    return value.lstrip(".~") in _EMITTED_MARKERS
+
+
+def _known_path(value: str) -> bool:
+    """A path under a known root with no random-looking segment."""
+    return (value.startswith(_PATH_ROOTS) or bool(_DRIVE_PATH.match(value))) and not (
+        _RANDOM_SEGMENT.search(value)
+    )
 
 
 def _kept_look_alike(value: str, label: str, *, quoted: bool, prose_follows: bool) -> bool:
     """Whether a labelled value is on the look-alike allowlist (kept).
 
     Everything else is masked (review r15tr-rev3: under-masking leaks a
-    secret; over-masking only makes a shared bundle less readable).
+    secret; over-masking only makes a shared bundle less readable). Under a
+    password label or a label whose value a person chooses (``jwt_secret``),
+    only placeholders other than ``changeme``, references, known-root paths,
+    dotted code and an UPPER_SNAKE constant holding every label word are kept
+    (review r15tr-rev4).
     """
     if not value:
         return True
     if len(value) > _MAX_EXAMINED_VALUE:
         return False
     label_words = set(_words(label))
-    password_label = bool(label_words & _PASSWORD_LABEL_WORDS)
-    call = _CALL_OR_INDEX.match(value)
+    normalized = label.casefold().replace("-", "_").strip("_")
+    password_label = bool(label_words & _PASSWORD_LABEL_WORDS) or (
+        normalized in _USER_CHOSEN_SECRET_LABELS
+    )
+    code = _CODE_VALUE.fullmatch(value)
     if (
         _PLACEHOLDER.fullmatch(value)
+        or _template_or_marker(value)
         or _REFERENCE.fullmatch(value)
-        or value.startswith(_PATH_ROOTS)
-        or _DRIVE_PATH.match(value)
-        or _URL_SCHEME.match(value)
-        or _TIME.search(value)
-        or _DATE.fullmatch(value)
+        or _known_path(value)
+        or (code is not None and "." in value.split("(", 1)[0].split("[", 1)[0])
+        or _DOTTED_NAME.fullmatch(value)
         or (
-            call is not None
-            and (
-                "." in call.group("callee")
-                or not re.search(r"\d[A-Za-z]", call.group("callee"))
-            )
+            re.fullmatch(_UPPER_SNAKE, value) is not None
+            and label_words <= set(_words(value))
         )
-        or _code_identifier(value, label_words)
     ):
         return True
     if password_label:
         return False
-    # Prose under a secret, token or key label: a quoted sentence, or a short
-    # lowercase word that a sentence continues (``client_secret: see the guide``).
-    return (quoted and " " in value) or (
-        prose_follows and value.isalpha() and value.islower() and len(value) <= 12
+    if (
+        value.casefold() in {"changeme", "change_me", "change-me"}
+        or code is not None
+        or _URL_SCHEME.match(value)
+        or _TIME.fullmatch(value)
+        or _ISO_DATE.fullmatch(value)
+        or _code_identifier(value, label_words)
+    ):
+        return True
+    # Prose under a secret, token or key label: a quoted sentence with no
+    # token-shaped word, or a function word that a sentence continues.
+    return ((quoted and " " in value) and not _LETTER_DIGIT_WORD.search(value)) or (
+        prose_follows and value in _PROSE_FUNCTION_WORDS
     )
 
 
@@ -711,16 +790,17 @@ def _trimmed_end(text: str, start: int, end: int) -> int:
     return end
 
 
-def _value_span(text: str, start: int) -> tuple[int, int, bool]:
+def _value_span(text: str, start: int, line_end: int) -> tuple[int, int, bool]:
     """``(start, end, quoted)`` of the value that begins at ``start``.
 
-    A quoted value honours ``\\`` escapes (as ``_find_quoted_end`` does); an
-    escape-quoted one (``\\"...\\"``, JSON inside a string) ends at the next
-    escape-quote. An unclosed quote leaves a bare value after it.
+    ``line_end`` is the end of ``start``'s line. A quoted value honours
+    ``\\`` escapes (as ``_find_quoted_end`` does); an escape-quoted one
+    (``\\"...\\"``, JSON inside a string) ends at the next escape-quote on the
+    line. An unclosed quote leaves a bare value after it. A YAML block scalar
+    (``|`` or ``>``) is its indented lines.
     """
     if text.startswith(('\\"', "\\'"), start):
-        quote = text[start : start + 2]
-        close = text.find(quote, start + 2, _line_end(text, start))
+        close = text.find(text[start : start + 2], start + 2, line_end)
         if close != -1:
             return start + 2, close, True
         start += 2
@@ -729,9 +809,19 @@ def _value_span(text: str, start: int) -> tuple[int, int, bool]:
         if closed:
             return start + 1, close, True
         start += 1
-    template = _TEMPLATE_VALUE.match(text, start)
-    if template is not None:
-        return start, template.end(), False
+    block = _YAML_BLOCK.match(text, start)
+    if block is not None:
+        lines = _INDENTED_LINES.match(text, block.end())
+        if lines is not None:
+            body = lines.group()
+            return (
+                lines.start() + len(body) - len(body.lstrip(" \t")),
+                lines.start() + len(body.rstrip("\r\n")),
+                False,
+            )
+    for template in (_TEMPLATE_VALUE.match(text, start), _CODE_VALUE.match(text, start)):
+        if template is not None and _CODE_VALUE_END.match(text, template.end()):
+            return start, template.end(), False
     end = _BARE_VALUE.match(text, start).end()
     return start, _trimmed_end(text, start, end), False
 
@@ -742,10 +832,9 @@ def mask_credential_labels(text: str, marker: str = REDACTION_MARKER) -> str:
     The labels are the ones diagnostics mask (``client_secret=``,
     ``refresh_token:``, ``X-Auth-Token:``); PII labels such as ``user_name=``
     are left alone. A value is masked whole unless it is on the look-alike
-    allowlist (placeholders, references, known-root paths, code, times, dates,
-    URLs, and prose under a non-password label). A value that is kept, or
-    that sits under any other label, is scanned again, so a label nested in it
-    (a URL, JSON text, a query string) is found too (TASK-41133).
+    allowlist (``_kept_look_alike``). A value that is kept, or that sits under
+    any other label, is scanned again, so a label nested in it (a URL, JSON
+    text, a query string) is found too (TASK-41133).
 
     Args:
         text: Text that may hold ``label=value`` or ``label: value`` pairs.
@@ -756,14 +845,17 @@ def mask_credential_labels(text: str, marker: str = REDACTION_MARKER) -> str:
     """
     parts: list[str] = []
     position = 0
+    line_end = -1
     while (label := _COMPOUND_LABEL.search(text, position)) is not None:
         name = label.group("label")
         if _is_credential_label(name):
-            start, end, quoted = _value_span(text, label.end())
+            if label.end() > line_end:  # one scan per line, not per label
+                line_end = _line_end(text, label.end())
+            start, end, quoted = _value_span(text, label.end(), line_end)
             value = text[start:end]
             prose_follows = bool(re.match(r"[ \t]+[a-z]", text[end : end + 2]))
-            # A masked value reads as a bracketed placeholder, so it is kept on
-            # a second pass.
+            # A masked value reads as an emitted marker, so it is kept on a
+            # second pass.
             if not _kept_look_alike(value, name, quoted=quoted, prose_follows=prose_follows):
                 parts.extend((text[position:start], marker))
                 position = end
@@ -775,7 +867,10 @@ def mask_credential_labels(text: str, marker: str = REDACTION_MARKER) -> str:
 
 
 def mask_url_query_keys(text: str, marker: str = REDACTION_MARKER) -> str:
-    """Mask ``?key=``/``&key=`` values inside URLs, as diagnostics do.
+    """Mask a URL's ``?key=``/``&key=`` value unless it is a look-alike.
+
+    The value is judged as an ``api_key`` value (review r15tr-rev4), so
+    ``?key=YOUR_API_KEY`` stays readable and a real key is masked.
 
     Args:
         text: Text that may hold URLs.
@@ -789,8 +884,10 @@ def mask_url_query_keys(text: str, marker: str = REDACTION_MARKER) -> str:
     for url in _DIAGNOSTIC_URL.finditer(text):
         for key in _URL_QUERY_KEY.finditer(url.group()):
             start = url.start() + key.end(1)
-            end = url.start() + key.end()
-            if start == end or text.startswith(marker, start):
+            end = _trimmed_end(text, start, url.start() + key.end())
+            if text.startswith(_EMITTED_MARKERS, start) or _kept_look_alike(
+                text[start:end], "api_key", quoted=False, prose_follows=False
+            ):
                 continue
             parts.extend((text[position:start], marker))
             position = end

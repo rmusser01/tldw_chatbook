@@ -620,6 +620,7 @@ RECOVERED_SUITES_TARGETS = (
     "Tests/Chat/test_trace_v2_collaboration.py::test_every_look_alike_in_the_must_keep_table_is_kept_and_imports",
     "Tests/Chat/test_trace_v2_collaboration.py::test_a_masked_label_value_keeps_its_closing_bracket_and_full_stop",
     "Tests/Chat/test_trace_v2_collaboration.py::test_adversarial_bundle_text_is_masked_in_bounded_time",
+    "Tests/Chat/test_trace_v2_collaboration.py::test_escape_quoted_values_scan_in_linear_time",
     "Tests/Chat/test_console_trace_legacy_migration.py::test_an_older_legacy_ledger_keeps_migrating_new_exchanges_under_the_current_version",
     # TASK-41134: the legacy trace maintenance loop's parking and projection
     # files, red on dev in no PR lane (their stand-in module lacked the loop's

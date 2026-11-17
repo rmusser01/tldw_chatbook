@@ -1517,10 +1517,10 @@ jobs:
       # Round 15: TASK-41112's Actor Pack export file (sandboxed, ~83 s serial
       # at load 104) joins the sandboxed block, before the bootstrap ones.
       # Round 15: TASK-41133's label-list, must-mask and must-keep table,
-      # bracket and timing nodes (pure) join the Trace export nodes, and its
-      # v1/v2 cases replace TASK-40303's ledger node. TASK-41134's legacy trace
-      # maintenance parking and projection files (sandboxed, ~42 s serial at
-      # load 51-56), on no lane before, follow.
+      # bracket and timing nodes (pure, one a CPU-time ratio) join the Trace
+      # export nodes, and its v1/v2 cases replace TASK-40303's ledger node.
+      # TASK-41134's legacy trace maintenance parking and projection files
+      # (sandboxed, ~42 s serial at load 51-56), on no lane before, follow.
       # test_closed_loop_pending_submit_is_emergency_detachment: deselected
       # 2026-11-12: red on dev e0186fa10a (console_send_diagnostic ContextVar
       # token reset across contexts), owned by TASK-33621.36 AC#3; remove when fixed.
@@ -1547,6 +1547,7 @@ jobs:
             Tests/Chat/test_trace_v2_collaboration.py::test_every_look_alike_in_the_must_keep_table_is_kept_and_imports \
             Tests/Chat/test_trace_v2_collaboration.py::test_a_masked_label_value_keeps_its_closing_bracket_and_full_stop \
             Tests/Chat/test_trace_v2_collaboration.py::test_adversarial_bundle_text_is_masked_in_bounded_time \
+            Tests/Chat/test_trace_v2_collaboration.py::test_escape_quoted_values_scan_in_linear_time \
             Tests/Chat/test_console_trace_legacy_migration.py::test_an_older_legacy_ledger_keeps_migrating_new_exchanges_under_the_current_version \
             Tests/Chat/test_console_trace_maintenance_parking.py \
             Tests/Chat/test_console_trace_projection.py \
