@@ -1,7 +1,7 @@
 ---
 id: TASK-41310
 title: "Trace capture refuses the requests after a native spawn_subagent call as unsupported_surface_change: real bug or probe artifact?"
-status: In Progress
+status: Done
 created_date: 2026-11-16 19:55
 labels:
 - follow-up
