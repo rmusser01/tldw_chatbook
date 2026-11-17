@@ -4,7 +4,7 @@ title: "The persona later-rollback test's reopen child fails 'database is locked
 status: In Progress
 assignee: ['@claude']
 created_date: 2026-11-15 02:20
-updated_date: 2026-11-17 00:18
+updated_date: 2026-11-17 02:00
 labels:
 - follow-up
 - backup
@@ -57,3 +57,9 @@ Other runs:
 - `Tests/Architecture/test_module_size_ratchet.py`: 207 passed. `ruff_gate.py`: exit 0. Preflight: passed.
 
 Files: `tldw_chatbook/DB/ChaChaNotes_DB.py`, `Tests/DB/test_operation_owned_connection_retirement.py`, `Tests/Backup_Recovery/test_created_persona_subtree_rollback.py`, `backlog/docs/lessons-testing-evidence.md`.
+
+### Review r15ac-rev1, fix round 1
+
+- **Finding 2 (Minor):** `base_db._operation_owned_connection` no longer lowers `busy_timeout` to the operation deadline before closing, and its docstring drops "A monotonic deadline also bounds the departing handle's checkpoint wait". The ChaChaNotes close checkpoint never waits now, and no other owned store checkpoints at close. `operation_deadline` is still accepted (three callers pass it). `test_owned_cleanup_deadline_bounds_checkpoint_with_live_reader` is removed; `test_closing_worker_does_not_hold_other_writers_behind_a_live_reader` covers a close behind a live reader. Runs: the DB retirement file, `test_store_kernel.py`, `test_archive_recovery_query.py`, `test_private_sqlite_lock_preservation.py`, `Tests/Dreams/test_connection_deadline.py` (`-n 4`): 78 passed, 1 failed. The failure is `test_copy_borrows_one_two_slot_envelope_for_sequential_preparations` (`ValueError: Unknown SQLite owner: settings.bulk_backup`), which fails the same way in the base worktree.
+- **Finding 4 (fold-in):** `Tests/Backup_Recovery/test_persona_observation_budget.py`'s fake `_child` takes `idle=` and records it, and its pins name the current budgets: seed, capture, replacement and reopen at 600 s with the 60 s idle check; the later child idle-checked; the final reopen and capture fixed. The darwin case expected 150, but the main test applies the non-Windows rule there, so it is now 600. 12 failed at base and head (`TypeError: ... unexpected keyword argument 'idle'`); 12 passed now.
+- AC#2 (20 runs at load 40 or more) stays open; the coordinator will schedule it at the end of the round.

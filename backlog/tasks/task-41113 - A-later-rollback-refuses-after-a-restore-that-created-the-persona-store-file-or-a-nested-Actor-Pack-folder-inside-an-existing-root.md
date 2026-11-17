@@ -4,7 +4,7 @@ title: "A later rollback refuses after a restore that created the persona store 
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-15 02:20
-updated_date: 2026-11-16 21:39
+updated_date: 2026-11-17 02:00
 labels:
 - follow-up
 - backup
@@ -60,3 +60,8 @@ Red/green (each child run through `run.sh`, load 70-110):
 Covering runs (`-n 4`): `test_later_created_destinations.py`, `test_later_rollback.py`, `test_config_file_retirement.py`, `test_retirement_only_rollback.py`, `test_rollback_group_scope.py`, `test_later_rollback_handoff.py`, `test_eval_later_snapshot.py`, `test_persona_observation_budget.py`, `test_builtin_later_snapshot.py`: 159 passed, 14 failed at load ~100. Rerun of the 14 at load 12-42: 2 passed (one created-destinations node had hit `Timeout (>300.0s)`), 13 failed, and the same groups fail with base `later_rollback.py` and base test file (same command, load 44): the 12 `test_persona_observation_budget.py` nodes (`TypeError: _observe.<locals>.child() got an unexpected keyword argument 'idle'`; its fake `_child` predates TASK-40306's `idle=`) and `test_builtin_later_snapshot.py::test_shared_builtin_later_preview_and_execution_preserve_both_profile_trees` (pytest-timeout >300 s in SQLite validation; both params at base). Proposed follow-up for the coordinator: the budget test's fake `_child` needs `idle`. The file's 9 `test_native_persona_mapping_refuses_unproved_graph` negatives ran on this final `later_rollback.py` in the last iteration of TASK-41115's capture campaign (two lanes): 18 of 18 passed.
 
 Files: `tldw_chatbook/Backup_Recovery/later_rollback.py`, `Tests/Backup_Recovery/test_created_persona_subtree_rollback.py` (`_ACTOR_TREES_ROLLBACK` routes and the new nested test).
+
+### Review r15ac-rev1, fix round 1
+
+- **Finding 1 (Important): the target's own persona store.** The `nested-target` route now captures the target's `tldw_chatbook_personas.json` after its own activation and asserts the restore replaced it and the later rollback brought it back byte for byte. That is the invariant the new `personas` retirement path depends on: only a restore-created file (`previous is None`) is retired. Green: 1 passed (523 s, load ~60). Control: with `and row.previous is None` removed from `_created_destination_target`'s artifact filter, the later rollback is refused (`ValueError: local_snapshot_absence_unclassified`, `later_rollback.py:1482`). Other replaced artifacts in that restore then fail the created-artifact rule before the store would be retired, so the control goes red by refusal, not at the store assertion. The reviewer's probe (`$FU/r15ac-rev1/probe_own_target.py`) also covers a target whose only own data is its persona store.
+- **Finding 3 (Minor):** the route comment now says `created-source` serves both target routes, and "had neither tree nor a persona store".
