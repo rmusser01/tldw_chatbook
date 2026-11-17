@@ -10,6 +10,8 @@
 # active Console session, owns the app-attached scope cache, and notifies.
 #
 # Imports
+import asyncio
+import importlib
 from datetime import UTC, datetime
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
@@ -22,6 +24,7 @@ from ...Chat.rag_scope import (
     SCOPE_STATUS_EMPTY,
     EffectiveScope,
     ScopeCache,
+    request_scope_session_for,
     scope_empty_notice,
 )
 from ...RAG_Search.pipeline_builder_simple import (
@@ -317,8 +320,6 @@ def _active_console_session(app: "TldwCli") -> Optional[Any]:
 
 def _capture_request_scope_session(app: "TldwCli") -> "RequestScopeSession | None":
     """Copy the active session identity before retrieval can change it."""
-    from ...RAG_Search.scope_evidence import request_scope_session_for
-
     return request_scope_session_for(_active_console_session(app))
 
 
@@ -505,16 +506,21 @@ async def capture_console_staged_evidence_for_chat(
         its prompt-evidence-set ID and the repair contract; empty fields when
         nothing is authorized or recorded.
     """
-    from ...RAG_Search import scope_evidence
-
     services = app.services
+    request_session = (
+        _capture_request_scope_session(app) if launch is not None else None
+    )
+    # Loading optional RAG code must not block the UI or change request authority.
+    scope_evidence = await asyncio.to_thread(
+        importlib.import_module, "tldw_chatbook.RAG_Search.scope_evidence"
+    )
     return await scope_evidence.capture_console_staged_evidence(
         services.storage,
         services.workspace,
         services.chat.citation_trace_repository,
         launch,
         user_message=user_message,
-        active_session=lambda: _capture_request_scope_session(app),
+        active_session=lambda: request_session,
     )
 
 
@@ -543,17 +549,21 @@ async def capture_console_prepared_evidence_for_chat(
     Returns:
         The same contract as ``capture_console_staged_evidence_for_chat``.
     """
-    from ...RAG_Search import scope_evidence
-
     services = app.services
+    request_session = request_scope_session_for(session) if bundle is not None else None
+    if request_session is None and bundle is not None:
+        request_session = _capture_request_scope_session(app)
+    scope_evidence = await asyncio.to_thread(
+        importlib.import_module, "tldw_chatbook.RAG_Search.scope_evidence"
+    )
     return await scope_evidence.capture_console_prepared_evidence(
         services.storage,
         services.workspace,
         services.chat.citation_trace_repository,
         bundle,
         user_message=user_message,
-        session=session,
-        active_session=lambda: _capture_request_scope_session(app),
+        session=request_session,
+        active_session=lambda: request_session,
     )
 
 

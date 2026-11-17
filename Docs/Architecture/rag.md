@@ -19,6 +19,7 @@ This document describes the RAG stack: the shared RAG service (embeddings + vect
 | `RAG_Search/reranker.py` | Reranker families incl. `CrossEncoderReranker` (local model reranking) |
 | `RAG_Search/fusion.py` | RRF + interleaving used by the Library keyword merge |
 | `RAG_Search/scope_evidence.py` | Console/chat retrieval scope resolution, prompt-boundary evidence authorization and citation capture. Receives the `storage` and `workspace` slices and the citation trace repository, never the app; `Event_Handlers/Chat_Events/chat_rag_events.py` is its event wiring (ADR-250) |
+| `Chat/rag_scope.py` | Scope contracts and immutable request-session identity. Console evidence wiring captures that identity before loading the optional evidence service on a worker; capture and authorization then run on the owning loop. `scope_evidence` retains the identity exports for existing consumers. |
 | `RAG_Search/pipeline_builder_simple.py` | `execute_pipeline`, the built-in pipelines and their search entry points (`perform_plain_rag_search` and the semantic, hybrid and custom variants) |
 | `Library/library_local_rag_search_service.py` | The Library Search/RAG canvas backend: four keyword seams + semantic leg |
 | `Library/library_rag_answer_service.py` | `generate_library_rag_answer()` — grounded answer generation |

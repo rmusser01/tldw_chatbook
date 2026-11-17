@@ -904,8 +904,8 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 4,
-      "diagnostic_digest": "d198df1c304fef5f1447",
+      "call_count": 5,
+      "diagnostic_digest": "58009c857b1a027472e1",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/rag_scope.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -2262,8 +2262,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 25,
-      "diagnostic_digest": "60b7dbffb6c5ca9ae336",
+      "call_count": 24,
+      "diagnostic_digest": "147e7dd28869a4d6e189",
       "owner": "TASK-494",
       "path": "tldw_chatbook/RAG_Search/scope_evidence.py",
       "reason": "remaining Chatbook production diagnostic owner"
