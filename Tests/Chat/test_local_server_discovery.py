@@ -4334,11 +4334,21 @@ def test_the_word_bench_never_targets_an_endpoint_the_contract_refuses(configure
     assert sample_bench.configured_llama_cpp_url(app_config) is None
 
 
-def test_the_word_bench_still_targets_an_accepted_endpoint():
-    """Review r15ep-rev1 I-3 control: llama.cpp's own route still benches."""
+@pytest.mark.parametrize(
+    "configured",
+    [
+        "http://localhost:8080/completion",
+        # The bench's own route, which the llama.cpp chat reading refuses as
+        # ambiguous; the bench sends to the root (test_evals_empty_states).
+        "http://localhost:8080/v1/completions",
+    ],
+)
+def test_the_word_bench_still_targets_an_accepted_endpoint(configured):
+    """Review r15ep-rev1 I-3 control: the check reads the URL the bench
+    sends to, its root, with the host, user info and query typed."""
     from tldw_chatbook.UI.Evals import sample_bench
 
-    app_config = {"api_settings": {"llama_cpp": {"api_url": "http://localhost:8080/completion"}}}
+    app_config = {"api_settings": {"llama_cpp": {"api_url": configured}}}
 
     assert sample_bench.configured_llama_cpp_url(app_config) == "http://localhost:8080"
 
