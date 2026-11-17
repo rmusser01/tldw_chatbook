@@ -10,8 +10,7 @@ from collections.abc import Callable, Mapping
 from contextlib import ExitStack, contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from functools import partial
-from types import FunctionType, MethodType, ModuleType
+from types import MethodType, ModuleType
 from typing import Any, NamedTuple
 
 from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
@@ -24,7 +23,6 @@ from .console_configuration_capture import (
     _require_mcp_attachment_source,
     capture_console_turn_configuration,
 )
-from .console_ordinary_tree import _function_record, _function_unchanged
 from .console_preparation_reads import run_preparation_read
 from .console_turn_context import (
     ConsoleTurnConfigurationSnapshot,
@@ -68,7 +66,6 @@ class _NativeSkillTrustPublication:
     initial_local: Any = field(repr=False)
     app_winner: Any = field(repr=False)
     local_winner: Any = field(repr=False)
-    source_functions: tuple = field(repr=False)
     guard: Any = field(repr=False)
 
 
@@ -170,22 +167,25 @@ class _ConfigurationSources(NamedTuple):
     callbacks: tuple[Any, ...]
 
 
+def _registered_skill_callbacks(app):
+    """The trust factory, plugin factory and builtin loader the app registered.
+
+    ``_build_local_skills_stack`` records them when it builds the stack; a
+    slot still holding one is the app's own (ADR-356 rule 4), whatever wraps
+    the functions behind it. Anything else is not invoked here.
+    """
+    callbacks = vars(app).get("_local_skills_callbacks")
+    if type(callbacks) is tuple and len(callbacks) == 3:
+        return callbacks
+    return (None, None, None)
+
+
 def _ready_published_plugin(local, app):
     if local is None:
         return None
-    from tldw_chatbook.Skills_Interop.local_skills_service import (
-        _STOCK_PLUGIN_SERVICE_PROPERTY,
-        LocalSkillsService,
-    )
+    from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
 
-    original_property, getter, code = _STOCK_PLUGIN_SERVICE_PROPERTY
-    descriptor = inspect.getattr_static(local, "plugin_service", None)
-    if (
-        type(local) is not LocalSkillsService
-        or descriptor is not original_property
-        or original_property.fget is not getter
-        or getter.__code__ is not code
-    ):
+    if type(local) is not LocalSkillsService:
         raise RecoveryRequired("console_capture_source_not_ready")
     existing = vars(local).get("_plugin_service")
     if existing is not None:
@@ -193,24 +193,10 @@ def _ready_published_plugin(local, app):
     factory = vars(local).get("_plugin_service_factory")
     if factory is None:
         return None
-    wiring = sys.modules.get("tldw_chatbook.app_service_wiring")
-    namespace = vars(wiring) if wiring is not None else {}
-    original = namespace.get("_STOCK_PLUGIN_SERVICE_FACTORY")
-    reader = namespace.get("_STOCK_PUBLISHED_PLUGIN_READER")
-    if (
-        type(factory) is not MethodType
-        or type(original) is not tuple
-        or len(original) != 2
-        or factory.__self__ is not app
-        or factory.__func__ is not original[0]
-        or original[0].__code__ is not original[1]
-        or type(reader) is not tuple
-        or len(reader) != 2
-        or namespace.get("_read_app_published_plugin_service") is not reader[0]
-        or reader[0].__code__ is not reader[1]
-    ):
+    if factory is not _registered_skill_callbacks(app)[1]:
         raise RecoveryRequired("console_capture_source_not_ready")
-    return reader[0](app)
+    # The app's factory returns its published service; read it, never build.
+    return vars(app).get("_plugin_service")
 
 
 def _source_references(app, store, creator, session, *, _unused_trust=None):
@@ -349,24 +335,8 @@ def _standard_configuration_references(app, refs) -> bool:
         if local is not None and type(local) is not LocalSkillsService:
             return False
         loader = getattr(local, "_builtin_disabled_loader", None)
-        if loader is not None:
-            # The app wiring module is already loaded by a stock app. Do not
-            # import its boot/UI dependency graph merely to check this reader.
-            wiring = sys.modules.get("tldw_chatbook.app_service_wiring")
-            namespace = vars(wiring) if wiring is not None else {}
-            original = namespace.get("_STOCK_DISABLED_BUILTINS_READER")
-            if (
-                type(loader) is not partial
-                or type(original) is not tuple
-                or len(original) != 2
-                or loader.func is not original[0]
-                or namespace.get("_read_app_disabled_builtin_skills") is not original[0]
-                or original[0].__code__ is not original[1]
-                or len(loader.args) != 1
-                or loader.args[0] is not app
-                or loader.keywords
-            ):
-                return False
+        if loader is not None and loader is not _registered_skill_callbacks(app)[2]:
+            return False
         if visual is not None and type(visual) is not VisualIdentityRepository:
             return False
         if type(scratch) is not ConsoleScratchSpaceManager or "snapshot" in vars(
@@ -426,7 +396,6 @@ class ConsoleReceivedConfigurationPreparation:
     refs: Any = field(repr=False)
     trust_source: Any = field(default=None, repr=False)
     trust_initial: tuple = field(default=(), repr=False)
-    trust_functions: tuple = field(default=(), repr=False)
 
 
 def _configuration_session_identity(session):
@@ -445,46 +414,13 @@ def _configuration_session_identity(session):
 
 
 def _resident_skill_wiring():
-    """Validate existing defining records before calling any proof helper."""
+    """The already-loaded app wiring module, or None; never imports it.
+
+    Its helpers are called as bound now (ADR-356 rule 4): a wrapped helper is
+    the app's helper. The app's registrations decide trust inside them.
+    """
     wiring = sys.modules.get("tldw_chatbook.app_service_wiring")
-    metadata = sys.modules.get("tldw_chatbook.Widgets.compact_model_bar")
-    if type(wiring) is not ModuleType or type(metadata) is not ModuleType:
-        return None
-    values = vars(wiring)
-    source = values.get("_CONSOLE_SKILL_WIRING_SOURCE")
-    names = {
-        "_capture_console_skill_trust_source",
-        "_console_skill_metadata_current",
-        "_console_skill_source_current",
-    }
-    if type(source) is not tuple or len(source) != 6 or type(source[5]) is not tuple:
-        return None
-    rows = [
-        row
-        for row in source[5]
-        if type(row) is tuple
-        and len(row) == 11
-        and type(row[1]) is str  # exact source metadata
-        and row[1] in names
-    ]
-    if len(rows) != len(names) or any(
-        type(row[2]) is not FunctionType
-        or values.get(row[1]) is not row[2]
-        or row[2].__code__ is not row[3]
-        or row[2].__globals__ is not row[4]
-        or row[2].__globals__.get("_source_wiring") is not wiring
-        or row[2].__defaults__ is not None
-        or row[2].__kwdefaults__ is not None
-        or row[2].__closure__ is not None
-        or vars(row[2]).get("__wrapped__") is not row[10]
-        for row in rows
-    ):
-        return None
-    if not wiring._console_skill_metadata_current(
-        metadata
-    ) or not wiring._console_skill_source_current(metadata, source):
-        return None
-    return wiring, metadata
+    return wiring if type(wiring) is ModuleType else None
 
 
 def _supported_published_skill_trust(source):
@@ -508,10 +444,6 @@ def _supported_published_skill_trust(source):
 
 
 def _skill_catalog_sources_current(preparation):
-    checked = _resident_skill_wiring()
-    if checked is None:
-        return False
-    wiring, metadata = checked
     source = preparation.trust_source
     if (
         source is None
@@ -520,20 +452,12 @@ def _skill_catalog_sources_current(preparation):
     ):
         return False
     local_module = sys.modules.get("tldw_chatbook.Skills_Interop.local_skills_service")
-    capture_module = sys.modules.get("tldw_chatbook.Chat.console_configuration_capture")
-    if type(local_module) is not ModuleType or type(capture_module) is not ModuleType:
+    if type(local_module) is not ModuleType:
         return False
-    if any(
+    # A per-instance override of a catalog method still declines.
+    return not any(
         name in vars(source.local)
         for name in vars(local_module).get("_CONSOLE_SKILL_CATALOG_METHODS", ())
-    ):
-        return False
-    return all(
-        wiring._console_skill_source_current(metadata, record)
-        for record in (
-            vars(local_module).get("_CONSOLE_SKILL_CATALOG_SOURCE"),
-            vars(capture_module).get("_CONSOLE_SKILL_CAPTURE_SOURCE"),
-        )
     )
 
 
@@ -549,7 +473,12 @@ def _same_configuration_references(left, right):
 
 
 def _first_library_source_current(source):
-    """Check the original native Q1 publisher/repository without invoking them."""
+    """The first durable policy's store and repository are still the session's.
+
+    Current module bindings, types and slots decide (ADR-356 rule 4), not the
+    publisher's or reader's function identity. A per-instance override of the
+    publisher or reader still declines.
+    """
     (
         store,
         persistence,
@@ -558,17 +487,15 @@ def _first_library_source_current(source):
         path,
         store_module,
         repository_module,
-        store_record,
+        store_type,
         repo_record,
         persistence_module,
         persistence_type,
     ) = source
-    if (
-        type(store_record) is not tuple
-        or len(store_record) != 6
-        or type(repo_record) is not tuple
-        or len(repo_record) != 12
-        or type(store) is not store_record[0]
+    return not (
+        type(repo_record) is not tuple
+        or len(repo_record) != 2
+        or type(store) is not store_type
         or type(repository) is not repo_record[0]
         or type(persistence) is not persistence_type
         or sys.modules.get("tldw_chatbook.Chat.console_chat_store") is not store_module
@@ -578,14 +505,14 @@ def _first_library_source_current(source):
         is not persistence_module
         or vars(persistence_module).get("ChatPersistenceService")
         is not persistence_type
-        or vars(store_module).get("_NATIVE_FIRST_LIBRARY_STORE") is not store_record
+        or vars(store_module).get("ConsoleChatStore") is not store_type
         or vars(repository_module).get("_NATIVE_FIRST_LIBRARY_REPOSITORY")
         is not repo_record
         or vars(store).get("persistence") is not persistence
         or vars(persistence).get("console_library_policy_repository") is not repository
         or vars(persistence).get("db") is not database
         or vars(repository).get("db") is not database
-        or type(database) is not repo_record[6]
+        or type(database) is not repo_record[1]
         or vars(database).get("db_path") is not path
         or any(
             name in vars(store)
@@ -596,65 +523,6 @@ def _first_library_source_current(source):
             )
         )
         or any(name in vars(repository) for name in ("read", "_result_from_row"))
-    ):
-        return False
-    (
-        store_type,
-        publish,
-        implementation,
-        identity,
-        identity_implementation,
-        session_lookup,
-    ) = store_record
-    (
-        repo_type,
-        read,
-        row,
-        normalize,
-        valid,
-        sql,
-        db_type,
-        policy_type,
-        result_type,
-        snapshot_type,
-        retrieve_type,
-        access_type,
-    ) = repo_record
-    policy_module = vars(repository_module).get("_ordinary_policy_source")
-    row_descriptor = vars(repo_type).get("_result_from_row")
-    return bool(
-        vars(store_module).get("ConsoleChatStore") is store_type
-        and inspect.getattr_static(store_type, "publish_durable_turn_identity", None)
-        is publish[0]
-        and vars(publish[0]).get("__wrapped__") is implementation[0]
-        and inspect.getattr_static(store_type, "publish_committed_identity", None)
-        is identity[0]
-        and vars(identity[0]).get("__wrapped__") is identity_implementation[0]
-        and inspect.getattr_static(store_type, "_session_or_raise", None)
-        is session_lookup[0]
-        and vars(repository_module).get("ConsoleLibraryPolicyRepository") is repo_type
-        and vars(repository_module).get("CharactersRAGDB") is db_type
-        and vars(repository_module).get("ConsoleConversationLibraryPolicy")
-        is policy_type
-        and vars(repository_module).get("ConsoleLibraryPolicyReadResult") is result_type
-        and vars(repository_module).get("ConsoleAutoRetrieve") is retrieve_type
-        and vars(repository_module).get("ConsoleAssistantLibraryAccess") is access_type
-        and inspect.getattr_static(repo_type, "read", None) is read[0]
-        and type(row_descriptor) is staticmethod
-        and row_descriptor.__func__ is row[0]
-        and vars(repository_module).get("normalize_policy_read") is normalize[0]
-        and vars(repository_module).get("_POLICY_SELECT") is sql
-        and type(policy_module) is ModuleType
-        and vars(policy_module).get("_is_valid_durable_policy") is valid[0]
-        and vars(policy_module).get("ConsoleLibraryPolicySnapshot") is snapshot_type
-        and vars(policy_module).get("ConsoleConversationLibraryPolicy") is policy_type
-        and vars(policy_module).get("ConsoleLibraryPolicyReadResult") is result_type
-        and vars(policy_module).get("ConsoleAutoRetrieve") is retrieve_type
-        and vars(policy_module).get("ConsoleAssistantLibraryAccess") is access_type
-        and all(
-            _function_unchanged(record)
-            for record in (*store_record[1:], *repo_record[1:5])
-        )
     )
 
 
@@ -697,7 +565,7 @@ def begin_first_library_publication(
         getattr(database, "db_path", None),
         store_module,
         repository_module,
-        vars(store_module).get("_NATIVE_FIRST_LIBRARY_STORE"),
+        vars(store_module).get("ConsoleChatStore"),
         vars(repository_module).get("_NATIVE_FIRST_LIBRARY_REPOSITORY"),
         persistence_module,
         vars(persistence_module).get("ChatPersistenceService"),
@@ -884,14 +752,9 @@ def _first_library_coordinator_current(
         or registered.conversation_id != session.persisted_conversation_id
     ):
         return False
-    for name, function in record[1]:
-        if (
-            name in vars(coordinator)
-            or inspect.getattr_static(type(coordinator), name, None) is not function[0]
-            or not _function_unchanged(function)
-        ):
-            return False
-    return True
+    # Its own holder registration decides (ADR-356 rule 4); a per-instance
+    # override of a reader method still declines.
+    return not any(name in vars(coordinator) for name in record[1])
 
 
 def _first_library_witness_current(controller, session, tree, configuration, receipt):
@@ -1009,46 +872,14 @@ def _same_trust_slots(source, expected):
     )
 
 
-def _trust_source_functions_current(preparation):
-    return _trust_source_records_current(
-        preparation.trust_source, preparation.trust_functions
-    )
-
-
-def _trust_source_records_current(source, records):
-    return bool(
-        source is not None
-        and len(records) == 2
-        and source.source_current is records[0][0]
-        and source.current is records[1][0]
-        and all(_function_unchanged(record) for record in records)
-    )
-
-
 def _skill_publisher_guard(preparation):
-    """Prepare exact plain identities before the publication fence."""
+    """Prepare the slots and environment the publication fence rechecks.
+
+    The app's and local service's current slots decide (ADR-356 rule 4), not
+    the trust getter's or builder's function identity.
+    """
     source = preparation.trust_source
     app, local = source.app, source.local
-    bindings = []
-    functions = []
-    for obj, name in (
-        (app, "local_skill_trust_service"),
-        (app, "_build_local_skill_trust_service"),
-        (app, "ensure_local_skill_trust_service"),
-        (local, "trust_service"),
-    ):
-        for cls in type(obj).__mro__:
-            namespace = vars(cls)
-            if name in namespace:
-                value = namespace[name]
-                bindings.append((namespace, name, value))
-                function = value.fget if type(value) is property else value
-                if type(function) is not FunctionType:
-                    return None
-                functions.append(_function_record(function))
-                break
-        else:
-            return None
     app_fields, local_fields = vars(app), vars(local)
     fields = tuple(
         (container, name, container.get(name))
@@ -1060,6 +891,7 @@ def _skill_publisher_guard(preparation):
                     "_local_skills_service",
                     "_skills_scope_service",
                     "_local_skills_stack_inputs",
+                    "_local_skills_callbacks",
                     "app_config",
                 ),
             ),
@@ -1075,10 +907,6 @@ def _skill_publisher_guard(preparation):
         )
         for name in names
     )
-    factory = local_fields.get("_trust_service_factory")
-    if type(factory) is not FunctionType:
-        return None
-    functions.append(_function_record(factory))
     environment = os.environ
     if type(environment) is not os._Environ:
         return None
@@ -1101,9 +929,7 @@ def _skill_publisher_guard(preparation):
     ):
         return None
     return (
-        tuple(bindings),
         fields,
-        tuple(functions),
         type(app),
         type(local),
         environment,
@@ -1114,9 +940,7 @@ def _skill_publisher_guard(preparation):
 
 def _skill_publisher_guard_current(source, guard):
     (
-        bindings,
         fields,
-        functions,
         app_type,
         local_type,
         environment,
@@ -1129,9 +953,7 @@ def _skill_publisher_guard_current(source, guard):
         and os.environ is environment
         and vars(environment).get("_data") is environment_data
         and all(environment_data.get(key) == value for key, value in selector)
-        and all(namespace.get(name) is value for namespace, name, value in bindings)
         and all(container.get(name) is value for container, name, value in fields)
-        and all(_function_unchanged(record) for record in functions)
     )
 
 
@@ -1217,7 +1039,6 @@ def finish_native_skill_trust_publication(marker, winner):
         initial_local,
         expected,
         winner,
-        preparation.trust_functions,
         marker.guard,
     )
     # Only plain native identity checks and assignment occur under this fence.
@@ -1228,7 +1049,6 @@ def finish_native_skill_trust_publication(marker, winner):
             or vars(source.app).get("_local_skill_trust_service") is not expected
             or vars(source.local).get("_trust_service") is not winner
             or not _skill_publisher_guard_current(source, marker.guard)
-            or not _trust_source_functions_current(preparation)
             or vars(preparation.config).get("_CONFIG_GENERATION")
             != preparation.config_identity[0]
         ):
@@ -1250,8 +1070,6 @@ def _original_skill_trust_slots_current(preparation, initial):
         and receipt.source.scope is source.scope
         and receipt.initial_app is initial[0]
         and receipt.initial_local is initial[1]
-        and _trust_source_functions_current(preparation)
-        and _trust_source_records_current(receipt.source, receipt.source_functions)
         and _skill_publisher_guard_current(receipt.source, receipt.guard)
         and receipt.source.source_current()
         and source.source_current()
@@ -1273,14 +1091,12 @@ def capture_console_received_configuration_preparation(
             return None
         trust_source = None
         trust_initial = ()
-        trust_functions = ()
         if not standard_console_configuration_sources(
             app, store, creator, session_id=session_id
         ):
-            checked = _resident_skill_wiring()
-            if checked is None:
+            wiring = _resident_skill_wiring()
+            if wiring is None:
                 return None
-            wiring, _metadata = checked
             trust_source = wiring._capture_console_skill_trust_source(
                 app, vars(app).get("_skills_scope_service")
             )
@@ -1292,15 +1108,6 @@ def capture_console_received_configuration_preparation(
             trust_initial = (
                 vars(trust_source.app).get("_local_skill_trust_service"),
                 vars(trust_source.local).get("_trust_service"),
-            )
-            if (
-                type(trust_source.source_current) is not FunctionType
-                or type(trust_source.current) is not FunctionType
-            ):
-                return None
-            trust_functions = (
-                _function_record(trust_source.source_current),
-                _function_record(trust_source.current),
             )
         refs = _source_references(
             app, store, creator, session, _unused_trust=trust_source
@@ -1318,11 +1125,9 @@ def capture_console_received_configuration_preparation(
             refs,
             trust_source,
             trust_initial,
-            trust_functions,
         )
         if trust_source is not None and (
-            not _trust_source_functions_current(preparation)
-            or not _skill_catalog_sources_current(preparation)
+            not _skill_catalog_sources_current(preparation)
             or not _same_trust_slots(trust_source, trust_initial)
         ):
             return None
@@ -1351,8 +1156,7 @@ def require_received_configuration_preparation(
         raise RecoveryRequired("console_snapshot_owner_changed")
     source = preparation.trust_source
     if source is not None and (
-        not _trust_source_functions_current(preparation)
-        or not _skill_catalog_sources_current(preparation)
+        not _skill_catalog_sources_current(preparation)
         or (on_loop and not source.current())
     ):
         raise RecoveryRequired("console_snapshot_owner_changed")
@@ -2069,8 +1873,6 @@ async def capture_console_turn_configuration_owned(
 
 
 def _consent_source_identity(service):
-    from .console_ordinary_tree import _function_record
-
     values = (
         tuple(
             inspect.getattr_static(service, name, None)
@@ -2084,10 +1886,7 @@ def _consent_source_identity(service):
         if service is not None
         else ()
     )
-    return tuple(
-        (value, _function_record(value) if type(value) is FunctionType else None)
-        for value in values
-    )
+    return tuple((value,) for value in values)
 
 
 def _mcp_source_identity(service, bounded_sources=None):
@@ -2123,13 +1922,8 @@ def _mcp_source_identity(service, bounded_sources=None):
         if permission is not None
         else None,
     )
-    from .console_ordinary_tree import _function_record
-
     return (
-        tuple(
-            (value, _function_record(value) if type(value) is FunctionType else None)
-            for value in values
-        ),
+        tuple((value,) for value in values),
         inspect.getattr_static(store, "path", None) if store is not None else None,
         inspect.getattr_static(permission, "path", None)
         if permission is not None
@@ -2139,10 +1933,9 @@ def _mcp_source_identity(service, bounded_sources=None):
 
 
 def _same_mcp_source_entry(original, current):
-    from .console_ordinary_tree import _function_unchanged
-
-    value, record = original
-    return value is current[0] and (record is None or _function_unchanged(record))
+    # The slot still holds the same receiver or callback (ADR-356 rule 4: its
+    # code is not inspected).
+    return original[0] is current[0]
 
 
 def _same_mcp_source(left, right):

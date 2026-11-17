@@ -231,7 +231,6 @@ EXCLUDED: dict[str, str] = {
             "_notes_sync_runtime_owner",
             "_parakeet_source_service",
             "_personal_context_service",
-            "_plugin_service",
             "_tts_profile_repository",
             "_tts_profile_service",
             "_tts_voice_bundle_service",

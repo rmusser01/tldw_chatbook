@@ -22229,16 +22229,3 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             return "pending"
         return "complete"
 
-
-from .console_ordinary_tree import _function_record as _ordinary_function_record
-
-_NATIVE_FIRST_LIBRARY_STORE = (
-    ConsoleChatStore,
-    _ordinary_function_record(ConsoleChatStore.publish_durable_turn_identity),
-    _ordinary_function_record(
-        ConsoleChatStore.publish_durable_turn_identity.__wrapped__
-    ),
-    _ordinary_function_record(ConsoleChatStore.publish_committed_identity),
-    _ordinary_function_record(ConsoleChatStore.publish_committed_identity.__wrapped__),
-    _ordinary_function_record(ConsoleChatStore._session_or_raise),
-)

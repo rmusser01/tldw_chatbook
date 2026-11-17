@@ -99,42 +99,6 @@ def test_captured_projection_error_is_not_reported_as_catalog_absence():
         )
 
 
-@pytest.mark.parametrize("changed", ["binding", "body", "defaults", "wrapper"])
-def test_resident_proof_rejects_changed_helper_before_invoking_it(tmp_path, changed):
-    # Definition-time identities need an uncontaminated import. Other domain
-    # fixtures deliberately replace the app's path callback during first import;
-    # its restoration must correctly make that captured source decline.
-    from Tests.Backup_Recovery.test_home_citation_retirement import _run
-
-    _run(tmp_path, changed, "proof", script=r"""
-import sys
-from Tests import network_guard, real_profile_guard
-network_guard.install()
-real_profile_guard.install()
-from tldw_chatbook import app_service_wiring as wiring
-from tldw_chatbook.Widgets import compact_model_bar as metadata
-from tldw_chatbook.Chat import console_configuration_preparation as preparation
-assert preparation._resident_skill_wiring() == (wiring, metadata)
-name = "_capture_console_skill_trust_source"
-original = getattr(wiring, name)
-def foreign(*args, **kwargs):
-    raise AssertionError("Replaced proof helper must never be executed")
-changed = sys.argv[1]
-if changed == "binding":
-    setattr(wiring, name, foreign)
-elif changed == "body":
-    original.__code__ = foreign.__code__
-elif changed == "defaults":
-    original.__defaults__ = (None,)
-else:
-    original.__wrapped__ = foreign
-assert preparation._resident_skill_wiring() is None
-assert not network_guard.blocked_attempts()
-assert not real_profile_guard.take_violations()
-print("retired and reopened")
-""")
-
-
 def test_unknown_cold_sources_decline_without_lazy_getter_or_missing_proof_import(
     monkeypatch,
 ):

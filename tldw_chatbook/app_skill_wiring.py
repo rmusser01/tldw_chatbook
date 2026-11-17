@@ -65,71 +65,6 @@ def _read_app_disabled_builtin_skills(app: object) -> frozenset[str]:
     return _source_wiring._disabled_builtin_skills(getattr(app, "app_config", None))
 
 
-def _read_app_published_plugin_service(app: object) -> Any:
-    """Return only the already resident plugin metadata owner."""
-    return getattr(app, "_plugin_service", None)
-
-
-def _console_skill_metadata_current(metadata):
-    """Check the three reused proof helpers before invoking their bodies."""
-    import sys
-    from importlib.machinery import ModuleSpec
-    from types import FunctionType, MappingProxyType, ModuleType
-
-    if type(metadata) is not ModuleType:
-        return False
-    if sys.modules.get(__package__ + ".Widgets.compact_model_bar") is not metadata:
-        return False
-    namespace = vars(metadata)
-    source = namespace.get("_WIDGET_SOURCE")
-    if type(source) is not tuple or len(source) != 6 or type(source[5]) is not tuple:
-        return False
-    defining, path, spec, origin, bindings, _records = source
-    if (
-        defining is not namespace
-        or type(path) is not str  # exact source metadata
-        or type(origin) is not str  # exact plain metadata; no custom dispatch
-        or type(namespace.get("__file__")) is not str  # exact source metadata
-        or namespace.get("__file__") != path  # exact plain metadata; no custom dispatch
-        or namespace.get("__spec__") is not spec
-        or type(spec) is not ModuleSpec
-        or type(spec.origin) is not str  # exact source metadata
-        or spec.origin != origin
-        or origin != path  # exact plain metadata; no custom dispatch
-        or type(bindings) is not tuple
-    ):
-        return False
-    for row in bindings:
-        if (
-            type(row) is not tuple
-            or len(row) != 3
-            or type(row[1]) is not str  # exact plain metadata; no custom dispatch
-            or (type(row[0]) is not dict and type(row[0]) is not MappingProxyType)  # exact plain metadata; no custom dispatch
-            or row[0].get(row[1]) is not row[2]
-        ):
-            return False
-    names = {"_plain_fields", "_source_current", "_function_current"}
-    records = tuple(
-        row
-        for row in source[5]
-        if type(row) is tuple
-        and len(row) == 11
-        and row[0] is namespace
-        and type(row[1]) is str  # plain capsule key
-        and row[1] in names
-    )
-    return len(records) == 3 and all(
-        namespace.get(row[1]) is row[2]
-        and type(row[2]) is FunctionType
-        and row[2].__code__ is row[3]
-        and row[2].__globals__ is row[4] is namespace
-        and row[2].__defaults__ is None
-        and row[2].__kwdefaults__ is None
-        and row[2].__closure__ is None
-        for row in records
-    )
-
-
 def _console_skill_source_current(metadata, source):
     """Reuse the existing finite source capsule checker for this stock route."""
     if type(source) is not tuple or len(source) != 6:
@@ -173,14 +108,20 @@ def _console_skill_source_current(metadata, source):
 
 
 def _capture_console_skill_trust_source(app, service):
-    """Capture resident service sources without a UI scheduling dependency."""
+    """Capture resident service sources without a UI scheduling dependency.
+
+    ADR-356 rule 4: the app's own registrations and current state decide (its
+    type, slots, runtime, the callbacks it registered for this skills stack,
+    config identity and environment), not function or code identity; a
+    wrapped or decorated skill collaborator qualifies like the stock one.
+    Per-instance overrides of the skill methods still decline.
+    """
     _source_wiring = globals()["_source_wiring"]
-    import inspect
     import sys
-    from types import FunctionType, ModuleType
+    from types import ModuleType
 
     metadata = sys.modules.get("tldw_chatbook.Widgets.compact_model_bar")
-    if not _source_wiring._console_skill_metadata_current(metadata):
+    if type(metadata) is not ModuleType:
         return None
     app_module = sys.modules.get("tldw_chatbook.app")
     scope_module = sys.modules.get("tldw_chatbook.Skills_Interop.skills_scope_service")
@@ -195,29 +136,12 @@ def _capture_console_skill_trust_source(app, service):
     app_record = app_namespace.get("_CONSOLE_SKILL_APP_SOURCE")
     if type(app_record) is not tuple or len(app_record) != 5:
         return None
-    app_type, defining, factory, factory_code, runtime_type = app_record
+    app_type, defining, _factory, _factory_code, runtime_type = app_record
     if (
         defining is not app_namespace
         or type(app) is not app_type
         or app_namespace.get("TldwCli") is not app_type
-        or type(factory) is not FunctionType
-        or factory.__globals__ is not defining
-        or factory.__code__ is not factory_code
-        or factory.__defaults__ is not None
-        or factory.__kwdefaults__ is not None
-        or factory.__closure__ is not None
-        or inspect.getattr_static(app_type, "_create_deferred_startup_task", None)
-        is not factory
     ):
-        return None
-    source = _source_wiring._CONSOLE_SKILL_WIRING_SOURCE
-    scope_source = vars(scope_module).get("_CONSOLE_SKILL_CONTEXT_SOURCE")
-    local_source = vars(local_module).get("_CONSOLE_SKILL_CONTEXT_SOURCE")
-    config_source = vars(config_module).get("_COMPACT_MODEL_CONFIG_SOURCE")
-    if source is not vars(_source_wiring).get("_CONSOLE_SKILL_CONTEXT_SOURCE"):
-        return None
-    sources = (source, _source_wiring._CONSOLE_SKILL_HELPER_SOURCE, scope_source, local_source, config_source)
-    if not all(_source_wiring._console_skill_source_current(metadata, row) for row in sources):
         return None
     app_slots = (
         "_build_local_skill_trust_service",
@@ -227,12 +151,6 @@ def _capture_console_skill_trust_source(app, service):
         "local_skills_service",
         "skills_scope_service",
     )
-    if any(
-        inspect.getattr_static(app_type, name, None)
-        is not (_source_wiring._skill_wiring.SkillServiceWiringMixin if name in ("_build_local_skill_trust_service", "_build_local_skills_stack", "ensure_local_skill_trust_service") else _source_wiring.ServiceWiringMixin).__dict__[name]
-        for name in app_slots
-    ):
-        return None
     scope_type = vars(scope_module).get("SkillsScopeService")
     local_type = vars(local_module).get("LocalSkillsService")
     app_fields = metadata._plain_fields(
@@ -244,6 +162,7 @@ def _capture_console_skill_trust_source(app, service):
             "_local_skills_service",
             "_skills_scope_service",
             "_local_skills_stack_inputs",
+            "_local_skills_callbacks",
             "app_config",
             "_shutting_down",
             "_exit",
@@ -323,20 +242,12 @@ def _capture_console_skill_trust_source(app, service):
         or type(app_fields.get("app_config")) is not dict  # exact stock metadata; no custom dispatch
     ):
         return None
+    # The trust factory must be the one this app registered for this stack;
+    # an injected factory declines here, before anything calls it.
+    callbacks = app_fields.get("_local_skills_callbacks")
     lazy = local_fields.get("_trust_service_factory")
-    if (
-        type(lazy) is not FunctionType
-        or lazy.__code__ is not _source_wiring._CONSOLE_SKILL_TRUST_FACTORY_CODE
-        or lazy.__globals__ is not vars(_source_wiring._skill_wiring)
-        or lazy.__defaults__ is not None
-        or lazy.__kwdefaults__ is not None
-        or lazy.__code__.co_freevars != ("self",)
-        or type(lazy.__closure__) is not tuple
-        or len(lazy.__closure__) != 1
-        or lazy.__closure__[0].cell_contents is not app
-    ):
+    if type(callbacks) is not tuple or len(callbacks) != 3 or lazy is not callbacks[0]:
         return None
-    lazy_closure = lazy.__closure__
     # Preserve the original captured policy collaborators; no verdict is reused.
     inputs = app_fields.get("_local_skills_stack_inputs")
     if type(inputs) is not tuple or len(inputs) != 2:
@@ -375,53 +286,13 @@ def _capture_console_skill_trust_source(app, service):
     ):
         return None
 
-    metadata_check = _source_wiring._console_skill_metadata_current
-    source_check = _source_wiring._console_skill_source_current
-    support = tuple(
-        row for row in source[5] if row[2] is metadata_check or row[2] is source_check
-    )
-    if len(support) != 2 or any(
-        row[5] is not None or row[6] is not None or row[8] is not None
-        for row in support
-    ):
-        return None
-
     def source_current():
-        if sources[1][0].get("_source_wiring") is not _source_wiring:
-            return False
-        # Check captured helper records without invoking either helper first.
-        # Bound references alone do not reject an in-place body replacement.
-        for row in support:
-            namespace, name, function = row[:3]
-            if (
-                namespace.get(name) is not function
-                or type(function) is not FunctionType
-                or function.__code__ is not row[3]
-                or function.__globals__ is not row[4]
-                or function.__globals__.get("_source_wiring") is not _source_wiring
-                or function.__defaults__ is not None
-                or function.__kwdefaults__ is not None
-                or function.__closure__ is not None
-                or type(vars(function)) is not dict  # plain defining metadata
-                or vars(function).get("__wrapped__") is not row[10]
-            ):
-                return False
-        if not metadata_check(metadata):
-            return False
-        if not all(source_check(metadata, row) for row in sources):
-            return False
         # Captured plain fields only: no Textual accessor or cached authority.
         if not (
             runtime_current()
             and sys.modules.get("tldw_chatbook.app") is app_module
             and app_namespace.get("_CONSOLE_SKILL_APP_SOURCE") is app_record
             and app_namespace.get("TldwCli") is app_type
-            and factory.__code__ is factory_code
-            and factory.__defaults__ is None
-            and factory.__kwdefaults__ is None
-            and factory.__closure__ is None
-            and inspect.getattr_static(app_type, "_create_deferred_startup_task", None)
-            is factory
             and config_module.current_config_identity() == identity
             and vars(config_module).get("_SETTINGS_CACHE") is cache
             and vars(config_module).get("_SETTINGS_CACHE_POSTURE") is posture
@@ -448,6 +319,7 @@ def _capture_console_skill_trust_source(app, service):
                     "_local_skills_service",
                     "_skills_scope_service",
                     "_local_skills_stack_inputs",
+                    "_local_skills_callbacks",
                     "app_config",
                     "_shutting_down",
                     "_exit",
@@ -484,19 +356,9 @@ def _capture_console_skill_trust_source(app, service):
             and app_fields.get("_thread_id") == thread.ident
             and app_fields.get("_shutting_down") is False
             and app_fields.get("_exit") is False
-            and all(
-                inspect.getattr_static(app_type, name, None)
-                is (_source_wiring._skill_wiring.SkillServiceWiringMixin if name in ("_build_local_skill_trust_service", "_build_local_skills_stack", "ensure_local_skill_trust_service") else _source_wiring.ServiceWiringMixin).__dict__[name]
-                for name in app_slots
-            )
             and not any(name in app_fields for name in app_slots)
+            and app_fields.get("_local_skills_callbacks") is callbacks
             and local_fields.get("_trust_service_factory") is lazy
-            and lazy.__code__ is _source_wiring._CONSOLE_SKILL_TRUST_FACTORY_CODE
-            and lazy.__globals__ is vars(_source_wiring._skill_wiring)
-            and lazy.__defaults__ is None
-            and lazy.__kwdefaults__ is None
-            and lazy.__closure__ is lazy_closure
-            and lazy_closure[0].cell_contents is app
             and local_fields.get("store_dir") is store_dir
             and local_fields.get("skills_dir") is skills_dir
             and not any(name in scope_fields for name in _source_wiring._CONSOLE_SKILL_SCOPE_SLOTS)
@@ -509,8 +371,6 @@ def _capture_console_skill_trust_source(app, service):
         )
 
     def current():
-        if sources[1][0].get("_source_wiring") is not _source_wiring:
-            return False
         try:
             return (
                 _source_wiring.asyncio.get_running_loop() is loop
@@ -748,7 +608,6 @@ def _install_skill_source(_source_wiring):
         ].fget,
         "local_skills_service": _source_wiring.ServiceWiringMixin.__dict__["local_skills_service"].fget,
         "skills_scope_service": _source_wiring.ServiceWiringMixin.__dict__["skills_scope_service"].fget,
-        "_console_skill_metadata_current": _source_wiring._console_skill_metadata_current,
         "_console_skill_source_current": _source_wiring._console_skill_source_current,
         "_capture_console_skill_trust_source": _source_wiring._capture_console_skill_trust_source,
         "_capture_console_skill_trust_preparation": _source_wiring._capture_console_skill_trust_preparation,
@@ -806,7 +665,6 @@ def _install_skill_source(_source_wiring):
                 "_capture_console_skill_trust_source",
                 _source_wiring._capture_console_skill_trust_source,
             ),
-            (vars(_source_wiring), "_console_skill_metadata_current", _source_wiring._console_skill_metadata_current),
             (vars(_source_wiring), "_console_skill_source_current", _source_wiring._console_skill_source_current),
             (
                 vars(_source_wiring),
@@ -889,24 +747,11 @@ def _install_skill_source(_source_wiring):
         _source_wiring._prepare_console_skill_trust_service,
     )
     vars(_source_wiring).update({'_CONSOLE_SKILL_ENTRY': _CONSOLE_SKILL_ENTRY})
-    _CONSOLE_SKILL_TRUST_FACTORY_CODE = next(
-        code
-        for code in _source_wiring.ServiceWiringMixin._build_local_skills_stack.__code__.co_consts
-        if isinstance(code, type(_source_wiring.ServiceWiringMixin._build_local_skills_stack.__code__))
-        and code.co_name == "<lambda>"
-        and code.co_names == ("local_skill_trust_service",)
-    )
-    vars(_source_wiring).update({'_CONSOLE_SKILL_TRUST_FACTORY_CODE': _CONSOLE_SKILL_TRUST_FACTORY_CODE})
     _CONSOLE_SKILL_CONTEXT_SOURCE = (
         *_CONSOLE_SKILL_CONTEXT_SOURCE[:4],
         _CONSOLE_SKILL_CONTEXT_SOURCE[4]
         + (
             (vars(_source_wiring), "_CONSOLE_SKILL_ENTRY", _CONSOLE_SKILL_ENTRY),
-            (
-                vars(_source_wiring),
-                "_CONSOLE_SKILL_TRUST_FACTORY_CODE",
-                _CONSOLE_SKILL_TRUST_FACTORY_CODE,
-            ),
         ),
         _CONSOLE_SKILL_CONTEXT_SOURCE[5],
     )
@@ -914,7 +759,7 @@ def _install_skill_source(_source_wiring):
     _CONSOLE_SKILL_WIRING_SOURCE = _CONSOLE_SKILL_CONTEXT_SOURCE
     vars(_source_wiring).update({'_CONSOLE_SKILL_WIRING_SOURCE': _CONSOLE_SKILL_WIRING_SOURCE})
     _helper_namespace = globals()
-    _helper_names = ('_console_skill_metadata_current', '_console_skill_source_current', '_capture_console_skill_trust_source', '_capture_console_skill_trust_preparation', '_prepare_console_skill_trust_service')
+    _helper_names = ('_console_skill_source_current', '_capture_console_skill_trust_source', '_capture_console_skill_trust_preparation', '_prepare_console_skill_trust_service')
     _helper_bindings = tuple((_helper_namespace, name, _helper_namespace[name]) for name in _helper_names) + ((_helper_namespace, '_source_wiring', _source_wiring), (_helper_namespace, '__package__', __package__), (vars(_source_wiring), '_skill_wiring', _source_wiring._skill_wiring))
     _helper_bindings += tuple((_helper_namespace, name, _helper_namespace[name]) for name in ("SkillServiceWiringMixin",))
     _helper_records = tuple((
@@ -941,7 +786,6 @@ def _install_skill_source(_source_wiring):
         '_CONSOLE_SKILL_RUN_WORKER': _CONSOLE_SKILL_RUN_WORKER,
         '_CONSOLE_SKILL_SCOPE_SLOTS': _CONSOLE_SKILL_SCOPE_SLOTS,
         '_CONSOLE_SKILL_START_WORKER': _CONSOLE_SKILL_START_WORKER,
-        '_CONSOLE_SKILL_TRUST_FACTORY_CODE': _CONSOLE_SKILL_TRUST_FACTORY_CODE,
         '_CONSOLE_SKILL_WAIT': _CONSOLE_SKILL_WAIT,
         '_CONSOLE_SKILL_WIRING_SOURCE': _CONSOLE_SKILL_WIRING_SOURCE,
         '_CONSOLE_SKILL_WORKERS': _CONSOLE_SKILL_WORKERS,
@@ -1089,14 +933,21 @@ class SkillServiceWiringMixin:
             return
         policy_enforcer, server_skills_service = self._local_skills_stack_inputs
         if self._local_skills_service is None:
+            # Recorded on the app: Console Send preparation trusts these slots
+            # only while they still hold what the app registered (ADR-356 rule 4).
+            trust_factory, plugin_factory, disabled_loader = self._local_skills_callbacks = (
+                lambda: self.local_skill_trust_service,
+                self._build_plugin_service,
+                # In-memory config read: this runs on every skills read,
+                # including the Console's per-send capture.
+                _source_wiring.partial(_source_wiring._read_app_disabled_builtin_skills, self),
+            )
             self._local_skills_service = _source_wiring.LocalSkillsService(
                 store_dir=_source_wiring.default_local_skills_store_dir(_source_wiring.get_user_data_dir()),
                 policy_enforcer=policy_enforcer,
-                trust_service_factory=lambda: self.local_skill_trust_service,
-                plugin_service_factory=self._build_plugin_service,
-                # In-memory config read: this runs on every skills read,
-                # including the Console's per-send capture.
-                builtin_disabled_loader=_source_wiring.partial(_source_wiring._read_app_disabled_builtin_skills, self),
+                trust_service_factory=trust_factory,
+                plugin_service_factory=plugin_factory,
+                builtin_disabled_loader=disabled_loader,
             )
         if self._skills_scope_service is None:
             self._skills_scope_service = _source_wiring.SkillsScopeService(
