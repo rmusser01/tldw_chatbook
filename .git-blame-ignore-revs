@@ -348,4 +348,4 @@ a529dbd3ed0b13502b8d100e3053e0bea5baa119
 # single-item delete, Undo, selection export, edit save) moved byte-for-byte
 # into LibraryMediaController with no token edit. Test edits are
 # receiver-only, AST-proven against the parent.
-e79dbfc7dbde872027bb42f8bdb6532ec460dfc0
+5fa37e565964b973ee1a62249e55576cb3aa98e1
