@@ -1,7 +1,7 @@
 ---
 id: TASK-41308
 title: "When the MCP store is unbound, a Send runs without MCP tools and neither the user nor the model is told"
-status: In Progress
+status: Done
 created_date: 2026-11-16 19:55
 labels:
 - follow-up
@@ -33,14 +33,14 @@ Filed from the 2026-11-13..16 burn-down. TASK-40714 (PR #3541) found it and left
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 When the MCP store is unbound and MCP servers are configured, the Console shows the user that MCP tools are off for this Send and why (e.g. in the inspector's MCP row), shown by a test that is red on dev
-- [ ] #2 The model is told, in the request, that MCP tools are unavailable for this turn, or the task notes record why it should not be
-- [ ] #3 With a bound store, the MCP row and the request are unchanged (existing tests still pass)
+- [x] #1 When the MCP store is unbound and MCP servers are configured, the Console shows the user that MCP tools are off for this Send and why (e.g. in the inspector's MCP row), shown by a test that is red on dev
+- [x] #2 The model is told, in the request, that MCP tools are unavailable for this turn, or the task notes record why it should not be
+- [x] #3 With a bound store, the MCP row and the request are unchanged (existing tests still pass)
 <!-- AC:END -->
 
 ## Implementation Plan
 
-DRAFT (design round, 2026-11-16): options for the owner; nothing is implemented until a decision comes back.
+Owner decision (2026-11-16): option A. Do not tell the model; show the row whenever the store is unbound, from mount, with no disk read; status blocked; an MCP hub warning is out of scope (filed separately). The Windows copy was dropped after the premise correction below (see Implementation Notes).
 
 ADR required: no. The change is display copy plus, at most, one model-facing line. It adds no authority: the unbound store still is not read for the turn.
 
@@ -61,3 +61,45 @@ ADR required: no. The change is display copy plus, at most, one model-facing lin
 1. Failing test (red on base), in `Tests/UI/test_console_send_without_mcp_store.py`. Mount the screen under the bound, Windows (`_bind_as_on_windows`) and non-default-data-dir profiles. Open the inspector and read `#console-inspector-mcp`: present with the off copy when unbound; when bound, unchanged and absent before a Send. Add unit rows in `Tests/Chat/test_console_display_state.py` (the reason wins; the count branches are unchanged).
 2. Make the code change in `MCP/console_snapshot.py`, `Chat/console_display_state.py` and `UI/Screens/chat_screen.py`. Update `Docs/User_Guide/console/agent-runs-and-tools.md`.
 3. Mutation check (drop the reason pass-through: red). Run `Tests/UI/test_console_run_inspector.py`, `test_console_right_rail.py`, `test_product_maturity_phase3_layout_contracts.py` and the display-state tests on base and on head; bootstrap-profile test apps are unbound, so pins on inspector rows may move. Then preflight, and `Tests/Architecture` run serially.
+
+## Implementation Notes
+
+**Premise corrected.** The "every Windows install" premise, carried over from TASK-40714, is false. `raw_participants`, `mcp_source_participants` and `private_paths` import `os` from `Utils/platform_files.py`. On `nt` that `os` is the `WindowsOS()` facade (`Utils/windows_files.py`), which provides `O_DIRECTORY`, `O_NOFOLLOW`, `supports_dir_fd` and `supports_follow_symlinks`. So `_pinned_io_available()` is True on Windows, and the store binds at the default data path. The coordinator found this on fu-base; TASK-41306 stopped on the same finding. The case that remains is a store outside the profile's data folder (`mcp_source_participants.bind`'s path check). Every bootstrap-profile `_build_test_app()` builds one, because the factory picks its own data folder. The Description is left as filed.
+
+**Change.**
+- `MCP/console_snapshot.console_mcp_unavailable_reason(service)` returns "store isn't in this profile's data folder" when `unbound_console_sources(service)`, the same pure predicate that makes the Send drop MCP, and "" otherwise. It reads no file and costs about 0.07-0.4 ms a call at load 70.
+- `ChatScreen._derive_console_inspector_state` passes the reason (lazy import, no new method) to `ConsoleInspectorState.from_values(mcp_unavailable_reason=...)`.
+- `_mcp_inspector_row` returns `MCP: off · <reason>`, status blocked, ahead of its count branches. An empty reason keeps every existing branch, so a bound store renders as before.
+- The row shows from mount, before the first Send, and stays after it.
+- The `unbound_console_sources` docstring no longer says "every Windows install".
+
+**AC #2: the model is not told.** Owner ruling: the row is the place that explains why. "I have no such tool" is true for the turn. V2-F2 / TASK-34100.5.3 (a tool-less request carries only the session prompt) stays intact.
+
+**Tests.**
+- `Tests/UI/test_console_send_without_mcp_store.py::test_inspector_mcp_row_says_off_and_why_when_the_store_is_unbound[bound|no-pinned-io|non-default-data-dir]` presses the real Send button and reads `#console-inspector-mcp` before and after the reply.
+  - On base, both unbound profiles timed out waiting for the row; bound passed.
+  - On head all three pass.
+  - Mutation checks:
+    - Dropping the ChatScreen pass-through: 2 failed, 1 passed.
+    - Making the helper return "": 2 failed, 1 passed.
+- `Tests/Chat/test_console_display_state.py::test_console_inspector_state_mcp_off_reason_wins_over_counts` (4 count states) fails on base with a TypeError.
+- That file's TASK-40714 docstring and its `_bind_as_on_windows` helper wrongly claimed Windows. The helper is now `_bind_without_pinned_io`, and the parametrize id is `no-pinned-io`. Behaviour is unchanged.
+- The same correction applies to the docstring of `Tests/Chat/test_console_configuration_preparation.py::test_unbound_mcp_store_is_no_mcp_source_on_the_runtime_route`.
+
+**AC #3 evidence: the 5 mounted MCP-row tests, red on dev.** All 5 in `Tests/UI/test_console_internals_decomposition.py` (`-k mcp`) failed on dev fbf1c9ea74 with `RecoveryRequired: raw_source_selection_changed`. They read config under the per-test profile redirect without a `bootstrap_profile` marker, the trap TASK-38111 fixed elsewhere.
+- Each now carries the per-node marker.
+- With only the marker, all 5 pass on base. Under this change, the 3 that pin bound rows (tools ready, not connected, omitted by default) would see the off row, because a bootstrap test app's store is unbound. So they build their app at the profile's own data folder (`_build_bound_mcp_test_app`), which asserts the store is bound.
+- The 2 compose tests replace the service with `FakeMCPService` and are unchanged.
+- With head tests on base product code, all 5 passed in a serial run. Under `-n 4` at load 60-85, `_open_console_inspector`'s 2 s rail-open deadline timed out on 1-2 of them on either code.
+
+**Covering files, base (fu-base) vs head, same 22 files, `-n 4`, run together at load 64-147.** The 22 files are the Inspector-deriving UI/Backup_Recovery files, `test_console_run_inspector`, `test_product_maturity_phase3_layout_contracts`, the display-state and send-without-store files, `Tests/MCP/test_console_snapshot_source_contracts.py` and `Tests/Chat/test_console_async_mcp_snapshot.py`.
+- Base: 347 failed, 738 passed. Head: 342 failed, 751 passed (8 more nodes).
+- No node fails only on head. The 5 nodes that fail only on base are the 5 MCP-row tests above.
+- The 342 shared reds are pre-existing: `test_console_internals_decomposition` 122, `test_console_session_settings` 97, `test_console_right_rail` 33, `test_console_async_mcp_snapshot` 32, `test_console_rail_reconciliation` 27, `test_console_snapshot_source_contracts` 16, and others.
+- This run predates the premise correction, which changed only copy, docstrings, the dropped Windows unit test and test ids. The touched files were rerun after it: 75 passed.
+
+**Files.**
+- Product: `tldw_chatbook/MCP/console_snapshot.py`, `tldw_chatbook/Chat/console_display_state.py`, `tldw_chatbook/UI/Screens/chat_screen.py` (+6 lines, no method; within the size ratchet).
+- Tests: `Tests/UI/test_console_send_without_mcp_store.py`, `Tests/Chat/test_console_display_state.py`, `Tests/UI/test_console_internals_decomposition.py`, `Tests/Chat/test_console_configuration_preparation.py` (docstring).
+- Docs: `Docs/User_Guide/console/agent-runs-and-tools.md` (MCP tools section).
+

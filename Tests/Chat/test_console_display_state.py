@@ -352,10 +352,12 @@ def test_console_inspector_state_mcp_off_reason_wins_over_counts(
     state = ConsoleInspectorState.from_values(
         mcp_tool_count=tool_count,
         mcp_not_connected_count=not_connected,
-        mcp_unavailable_reason="not yet available on Windows",
+        mcp_unavailable_reason="store isn't in this profile's data folder",
     )
     rows_by_label = {row.label: row for row in state.rows}
-    assert rows_by_label["MCP"].value == "off · not yet available on Windows"
+    assert rows_by_label["MCP"].value == (
+        "off · store isn't in this profile's data folder"
+    )
     assert rows_by_label["MCP"].status == "blocked"
 
 

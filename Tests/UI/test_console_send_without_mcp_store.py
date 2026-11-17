@@ -1,8 +1,12 @@
 """TASK-40714: an ordinary Console Send must not need a bound MCP store.
 
-The MCP store binds to backup custody only with POSIX pinned I/O (never on
-Windows) and only at the profile's canonical path. Unbound, the stock screen
-refused every Send with "Console preparation source unavailable; Send again."
+The MCP store binds to backup custody only at the profile's canonical path
+and only with pinned I/O. Every supported platform has pinned I/O (Windows
+through `Utils/windows_files.WindowsOS`), so TASK-40714's "never on Windows"
+was wrong (TASK-41308): a store outside the profile's data folder is the
+unbound case, and a bind with pinned I/O switched off is kept as a second way
+to build one. Unbound, the stock screen refused every Send with "Console
+preparation source unavailable; Send again."
 The tests press the real Send button on a mounted ChatScreen and wait for the
 gateway's reply in the transcript and in the store; check that a replaced MCP
 reader is still refused; and rerun the draft-snapshot sends that take the
@@ -35,7 +39,6 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 from tldw_chatbook.Backup_Recovery import mcp_source_participants, raw_participants
 from tldw_chatbook.Chat import console_configuration_preparation as preparation
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
-from tldw_chatbook.MCP import console_snapshot
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
 pytestmark = pytest.mark.bootstrap_profile
@@ -68,8 +71,8 @@ def _record_mcp_maximum(monkeypatch) -> list:
     return captured
 
 
-def _bind_as_on_windows(monkeypatch) -> None:
-    """Bind MCP stores without POSIX pinned I/O, as every Windows install does.
+def _bind_without_pinned_io(monkeypatch) -> None:
+    """Bind MCP stores with pinned I/O switched off, so they stay unbound.
 
     Scoped to the bind: the profile's other sources registered with pinned I/O
     before the test, and switching it off under them is refused by design.
@@ -85,13 +88,13 @@ def _bind_as_on_windows(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("profile", ["bound", "windows", "non-default-data-dir"])
+@pytest.mark.parametrize("profile", ["bound", "no-pinned-io", "non-default-data-dir"])
 async def test_ordinary_send_reaches_the_provider_and_saves_the_reply(
     monkeypatch, tmp_path, profile
 ):
     kwargs = {}
-    if profile == "windows":
-        _bind_as_on_windows(monkeypatch)
+    if profile == "no-pinned-io":
+        _bind_without_pinned_io(monkeypatch)
     elif profile == "non-default-data-dir":
         kwargs["user_data_dir"] = tmp_path
     gateway = _ToolRecordingGateway()
@@ -135,7 +138,7 @@ async def test_ordinary_send_reaches_the_provider_and_saves_the_reply(
 @pytest.mark.asyncio
 async def test_unbound_store_with_a_replaced_mcp_reader_is_still_refused(monkeypatch):
     """Only a stock MCP service runs without MCP tools; a replaced reader refuses."""
-    _bind_as_on_windows(monkeypatch)
+    _bind_without_pinned_io(monkeypatch)
     gateway = CapturingGateway()
     app = _build_console_send_test_app()
     app.chat_api_provider_value = "llama_cpp"
@@ -166,7 +169,7 @@ async def test_unbound_store_with_a_replaced_mcp_reader_is_still_refused(monkeyp
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("profile", ["windows", "non-default-data-dir"])
+@pytest.mark.parametrize("profile", ["no-pinned-io", "non-default-data-dir"])
 @pytest.mark.parametrize(
     "scenario",
     [
@@ -178,8 +181,8 @@ async def test_unbound_store_with_a_replaced_mcp_reader_is_still_refused(monkeyp
 async def test_draft_snapshot_sends_without_a_bound_mcp_store(
     monkeypatch, tmp_path, profile, scenario
 ):
-    if profile == "windows":
-        _bind_as_on_windows(monkeypatch)
+    if profile == "no-pinned-io":
+        _bind_without_pinned_io(monkeypatch)
     else:
         build = _build_console_send_test_app
 
@@ -197,19 +200,14 @@ def _mcp_row_text(console) -> str | None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("profile", ["bound", "windows", "non-default-data-dir"])
+@pytest.mark.parametrize("profile", ["bound", "no-pinned-io", "non-default-data-dir"])
 async def test_inspector_mcp_row_says_off_and_why_when_the_store_is_unbound(
     monkeypatch, tmp_path, profile
 ):
-    """TASK-41308: before and after a Send, an unbound store shows the row.
-
-    The simulated Windows bind runs on a POSIX host, so the display-time
-    platform check still sees pinned I/O and names the data folder; the
-    Windows copy is pinned by the unit test below.
-    """
+    """TASK-41308: before and after a Send, an unbound store shows the row."""
     kwargs = {}
-    if profile == "windows":
-        _bind_as_on_windows(monkeypatch)
+    if profile == "no-pinned-io":
+        _bind_without_pinned_io(monkeypatch)
     elif profile == "non-default-data-dir":
         kwargs["user_data_dir"] = tmp_path
     gateway = _ToolRecordingGateway()
@@ -243,20 +241,3 @@ async def test_inspector_mcp_row_says_off_and_why_when_the_store_is_unbound(
     assert after == off
     assert gateway.offered_tools == [None]
 
-
-def test_unavailable_reason_names_windows_without_pinned_io(monkeypatch):
-    """The Windows copy, chosen by the same check that skips the bind."""
-    monkeypatch.setattr(console_snapshot, "unbound_console_sources", lambda _s: True)
-    monkeypatch.setattr(raw_participants, "_pinned_io_available", lambda: False)
-    assert (
-        console_snapshot.console_mcp_unavailable_reason(object())
-        == "not yet available on Windows"
-    )
-    monkeypatch.setattr(raw_participants, "_pinned_io_available", lambda: True)
-    assert (
-        console_snapshot.console_mcp_unavailable_reason(object())
-        == "store isn't in this profile's data folder"
-    )
-    monkeypatch.setattr(console_snapshot, "unbound_console_sources", lambda _s: False)
-    assert console_snapshot.console_mcp_unavailable_reason(object()) == ""
-    assert console_snapshot.console_mcp_unavailable_reason(None) == ""
