@@ -2305,11 +2305,14 @@ def seal_pending_queue_capture(controller, session, configuration):
     # captured snapshot, so identity alone would refuse every cold-skill queue.
     if deferred is not None and (
         not configuration.skill_capture_pending
-        or witness[-4] is not configuration
-        and replace(
-            witness[-4], recovery_user_origin=configuration.recovery_user_origin
+        or witness[-4] is None
+        or (
+            witness[-4] is not configuration
+            and replace(
+                witness[-4], recovery_user_origin=configuration.recovery_user_origin
+            )
+            != configuration
         )
-        != configuration
     ):
         raise RuntimeError("Original queued skill preparation changed; send again.")
     unused_trust = (

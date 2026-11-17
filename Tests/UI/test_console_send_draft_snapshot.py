@@ -1651,6 +1651,37 @@ async def test_console_queued_send_made_before_attach_finishes_is_not_refused(
         return await real_attach(self)
 
     monkeypatch.setattr(ChatScreen, "_reconcile_console_after_attach", slow_attach)
+    # Observe the sealed handoff the queued turn will later claim, and prove
+    # the seal still refuses a copy that differs in anything but the origin.
+    from contextlib import contextmanager
+
+    from tldw_chatbook.Chat import console_configuration_preparation as prep
+
+    real_seal = prep.seal_pending_queue_capture
+    observed: list = []
+
+    @contextmanager
+    def spy(controller, session, configuration):
+        raw = prep._mcp_capture_witness.get()
+        for bad in (
+            replace(configuration, rag_defaults={"top_k": 99}),
+        ):
+            with pytest.raises(RuntimeError, match="skill preparation changed"):
+                with real_seal(controller, session, bad):
+                    pass
+        prep._mcp_capture_witness.set((*raw[:-4], None, *raw[-3:]))
+        try:
+            with pytest.raises(RuntimeError, match="skill preparation changed"):
+                with real_seal(controller, session, configuration):
+                    pass
+        finally:
+            prep._mcp_capture_witness.set(raw)
+        with real_seal(controller, session, configuration):
+            transfer = prep._mcp_capture_witness.get()
+            observed.append((configuration, transfer.witness[-4], transfer.witness[-5]))
+            yield
+
+    monkeypatch.setattr(prep, "seal_pending_queue_capture", spy)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -1671,6 +1702,11 @@ async def test_console_queued_send_made_before_attach_finishes_is_not_refused(
         await pilot.pause(0.3)
         snapshot = controller.prompt_queue_registry.snapshot(session_id)
         assert [e.preview for e in snapshot.entries] == ["second"]
+        # The sealed original is the dispatcher's copy, so the ordinary tree's
+        # `record.request.configuration is original` custody check holds.
+        (copy, sealed_original, deferred), = observed
+        assert sealed_original is copy and copy.skill_capture_pending
+        assert deferred is not None
         release_attach.set()
         gateway.release.set()
         await until(lambda: console._console_attach_reconciled)
