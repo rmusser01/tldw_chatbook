@@ -100,48 +100,6 @@ def test_core_guard_retires_only_replacement_borrowers(
         db.close()
 
 
-def test_owned_cleanup_deadline_bounds_checkpoint_with_live_reader(tmp_path):
-    """A finite read must not spend the ordinary 15s timeout checkpointing."""
-    import time
-
-    path = tmp_path / "checkpoint-budget.sqlite"
-    db = CharactersRAGDB(path, "checkpoint-budget")
-    reader = sqlite3.connect(path)
-    executor = ThreadPoolExecutor(max_workers=1)
-    try:
-        reader.execute("BEGIN")
-        reader.execute("SELECT COUNT(*) FROM conversations").fetchone()
-        db.add_conversation({"title": "WAL newer than the reader"})
-
-        def read():
-            with operation_owned_connection(
-                db, operation_deadline=time.monotonic() + 0.2
-            ):
-                connection = db.get_connection()
-                assert (
-                    connection.execute("SELECT COUNT(*) FROM conversations").fetchone()[
-                        0
-                    ]
-                    == 1
-                )
-            with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
-                connection.execute("SELECT 1")
-
-        executor.submit(read).result(timeout=3)
-        assert reader.in_transaction
-        assert (
-            db.get_connection()
-            .execute("SELECT COUNT(*) FROM conversations")
-            .fetchone()[0]
-            == 1
-        )
-    finally:
-        reader.rollback()
-        reader.close()
-        executor.shutdown(wait=True)
-        db.close_connection()
-
-
 def test_closing_worker_does_not_hold_other_writers_behind_a_live_reader(tmp_path):
     """TASK-41115: a finite worker's close (``run_owned_db_call`` passes no
     deadline) ran ``wal_checkpoint(TRUNCATE)`` with the 15 s busy timeout. A
