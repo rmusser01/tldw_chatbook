@@ -949,7 +949,9 @@ _BUDGETS: dict[str, int] = {
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
     # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):
     # the storage provider reaches the per-run BuiltinToolProvider (+8 on 12,091).
-    "tldw_chatbook/Chat/console_agent_bridge.py": 10084,
+    # 2026-11-17, TASK-41310 B review: 10084 -> 10111 (+27), exact measurement.
+    # The factory verifies a child route names its spawning turn.
+    "tldw_chatbook/Chat/console_agent_bridge.py": 10111,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # TASK-36944.2, 2026-11-03: +6 for the public `setting` Console reads.
