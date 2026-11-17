@@ -244,7 +244,7 @@ Simple labels (`api_key=`, `token:`) stay with the export's older rule. A traili
      - probe13 (1 MB, rev5 file vs head): 0.30/0.31 s, 0.25/0.26 s and 0.33/0.35 s, so back to rev5 cost.
      - `test_runs_after_a_value_scan_in_linear_time` adds the ratio pin (4x text under 8x time) for the function-word and passphrase chains.
      - The ratio alone passed on the rev5 code (2 KB per label is linear), so the test also asserts each chain costs under 3x a chain of one-word values. On rev5 that assertion failed: 4.14 s vs 3 x 0.68 s.
-- **Tables.** `_MUST_MASK` has 187 rows and `_MUST_KEEP` 71. Against the rev5 source, 23 nodes were red: 7 mask, 13 keep, 3 exact-output. Both linear-time nodes were red too (run alone).
+- **Tables.** `_MUST_MASK` has 187 rows and `_MUST_KEEP` 70. Against the rev5 source, 23 nodes were red: 7 mask, 13 keep, 3 exact-output. Both linear-time nodes were red too (run alone).
 - **Adapted probe9** (`$FU/r15tr-probe9-r6.py`): 40 loosenings, with fragments updated and one or more for each rev6 rule.
   - The prose loosening now widens the caller's function-word test, because `_kept_look_alike` no longer repeats it.
   - Baseline is 0 red, and every loosening turns at least one must-mask row red.
