@@ -4989,12 +4989,12 @@ def _publish_runtime_config_unlocked(
             Omitted by callers with no path of their own (the raw-less
             reload path recomputes it under the same lock).
 
-    The `_CONFIG_GENERATION` bump is kept last for consistency, but the
-    ordering is not load-bearing: the fast path's soundness rests on its
-    cache-identity re-check, and the generation sandwich only adds
-    conservatism (see `_load_cli_config_bootstrap` -- the TASK-21124
-    review proved a bump-first mutant equivalent). Callers hold the write
-    lock.
+    Advance `_CONFIG_GENERATION` after installing the bootstrap cache and
+    before deriving settings, so directory memos built by that derivation
+    belong to the generation being published. The fast path's soundness
+    still rests on its cache-identity re-check. Callers hold the write lock;
+    the enclosing config operation restores cache/generation state if the
+    settings rebuild fails.
     """
 
     global settings, _CONFIG_GENERATION, _CONFIG_PERSISTENCE_ERROR
@@ -5009,8 +5009,8 @@ def _publish_runtime_config_unlocked(
         if not bootstrap.succeeded:
             raise ValueError("Configuration runtime reload failed")
         loaded = bootstrap.config
-    settings = load_settings(force_reload=True, reload_bootstrap=False)
     _CONFIG_GENERATION += 1
+    settings = load_settings(force_reload=True, reload_bootstrap=False)
     _CONFIG_PERSISTENCE_ERROR = None
     return loaded
 

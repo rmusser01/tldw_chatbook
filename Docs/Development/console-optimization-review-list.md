@@ -3015,3 +3015,145 @@ directly and do not nest config_participants.operation. Adding one would add
 admission while different-source raw scopes still suspend discovery and admit
 independently. Replacing source-specific checks with that config lease would alter
 authority. Current measurements do not justify this wrapper.
+
+### 2026-11-16 remaining native preparation candidates
+
+**OPT34 — checked existing-lock opening (selected experiment, Task3aa).**
+The original helper still attempts exclusive creation for each existing lock.
+OPT09 already combined parent establishment; retain its two fresh ancestor
+checks, original created descriptor/fsync and source-owned retirement. Select
+an existing no-follow classified file before opening without creation; only
+initial absence may create, and only positively rejected native EEXIST permits
+the concurrent-creator fallback. Add original warm config/hook RED counts first.
+The dc7 diagnostic's191ms config/74ms hook lock envelopes include required work;
+there is no measured whole-Send saving yet.
+
+**User-directory key narrowing (not selected pending evidence).**
+Worker-detail-1 finds4/7/4 first-hook config operations but one raw TOML and one
+hook-state read per Send. Warm2's extra three operations belong to directory
+resolution under the default-root lock. Cache/key/stamp miss reason is unknown.
+ADR126 D2 currently requires cache identity/generation, including unrelated
+reloads. Any narrower key needs an explicit contract change and fresh posture
+controls; the follow-up observer must first establish the actual miss reason.
+
+**Post-save preview/native plan reuse (deferred).**
+The authoritative capacity pass may refuse or compact before native provider
+setup. The later plan uses the resulting messages and current live providers;
+it is already reused for the first native request. Moving it earlier changes
+capacity/error ordering and resource lifetime, so no existing-result substitution
+is selected.
+
+**OPT06 prompt-history detachment (still deferred).**
+Its physical write currently precedes recall publication and participates in
+the accepted-turn effect ledger. A safe detached path needs an app-owned ordered
+writer, pending recall/failure semantics and a seal/drain that covers unstarted
+tasks. The latest0.10/0.59/0.09s envelopes do not establish useful overlap.
+
+**Storage evidence dependency consolidation (not selected pending evidence).**
+Bound profiles may repeat shared ancestors across selector/per-path batches;
+unbound profiles have no per-path batch to combine. Independently, with no
+profile records at all the original binding returns before selector fingerprinting,
+but evidence still reads its content. A narrow omission must preserve selector
+posture, fresh root membership, drifted-profile restoration and all epoch/native
+close checks. Observe actual branch, dependency counts and cost before selecting
+either change. A combined MCP lease has no existing multi-source raw consumer
+and would otherwise add work or eagerly read a kill-switched catalog.
+
+**Directory publication ordering (implemented, Task3ab; key narrowing rejected).**
+The follow-up observes a memo already referring to the current cache object and
+unchanged directory inputs/postures, but carrying generation2 while publication
+has advanced to3. The settings rebuild derives that memo before the final bump.
+Move the existing bump before settings derivation, after successful bootstrap
+installation. Preserve the exact key and all fresh stamps. Real public mutation
+RED/GREEN covers default/configured paths and a subsequent forced reload; actual
+rollback, rebuild failure and concurrent readers pass. This corrects publication
+ordering instead of weakening invalidation for arbitrary config changes.
+
+**Windows finite callback handoff (selected experiment, Task3ac).**
+Config writes already use the shared100us scope for their many GIL-releasing
+metadata calls; finite preparation still used1ms. Use100us only on Windows within
+the existing physical callback owner, retaining1ms elsewhere and all source/file
+checks. An actual callback RED observes1ms;17 overlap, cancellation, submission,
+external-setting and interprocess-wait controls pass after a separate shared
+owner bug is fixed: never reapply an unchanged float interval, which can truncate
+an already-shorter50us setting to49us. Exact preservation assertions remain.
+Whole-Send qualification is pending; file-open reduction is not claimed.
+
+Task3ac's100us scheduling trial was rejected after quiet Enter
+15.026/12.941/14.318s failed to show a benefit. Restore the original1ms limit;
+keep only the independently reproduced/fixed exact-interval rounding bug and
+its50us preservation control. All3turns persisted, replied and settled with fixed
+sources. Smaller handoff intervals are not presumed faster on this host.
+
+OPT34/Task3aa is withdrawn as well. Functional22-case verification and the exact
+2to1 warm target-open count did not establish a whole-Send gain; total native
+opens in the observed fixture increased without a proven explanation. The patch
+and all receipts are preserved externally as task3aa-existing-lock-deferred.patch.
+The original helper and race fixtures remain selected. Do not claim its rejected
+create count as an overall file-open or latency reduction.
+
+**Frozen capacity-estimation metadata (deferred design).**
+Captured MCP hashes narrow execution, but deferred composition and live builtin/
+local gates can add schemas beyond an old estimate. Schema selection is also
+non-monotone: a larger catalog can trigger a no-tools fallback while a smaller
+catalog fits tools. A safe future detached estimate value must re-plan against
+current messages/model/reserve on every capacity pass, distinguish unavailable
+capture from an empty catalog, and leave final actual-schema/permission gates
+fresh. It intentionally changes compaction/refusal freshness and needs an ADR230
+amendment plus both kill-switch directions, schema changes and compaction controls.
+
+**OPT33 directory-establishment walk (still deferred).**
+The actual helper bypasses prepared parent walking and revalidates a named parent
+chain for every component allocation. Any contraction must use the actual pinned
+operation, retain per-component source/custody and mutation checks, final named/FD
+association and retirement. Current aggregate raw/pin-check counts do not isolate
+this caller's elapsed cost. No registry-view cache is justified: ordinary admission
+retains namespace lease locks, not registry.lock, and hook/config locks do not
+hold the separate default-root-selection lock.
+
+### 2026-11-17 complete worker and native-start attribution
+
+The final retained generation-order and exact switch-interval fixes pass54
+targeted integrated Windows cases. Quiet button repeats still fail six seconds
+(6.208/5.580/6.120 and7.708/6.075/5.058); do not select only the faster samples.
+
+**MCP catalog forwarding join — deferred.** Original source capture spends
+.417/.793/.903s in its two checked readers with under2ms worker handoff overhead.
+A pure state-to-catalog projection could remove one get_catalog_bundle join while
+retaining guarded load/read_payload, migration and final checks. It removes no
+payload read or acquisition; no count or timing gain is established. The larger
+OPT28/73 bypass remains rejected.
+
+**Repeated mix-in receipt verification — deferred.** Ordinary durable acceptance
+already writes the exact attempt, including empty selections. The later accepted
+attempt opens another IMMEDIATE transaction, but its existing-record path checks
+anchors, predecessor IDs and exact replay contents rather than rewriting payload.
+Measured accept_attempt is .148/.122/.115s. Do not skip it on attempt ID or empty
+selection alone; conflict/corrupt-receipt refusal and retry semantics remain.
+
+**Sensitive raw-input memo — no invalidation fix selected.** The all-thread
+observer proves first-use absence, a real cache object/generation change on the
+second Send, then a hit on the third. Source/path/environment/cwd keys remain
+equal and both rebuilds publish successfully. The cold tuple already shares one
+configuration scope. Preserve live initial/final keys and both containment checks.
+
+**Task3ad finite run-log handoffs — selected experiment.** Actual native bind
+starts and returns at5ms; test the existing shared1ms owner around only its
+synchronous access-scope lifetime. CPU is close to wall in this receipt, so no
+scheduling benefit is established. Disabled/repeated returns, native retirement,
+custom callbacks and lock-wait release must remain. The prior100us general
+preparation trial remains rejected. Whole-Send evidence decides retention.
+
+Task3ad disposition: withdrawn, not a proven causal regression. All 23 targeted
+controls pass, but quiet button 24.448/18.670/13.786s fails the gate. Its presubmit
+path already takes 4.258/5.456/5.972s before the changed bind executes. The trial
+therefore proves neither a speed gain nor that the new scope caused the overall
+slowdown. Both source/test files are restored; the exact patch is retained outside
+the tree. Add low-overhead host/process observations to distinguish CPU work,
+I/O counts and host contention before attributing further timing differences.
+
+A proposed worker-only cProfile capture was not implemented: CPython 3.12.10
+uses interpreter-wide monitoring events in _lsprof, making a worker thread_time
+interpretation unsound. A thread-local profile.Profile capture would require
+a synthetic diagnostic control and has higher Python overhead.
+Prefer the bounded host observation first; no profiler replacement is selected.

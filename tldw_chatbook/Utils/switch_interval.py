@@ -31,8 +31,12 @@ def _install_locked() -> None:
     assert _saved is not None
     previous, installed = _saved
     if sys.getswitchinterval() == installed:
-        sys.setswitchinterval(min([previous, *_open_limits]))
-        installed = sys.getswitchinterval()
+        requested = min([previous, *_open_limits])
+        # Reapplying an unchanged float can truncate another microsecond in
+        # CPython. Preserve an already shorter interval without rewriting it.
+        if requested != installed:
+            sys.setswitchinterval(requested)
+            installed = sys.getswitchinterval()
     _saved = (previous, installed) if _open_limits else None
 
 

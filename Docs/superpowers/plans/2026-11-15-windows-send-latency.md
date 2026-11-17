@@ -1964,3 +1964,198 @@ waits in the first hook read and post-save preview. The v5 preview worker scope
 accounts for98–99% of its await; adding an outer config operation around MCP
 reads is not selected, because those sources do not enter nested config operations
 and would still require their distinct fresh source admission.
+
+### Task3aa — checked existing-lock opening (OPT34)
+
+ADR required: no new ADR. ADR path: existing
+`backlog/decisions/126-complete-local-backup-and-recovery.md`.
+Reason: preserve the existing lock API, fresh parent/file checks, source custody
+and physical retirement; remove a rejected exclusive creation on an existing file.
+
+1. Extend the installed config/hook lock observer to require zero original
+   exclusive-create attempts on warm locks, after actual locking, payload and
+   retirement assertions. Run RED before modifying the helper.
+2. Classify the original no-follow leaf observation before opening an existing
+   lock with the existing nonblocking flags and without creation. Only an initial
+   absence may enter the existing exclusive-create path. A positive observation
+   followed by disappearance/replacement refuses; only positively rejected native
+   EEXIST from a concurrent creator can use the checked existing fallback.
+3. Keep the fresh second ancestor/parent check after the actual open or created
+   FD hardening/fsync, before publication. Keep all named/opened identity, owner,
+   regular-file, single-link, private-mode and source/retirement checks. Preserve
+   the fallback for platforms without the native guarded path.
+4. Adapt posture-race stimuli from the removed rejected-create event to the
+   successful existing-open event, preserving every refusal and retirement
+   oracle. Run targeted helper, installed config/hook, allocation failure,
+   concurrent creator and Windows posture checks sequentially.
+5. Review and run the integrated feedback/shutdown checks, then quiet full-default
+   Enter and button timings sequentially. The observed 191ms config and 74ms hook
+   lock envelopes include required work and are not predicted savings. Keep the
+   six-second merge gate and preserve a failed candidate for review if rejected.
+
+The dc7 original worker-detail diagnostic passes in64.42s with unchanged sources,
+three complete dispatches, zero observer errors/overflows and restored bindings.
+First-hook wall intervals are0.732/1.181/0.315s; in-process config lock waits total
+about0.148/0.302/0.000s. Warm2 additionally resolves the user directory, but the
+capture cannot distinguish cache/key/stamp invalidation. A separate original-code
+observer will record that decision and evidence dependency counts before choosing
+any memo or storage-evidence change. No authority cache is selected here.
+
+Preview-plan reuse remains deferred: authoritative post-save capacity can refuse
+or compact before native plan construction. Prompt-history detachment remains
+deferred: it needs an owned queued writer, recall/failure semantics and drain
+contract. An outer combined MCP scope would add work unless ownership changes;
+batching evidence or omitting an unconsumed selector payload needs measured branch
+and dependency evidence first. These are distinct from the selected lock change.
+
+Task3aa RED is established by both original warm config/hook lock cases at the
+final1-versus0 exclusive-create oracle (pr3534-lock-existing-red-1,16.23s), after
+all actual payload/locking/retirement checks pass. The checked existing-first
+helper and updated race stimuli then pass all22 targeted native Windows cases
+in45.63s (pr3534-lock-existing-green-1), with fixed source/HEAD. Independent review
+finds no lost identity, cold durability, creator-race or cleanup boundary. Whole
+Send timing and integrated UI/shutdown qualification remain pending.
+
+### Task3ab — publish the generation before deriving settings
+
+ADR required: no new ADR. ADR path: existing
+`backlog/decisions/126-complete-local-backup-and-recovery.md`, D2.
+Reason: preserve the exact cache-identity/generation memo contract and correct
+publication order; do not narrow its key, skip a reload or relax fresh stamps.
+
+The directory-detail diagnostic proves warm2's cache object, source, user folder,
+base and before/after posture stamps all match the memo, but its generation is2
+while the published generation is3. The original fallback costs0.506s. The actual
+settings rebuild derives chat-dictionary paths through get_user_data_dir, then
+the publisher increments generation and immediately invalidates that new memo.
+The publisher's existing contract documents that cache identity is authoritative
+and bump-first ordering is equivalent for its concurrent readers.
+
+1. Reproduce through a real public settings mutation with original resolution
+   observation: the next same-input lookup must reuse the directory derived by
+   that rebuild. Preserve a forced-reload control that still resolves anew.
+2. After bootstrap installation succeeds, increment generation before deriving
+   settings. Keep guarded rollback, publication failure and persistence-error
+   behavior; no helper/API/cache or callback-attestation layer is added.
+3. Run the original-path regression, forced reload, failed-rebuild rollback and
+   runtime snapshot/concurrent-reader tests sequentially. Integrate with Task3aa
+   and the existing feedback/shutdown selection before quiet Enter/button runs.
+
+The diagnostic's observed storage reuse is unbound with zero per-path entries;
+unioning per-path observations has no saving in this case. Its10/13/10 fresh
+evidence calls total0.144/0.425/0.174s, but no selector-evidence construction occurs
+inside the capture, so no-profile-record qualification is still unproven. Keep
+that separate idea deferred and do not infer selector payload cost from envelopes.
+
+### Task3ac — shorter Windows preparation handoffs
+
+ADR required: no new ADR. ADR path: existing
+`backlog/decisions/230-console-send-preparation-and-io-ownership.md`, bounded
+interpreter handoffs. The proposed100us limit remains below its1ms ceiling and
+uses the existing shared scope owner; no authority, worker or wait deadline changes.
+
+The current config-write implementation already uses100us to address repeated
+GIL-releasing metadata calls. Finite preparation still uses1ms. Current Windows
+observations show hundreds of original pin checks and substantial non-CPU wall
+time, but do not alone identify its cause. Test this existing scheduling control
+before introducing more storage/preview contract changes.
+
+1. Make the actual finite callback test require at most100us on Windows, retaining
+   the1ms non-Windows requirement, and run RED. Make its shorter-existing-interval
+   control use50us so it still tests a limit below both policies.
+2. Use100us only on Windows in the existing finite callback scope. Keep its shared
+   refcount, physical-return ownership, cancellation, overlap, external-setting
+   behavior and interprocess-wait release untouched.
+3. Run scheduling/config-writer overlap and cancellation controls, then quiet
+   full-default native Enter/button timings sequentially. Retain only with actual
+   whole-path evidence; tuning does not reduce the number of required file checks.
+4. Complete final integrated feedback/shutdown checks and record all source hashes.
+
+Task3ab's public default/configured mutations both reproduce the extra resolution
+before the change (2failed/1passed,8.68s). After the generation move, all14 existing
+rollback/concurrent/publication/selection controls pass in39.19s. The new child
+scripts also pass all assertions but lacked their runner's completion marker;
+after adding it, all3 new cases plus2 warm lock cases pass in15.21s. No product
+checks or deadlines were weakened. Quiet combined Enter6.818/6.225/7.722s and
+button14.463/6.025/4.922s still fail the gate. Every turn persists, replies and
+settles; source/HEAD are fixed. OPT34's whole-read native counts remain variable
+and not proven lower, despite the exact warm lock open count2to1.
+
+Task3ac's actual callback RED observes1ms instead of the requested100us. The first
+GREEN run passes16 controls and exposes a shared-owner bug: reapplying an unchanged
+50us external interval truncates it to49us in CPython. Preserve the existing exact
+restoration assertion and avoid calling setswitchinterval when the desired value
+already equals the installed value. This is a correction to the existing
+shorter-interval contract, not a tolerance or assertion relaxation.
+
+Task3ac scheduling trial rejected: after all17 ownership controls pass in10.44s,
+quiet native Enter takes15.026/12.941/14.318s with all3saved replies/traces and
+zero pending checkpoints. This provides no whole-Send benefit. Restore the
+original1ms preparation limit and first callback assertion; keep the independent
+no-op-rounding correction and its exact50us preservation regression. No button
+qualification is inferred from this rejected trial.
+
+Task3aa is also withdrawn pending a demonstrated whole-path gain. Its exact warm
+lock target count falls2to1 and all22 functional cases pass, but whole-read native
+open counts rose in the observed fixtures (config824to1301; hooks1071to1529,
+then1291 in a second selection), without an established source-level explanation.
+Preserve the candidate in task3aa-existing-lock-deferred.patch outside the tree;
+restore the original helper and its three changed test files. Remove those extra
+CI selections. Retain only the independently reproduced Task3ab publication fix
+and the shared exact-interval rounding fix for the next integrated qualification.
+
+### Task3ad — qualify finite run-log preparation handoffs
+
+ADR required: no new ADR. ADR path: existing
+`backlog/decisions/230-console-send-preparation-and-io-ownership.md`, bounded
+interpreter handoffs. Reason: reuse the shared 1ms scheduling owner only while
+the existing synchronous run-log bind access scope physically executes. No
+permission, path, persistence, callback, provider or retirement order changes.
+
+The final retained publication/interval fixes pass all54 selected Windows
+configuration, overlap, 100ms feedback, Waiting/Streaming, saved-draft, shutdown
+and CI-selection checks in203.85s (pr3534-retained-integration-1). Quiet Enter
+5.985/5.686/4.325s passes, but button6.208/5.580/6.120s and its repeat
+7.708/6.075/5.058s still fail the merge gate. Sources and HEAD are fixed in each.
+
+The all-workers/native-start observers distinguish actual foreground work from
+overlapping display workers. MCP source capture spends .417/.793/.903s inside
+its two original checked reads; queue/return overhead is under2ms. Native
+run_turn to adapter additionally spans1.204/1.168/.772s. Repeated mix-in receipt
+verification costs .148/.122/.115s and remains unchanged. Sensitive-input capture
+proves initial absence, then a real cache-identity/generation change, then a hit;
+there is no second stale-generation bug. Original log bind samples5ms on entry
+and return. Its .386/.373/.089s walls have .359/.359/.094s coarse thread CPU, so
+this does not prove scheduling dominates or predict a gain.
+
+1. Establish original-body RED for the finite bind interval and preserve exact
+   shorter-interval restoration, denied-path and failing-access-scope controls.
+2. Wrap only the existing bind access-scope block with the shared1ms owner; keep
+   disabled/idempotent returns before entry, and close after physical retirement.
+   Existing config interprocess waits release this thread's shared scopes.
+3. Run the real path preparation, custom callback, overlap, restoration and wait
+   controls sequentially. Do not change the general preparation1ms policy.
+4. Run quiet native Enter/button timing sequentially. Retain only with actual
+   whole-path benefit; otherwise preserve the candidate for deferred review.
+   Repeat integrated feedback/shutdown qualification for any retained change.
+
+Source review finds no changed authority or callback order. A custom scope or
+on_bound callback may run arbitrarily long; the scheduling effect follows its
+actual synchronous lifetime and is not a new timeout or bounded-execution claim.
+
+Task3ad original-body RED passes the actual file/active-writer/restoration checks
+then fails only5ms versus1ms in the original bind body; its50us control passes
+(pr3534-log-handoff-red-1:1failed/1passed in5.64s). The candidate scopes only the
+existing access block and retains the original method and callbacks.
+
+Task3ad is withdrawn after 23 focused controls pass in 37.26s. Quiet button
+24.448/18.670/13.786s supplies no qualified whole-Send benefit. Delay is already
+large before the new bind scope: action-to-controller 4.258/5.456/5.972s, versus
+1.084/1.677/1.732s in the earlier retained-source receipt. This rules out calling
+the full slowdown a direct measured cost of the bind block; host conditions or
+other application work remain unmeasured. Preserve task3ad-log-handoff-deferred.patch
+outside the tree and restore both original run_log/test files. The 54-case
+retained-source integration receipt remains applicable to the restored source.
+A bounded phase-entry/exit host CPU, process CPU, memory and I/O observer will
+record contention alongside subsequent original runs; no unrelated processes
+will be stopped and no slow sample will silently be discarded.

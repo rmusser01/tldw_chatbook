@@ -40,7 +40,7 @@ async def test_original_callback_gets_short_handoffs_then_restores_interval():
 
 
 async def test_an_already_shorter_interval_is_preserved():
-    sys.setswitchinterval(0.0005)
+    sys.setswitchinterval(0.00005)
     original = sys.getswitchinterval()
     assert await _read(sys.getswitchinterval) == original
     assert sys.getswitchinterval() == original
