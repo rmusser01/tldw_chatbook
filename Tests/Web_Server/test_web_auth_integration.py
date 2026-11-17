@@ -14,7 +14,8 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
-from fido2 import cbor
+
+cbor = pytest.importorskip("fido2.cbor", reason="requires the web extra")
 
 from tldw_chatbook.Canvas.web_auth import (
     CSRF_HEADER_NAME,
@@ -29,6 +30,7 @@ from tldw_chatbook.Web_Server.webauthn_service import WebAuthnService
 from tldw_chatbook.Web_Server.webauthn_store import WebAuthnCredentialStore
 
 pytestmark = [
+    pytest.mark.bootstrap_profile,
     pytest.mark.skipif(
         not serve.check_web_server_available(),
         reason="web server optional dependencies are unavailable",
