@@ -575,6 +575,13 @@ def test_the_streaming_check_copies_the_session_once_per_transcript_change(
     assert not view.console_turn_activity().startswith(_WAITING)
     assert len(reads) == 2
 
+    # Some store changes do not bump the revision (a resumed attempt back to
+    # pending): the answer is still read again within a ~3 s bucket.
+    row.status = "pending"
+    clock[0] += 3.0
+    assert view.console_turn_activity().startswith(_WAITING)
+    assert len(reads) == 3
+
 
 def _thinking(text: str):
     from tldw_chatbook.Chat.thinking_blocks import (

@@ -1076,6 +1076,34 @@ async def test_a_line_no_row_can_show_never_reopens_the_pipeline():
 
 
 @pytest.mark.asyncio
+async def test_the_line_shows_on_the_tick_its_row_first_arrives():
+    """The gate's apply sees the previous rows; the apply after
+    ``set_messages`` must hand the line to a row that arrives on this tick."""
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    line = "⚙ read_file · 4s"
+    screen, transcript = _sync_stub(line)
+    screen._console_send_ack = None  # push the projected rows through as-is
+    rows = []
+    transcript.set_messages.side_effect = lambda messages, *_a, **_k: rows.extend(
+        messages
+    )
+    transcript.apply_turn_activity.side_effect = lambda activity, **_k: (
+        activity if rows else ""
+    )
+    await ChatScreen._sync_native_console_transcript(screen)
+    assert transcript.refresh_messages.await_count == 1
+
+    screen._change_review_projection.project.return_value = [
+        SimpleNamespace(id="assistant-1")
+    ]
+    await ChatScreen._sync_native_console_transcript(screen, force=True)
+
+    assert transcript.apply_turn_activity.call_args.args == (line,)
+    assert transcript.refresh_messages.await_count == 2
+
+
+@pytest.mark.asyncio
 async def test_published_token_usage_repaints_once_per_changed_scalar():
     """Repeated chunk observations cannot churn the DOM until publication changes."""
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
