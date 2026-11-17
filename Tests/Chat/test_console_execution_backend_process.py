@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import subprocess
 import sys
+import threading
 import time
 
 import pytest
@@ -31,6 +33,102 @@ class _ObservedStderr:
     @property
     def closed(self):
         return self.original.closed
+
+
+_ACCEPTED_DRAFT = "Original accepted process input"
+_ACCEPTED_REPLY = "ORIGINAL-ACCEPTED-PROCESS-REPLY"
+
+
+@pytest.fixture
+def accepted_process_provider(request):
+    """Join a real loopback endpoint using the original HTTP/SSE conventions."""
+    from Tests.private_profile import is_private_profile_child
+
+    # The outer private-profile launcher never executes this test body.
+    if not is_private_profile_child(request):
+        yield None
+        return
+    from Tests.Chat.test_console_refused_stream_retry import (
+        _Handler,
+        _OpenAICompatibleServer,
+    )
+
+    class Handler(_Handler):
+        def setup(self):
+            super().setup()
+            self.connection.settimeout(2)
+
+        def do_GET(self):  # noqa: N802 - original http.server contract
+            self.server.requests.append(("GET", self.path))
+            super().do_GET()
+
+        def do_POST(self):  # noqa: N802 - original http.server contract
+            server = self.server
+            server.requests.append(("POST", self.path))
+            payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            server.payloads.append(payload)
+            server.stream_flags.append(payload.get("stream") is True)
+            chunks = [
+                {"choices": [{"index": 0, "delta": {"role": "assistant"}}]},
+                {"choices": [{"index": 0, "delta": {"content": _ACCEPTED_REPLY}}]},
+                {
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                    "usage": {
+                        "prompt_tokens": 21,
+                        "completion_tokens": 5,
+                        "total_tokens": 26,
+                    },
+                },
+            ]
+            body = (
+                "".join(
+                    "data: "
+                    + json.dumps(
+                        {
+                            "id": "chatcmpl-task62-accepted",
+                            "object": "chat.completion.chunk",
+                            "created": 1,
+                            "model": payload["model"],
+                            **chunk,
+                        }
+                    )
+                    + "\n\n"
+                    for chunk in chunks
+                )
+                + "data: [DONE]\n\n"
+            )
+            self._send(200, "text/event-stream", body.encode())
+
+    class Server(_OpenAICompatibleServer):
+        daemon_threads = False
+        block_on_close = True
+
+        def __init__(self):
+            super().__init__()
+            self.RequestHandlerClass = Handler
+            self.requests = []
+
+    server = Server()
+    thread = threading.Thread(target=server.serve_forever, daemon=False)
+    started = False
+    try:
+        thread.start()
+        started = True
+        yield server
+    finally:
+        try:
+            if started and thread.is_alive():
+                server.shutdown()
+        finally:
+            try:
+                server.server_close()  # Joins the non-daemon request owners too.
+            finally:
+                if started:
+                    thread.join(timeout=2)
+        request.node.user_properties.append(
+            ("accepted_provider_listener_joined", not thread.is_alive())
+        )
+        assert not thread.is_alive()
 
 
 @private_profile_test
@@ -134,7 +232,9 @@ async def test_original_backend_runs_in_one_contained_process_and_retires(reques
 
 @private_profile_test
 @pytest.mark.asyncio
-async def test_actual_process_projection_reference_and_original_pre_ack_cancel(request):
+async def test_actual_process_projection_reference_and_original_pre_ack_cancel(
+    request, accepted_process_provider
+):
     from Tests.Chat.test_console_execution_profile import _settled_profile
     from Tests.Chat.test_console_first_send_atomicity import _until
     from Tests.Chat.test_console_control_trace import _observe
@@ -142,7 +242,11 @@ async def test_actual_process_projection_reference_and_original_pre_ack_cancel(r
     from tldw_chatbook.Chat.console_chat_controller import (
         build_console_provider_selection_from_settings,
     )
-    from tldw_chatbook.Chat.console_chat_models import ConsoleWorkspaceContext
+    from tldw_chatbook.Chat.console_chat_models import (
+        ConsoleMessageRole,
+        ConsoleRunStatus,
+        ConsoleWorkspaceContext,
+    )
     from tldw_chatbook.Chat.console_execution_process import (
         ConsoleExecutionClient,
         ConsoleProcessProfile,
@@ -159,7 +263,7 @@ async def test_actual_process_projection_reference_and_original_pre_ack_cancel(r
             "chat_defaults": {"provider": "openai", "model": "gpt-4o-mini"},
             "api_settings.openai": {
                 "api_key": "task62-local-readiness-only",
-                "api_base": "http://127.0.0.1:1/v1",
+                "api_base": accepted_process_provider.base_url,
             },
         }
     )
@@ -173,6 +277,7 @@ async def test_actual_process_projection_reference_and_original_pre_ack_cancel(r
             active_workspace_id=DEFAULT_WORKSPACE_ID
         ),
     )
+    assert provider.base_url == accepted_process_provider.base_url
     selected = {
         name: getattr(provider, name)
         for name in (
@@ -221,6 +326,7 @@ async def test_actual_process_projection_reference_and_original_pre_ack_cancel(r
             process.stderr = _ObservedStderr(process.stderr, tail)
 
     received = None
+    accepted_fingerprint = None
     closed = False
     body_failed = False
     try:
@@ -329,6 +435,7 @@ async def test_actual_process_projection_reference_and_original_pre_ack_cancel(r
             and plan.payload["ordinal"] == 1
         )
         assert not received.retired.done() and not received.potentially_committed
+        assert not accepted_process_provider.requests
         cancelled = client.submit(
             "CancelTurn",
             {"turn_id": "process-pre-ack"},
@@ -340,6 +447,169 @@ async def test_actual_process_projection_reference_and_original_pre_ack_cancel(r
         assert await asyncio.shield(cancelled.retired) is True
         assert not client._plans and not client._requests
         request.node.user_properties.append(("actual_pre_ack_cancel_retired", True))
+        assert not accepted_process_provider.requests
+
+        # Integration prerequisite: the same retired projection publication
+        # provides the original row plus detached current input sidecar.
+        fresh = await client.read_projection(sid, incarnation)
+        row = client.projection_view.session(sid)
+        current_inputs = client.pressed_inputs
+        assert fresh.session_id == row.id == current_inputs["session_id"] == sid
+        assert (
+            fresh.incarnation_id
+            == row.incarnation_id
+            == current_inputs["incarnation_id"]
+            == incarnation
+        )
+        assert row.settings is not None
+        assert current_inputs["settings"] == _settings(row.settings, False)
+        assert current_inputs["settings_revision"] == row.settings_revision
+        # This is a new parent-authored identity, not a guessed backend revision.
+        authored_token = [2, 1]
+        next_update = client.submit(
+            "UpdateInputs",
+            {
+                "draft": _ACCEPTED_DRAFT,
+                "authored_token": authored_token,
+                "expected_settings_revision": row.settings_revision,
+                "expected_settings": current_inputs["settings"],
+                "expected_attachment_ids": current_inputs["attachment_ids"],
+                "remove_attachment_ids": [],
+                "prefill": None,
+            },
+            session_id=sid,
+            incarnation_id=incarnation,
+        )
+        await asyncio.shield(next_update.received)
+        next_draft = await asyncio.shield(next_update.applied)
+        assert await asyncio.shield(next_update.retired) is True
+        await client.read_projection(sid, incarnation)
+        row = client.projection_view.session(sid)
+        pressed = client.pressed_inputs
+        assert row.draft_revision == next_draft["draft_revision"]
+        assert row.draft == pressed["draft"] == _ACCEPTED_DRAFT
+        assert pressed["authored_token"] == authored_token
+        assert pressed["session_id"] == sid and pressed["incarnation_id"] == incarnation
+        assert pressed["settings"] == _settings(row.settings, False)
+        assert pressed["settings_revision"] == row.settings_revision
+        next_provider = build_console_provider_selection_from_settings(
+            row.settings,
+            app_config=configuration,
+            workspace_context=ConsoleWorkspaceContext(
+                active_workspace_id=row.workspace_id
+            ),
+        )
+        assert next_provider.base_url == accepted_process_provider.base_url
+        next_selected = {
+            name: getattr(next_provider, name)
+            for name in selected
+            if name not in {"endpoint_provenance", "workspace_context"}
+        }
+        next_selected["endpoint_provenance"] = next_provider.endpoint_provenance.value
+        next_selected["workspace_context"] = {
+            **selected["workspace_context"],
+            "active_workspace_id": row.workspace_id,
+        }
+        accepted_started = time.monotonic()
+        accepted = client.submit(
+            "ReceiveTurn",
+            {
+                "turn_id": "process-accepted",
+                "draft_revision": row.draft_revision,
+                "expected_settings_revision": pressed["settings_revision"],
+                "expected_attachment_revision": pressed["attachment_revision"],
+                "expected_prefill_revision": pressed["prefill_revision"],
+                "selection": {
+                    **payload["selection"],
+                    "provider_selection": next_selected,
+                    "skill_workspace_id": row.workspace_id,
+                },
+                "pressed_inputs": pressed,
+            },
+            session_id=sid,
+            incarnation_id=incarnation,
+        )
+        await asyncio.shield(accepted.received)
+        assert (await asyncio.shield(accepted.applied))["turn_id"] == "process-accepted"
+        assert await _until(
+            lambda: any(event.kind == "commit_planned" for event in accepted.events)
+            or accepted.retired.done()
+        )
+        accepted_plans = [
+            event for event in accepted.events if event.kind == "commit_planned"
+        ]
+        request.node.user_properties.append(
+            (
+                "accepted_receive_to_commit_planned_seconds"
+                if accepted_plans
+                else "accepted_receive_to_terminal_failure_seconds",
+                time.monotonic() - accepted_started,
+            )
+        )
+        assert len(accepted_plans) == 1, [
+            (event.kind, dict(event.payload)) for event in accepted.events
+        ]
+        accepted_plan = accepted_plans[0]
+        assert (
+            accepted_plan.payload["received_request_id"] == accepted.identity.request_id
+        )
+        assert accepted_plan.payload["turn_id"] == "process-accepted"
+        assert not accepted.retired.done() and not accepted.potentially_committed
+        assert not accepted_process_provider.requests
+        ack = client.submit(
+            "CommitPlanAck",
+            {
+                name: accepted_plan.payload[name]
+                for name in ("received_request_id", "turn_id", "ordinal", "fingerprint")
+            },
+            session_id=sid,
+            incarnation_id=incarnation,
+        )
+        assert accepted.potentially_committed
+        await asyncio.shield(ack.received)
+        assert (await asyncio.shield(ack.applied))["applied"] is True
+        assert await asyncio.shield(ack.retired) is True
+        assert await _until(accepted.retired.done)
+        assert await asyncio.shield(accepted.retired) is True
+        request.node.user_properties.append(
+            (
+                "accepted_receive_to_terminal_seconds",
+                time.monotonic() - accepted_started,
+            )
+        )
+        assert not any(event.kind == "failed" for event in accepted.events), [
+            (event.kind, dict(event.payload)) for event in accepted.events
+        ]
+        assert accepted_process_provider.requests == [("POST", "/v1/chat/completions")]
+        assert accepted_process_provider.stream_flags == [True]
+        assert len(accepted_process_provider.payloads) == 1
+        sent = accepted_process_provider.payloads[0]
+        assert any(
+            message.get("role") == "user" and message.get("content") == _ACCEPTED_DRAFT
+            for message in sent["messages"]
+        )
+        terminal = await client.read_projection(sid, incarnation)
+        assert terminal.run_state.status is ConsoleRunStatus.COMPLETED
+        accepted_fingerprint = dict(accepted_plan.payload["fingerprint"])
+        messages = terminal.messages
+        assert [
+            (message.role, message.content, message.status) for message in messages
+        ] == [
+            (ConsoleMessageRole.USER, _ACCEPTED_DRAFT, "complete"),
+            (ConsoleMessageRole.ASSISTANT, _ACCEPTED_REPLY, "complete"),
+        ]
+        assert messages[1].assistant_generation_state == "complete"
+        assert [message.persisted_message_id for message in messages] == [
+            accepted_fingerprint["user_message_id"],
+            accepted_fingerprint["assistant_message_id"],
+        ]
+        saved_row = client.projection_view.session(sid)
+        assert (
+            saved_row.persisted_conversation_id
+            == accepted_fingerprint["conversation_id"]
+        )
+        assert not client._plans and not client._requests
+        request.node.user_properties.append(("actual_accepted_turn_retired", True))
     except BaseException as error:
         body_failed = True
         request.node.user_properties.append(("first_body_error", type(error).__name__))
@@ -356,3 +626,45 @@ async def test_actual_process_projection_reference_and_original_pre_ack_cancel(r
                 )
     assert closed and client.physically_closed
     assert client._process.returncode == 0
+    assert accepted_fingerprint is not None
+    from tldw_chatbook.app_services import open_chachanotes_db
+
+    # Reopen through the original repository after complete child retirement;
+    # this thread owns and closes the actual verification connection.
+    db = open_chachanotes_db(
+        config.get_chachanotes_db_path(), client_id=config.CLI_APP_CLIENT_ID
+    )
+    persistence_failed = False
+    try:
+        conversation_id = accepted_fingerprint["conversation_id"]
+        conversation = db.get_conversation_by_id(conversation_id)
+        assert conversation is not None and conversation["id"] == conversation_id
+        rows = db.get_messages_for_conversation(conversation_id, limit=3)
+        assert len(rows) == 2
+        by_id = {row["id"]: row for row in rows}
+        user = by_id[accepted_fingerprint["user_message_id"]]
+        assistant = by_id[accepted_fingerprint["assistant_message_id"]]
+        assert (user["role"], user["content"]) == ("user", _ACCEPTED_DRAFT)
+        assert (assistant["role"], assistant["content"]) == (
+            "assistant",
+            _ACCEPTED_REPLY,
+        )
+        assert assistant["parent_message_id"] == user["id"]
+        assert assistant["assistant_generation_state"] == "complete"
+        assert (
+            user["conversation_id"] == assistant["conversation_id"] == conversation_id
+        )
+    except BaseException as error:
+        persistence_failed = True
+        request.node.user_properties.append(("first_body_error", type(error).__name__))
+        raise
+    finally:
+        try:
+            db.close()
+        except BaseException as error:
+            request.node.user_properties.append(
+                ("persistence_cleanup_error", type(error).__name__)
+            )
+            if not persistence_failed:
+                raise
+    request.node.user_properties.append(("actual_accepted_turn_persisted", True))

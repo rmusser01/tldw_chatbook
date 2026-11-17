@@ -442,7 +442,7 @@ _ATTACHMENT = _record(
     original_size=_REVISION,
     processed_size=_REVISION,
 )
-_PRESSED_INPUTS = _record(
+_INPUT_FIELDS = dict(
     draft=_TEXT,
     authored_token=_AUTHORED_TOKEN,
     settings=_optional(_SESSION_SETTINGS),
@@ -454,6 +454,11 @@ _PRESSED_INPUTS = _record(
     prefill_revision=_REVISION,
     session_id=_REFERENCE,
     incarnation_id=_REFERENCE,
+)
+_PRESSED_INPUTS = _record(**_INPUT_FIELDS)
+# A pristine backend session has no authored token until a real input update.
+_PROJECTED_INPUTS = _record(
+    **{**_INPUT_FIELDS, "authored_token": _optional(_AUTHORED_TOKEN)}
 )
 
 

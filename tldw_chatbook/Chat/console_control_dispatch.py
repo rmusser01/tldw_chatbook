@@ -479,7 +479,7 @@ class ConsoleLocalControls:
             session = self._store._sessions.get(identity.session_id)
             if session is None or session.incarnation_id != identity.incarnation_id:
                 raise RuntimeError("Console projection session changed")
-            return ConsoleProjection(
+            projection = ConsoleProjection(
                 revision,
                 session.id,
                 session.incarnation_id,
@@ -488,6 +488,11 @@ class ConsoleLocalControls:
                 self._controller.run_state_for(session.id),
                 self._controller.pending_decision_projection(session.id),
             )
+            from .console_backend_presentation import ConsoleBackendPresentation
+
+            if type(self._domain.presentation) is ConsoleBackendPresentation:
+                self._domain.presentation.capture_projection_view(self, identity, projection)
+            return projection
 
     def _require_source_publication(self, fence):
         with self._lock:

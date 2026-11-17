@@ -1,6 +1,6 @@
 # TASK-40608 recovery checkpoint
 
-This directory preserves pending source patches and the immediate continuation state for the owner's crash-recovery request on 2026-11-16. The source checkpoint is `03be283bb0229b904bea306fd05583ae589fe91f`; draft PR: https://github.com/rmusser01/tldw_chatbook/pull/3575. These drafts are **not installed or runtime-qualified**. Do not apply them wholesale over newer code.
+This directory preserves source patches and continuation state for the owner's crash-recovery request on 2026-11-16. The initial source checkpoint is `03be283bb0229b904bea306fd05583ae589fe91f`; draft PR: https://github.com/rmusser01/tldw_chatbook/pull/3575. These patch files preserve an earlier integration draft; consult the live code and current result below before using them. Do not apply them wholesale over newer code.
 
 ## Required outcome
 
@@ -10,9 +10,11 @@ The accepted architecture uses one contained backend runtime/store/controller/do
 
 ## Current result and next action
 
+**2026-11-17 interruption recovery:** session-view/current-input publication, the readonly projection view, and the accepted-turn test are now installed in the working implementation. Their first run, `task62-accepted-process-a1`, cannot qualify them: after the interruption its after JSON is entirely NUL-filled, and its outer/inner XML and log are partly NUL-filled. The surviving log prefix shows two passes and two failures, but the failure details and normal after proof are unavailable. Preserve those files and repeat the same four checks in a fresh run. All 2,836 live input hashes and all frozen copies still match the pre-run manifest; its SHA-256 is `24382a132d6e16d9ea4044acd2210afbad8db615b470a46a7f5d4c777224d4ed`. The actual-user census at `2026-11-17T15:18:24.6553750Z` found no surviving workers. No accepted provider/terminal result is claimed. The last fully observed passing checkpoint below was pushed as `571af6c263` before the interruption.
+
 The correction passed `task62-plan-process-a10`: both the actual source/selector regression and unchanged process pre-ACK test passed. The process reached the original commit plan in **2.484 seconds**, reused the actual projection reference, and positively retired the original pre-ACK cancellation. Repeated association checks entered the native getter **zero times**; selector/cache/environment/CWD and definition changes were refused. Normal after receipt: `2026-11-17T06:32:33.8797249Z`, SID ending 1002, all 2,835 hashes unchanged, zero workers. XML: 2 tests, 0 failures/errors, 108.175 seconds including isolated fixture setup/cleanup. Runner SHA-256: `c2b2de436897d43161e91347642cddd813aef8c4ca11f701f3c724bff25c422d`; manifest SHA-256: `75d3f704347e2344f8c1b542c1f3c0de2ccb573b12eb84b6d71863fb737b4edc`.
 
-Next, integrate the preserved session-view/current-input sidecar and run the real accepted ACK/provider/terminal-persistence test. The 2.484-second pre-plan result is not a whole journey, UI, or final three-pair speed qualification. Diagnostic timing logs remain temporary.
+Next, qualify the installed session-view/current-input sidecar and real accepted ACK/provider/terminal-persistence test. The 2.484-second pre-plan result is not a whole journey, UI, or final three-pair speed qualification. Diagnostic timing logs remain temporary.
 
 The preceding diagnostic and its failure remain evidence:
 

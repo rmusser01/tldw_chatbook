@@ -564,6 +564,9 @@ class _BackendService:
                 if current and known == result.display_revision
                 else self._projection_messages,
             )
+            body["session_view"] = self.backend.presentation.projection_view(
+                command.identity, result
+            )
             message = ConsoleWireMessage(identity, "applied", "ReadProjection", body)
             self.channel.send(message)
             self.sequence = message.identity.sequence
@@ -797,6 +800,9 @@ class _BackendService:
             self._release_result(message)
 
     def _release_result(self, message) -> None:
+        self.backend.presentation._projection_views.pop(
+            message.identity.request_id, None
+        )
         # Only these actual results can be consumed by a later named command.
         retained = message.operation in {
             "FenceSource",

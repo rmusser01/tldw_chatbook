@@ -199,15 +199,20 @@ class ConsoleExecutionClient:
         self._view: Any = None
         self._visit = 0
         self._projection = None
+        self.projection_view = None
+        self.pressed_inputs = None
+        self._projection_sequence = 0
 
     async def read_projection(self, session_id: str, incarnation_id: str):
         """Adopt one exact retired projection without constructing a local store."""
         from .console_execution_projection_result import (
             decode_projection_payload,
+            decode_projection_view,
             projection_key,
         )
 
         previous = self._projection
+        view, visit = self._view, self._visit
         binding = (self._source_revision, session_id, incarnation_id)
         known = (
             previous.display_revision
@@ -223,17 +228,26 @@ class ConsoleExecutionClient:
         await asyncio.shield(receipt.applied)
         if await asyncio.shield(receipt.retired) is not True:
             raise ConsoleChannelLost("Console projection retirement is unproven")
-        if self._channel_error is not None or self._source_revision != binding[0]:
+        if (
+            self._channel_error is not None
+            or self._source_revision != binding[0]
+            or self._view is not view
+            or self._visit != visit
+            or receipt.identity.sequence <= self._projection_sequence
+        ):
             raise ConsoleChannelLost("Console projection source changed")
         # Thaw only this validated message using the canonical codec. The
         # reference resolves against the snapshot captured for this request.
         message = receipt.projection_message
         if message is None:
             raise ConsoleProtocolError("projection_message_missing")
-        value = decode_projection_payload(
-            encode_message(message)["payload"], previous=previous
-        )
+        payload = encode_message(message)["payload"]
+        value = decode_projection_payload(payload, previous=previous)
+        projection_view = decode_projection_view(payload, value)
         self._projection = value
+        self.projection_view = projection_view
+        self.pressed_inputs = payload["session_view"]["pressed_inputs"]
+        self._projection_sequence = receipt.identity.sequence
         return value
 
     async def start(self, profile: ConsoleProcessProfile) -> None:

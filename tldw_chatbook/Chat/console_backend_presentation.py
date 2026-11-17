@@ -28,6 +28,63 @@ class ConsoleBackendPresentation:
         self._display_context_demands = {}
         self._display_character_demands = {}
         self.parent_attachment = None
+        self._projection_views = {}
+
+    def capture_projection_view(self, controls, identity, projection) -> None:
+        """Retain inert row facts at the original synchronous projection boundary."""
+        from .console_control_dispatch import (
+            ConsoleLocalControls,
+            require_control_source,
+        )
+        from .console_execution_projection_values import encode_session_projection
+        from .console_execution_projection_result import encode_pressed_inputs
+
+        self.require_association(self.association)
+        source = require_control_source(self._runtime)
+        if (
+            type(controls) is not ConsoleLocalControls
+            or controls is not self.backend.controls
+            or source.identity is not identity
+            or identity.source_revision != controls.source_revision
+            or projection.source_revision != identity.source_revision
+            or projection.session_id != identity.session_id
+            or projection.incarnation_id != identity.incarnation_id
+            or identity.request_id in self._projection_views
+        ):
+            raise RuntimeError("Backend projection capture changed")
+        store = controls._store
+        sessions = store.sessions()
+        body = {
+            "sessions": [encode_session_projection(session) for session in sessions],
+            "active_session_id": store.active_session_id,
+            "fingerprints": [],
+            "pressed_inputs": encode_pressed_inputs(
+                store.session_input_snapshot(identity.session_id),
+                store._sessions[identity.session_id],
+            ),
+        }
+        for session in sessions:
+            count, length = store.session_fingerprint(session.id)
+            body["fingerprints"].append(
+                {
+                    "session_id": session.id,
+                    "count": count,
+                    "last_content_length": length,
+                }
+            )
+        self._projection_views[identity.request_id] = (identity, projection, body)
+
+    def projection_view(self, identity, projection) -> dict:
+        """Return only this completed command's already-captured row values."""
+        self.require_association(self.association)
+        captured = self._projection_views.get(identity.request_id)
+        if (
+            captured is None
+            or captured[0] is not identity
+            or captured[1] is not projection
+        ):
+            raise RuntimeError("Backend projection result association changed")
+        return captured[2]
 
     def bind_runtime(self, runtime) -> None:
         if self._runtime is not None or runtime._app is not None:
