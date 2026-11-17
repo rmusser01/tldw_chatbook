@@ -62,9 +62,20 @@ def test_reference_reuses_exact_transcript_and_refreshes_run_values():
         replace(first, source_revision=4),
         replace(first, incarnation_id="replacement"),
         replace(first, display_revision=8),
+        replace(first, marker_revision=1),
     ):
         with pytest.raises(ConsoleProtocolError, match="snapshot_not_owned"):
             decode_projection_payload(reference, previous=previous)
+
+    marked = replace(original, marker_revision=1)
+    marked_body = encode_projection_payload(marked, messages=None)
+    with pytest.raises(ConsoleProtocolError, match="snapshot_not_owned"):
+        decode_projection_payload(marked_body, previous=first)
+    marked_body["messages"] = body["messages"]
+    assert decode_projection_payload(marked_body).marker_revision == 1
+    marked_body["marker_revision"] = True
+    with pytest.raises(ConsoleProtocolError, match="marker_revision"):
+        decode_projection_payload(marked_body)
 
 
 def test_projection_envelope_and_nested_original_fields_remain_checked():

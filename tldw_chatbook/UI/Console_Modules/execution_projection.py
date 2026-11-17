@@ -20,10 +20,17 @@ from ..Screens import chat_screen as _screen_module
 from ..Screens.chat_screen import ChatScreen
 from . import message as _message_module
 from .message import ConsoleMessageController
+from . import send_acknowledgement as _ack_module
+from . import execution_sessions as _session_presentation
 
 _definition = _definitions._definition
 _definition_current = _definitions._definition_current
 _TORN_DOWN = _definition(_screen_module._console_screen_is_torn_down)
+_ACK_OWNER = _definition(_session_presentation._require_ack)
+_ACK_PROJECT = tuple(
+    (name, _definition(getattr(_ack_module.ConsoleSendAcknowledgement, name)))
+    for name in ("project", "_with_stand_in")
+)
 _TYPES = (
     (_screen_module, "ChatScreen", ChatScreen),
     (_process, "ConsoleExecutionClient", ConsoleExecutionClient),
@@ -179,6 +186,17 @@ def apply_console_process_projection(
         transcript.pending_selection_id = screen._pending_console_swipe_selection
         screen._pending_console_swipe_selection = None
     transcript.set_model_thinking_visible(screen._show_model_thinking())
-    transcript.set_messages(projection.messages, session_id=projection.session_id)
+    rows = projection.messages
+    ack = screen._console_send_ack
+    if ack is not None:
+        if (
+            _session_presentation._require_ack is not _ACK_OWNER[0]
+            or not _definition_current(_ACK_OWNER)
+        ):
+            raise RuntimeError("Console acknowledgement owner source changed")
+        _ACK_OWNER[0](screen, ack)
+        _require_methods(ack, _ACK_PROJECT)
+        rows = ack.project(projection.session_id, rows)
+    transcript.set_messages(rows, session_id=projection.session_id)
     transcript.sync_jump_indicator(projection.run_state.status.value)
     return True

@@ -624,11 +624,23 @@ _PLAN = {
 _SOURCE = _enum("configuration", "workspace")
 
 
+def _open_session_request(value, path):
+    fields = dict(title=_TEXT, workspace_id=_MAYBE_TEXT, conversation_id=_MAYBE_TEXT)
+    _object(value, path)
+    if "new_chat" in value:
+        fields.update(new_chat=_boolean, ephemeral=_boolean, new_chat_default_generation=_REVISION)
+        if value["new_chat"] is not True or value.get("conversation_id") is not None:
+            _reject(path, "invalid new-chat intent")
+    _record(**fields)(value, path)
+
+
 def _projection_request(value, path):
     _object(value, path)
     if not value:
         return  # Original callers request a complete first snapshot.
     fields = {"known_display_revision": _MAYBE_REVISION}
+    if "known_marker_revision" in value:
+        fields["known_marker_revision"] = _MAYBE_REVISION
     if "view_checkpoint" in value:
         fields["view_checkpoint"] = _record(
             attachment_id=_NONEMPTY, visit=_SEQUENCE,
@@ -663,9 +675,7 @@ _COMMANDS = {
         pressed_inputs=_PRESSED_INPUTS,
     ),
     "ApplySettings": _record(submission=_SUBMISSION),
-    "OpenSession": _record(
-        title=_TEXT, workspace_id=_MAYBE_TEXT, conversation_id=_MAYBE_TEXT
-    ),
+    "OpenSession": _open_session_request,
     "CloseSession": _record(expected_revision=_REVISION),
     "ResolveDecision": _record(decision=_DECISION),
     "ReadProjection": _projection_request,

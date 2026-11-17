@@ -105,7 +105,7 @@ async def test_selected_original_enter_reaches_provider_and_durable_terminal(
                     await asyncio.shield(permission.applied)
                     assert await asyncio.shield(permission.retired) is True
                     composer.focus_draft_from(None)
-                    await pilot.press(*"original selected enter")
+                    await pilot.press(*("space" if character == " " else character for character in "original selected enter"))
                     assert composer.draft_text() == "original selected enter"
                     started = time.monotonic()
                     with _observe(

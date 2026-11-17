@@ -213,6 +213,20 @@ class OpenSession:
     title: str = "New chat"
     workspace_id: str | None = None
     conversation_id: str | None = None
+    new_chat: bool = False
+    ephemeral: bool = False
+    new_chat_default_generation: int = 0
+
+    def __post_init__(self):
+        if (
+            type(self.new_chat) is not bool
+            or type(self.ephemeral) is not bool
+            or type(self.new_chat_default_generation) is not int
+            or self.new_chat_default_generation < 0
+            or self.new_chat and self.conversation_id is not None
+            or not self.new_chat and (self.ephemeral or self.new_chat_default_generation)
+        ):
+            raise ValueError("Invalid Console new-chat intent")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1367,6 +1381,33 @@ class ConsoleLocalControls:
                 raise RuntimeError("Console control intake is fenced")
         receipt = ControlReceipt(identity, self._loop.create_future())
         if type(command) is OpenSession:
+            if command.new_chat:
+                self._domain.require_current()
+                with self._store._preparation_lock:
+                    previous = self._store._sessions.get(identity.session_id)
+                    if (
+                        previous is None
+                        or previous.incarnation_id != identity.incarnation_id
+                        or self._store.active_session_id != previous.id
+                    ):
+                        raise RuntimeError("Console New Chat origin changed")
+                from .console_chat_models import ConsoleWorkspaceContext
+
+                defaults = self._domain.default_session_settings()
+                workspace_id = command.workspace_id or previous.workspace_id
+                self._store.set_workspace_context(
+                    ConsoleWorkspaceContext(active_workspace_id=workspace_id)
+                )
+                session = self._controller.new_session(
+                    title=command.title or None,
+                    workspace_id=workspace_id,
+                    settings=defaults,
+                    canonical_settings_baseline=defaults,
+                    new_chat_default_generation=command.new_chat_default_generation,
+                    ephemeral=command.ephemeral,
+                )
+                receipt.applied.set_result((session.id, session.incarnation_id))
+                return receipt
             if identity.session_id:
                 raise ValueError(
                     "OpenSession does not adopt a caller-provided incarnation"
@@ -2035,4 +2076,15 @@ def finish_admitted_display(full):
         or effect.owner.selection is not full.selection
         or asyncio.current_task() is not effect.owner.selection.task
     ):
-        raise ConsoleDisplayPhaseRefused("Original display 
+        raise ConsoleDisplayPhaseRefused("Original display effect registration changed")
+    record[3](controls, effect, retired=False)
+    raise ConsoleDisplayPhaseRefused("Admitted display control definition changed")
+
+
+# Fixed original release-tail methods; the retained result is not a callback.
+from .console_domain_services import _definition as _reservation_definition
+
+_RESERVATION_METHODS = tuple(
+    (name, _reservation_definition(vars(ConsoleLocalControls)[name]))
+    for name in ("_settle_released_reservation", "_finish_effect")
+)

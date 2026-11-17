@@ -18,13 +18,14 @@ if TYPE_CHECKING:
     from .console_execution_projection_view import ConsoleProjectionView
 
 
-def projection_key(value: ConsoleProjection) -> tuple[int, str, str, int]:
+def projection_key(value: ConsoleProjection) -> tuple[int, str, str, int, int | None]:
     """Return the original source and transcript invalidation facts."""
     return (
         value.source_revision,
         value.session_id,
         value.incarnation_id,
         value.display_revision,
+        value.marker_revision,
     )
 
 
@@ -43,6 +44,7 @@ def encode_projection_payload(
         "session_id": value.session_id,
         "incarnation_id": value.incarnation_id,
         "display_revision": value.display_revision,
+        "marker_revision": value.marker_revision,
         "messages": messages,
         "run_state": encode_run_projection(value.run_state),
         "decision": encode_pending_decision(value.decision),
@@ -59,8 +61,14 @@ def _shape(value: object) -> None:
         "run_state",
         "decision",
     }
-    if type(value) is not dict or set(value) not in (fields, fields | {"session_view"}):
+    if type(value) is not dict or set(value) not in (
+        fields, fields | {"session_view"}, fields | {"marker_revision"},
+        fields | {"session_view", "marker_revision"},
+    ):
         raise ConsoleProtocolError("invalid_projection_fields")
+    marker = value.get("marker_revision")
+    if marker is not None and (type(marker) is not int or marker < 0):
+        raise ConsoleProtocolError("invalid_projection_marker_revision")
     for name in ("source_revision", "display_revision"):
         if type(value[name]) is not int or value[name] < 0:
             raise ConsoleProtocolError("invalid_projection_revision")
@@ -354,7 +362,7 @@ def decode_projection_payload(
         )
     )
     if value["messages"] is None:
-        if type(previous) is not ConsoleProjection or projection_key(previous) != key:
+        if type(previous) is not ConsoleProjection or projection_key(previous) != (*key, value.get("marker_revision")):
             raise ConsoleProtocolError("projection_snapshot_not_owned")
         messages = previous.messages
     else:
@@ -367,4 +375,5 @@ def decode_projection_payload(
         messages,
         decode_run_projection(value["run_state"]),
         decision,
+        value.get("marker_revision"),
     )

@@ -469,7 +469,7 @@ class ConsoleExecutionClient:
                 raise ConsoleProtocolError("turn_receipt_changed")
             await receipt.changed.wait()
 
-    def publish_authored_inputs(self, view, visit: int, draft: str, token: tuple[int, int]) -> bool:
+    def publish_authored_inputs(self, view, visit: int, draft: str, token: tuple[int, int], *, _switch=None, _session_id=None) -> bool:
         """Queue the actual widget edit; Applied alone publishes its revision."""
         from .console_execution_projection_values import _settings
 
@@ -477,8 +477,17 @@ class ConsoleExecutionClient:
         if (type(draft) is not str or type(token) is not tuple or len(token) != 2
             or any(type(item) is not int or item < 0 for item in token)):
             raise ConsoleProtocolError("invalid_authored_input_identity")
-        row = self.projection_view.session(self.projection_view.active_session_id)
-        if view._console_visible_draft_session_id != row.id:
+        transition = getattr(view, "_console_process_draft_switch", None)
+        if transition is not None and _switch is None:
+            # The original switch snapshot assigns edits made in this window
+            # only when the destination's actual command has published its row.
+            if transition[0] is not self or transition[1] != visit:
+                raise ConsoleProtocolError("authored_switch_owner_changed")
+            return True
+        if _switch is not None and transition is not _switch:
+            raise ConsoleProtocolError("authored_switch_owner_changed")
+        row = self.projection_view.session(_session_id or self.projection_view.active_session_id)
+        if _switch is None and view._console_visible_draft_session_id != row.id:
             return False
         key = (row.id, row.incarnation_id)
         if self._input_press is not None:
@@ -491,7 +500,7 @@ class ConsoleExecutionClient:
             "draft": draft, "authored_token": list(token),
             "expected_settings_revision": row.settings_revision,
             "expected_settings": _settings(row.settings, False),
-            "expected_attachment_ids": list(self.pressed_inputs["attachment_ids"]),
+            "expected_attachment_ids": None if _switch is not None else list(self.pressed_inputs["attachment_ids"]),
             "remove_attachment_ids": [], "prefill": None,
         }, session_id=row.id, incarnation_id=row.incarnation_id)
         entry = (draft, token, receipt)
@@ -673,6 +682,7 @@ class ConsoleExecutionClient:
             else None
         )
         payload = {"known_display_revision": known}
+        payload["known_marker_revision"] = previous.marker_revision if known is not None else None
         if _checkpoint is not None:
             if view is None or _checkpoint not in {"mount", "visible"}:
                 raise ConsoleChannelLost("Console visible checkpoint requires its view")

@@ -562,6 +562,7 @@ class _BackendService:
                 result,
                 messages=None
                 if current and known == result.display_revision
+                and request.payload.get("known_marker_revision") == result.marker_revision
                 else self._projection_messages,
             )
             body["session_view"] = self.backend.presentation.projection_view(
