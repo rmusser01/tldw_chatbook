@@ -3,7 +3,7 @@ id: TASK-41133
 title: "Trace credential masking leftovers: a credentials-v3 projection for whsec_ and gsk_, and compound labels such as client_secret= in shared bundle text"
 status: Done
 created_date: 2026-11-15 02:20
-updated_date: 2026-11-17 10:20
+updated_date: 2026-11-17 15:00
 assignee:
 - '@claude'
 labels:
@@ -312,4 +312,14 @@ Masked by design although they are not secrets:
   - probe2, probe_labels, probe3-7 and probe11 give the same results as rev6.
   - `probe_equiv` (rev7 corpus 4719): 0 diffs.
   - Adversarial: the slowest case is 0.32 s CPU (quoted-prose-1mb); the new code texts take at most 0.14 s (load 44).
+- **Rev7 evidence:**
+  - Covering run (`-n 4`, 39 files with UI, started at load 32): 31 failed, 10 errors and 1777 passed in 28 min.
+    - At about 11:08 UTC the load spiked past 500 and macOS refused `~/Documents` reads ("Operation not permitted") on `.venv` and worktree files until 14:17 UTC.
+    - Every failure and error beyond the 8 base failures was in four files that run subprocesses or time keystrokes: `Tests/Packaging/test_installed_distribution.py`, `Tests/Packaging/test_bug_report_import_deferral.py`, `Tests/Packaging/test_rag_boot_import_closure.py` and `Tests/Performance/test_console_keystroke_work_census.py`. They showed `PermissionError` or subprocess `init_import_site` failures.
+  - Rerun of those four files once access was back (`-n 4`, load 50-155): 3 failed, 247 passed in 42 min, with no `PermissionError`.
+    - The 3 failures are base failures from the known 8: `test_installed_wheel_loaders_entry_points_and_assets_are_immutable`, `test_profile_driven_rag_still_works_from_the_deferred_boot_state` and `test_search_modes_is_import_cheap_and_single_sourced`.
+    - So the covering set fails only its 8 base failures.
+  - Serial with lane flags: the recovered-suites slice (19 targets) gives 577 passed in 117 s at load 34; `Tests/Utils/test_log_sanitizer.py` gives 209 passed.
+  - `Tests/CI` gives 1640 passed, 1 skipped (load 35). The module ratchet gives 207 passed, and the ruff gate is OK.
+  - `./scripts/preflight.sh` passes (rc 0, load 34-37).
 
