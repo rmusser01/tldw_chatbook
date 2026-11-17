@@ -704,7 +704,7 @@ def _actor_pack_import_error_copy(category: str | None) -> str:
         ),
         "actor_pack_import_creation_blocked": (  # TASK-41114
             "An earlier persona Actor Pack import was interrupted. Choose \"Keep my "
-            "current personas and clear the interrupted import\" above, then import again."
+            "current personas and clear the interrupted import\" above, then try again."
         ),
     }.get(category, "Actor Pack import failed.")
 
@@ -8231,6 +8231,9 @@ class PersonasScreen(BaseAppScreen):
             and error.user_message == "Save a local copy first"
         ):
             copy = error.user_message
+        elif getattr(error, "category", None) == "actor_pack_creation_blocked":
+            copy = _actor_pack_import_error_copy("actor_pack_import_creation_blocked")
+            self.call_later(show_actor_pack_recovery_notice, self)  # TASK-41114
         self._notify(copy, "error")
 
     def _note_actor_pack_portrait_change(self) -> None:

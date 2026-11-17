@@ -18,8 +18,8 @@ NOTICE_ID = "personas-actor-pack-recovery-notice"
 CLEAR_BUTTON_ID = "personas-actor-pack-recovery-clear"
 NOTICE_TEXT = (
     "An earlier persona Actor Pack import was interrupted and is still "
-    "recorded, so persona Actor Packs can't be imported. Your personas are "
-    "not affected."
+    "recorded, so persona Actor Packs can't be imported or created. Your "
+    "personas are not affected."
 )
 CLEAR_LABEL = "Keep my current personas and clear the interrupted import"
 _CLEARED = (

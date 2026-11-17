@@ -1655,6 +1655,88 @@ def test_clearing_the_interrupted_import_refuses_during_a_storage_pause(
         db.close_connection()
 
 
+def test_cleared_interrupted_import_stays_cleared_on_the_next_recovery_read(
+    tmp_path, monkeypatch
+):
+    """TASK-41114, review r15ac-rev2: the next Personas visit reruns the app's
+    recovery read, which returned the cached summary that still named the
+    cleared intent. That put actor_pack_recovery_error back and skipped the
+    Buddy setup until restart."""
+    from types import SimpleNamespace
+
+    import tldw_chatbook.app_service_wiring as wiring
+    import tldw_chatbook.Persona_Buddy.library as buddy_library
+    from tldw_chatbook.app_service_wiring import ServiceWiringMixin
+
+    db, activation, review, trees = _actor_pack_activation_on_profile(
+        tmp_path, monkeypatch, bound=True
+    )
+    buddy = []
+
+    class Library:  # Records that the Buddy block ran, then stops it.
+        def __init__(self, *args, **kwargs):
+            buddy.append(True)
+            raise RuntimeError("buddy block reached")
+
+    monkeypatch.setattr(buddy_library, "BuddyLibrary", Library)
+    # The wiring module bound its own config import; point it at this profile.
+    monkeypatch.setattr(wiring, "get_user_data_dir", lambda: tmp_path / "data")
+    app = SimpleNamespace(
+        persona_actor_pack_coordinator=activation.persona_coordinator,
+        chachanotes_db=db,
+        actor_pack_recovery_error=None,
+        local_character_persona_service=activation.local_service,
+        loguru_logger=SimpleNamespace(error=lambda *a: None, warning=lambda *a: None),
+    )
+    try:
+        _stuck_persona_import(activation)
+        ServiceWiringMixin.ensure_actor_pack_recovery(app)
+        assert app.actor_pack_recovery_error == "actor_pack_recovery_blocked"
+        assert buddy == []
+        assert activation.persona_coordinator.clear_blocked_intents() == 1
+        app.actor_pack_recovery_error = None  # What the notice does on success.
+        ServiceWiringMixin.ensure_actor_pack_recovery(app)
+        assert app.actor_pack_recovery_error is None
+        assert buddy == [True]
+    finally:
+        db.close_idle_connections()
+        db.close_connection()
+
+
+def test_persona_actor_pack_creation_blocked_names_the_stuck_import():
+    """TASK-41114, review r15ac-rev2: creating a persona Actor Pack while an
+    interrupted import is stuck names it and the way out, and asks for the
+    notice (a block can also appear mid-session)."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Actor_Packs.creation import ActorPackCreationError
+    from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
+    from tldw_chatbook.Widgets.Persona_Widgets.actor_pack_recovery_notice import (
+        show_actor_pack_recovery_notice,
+    )
+
+    notices, scheduled = [], []
+    screen = SimpleNamespace(
+        _actor_pack_session_is_current=lambda session: True,
+        _notify=lambda message, severity: notices.append((message, severity)),
+        call_later=lambda callback, *args: scheduled.append((callback, args)),
+    )
+    PersonasScreen._show_actor_pack_creation_error(
+        screen, ActorPackCreationError("actor_pack_creation_blocked"), object()
+    )
+    [(message, severity)] = notices
+    assert severity == "error"
+    assert "interrupted" in message
+    assert "Keep my current personas and clear the interrupted import" in message
+    assert scheduled == [(show_actor_pack_recovery_notice, (screen,))]
+    # Any other failure keeps the generic copy and no notice.
+    notices.clear(), scheduled.clear()
+    PersonasScreen._show_actor_pack_creation_error(
+        screen, ActorPackCreationError("actor_pack_creation_failed"), object()
+    )
+    assert notices == [("Actor Pack creation failed.", "error")] and scheduled == []
+
+
 @pytest.mark.parametrize("refusal", [None, "actor_pack_storage_unavailable"])
 def test_interrupted_import_notice_clears_from_the_keyboard_off_the_ui_thread(
     refusal,
