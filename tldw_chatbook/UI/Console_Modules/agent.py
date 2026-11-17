@@ -1366,12 +1366,15 @@ class ConsoleAgentController:
             ConsoleHeldToolSlotsModal(
                 held_tool_slots(controller), partial(release_held_tool_slot, controller)
             ),
-            # Repaint the segment and the transcript's rows after releasing.
-            callback=lambda _result: self.run_worker(
-                self._sync_native_console_chat_ui_accessor(),
-                exclusive=True,
-                group="console-sync",
-            ),
+            callback=lambda _result: self.resync_held_tool_slots(),
+        )
+
+    def resync_held_tool_slots(self) -> None:
+        """Repaint the held-slots segment and Release rows after a release."""
+        self.run_worker(
+            self._sync_native_console_chat_ui_accessor(),
+            exclusive=True,
+            group="console-sync",
         )
 
     def release_unproven_tool_slot(self, message_id: str) -> bool:

@@ -58,7 +58,7 @@ def test_release_rows_follow_retained_runs_whatever_their_outcome():
     owner.bind_run("timed-out-run")
     retention = owner.reserve_tool().retain_unproven("fs_read")
     controller = SimpleNamespace(
-        run_terminal_rows={"done-card": "timed-out-run", "other": "clean-run"},
+        run_terminal_rows={"done-card": {"timed-out-run"}, "other": {"clean-run"}},
         _agent_bridge=SimpleNamespace(_runtime_capacity=capacity),
     )
     pushed = []
@@ -105,7 +105,7 @@ async def test_pressing_release_returns_the_slot_once_and_says_what_stays_held()
         cleanup_release_widget,
     )
 
-    released = []
+    released, resyncs = [], []
 
     class Agent:
         def release_unproven_tool_slot(self, message_id):
@@ -114,6 +114,11 @@ async def test_pressing_release_returns_the_slot_once_and_says_what_stays_held()
             assert threading.current_thread() is not threading.main_thread()
             released.append(message_id)
             return True
+
+        def resync_held_tool_slots(self):
+            # TASK-41307: the idle poll is stopped; the status segment must
+            # not keep counting the slot this card just freed.
+            resyncs.append(True)
 
     class Host(Screen):
         _agent = Agent()
@@ -137,6 +142,7 @@ async def test_pressing_release_returns_the_slot_once_and_says_what_stays_held()
         # Released off the UI thread; the button then says what stays held.
         assert released == ["explanation"]
         assert str(button.label) == RELEASED_COPY and button.disabled
+        assert resyncs == [True]
 
 
 def test_release_row_renders_under_a_failed_assistant_card():
@@ -176,20 +182,20 @@ def test_run_rows_are_forgotten_once_nothing_can_need_release():
     held_owner, held_op = run("held")
     held = held_op.retain_unproven("fs_read")
     controller = SimpleNamespace(
-        run_terminal_rows={"c": "clean", "h": "held"},
+        run_terminal_rows={"c": {"clean"}, "h": {"held"}},
         _agent_bridge=SimpleNamespace(_runtime_capacity=capacity),
     )
     messages = [_card("c"), _card("h")]
 
     # A run still live keeps its row; only a retained run shows one.
     assert unproven_cleanup_rows(controller, messages) == {"h": (False, "")}
-    assert controller.run_terminal_rows == {"c": "clean", "h": "held"}
+    assert controller.run_terminal_rows == {"c": {"clean"}, "h": {"held"}}
 
     # A run that drained without retention needs no Release row.
     clean_op.finish()
     clean_owner.finish_root()
     unproven_cleanup_rows(controller, messages)
-    assert controller.run_terminal_rows == {"h": "held"}
+    assert controller.run_terminal_rows == {"h": {"held"}}
 
     # A released record stays listed while it is retained...
     assert held.abandon()
@@ -216,7 +222,7 @@ def test_a_closed_and_reopened_card_keeps_its_release_row():
     owner.finish_root()
     # The card is recorded by its persisted id once it has one.
     controller = SimpleNamespace(
-        run_terminal_rows={"db-card": "held"},
+        run_terminal_rows={"db-card": {"held"}},
         _agent_bridge=SimpleNamespace(_runtime_capacity=capacity),
     )
     assert unproven_cleanup_rows(controller, [_card("live-card", "db-card")]) == {
@@ -233,7 +239,7 @@ def test_a_closed_and_reopened_card_keeps_its_release_row():
     # Each reopen replaces the run's alias instead of adding another.
     for index in range(3):
         unproven_cleanup_rows(controller, [_card(f"reopen-{index}", "db-card")])
-    assert controller.run_terminal_rows == {"db-card": "held", "reopen-2": "held"}
+    assert controller.run_terminal_rows == {"db-card": {"held"}, "reopen-2": {"held"}}
 
 
 def test_release_returns_every_slot_a_run_retains():
@@ -251,7 +257,7 @@ def test_release_returns_every_slot_a_run_retains():
     first.retain_unproven("fs_read")
     second.retain_unproven("native Git")
     controller = SimpleNamespace(
-        run_terminal_rows={"card": "held"},
+        run_terminal_rows={"card": {"held"}},
         _agent_bridge=SimpleNamespace(_runtime_capacity=capacity),
     )
     assert capacity.snapshot().tool_workers == 2
@@ -327,7 +333,7 @@ def test_a_sub_agents_held_slot_is_listed_not_put_on_a_reply_card():
     child.bind_run("child-run")
     child.reserve_tool().retain_unproven("fs_read")
     controller = _runtime_controller(capacity)
-    controller.run_terminal_rows["parent-card"] = "parent-run"
+    controller.run_terminal_rows["parent-card"] = {"parent-run"}
 
     assert unproven_cleanup_rows(controller, [_card("parent-card")]) == {}
     assert held_tool_slots(controller) == {"child-run": ("fs_read", False)}
@@ -392,3 +398,75 @@ def test_an_unrelated_settlement_failure_keeps_its_own_recovery_copy():
     explain_pre_run_stop(controller, "reply", RuntimeError("provider down"))
     assert controller._preflight_block_copies == {}
     assert controller.run_terminal_rows == {}
+
+
+def test_a_retried_reply_keeps_its_pre_run_release_row():
+    """"Try again" reuses the reply id; its retry run must not hide the slot."""
+    from tldw_chatbook.Agents.execution_capacity import (
+        CleanupUnprovenRefused,
+        RuntimeCapacity,
+        WorkOrigin,
+    )
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+    from tldw_chatbook.Chat.console_unproven_cleanup import (
+        explain_pre_run_stop,
+        unproven_cleanup_rows,
+    )
+
+    capacity = RuntimeCapacity()
+    owner = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="c")
+    owner.reserve_tool().retain_unproven("a remote SSH read")
+    try:
+        owner.reserve_tool()
+    except CleanupUnprovenRefused as refused:
+        error = refused
+    controller = _runtime_controller(capacity, _preflight_block_copies={})
+    reply = ConsoleChatMessage(
+        id="reply", role=ConsoleMessageRole.ASSISTANT, content="", status="pending"
+    )
+    explain_pre_run_stop(controller, "reply", error)
+    assert unproven_cleanup_rows(controller, [reply]) == {"reply": (False, _SSH_STOP)}
+
+    # The retry's run finished on the same reply and retained nothing.
+    retry = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="c")
+    retry.bind_run("retry-run")
+    retry.finish_root()
+    ConsoleChatController._record_run_assistant_message(controller, "retry-run", reply)
+    assert unproven_cleanup_rows(controller, [reply]) == {"reply": (False, _SSH_STOP)}
+    assert controller.run_terminal_rows == {"reply": {owner.execution_id}}
+
+
+def test_a_user_raw_cli_markers_release_row_renders_under_it():
+    """The grouped rows, not only the flat ones: a user marker stands alone."""
+    from pathlib import Path
+
+    from tldw_chatbook.Chat.console_chat_models import RawCliPresentation
+
+    marker = ConsoleChatMessage(
+        id="raw-cli-1",
+        role=ConsoleMessageRole.TOOL,
+        content="Cleanup: Unproven",
+        raw_cli_presentation=RawCliPresentation(
+            invocation_id="1",
+            caller="user",
+            lifecycle_state="cleanup_unproven",
+            command="sleep 9",
+            shell="/bin/sh",
+            cwd=str(Path.cwd()),
+            started_at_monotonic=None,
+            elapsed_seconds=1.0,
+            exit_code=None,
+            truncated=False,
+            cleanup_proven=False,
+        ),
+    )
+    reply = ConsoleChatMessage(
+        id="reply", role=ConsoleMessageRole.ASSISTANT, content="Done."
+    )
+    user = ConsoleChatMessage(id="ask", role=ConsoleMessageRole.USER, content="go")
+    transcript = ConsoleTranscript()
+    transcript.set_messages([user, reply, marker])
+    transcript.set_unproven_cleanup_rows({"raw-cli-1": (False, "")})
+    keys = [row.key for row in transcript._transcript_rows()]
+    assert keys.index("cleanup-release:raw-cli-1") == keys.index("message:raw-cli-1") + 1
+

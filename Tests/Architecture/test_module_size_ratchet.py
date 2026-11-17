@@ -286,10 +286,11 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-12: re-measured after rebasing onto dev 4b90eb860b (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 28743 -> 28755.
     # 2026-11-15: re-measured after rebasing onto dev 2ff0e9a5e5 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 28746 -> 28753.
     # 2026-11-16: re-measured after rebasing onto dev 5e3c8b2bd4 (owner rule: dev's row + this branch's growth): 28753 -> 28757 (+4, TASK-41102 Partial tray status).
-    # Raised for TASK-41307, 2026-11-17: +3 lines, the accepted-turn failure
-    # handler names a pre-run unproven cleanup (Chat/console_unproven_cleanup.py).
-    # 2026-11-18: rebased onto dev 45b1949ca3 (dev's row 28757 + TASK-41307's +3).
-    "tldw_chatbook/Chat/console_chat_controller.py": 28760,
+    # Raised for TASK-41307, 2026-11-17: +4 lines on 28,753, the accepted-turn
+    # failure handler names a pre-run unproven cleanup just before each recovery
+    # restore (Chat/console_unproven_cleanup.py).
+    # 2026-11-18: rebased onto dev 45b1949ca3 (dev's row + this branch's growth, measured): 28761.
+    "tldw_chatbook/Chat/console_chat_controller.py": 28761,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6298,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.

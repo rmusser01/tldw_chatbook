@@ -15,6 +15,7 @@ row or record can exist.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from loguru import logger
@@ -64,12 +65,14 @@ def unproven_cleanup_rows(
 ) -> dict[str, tuple[bool, str]]:
     """Rows among ``messages`` with a retained cleanup: (released, explanation).
 
-    A card is found by its id or its persisted id, so a conversation closed
-    and reopened shows its row again. Each row whose key is neither live nor
-    retained is forgotten (including after a late proof), so the map stays
-    bounded by live work plus retained records. The explanation is set only
-    for a turn stopped before its run existed (TASK-41307): an agent run
-    explains itself in its own row, a Raw CLI marker in its "Cleanup" line.
+    A row can carry several keys: a retried turn reuses its reply, whose
+    pre-run record stays retained under the same row (TASK-41307). A card is
+    found by its id or its persisted id, so a conversation closed and
+    reopened shows its row again. A key that is neither live nor retained is
+    forgotten (including after a late proof), so the map stays bounded by
+    live work plus retained records. The explanation is set only for a turn
+    stopped before its run existed: an agent run explains itself in its own
+    row, a Raw CLI marker in its "Cleanup" line.
     """
     from .console_chat_models import ConsoleMessageRole
 
@@ -85,33 +88,43 @@ def unproven_cleanup_rows(
         else set()
     )
     cards = controller.run_terminal_rows
-    for card, key in list(cards.items()):
-        if key not in retained and key not in live:
+    for card, keys in list(cards.items()):
+        keys &= retained.keys() | live
+        if not keys:
             cards.pop(card, None)
     rows = {}
     for message in messages:
         keep = (message.id, message.persisted_message_id)
-        key = cards.get(message.id) or cards.get(message.persisted_message_id)
-        if key in retained:
-            # A reopened card releases by its new id; one alias per key.
-            for card in [c for c, k in cards.items() if k == key and c not in keep]:
-                del cards[card]
-            cards[message.id] = key
-            records = retained[key]
-            pre_run = message.role is ConsoleMessageRole.ASSISTANT and not any(
-                record.run_id for record in records
-            )
-            rows[message.id] = (
-                all(record.abandoned for record in records),
-                _explanation(records) if pre_run else "",
-            )
+        held = {
+            key
+            for card in keep
+            for key in cards.get(card, ())
+            if key in retained
+        }
+        if not held:
+            continue
+        # A reopened card releases by its new id; one alias per key.
+        for card, keys in list(cards.items()):
+            if card not in keep:
+                keys -= held
+                if not keys:
+                    del cards[card]
+        cards.setdefault(message.id, set()).update(held)
+        records = [record for key in held for record in retained[key]]
+        pre_run = message.role is ConsoleMessageRole.ASSISTANT and not any(
+            record.run_id for record in records
+        )
+        rows[message.id] = (
+            all(record.abandoned for record in records),
+            _explanation(records) if pre_run else "",
+        )
     return rows
 
 
 def release_unproven_tool_slot(controller: Any, message_id: str) -> bool:
-    """Return every tool-worker slot the row's key still holds."""
-    key = controller.run_terminal_rows.get(message_id)
-    return release_held_tool_slot(controller, key)
+    """Return every tool-worker slot the row's keys still hold."""
+    keys = tuple(controller.run_terminal_rows.get(message_id, ()))
+    return any([release_held_tool_slot(controller, key) for key in keys])
 
 
 def held_tool_slots(controller: Any) -> dict[str, tuple[str, bool]]:
@@ -138,7 +151,7 @@ def release_held_tool_slot(controller: Any, key: str | None) -> bool:
 
 def offer_release(controller: Any, row_id: str, retention: Any) -> None:
     """Show Release under transcript row ``row_id`` for ``retention``."""
-    controller.run_terminal_rows[row_id] = _key(retention)
+    controller.run_terminal_rows.setdefault(row_id, set()).add(_key(retention))
 
 
 def explain_pre_run_stop(
@@ -147,9 +160,13 @@ def explain_pre_run_stop(
     """Name the cleanup that stopped a turn before its run, and offer Release.
 
     The stop copy names the tool instead of "Response recovery failed", and
-    the reply gets the explanation with Release (TASK-41307). It runs inside
-    the accepted-turn failure handler, so it never raises.
+    the reply gets the explanation with Release (TASK-41307). Callers run it
+    just before the recovery restore that consumes the copy, so an early
+    return leaves none behind. It runs inside the accepted-turn failure
+    handler, so it never raises; a cancellation is never explained.
     """
+    if isinstance(error, asyncio.CancelledError):
+        return
     try:
         seen = set()
         while error is not None and id(error) not in seen:

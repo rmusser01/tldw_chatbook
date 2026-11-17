@@ -46,10 +46,16 @@ class ConsoleCleanupReleaseButton(Button):
         self.disabled = True
         # Releasing runs drain callbacks that write the agent-runs DB.
         released = await asyncio.to_thread(release, self.native_message_id)
-        if released:
-            self.label = RELEASED_COPY
-        else:
+        if not released:
             self.disabled = False
+            return
+        self.label = RELEASED_COPY
+        # The 0.2 s poll stops when idle; repaint the held-slots segment now.
+        resync = getattr(
+            getattr(self.screen, "_agent", None), "resync_held_tool_slots", None
+        )
+        if callable(resync):
+            resync()
 
 
 def cleanup_release_widget(

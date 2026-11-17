@@ -117,3 +117,46 @@ def test_opening_the_list_reads_every_held_slot():
     assert modal.slots == {"run-1": ("fs_read", False)}
     assert modal.release("run-1")
     assert capacity.snapshot().tool_workers == 0
+
+
+def test_the_console_screen_opens_the_list_from_the_segment():
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    handler = ChatScreen._console_held_slots_activated
+    assert any(
+        message_type is ConsoleHeldSlotsChip.OpenRequested
+        for message_type, _ in getattr(handler, "_textual_on", ())
+    )
+    opened, stopped = [], []
+    screen = SimpleNamespace(
+        _agent=SimpleNamespace(open_held_tool_slots=lambda: opened.append(True))
+    )
+    handler(screen, SimpleNamespace(stop=lambda: stopped.append(True)))
+    assert opened == [True] and stopped == [True]
+
+
+async def test_the_console_sync_counts_held_slots_on_the_status_line():
+    """The real Console sync pushes the count; a release hides the segment."""
+    from Tests.UI.test_console_library_auto_outcome import _automatic_console, _build
+    from Tests.UI.test_console_send_acknowledgement import eager_tasks
+    from tldw_chatbook.Agents.execution_capacity import WorkOrigin
+
+    host, _gateway = _build()
+    async with host.run_test(size=(160, 40)) as pilot:
+        with eager_tasks():
+            console, controller, _composer = await _automatic_console(host, pilot)
+            capacity = controller._hooks_v2_runtime.execution_capacity
+            owner = capacity.begin_execution(
+                origin=WorkOrigin.MANUAL, conversation_id="undo"
+            )
+            retention = owner.reserve_tool().retain_unproven("Undo")
+            owner.finish_root()
+            chips = console.query_one("#console-status-chips", ConsoleStatusChips)
+            assert not chips.segment_visible("held-slots")
+            await console._sync_native_console_transcript(force=True)
+            await pilot.pause()
+            assert chips.segment_text("held-slots") == "Held tool slots: 1"
+            assert retention.abandon()
+            await console._sync_native_console_transcript(force=True)
+            await pilot.pause()
+            assert not chips.segment_visible("held-slots")

@@ -286,8 +286,8 @@ last reply shows **Release tool slot**, also after you close and reopen the
 conversation. A Raw CLI command whose **Cleanup** reads *Unproven* shows it
 under its row too. Every held slot is also listed under **Held tool slots: N**
 on the status line above the composer, including work that has no row of its
-own: Undo, Change Review, an `@git` reference read outside an agent turn, and
-sub-agents. The segment shows only while a slot is held; select it to open the
+own: Undo, Change Review work outside an agent turn, an `@git` reference read
+outside an agent turn, and sub-agents. The segment shows only while a slot is held; select it to open the
 list, which names what held each slot and offers **Release tool slot** for it.
 Releasing frees only the tool slot for other work; the workspace, storage and
 reservation stay held until you restart the app. When you quit, the app does not

@@ -395,7 +395,7 @@ This extends the TASK-40716 decision that the abandon action sits on the run's t
 - Release still returns only the tool-worker slot. The resource, its storage leases and any activity claim stay held until restart.
 
 **Implementation note (not an owner decision).**
-- A record is keyed by its run, else by its owner's execution (Undo, Change Review jobs, an @git reference outside an ordinary turn and a pre-run stop are never bound to a run).
+- A record is keyed by its run, else by its owner's execution. Undo, Change Review jobs with their own owner, an @git reference outside an ordinary turn and a pre-run stop are never bound to a run; a Change Review snapshot job that borrows an ordinary turn's owner carries that turn's run id. A transcript row can carry several keys, so a retried reply keeps its pre-run record's Release.
 - The list reads the runtime's capacity, not the agent bridge's, which is allocated only once an agent turn runs; a session that only ran Raw CLI or Undo still lists its records.
-- `CleanupUnprovenRefused` carries its retention, so the accepted-turn failure handler and the Raw CLI command can point Release at it. A pre-run stop keeps the accepted turn's dispatch recovery; only its copy changes.
-- The segment refreshes on the Console's sync. A Change Review job retained in the background between syncs shows at the next one.
+- `CleanupUnprovenRefused` carries its retention, so the accepted-turn failure handler and the Raw CLI command can point Release at it. A pre-run stop keeps the accepted turn's dispatch recovery; only its copy changes, and it is set just before that recovery is restored, so an early return leaves none behind.
+- The segment refreshes on the Console's sync, after a card's Release and when the list closes. A Change Review job retained in the background between syncs shows at the next one.
