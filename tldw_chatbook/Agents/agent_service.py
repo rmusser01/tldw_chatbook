@@ -5659,7 +5659,12 @@ class AgentService:
                     if self.confirm_project_instruction_dispatch is not None
                     else "cancel"
                 )
-            except Exception:  # noqa: BLE001 - consent failures are content-free
+            except Exception as exc:  # noqa: BLE001 - consent failures are content-free
+                logger.warning(
+                    "project instruction consent failed; run cancelled "
+                    "(exception_type={})",
+                    type(exc).__name__,
+                )
                 decision = "cancel"
             if decision not in {"proceed", "cancel", "disable"}:
                 decision = "cancel"
