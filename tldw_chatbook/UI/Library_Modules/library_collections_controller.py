@@ -463,6 +463,12 @@ class LibraryCollectionsController:
         # recompose one pane at once (TASK-41126).
         async with self._pane_sync_lock:
             self._capture_reader_annotation_draft()
+            if self._library_collections_quick_capture_open:
+                # The mounted fields, not their still-queued Changed events.
+                try:
+                    self._capture_library_collection_quick_capture_draft()
+                except (NoMatches, QueryError):
+                    pass
             presentation = self._library_collections_capture_presentation()
             if not await recompose_capture_panes(self._screen, presentation):
                 self._recompose_library_collections_screen()

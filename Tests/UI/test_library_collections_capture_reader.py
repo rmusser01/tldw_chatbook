@@ -631,8 +631,8 @@ async def test_quick_capture_draft_survives_background_reader_recompose() -> Non
         screen.query_one(
             "#library-collections-capture-note", TextArea
         ).text = "Draft note"
-        await pilot.pause()
-
+        # No pause (TASK-41126 review r15lc-rev1): the repaint must read the
+        # mounted fields, not wait for their Changed events to reach the screen.
         screen._refresh_library_collections_capture_reader()
         await _wait_for_condition(
             pilot,
