@@ -14,8 +14,10 @@ from loguru import logger
 
 from tldw_chatbook.Provider_Contract import ChatConfigurationError
 from tldw_chatbook.Chat.console_provider_endpoints import (
+    ADAPTER_ONLY_ENDPOINT_KEYS,
     effective_provider_endpoint,
     first_configured_endpoint,
+    mlx_endpoint,
 )
 from tldw_chatbook.Chat.provider_readiness import (
     configured_provider_credential_source,
@@ -365,6 +367,10 @@ class LocalLLMProviderCatalogService:
         )
         if staged_endpoint:
             return staged_endpoint
+        if provider_key in ADAPTER_ONLY_ENDPOINT_KEYS:
+            # TASK-41145 review r15ep-rev2: MLX-LM sends to its host and port,
+            # never its (ignored) api_url, so it lists there too.
+            return mlx_endpoint(saved_provider_settings)
         return effective_provider_endpoint(
             provider_key,
             staged_endpoint,

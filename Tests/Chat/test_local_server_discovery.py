@@ -4761,3 +4761,37 @@ def test_mlx_counts_as_configured_only_for_a_host_and_port_the_user_set(user, co
     keys = configured_provider_keys(catalog, _merged(user), PROVIDER_ENDPOINT_KEYS, environ={})
 
     assert sorted(keys) == configured
+
+
+@pytest.mark.parametrize(
+    ("user", "listed"),
+    [
+        ({}, "http://127.0.0.1:8080/v1"),
+        (_OLD_TEMPLATE_MLX, "http://127.0.0.1:8080/v1"),
+        (
+            {"api_settings": {"local_mlx_lm": {"host": "gpu-box.lan", "port": 9000}}},
+            "http://gpu-box.lan:9000/v1",
+        ),
+    ],
+)
+def test_mlx_discovery_lists_the_host_and_port_its_send_uses(user, listed):
+    """Review r15ep-rev2: model discovery and auto-refresh read MLX-LM's
+    ``api_url``, so a fresh or host-and-port profile listed nothing and an
+    old-template profile listed the ignored localhost:5678 placeholder."""
+    from tldw_chatbook.LLM_Provider_Catalog.local_llm_provider_catalog_service import (
+        LocalLLMProviderCatalogService,
+    )
+
+    service = LocalLLMProviderCatalogService.__new__(LocalLLMProviderCatalogService)
+
+    endpoint = service._resolve_endpoint(
+        provider_key="local_mlx_lm", saved_settings=_merged(user), staged_settings=None
+    )
+    draft = service._resolve_endpoint(
+        provider_key="local_mlx_lm",
+        saved_settings=_merged(user),
+        staged_settings={"api_settings": {"local_mlx_lm": {"api_url": "http://draft-box.lan:9100/v1"}}},
+    )
+
+    assert endpoint == listed
+    assert draft == "http://draft-box.lan:9100/v1"
