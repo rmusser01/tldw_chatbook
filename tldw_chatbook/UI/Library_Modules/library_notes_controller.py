@@ -2296,8 +2296,14 @@ class LibraryNotesController:
             return
         # Focus FIRST and synchronously: the callback runs from the canvas's
         # own ``recompose``, so focus is restored before any frame in which
-        # it could be seen sitting outside the canvas.
-        self._restore_library_notes_focus_identity(identity)
+        # it could be seen sitting outside the canvas. Not while the list
+        # entry channel is armed: it owns focus then, as it does for Media
+        # (``_restore_library_media_focus``). A resident Notes canvas
+        # repainted by a Media -> Notes switch otherwise replayed an identity
+        # captured with nothing focused, the filter, over the entry's first
+        # row (TASK-41129 review r15lf-rev1).
+        if not getattr(self._screen, "_library_pending_list_entry_focus", False):
+            self._restore_library_notes_focus_identity(identity)
         # Scroll SECOND and deferred. The restore above already attempts it,
         # but at this point the freshly mounted children have not been laid
         # out yet -- the container's max scroll is still 0, so ``scroll_to``

@@ -436,10 +436,10 @@ async def _adopt_library_browse_canvas(
         # keeps its pre-phase-C lifetime (mounted on entry, removed on exit).
         await canvas_host.mount(destination)
     # TASK-41129: ``swap_work``'s rule for its outgoing pane. A focus left in
-    # a canvas about to be hidden is moved by Textual's reset onto a hidden
-    # sibling (it ignores ``display``), which reads as a user move and revokes
-    # the destination's entry focus: Media -> Notes stranded keys on a hidden
-    # Media row.
+    # a canvas about to be hidden is moved by Textual's reset onto a sibling
+    # (it checks each sibling's own ``display``, not a hidden ancestor's),
+    # which reads as a user move and revokes the destination's entry focus:
+    # Media -> Notes stranded keys on a hidden Media row.
     focused = screen.focused
     if (
         focused is not None

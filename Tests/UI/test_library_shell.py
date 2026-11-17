@@ -34220,6 +34220,17 @@ async def test_escape_from_create_and_add_from_files_lands_on_the_blank_notes_pa
             rows = list(screen.query(".library-notes-row"))
             return rows[0] if rows else screen.query_one("#library-notes-new")
 
+        def footer() -> str:
+            footers = list(screen.query(AppFooterStatus))
+            text = footers[0].shortcut_text if footers else ""
+            return text.rsplit(" | ", 1)[0]  # drop the global suffix
+
+        # The footer each landing shows (pinned for both seeds).
+        expected_footer = {
+            "two-notes": "n new note | / find note | g go to folder | esc focus rail",
+            "no-notes": "n new note | / find note | esc focus rail",
+        }[seeded]
+
         async def assert_blank_center_landing(flow: str) -> None:
             await _wait_for_condition(
                 pilot,
@@ -34232,13 +34243,29 @@ async def test_escape_from_create_and_add_from_files_lands_on_the_blank_notes_pa
             )
             await pilot.pause(0.3)
             assert screen.focused is landing(), flow
-            assert screen.query_one("#library-note-work-empty").display is True, flow
             assert not screen.query("#library-notes-create-blank"), flow
+            # The blank center is really on screen at this size.
+            blank = screen.query_one("#library-note-work-empty")
+            assert blank.region.width > 0 and blank.region.height > 0, flow
+            assert all(node.display for node in blank.ancestors_with_self), flow
+            await _wait_for_condition(
+                pilot,
+                lambda: footer() == expected_footer,
+                message=lambda: f"{flow}: footer {footer()!r}.",
+            )
 
         screen.query_one("#library-notes-new", Button).press()
         await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
         await pilot.press("escape")
         await assert_blank_center_landing("Create")
+
+        # The rail's Notes row from Create is also a way out of Create
+        # (coordinator ruling, review r15lf-rev1): same landing.
+        screen.query_one("#library-notes-new", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
+        await pilot.pause(0.3)
+        await pilot.click(f"#library-row-{LIBRARY_ROW_BROWSE_NOTES}")
+        await assert_blank_center_landing("Create, then the rail's Notes row")
 
         screen.query_one("#library-notes-add-from-files", Button).press()
         await _wait_for_selector(screen, pilot, "#notes-add-import-once")
@@ -34297,10 +34324,18 @@ async def test_escape_from_create_and_add_from_files_lands_on_the_blank_notes_pa
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "size", [(60, 20), (100, 30), (120, 36), (235, 52)], ids=lambda s: f"{s[0]}x{s[1]}"
+    ("size", "notes_first"),
+    [
+        pytest.param((60, 20), False, id="60x20"),
+        pytest.param((100, 30), False, id="100x30"),
+        pytest.param((120, 36), False, id="120x36"),
+        pytest.param((235, 52), False, id="235x52"),
+        pytest.param((120, 36), True, id="120x36-revisit"),
+        pytest.param((235, 52), True, id="235x52-revisit"),
+    ],
 )
 async def test_media_to_notes_switch_never_leaves_focus_on_a_hidden_media_row(
-    size,
+    size, notes_first
 ) -> None:
     """TASK-41129: a Media -> Notes switch that leaves focus on a Media row.
 
@@ -34309,6 +34344,11 @@ async def test_media_to_notes_switch_never_leaves_focus_on_a_hidden_media_row(
     Media canvas with focus inside it. Textual's reset then moved focus to a
     hidden sibling row, which revoked the Notes entry focus: at 120x36 and
     235x52 keys stayed on the hidden ``#library-media-row-0``.
+
+    ``-revisit``: Notes was opened first, so its canvas is resident and the
+    switch repaints it; that repaint's default focus restore replayed an
+    identity captured with nothing focused and moved the landing to the
+    filter (review r15lf-rev1).
     """
     app = _build_test_app()
     _seed_conversations(
@@ -34319,6 +34359,9 @@ async def test_media_to_notes_switch_never_leaves_focus_on_a_hidden_media_row(
     async with host.run_test(size=size) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
+        if notes_first:
+            screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_NOTES}").press()
+            await _wait_for_notes_entry_focus_landing(screen, pilot)
         screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_MEDIA}").press()
         row = await _wait_for_selector(screen, pilot, "#library-media-row-1")
         await _wait_for_condition(
@@ -34337,10 +34380,34 @@ async def test_media_to_notes_switch_never_leaves_focus_on_a_hidden_media_row(
         )
 
         screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_NOTES}").press()
-        await _wait_for_notes_entry_focus_landing(screen, pilot)
-        await pilot.pause(0.3)
-        assert screen.focused is screen.query(".library-notes-row").first()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen.focused in screen.focus_chain
+                and screen.query_one("#library-notes-canvas")
+                in screen.focused.ancestors_with_self
+            ),
+            message=lambda: f"Focus stayed outside Notes: {screen.focused!r}.",
+        )
+        # Settle past the entry channel's arm, so a late restore would show.
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen._library_pending_list_entry_focus,
+            message="The Notes entry focus never settled.",
+        )
+        await pilot.pause(0.5)
         assert screen.focused in screen.focus_chain
+        if notes_first:
+            # Rows are resident, so the entry lands on the first one.
+            assert screen.focused is screen.query(".library-notes-row").first()
+        else:
+            # A first visit lands on the first row, or in the filter when the
+            # rows had not arrived yet (the entry channel's own empty-list
+            # rule, task-31946) -- either way a visible Notes control.
+            assert screen.focused in (
+                screen.query(".library-notes-row").first(),
+                screen.query_one("#library-notes-filter"),
+            ), screen.focused
 
 
 def test_library_note_ctrl_s_is_unavailable_while_save_remains_explicit() -> None:
