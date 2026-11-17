@@ -4,7 +4,7 @@ title: "A quarantined persona Actor Pack intent blocks persona Actor Pack creati
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-15 02:20
-updated_date: 2026-11-17 02:00
+updated_date: 2026-11-17 03:37
 labels:
 - follow-up
 - actor-packs
@@ -96,3 +96,4 @@ Files: `tldw_chatbook/Actor_Packs/persona_coordinator.py`, `tldw_chatbook/Actor_
   - Test: `test_persona_actor_pack_creation_blocked_names_the_stuck_import` (the screen method on a stand-in). Red with round 1's screen: `assert 'interrupted' in 'Actor Pack creation failed.'`.
   - `personas_screen.py` +3 lines; ratchet row 16,889 -> 16,892 with a dated comment.
 - **Finding 4:** the User Guide now places the notice just below the line that names the current mode and its item count (`#personas-purpose`), above the mode buttons.
+- Runs (load 24-41): the inventory file serially with `--timeout=1500`: 56 passed. `Tests/Actor_Packs`, the persona Character_Chat tests, the two Actor Pack UI files, the DB retirement file and the archive-recovery query/search files with `-n 4`: 489 passed, 2 failed (the export golden-byte pair, red at base). Module size ratchet + worker group inventory + three boundary files + undefined globals, serially: 256 passed. `ruff_gate.py` exit 0; `check_markup_interpolation.py` OK.
