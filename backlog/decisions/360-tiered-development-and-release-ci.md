@@ -2,8 +2,9 @@
 
 Status: Proposed; activation requires live qualification
 Date: 2026-11-13
-Task: TASK-40998
-Amends: ADR-103; preserves ADR-359 runner isolation
+Task: TASK-41564
+Amends: ADR-103
+Execution: GitHub-hosted runners; self-hosted CI canceled by the owner on 2026-11-17
 
 ## Context
 
@@ -13,15 +14,15 @@ The owner requested a light development gate, nightly regression coverage and fu
 
 Keep the stable required context and every existing broad regression command. Add a bounded smoke job and a reviewed subsystem smoke map. Enable selective gating only with `CI_TIERED_ENABLED=true`; default behavior remains broad on dev PRs. Always run artifact/Ruff preflight and the smoke job when selective policy is active. After merging, dev pushes run smoke on the merged tree without repeating PR regression coverage; activation requires PR-only protected dev updates. Unknown subsystems, new source files, deleted/renamed inputs, shared configuration, dependency/CI/test harness changes, migrations, recovery and authority/security changes select broad regression. The map is deliberately finite (Chat, UI, Widgets, Notes and CSS): absence means broad, never no tests. These are representative subsystem checks, not inferred dependency closure or every affected test. Explicit authority/storage-related path names retain broad coverage; review must also identify semantic high-risk changes whose paths do not reveal them. Task bookkeeping is covered by preflight and smoke; it does not by itself force a broad run. This explicitly supersedes ADR-103's rejection of all path-based selection, but never filters the required workflow itself.
 
-A default-branch-owned nightly dispatcher requests the existing broad regression workflow on dev, including the Library shell matrix previously repeated on every dev push. The dispatched run's immutable GitHub SHA is the checkout source for every job. Skip only an already-successful nightly run at the currently resolved dev SHA; failures retry the next night. A race with a new dev push can select a newer SHA, never mix SHAs within the run. Keep the former deep cross-platform nightly available but disabled; it is not the replacement's coverage claim. Nightly covers the preserved regression census, not every test in the repository.
+A default-branch-owned nightly dispatcher requests the existing broad regression workflow on dev, including the Library shell matrix and Backup_Recovery owner suites previously repeated on every dev push. The dispatched run's immutable GitHub SHA is the checkout source for every job. Skip only an already-successful nightly run at the currently resolved dev SHA; failures retry the next night. A race with a new dev push can select a newer SHA, never mix SHAs within the run. Keep the former deep cross-platform nightly available but disabled; it is not the replacement's coverage claim. Nightly covers the preserved regression census, not every test in the repository.
 
 PRs targeting main require broad regression plus the existing comprehensive Tests workflow and package build/install checks through reusable workflows. Publication also depends on successful comprehensive qualification and package checks on that exact main commit; neither a previous night's result nor another SHA is accepted. Weekly or fortnightly releases remain an owner decision, not automatic publishing on a timer.
 
-Use the existing hosted bulk runners for overnight and comprehensive jobs: their 120-minute budgets exceed the disposable local workers' 45-minute deadline. Preserve same-repository local PR routing and hosted fork fallback. Do not increase host resource limits.
+Use GitHub-hosted runners for smoke, regression and comprehensive qualification. The owner canceled the entire self-hosted CI effort and its benchmark on 2026-11-17. Neither is a prerequisite for this policy. The new smoke job directly selects a hosted runner; existing broad jobs use their hosted defaults with the runner variables unset.
 
 ## Rollout and rollback
 
-Keep the opt-in unset while #3529 establishes its baseline. Merge this policy only after focused contracts and review; install the identical nightly dispatcher on default-branch main independently of unrelated product changes. Qualify one nightly and an exact release candidate through a safe PR or reusable qualification without publishing or merging a product release merely to test. Require the stable context on main with strict protection and admin enforcement. Repeat the live routing, evidence, schedule, protection and runner checks before enabling the opt-in, then verify mapped PR selection, broad fallback and post-merge smoke. Unset it to restore broad dev PR gating. Never weaken protection to qualify the rollout.
+Keep the opt-in unset until live qualification finishes. Retain a successful hosted full PR run for the light-CI timing comparison. Merge this policy only after focused contracts and review; install the identical nightly dispatcher on default-branch main independently of unrelated product changes. Qualify one nightly and an exact release candidate through a safe PR or the explicit `release=true` Derived Artifacts dispatch without publishing or merging a product release merely to test. That dispatch calls comprehensive tests and package checks at its immutable event SHA and fails the aggregate unless both succeed. Require the stable context on main with strict protection and admin enforcement. Repeat the live routing, evidence, schedule, protection and runner checks before enabling the opt-in, then verify mapped PR selection, broad fallback and post-merge smoke. Unset it to restore broad dev PR gating. Never weaken protection to qualify the rollout.
 
 ## Alternatives and limits
 

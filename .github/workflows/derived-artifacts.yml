@@ -1,5 +1,5 @@
 name: Derived Artifacts
-run-name: ${{ inputs.nightly && 'Nightly regression' || 'Derived Artifacts' }}
+run-name: ${{ inputs.release && 'Release candidate qualification' || inputs.nightly && 'Nightly regression' || 'Derived Artifacts' }}
 
 # TASK-19572: one small check that actually runs, instead of a comprehensive
 # suite that never reports.
@@ -35,6 +35,10 @@ on:
   # never go green without tests actually running.
   workflow_dispatch:
     inputs:
+      release:
+        description: Qualify this exact candidate with comprehensive tests and package checks without publishing
+        type: boolean
+        default: false
       nightly:
         description: Run preserved regression coverage, including Library shell
         type: boolean
@@ -81,7 +85,7 @@ on:
 # Same-head runs are still preserved. TASK-38413 adds a separate cleanup job
 # in merge-queue.yml that cancels only verified obsolete PR-head runs.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ inputs.nightly && '-nightly' || inputs.release && '-release' || '' }}
   cancel-in-progress: ${{ github.event_name == 'push' && github.ref != 'refs/heads/main' }}
 
 permissions:
@@ -271,7 +275,7 @@ jobs:
     name: Dev smoke and affected contracts
     needs: [preflight]
     if: needs.preflight.outputs.light == 'true'
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -304,13 +308,13 @@ jobs:
   release-qualification:
     name: Release candidate qualification
     needs: [preflight]
-    if: (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.pr != '')
+    if: (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main') || (github.event_name == 'workflow_dispatch' && (inputs.release || (github.ref == 'refs/heads/main' && inputs.pr != '')))
     uses: ./.github/workflows/release-qualification.yml
 
   pr-fast-lane:
     needs: [preflight]
     name: PR Fast Lane
-    if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.pr != '' || github.ref != 'refs/heads/dev')))
+    if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
     # TASK-34916: the admission-sensitive invocation moved to its own job
     # (pr-fast-lane-admission, below). Over 90 pull-request runs to
@@ -540,7 +544,7 @@ jobs:
     #
     # One more runner per PR (ADR-103 note, 2026-10-14).
     name: PR Fast Lane (admission-sensitive)
-    if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.pr != '' || github.ref != 'refs/heads/dev')))
+    if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 35
 
@@ -652,7 +656,7 @@ jobs:
     # pr-fast-lane-admission, and its own pytest process and bootstrap
     # profile, as there. One more runner per PR (ADR-103 note, 2026-10-19).
     name: PR Fast Lane (admission-sensitive 2)
-    if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.pr != '' || github.ref != 'refs/heads/dev')))
+    if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 35
 
@@ -842,7 +846,7 @@ jobs:
     # pr-fast-lane-admission-2, and its own pytest process and bootstrap
     # profile, as there. The project-chat UAT steps stay in lane 2.
     name: PR Fast Lane (admission-sensitive 3)
-    if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.pr != '' || github.ref != 'refs/heads/dev')))
+    if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 35
 
@@ -945,7 +949,7 @@ jobs:
     # more peak runners than at 19, and no timeout grows.
     # Complete duration rows let replay charge function selectors by node.
     name: UI Fast Lane
-    if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.pr != '' || github.ref != 'refs/heads/dev')))
+    if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
     strategy:
@@ -992,7 +996,7 @@ jobs:
     # runtime (ADR-162). Linux census entries retain their capability marks;
     # only executed macOS passes qualify this required evidence (ADR-103).
     name: Managed plugin recovery UI
-    if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.pr != '' || github.ref != 'refs/heads/dev')))
+    if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: macos-latest
     timeout-minutes: 15
     steps:
@@ -1059,7 +1063,7 @@ jobs:
     # TASK-40724: run 43487945840 exhausted 20min in the first invocation.
     # Separate the existing profiles; each retains its own test deadlines.
     name: Console P0 regression gate (${{ matrix.profile }})
-    if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.pr != '' || github.ref != 'refs/heads/dev')))
+    if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 35
     strategy:
@@ -1206,7 +1210,7 @@ jobs:
     # TASK-40724: run 43487945840 reached 91% of the final group at 20min.
     # Use the existing long-lane budget; per-test deadlines stay unchanged.
     name: Dreams and Guardian boundary contracts
-    if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.pr != '' || github.ref != 'refs/heads/dev')))
+    if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 35
 
@@ -1311,7 +1315,7 @@ jobs:
     # timeout-minutes: the first run's 6m50s leaves ~13 min, and one hung
     # test at --timeout=180 still ends ~10 min under the cap.
     name: Dreams tracking tests
-    if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.pr != '' || github.ref != 'refs/heads/dev')))
+    if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
 
@@ -1345,7 +1349,7 @@ jobs:
     # TASK-39153: the persistent terminal privacy boundary runs last; its one
     # bootstrap_profile node must not precede a sandboxed suite (TASK-32873).
     name: Architecture guard contracts
-    if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.pr != '' || github.ref != 'refs/heads/dev')))
+    if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
 
@@ -1439,7 +1443,7 @@ jobs:
     # last), on no PR lane before: 494 tests, 4.1 min serially at load ~56.
     # Its three deselected nodes are red on dev, owned by TASK-41053.
     name: PR Fast Lane (architecture-review tests)
-    if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.pr != '' || github.ref != 'refs/heads/dev')))
+    if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
 
@@ -1525,7 +1529,7 @@ jobs:
     # suite whose path reads no config in-process may follow them; the step
     # note names the one that does.
     name: PR lane (recovered suites)
-    if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.pr != '' || github.ref != 'refs/heads/dev')))
+    if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
 
@@ -1710,7 +1714,7 @@ jobs:
         run: exit 1
 
       - name: Require complete release qualification
-        if: ${{ !cancelled() && ((github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.pr != '')) && needs.release-qualification.result != 'success' }}
+        if: ${{ !cancelled() && ((github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main') || (github.event_name == 'workflow_dispatch' && (inputs.release || (github.ref == 'refs/heads/main' && inputs.pr != '')))) && needs.release-qualification.result != 'success' }}
         run: exit 1
 
       # TASK-33621.27 review round 4: each verdict starts `!cancelled() &&`,
@@ -1718,7 +1722,7 @@ jobs:
       # lane's verdict skipped the others (run 38072845848), so a second red
       # lane went unreported until the next push.
       - name: Require successful PR fast lane
-        if: ${{ !cancelled() && (needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.pr != '' || github.ref != 'refs/heads/dev')))) && needs.pr-fast-lane.result != 'success' }}
+        if: ${{ !cancelled() && (needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))) && needs.pr-fast-lane.result != 'success' }}
         run: |
           echo "PR Fast Lane result: ${{ needs.pr-fast-lane.result }}"
           echo "::error::The required PR fast lane did not succeed."
@@ -1728,7 +1732,7 @@ jobs:
       # own job. Without this step a red half would leave the required check
       # green.
       - name: Require successful PR fast lane (admission-sensitive)
-        if: ${{ !cancelled() && (needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.pr != '' || github.ref != 'refs/heads/dev')))) && needs.pr-fast-lane-admission.result != 'success' }}
+        if: ${{ !cancelled() && (needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))) && needs.pr-fast-lane-admission.result != 'success' }}
         run: |
           echo "PR Fast Lane (admission-sensitive) result: ${{ needs.pr-fast-lane-admission.result }}"
           echo "::error::The required PR fast lane (admission-sensitive) did not succeed."
@@ -1736,7 +1740,7 @@ jobs:
 
       # TASK-35575: same shape, for the second admission-sensitive job.
       - name: Require successful PR fast lane (admission-sensitive 2)
-        if: ${{ !cancelled() && (needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.pr != '' || github.ref != 'refs/heads/dev')))) && needs.pr-fast-lane-admission-2.result != 'success' }}
+        if: ${{ !cancelled() && (needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))) && needs.pr-fast-lane-admission-2.result != 'success' }}
         run: |
           echo "PR Fast Lane (admission-sensitive 2) result: ${{ needs.pr-fast-lane-admission-2.result }}"
           echo "::error::The required PR fast lane (admission-sensitive 2) did not succeed."
@@ -1744,7 +1748,7 @@ jobs:
 
       # Roleplay frame B2b (owner decision 2026-10-31): same shape, for the third admission-sensitive job.
       - name: Require successful PR fast lane (admission-sensitive 3)
-        if: ${{ !cancelled() && (needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.pr != '' || github.ref != 'refs/heads/dev')))) && needs.pr-fast-lane-admission-3.result != 'success' }}
+        if: ${{ !cancelled() && (needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))) && needs.pr-fast-lane-admission-3.result != 'success' }}
         run: |
           echo "PR Fast Lane (admission-sensitive 3) result: ${{ needs.pr-fast-lane-admission-3.result }}"
           echo "::error::The required PR fast lane (admission-sensitive 3) did not succeed."
@@ -1755,14 +1759,14 @@ jobs:
       # which is the "guard nobody is gated on" failure this workflow exists to
       # avoid.
       - name: Require successful UI fast lane
-        if: ${{ !cancelled() && (needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.pr != '' || github.ref != 'refs/heads/dev')))) && needs.ui-fast-lane.result != 'success' }}
+        if: ${{ !cancelled() && (needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))) && needs.ui-fast-lane.result != 'success' }}
         run: |
           echo "UI Fast Lane result: ${{ needs.ui-fast-lane.result }}"
           echo "::error::The required UI fast lane did not succeed."
           exit 1
 
       - name: Require successful managed plugin recovery UI
-        if: ${{ !cancelled() && (needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.pr != '' || github.ref != 'refs/heads/dev')))) && needs.plugins-recovery-ui.result != 'success' }}
+        if: ${{ !cancelled() && (needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))) && needs.plugins-recovery-ui.result != 'success' }}
         run: |
           echo "Managed plugin recovery UI result: ${{ needs.plugins-recovery-ui.result }}"
           echo "::error::The required managed plugin recovery UI did not succeed."
@@ -1770,7 +1774,7 @@ jobs:
 
       # TASK-33621.27: same shape again, for the Console P0 regression gate.
       - name: Require successful Console P0 regression gate
-        if: ${{ !cancelled() && (needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.pr != '' || github.ref != 'refs/heads/dev')))) && needs.console-p0-gate.result != 'success' }}
+        if: ${{ !cancelled() && (needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))) && needs.console-p0-gate.result != 'success' }}
         run: |
           echo "Console P0 regression gate result: ${{ needs.console-p0-gate.result }}"
           echo "::error::The required Console P0 regression gate did not succeed."
@@ -1779,7 +1783,7 @@ jobs:
       # TASK-34986: same shape, for the Dreams/Guardian steps moved out of
       # the Console P0 regression gate.
       - name: Require successful Dreams and Guardian boundary contracts
-        if: ${{ !cancelled() && (needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.pr != '' || github.ref != 'refs/heads/dev')))) && needs.dreams-boundary.result != 'success' }}
+        if: ${{ !cancelled() && (needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))) && needs.dreams-boundary.result != 'success' }}
         run: |
           echo "Dreams and Guardian boundary contracts result: ${{ needs.dreams-boundary.result }}"
           echo "::error::The required Dreams and Guardian boundary contracts did not succeed."
@@ -1787,7 +1791,7 @@ jobs:
 
       # TASK-34929: same shape again, for the Dreams tracking tests.
       - name: Require successful Dreams tracking tests
-        if: ${{ !cancelled() && (needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.pr != '' || github.ref != 'refs/heads/dev')))) && needs.dreams-tracking.result != 'success' }}
+        if: ${{ !cancelled() && (needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))) && needs.dreams-tracking.result != 'success' }}
         run: |
           echo "Dreams tracking tests result: ${{ needs.dreams-tracking.result }}"
           echo "::error::The required Dreams tracking tests did not succeed."
@@ -1795,7 +1799,7 @@ jobs:
 
       # TASK-38989: same shape again, for the Architecture guard contracts.
       - name: Require successful Architecture guard contracts
-        if: ${{ !cancelled() && (needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.pr != '' || github.ref != 'refs/heads/dev')))) && needs.architecture-guards.result != 'success' }}
+        if: ${{ !cancelled() && (needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))) && needs.architecture-guards.result != 'success' }}
         run: |
           echo "Architecture guard contracts result: ${{ needs.architecture-guards.result }}"
           echo "::error::The required Architecture guard contracts did not succeed."
@@ -1803,7 +1807,7 @@ jobs:
 
       # Same shape again, for the architecture-review tests.
       - name: Require successful PR fast lane (architecture-review tests)
-        if: ${{ !cancelled() && (needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.pr != '' || github.ref != 'refs/heads/dev')))) && needs.pr-fast-lane-arch.result != 'success' }}
+        if: ${{ !cancelled() && (needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))) && needs.pr-fast-lane-arch.result != 'success' }}
         run: |
           echo "PR Fast Lane (architecture-review tests) result: ${{ needs.pr-fast-lane-arch.result }}"
           echo "::error::The required architecture-review tests did not succeed."
@@ -1811,7 +1815,7 @@ jobs:
 
       # Owner decision 2026-11-06: same shape again, for the recovered suites.
       - name: Require successful PR lane (recovered suites)
-        if: ${{ !cancelled() && (needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.pr != '' || github.ref != 'refs/heads/dev')))) && needs.recovered-suites.result != 'success' }}
+        if: ${{ !cancelled() && (needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))) && needs.recovered-suites.result != 'success' }}
         run: |
           echo "PR lane (recovered suites) result: ${{ needs.recovered-suites.result }}"
           echo "::error::The required recovered suites did not succeed."
