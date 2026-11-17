@@ -341,6 +341,15 @@ async def test_installed_activation_rejects_stale_or_failed_owner_and_preserves_
             result = await original(request)
             entered.set()
             await asyncio.wait_for(release.wait(), 3)
+            if fault == "transcript":
+                # After held()'s last await: nothing (e.g. a re-projection of
+                # the retained viewport, ADR-365) can repair the visible
+                # transcript before the coordinator's synchronous proof.
+                from tldw_chatbook.Widgets.Console.console_background_effect import (
+                    active_console_transcript,
+                )
+
+                active_console_transcript(chat)._session_identity = "wrong"
             if fault == "open-failure":
                 return ConsoleActivationCommit(False, result.owned_runtime_token)
             return result
@@ -352,7 +361,7 @@ async def test_installed_activation_rejects_stale_or_failed_owner_and_preserves_
             if fault == "cancel":
                 await pilot.press("escape")
             elif fault == "transcript":
-                chat.query_one("#console-native-transcript")._session_identity = "wrong"
+                pass  # Applied in held() above, after its last await.
             elif fault in {"overlay", "away-back"}:
                 await host.push_screen(Screen())
                 if fault == "away-back":
