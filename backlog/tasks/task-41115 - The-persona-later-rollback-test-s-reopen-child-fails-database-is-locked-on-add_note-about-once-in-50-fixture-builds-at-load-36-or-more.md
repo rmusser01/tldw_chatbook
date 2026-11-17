@@ -4,7 +4,7 @@ title: "The persona later-rollback test's reopen child fails 'database is locked
 status: In Progress
 assignee: ['@claude']
 created_date: 2026-11-15 02:20
-updated_date: 2026-11-17 02:00
+updated_date: 2026-11-17 04:28
 labels:
 - follow-up
 - backup
@@ -68,3 +68,14 @@ Files: `tldw_chatbook/DB/ChaChaNotes_DB.py`, `Tests/DB/test_operation_owned_conn
 
 - **Finding 3 (Minor):** `operation_owned_connection` and `_operation_owned_connection` no longer take `operation_deadline`. The two archive-search call sites stop passing it (`Chat/archive_recovery/search_service.py`). The workspace read still bounds its own connection with its existing `connection(operation_deadline=...)`, busy timeout and progress handler. The two tests that passed `operation_deadline=0` now test what remains: `test_cleanup_preserves_borrowed_timeout_and_transaction` and `test_cleanup_tolerates_already_retired_native_handle`. Round 1's note said "three callers"; there were two.
 - Runs (`-n 4`, load 35-43): the archive-recovery coordinator, operations, search, dispatch and query files, the DB retirement file, `test_console_archive_recovery_flow.py`, `test_console_async_mcp_snapshot.py` and `test_ui_ready_module_census.py`: 59 failed and 254 passed after the removal, 58 failed and 255 passed with round 1's `base_db.py`, `search_service.py` and test file (same command). The one extra, `test_ui_ready_module_census_stays_at_the_pinned_size`, passed alone and twice more at `-n 4` (load 12-15). The other 58 are the same nodes in both runs: 23 in `test_console_archive_recovery_dispatch.py` and 32 in `test_console_async_mcp_snapshot.py` (`RuntimeError: original agent storage source changed`, a missing `ConsoleChatController` attribute, MCP catalog ownership asserts), plus 3 archive-recovery flow nodes.
+
+### AC#2 attempt 2 (2026-11-16 20:12-20:27, coordinator-scheduled at load ~35-60)
+
+Two lanes of `twenty.sh` (the whole file, `-n 4`, 1-minute load sampled every 30 s):
+
+| run | secs | load min-max (mean) | result |
+| --- | --- | --- | --- |
+| A-1 | 911 | 38.4-67.5 (57.4) | 1 failed, 22 passed |
+| B-1 | 918 | 38.3-67.5 (56.9) | 1 failed, 22 passed |
+
+In both runs the one failure was the main test, `test_native_nested_persona_pack_survives_reopen_and_later_rollback`: its `persona-later` child reached the cap the test computes from its fixed 860 s budget (`timed out after 299 seconds`) while still busy. Setup had used the rest of the 860 s. No reopen child failed: the 5 fixture builds in each run (the module fixture on 4 workers, plus the main test's own) all passed `add_note`. The runs were stopped after the first pair because the budget fails the file at this load whatever the lock does. AC#2 is not met: it needs the main test's 860 s budget (and its 900 s pytest timeout) made load-tolerant, as TASK-40306 did for the child budgets. `test_persona_observation_budget.py` pins that arithmetic and would change with it.
