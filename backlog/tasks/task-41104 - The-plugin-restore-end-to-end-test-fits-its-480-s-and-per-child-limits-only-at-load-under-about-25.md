@@ -4,7 +4,7 @@ title: "The plugin restore end-to-end test fits its 480 s and per-child limits o
 status: In Progress
 assignee:
 - '@claude'
-updated_date: '2026-11-17 00:18'
+updated_date: '2026-11-17 01:02'
 created_date: 2026-11-15 02:20
 labels:
 - follow-up
@@ -47,7 +47,7 @@ Filed in round 14 of the 2026-10-23 burn-down (closeout, 2026-11-15). Checked ag
 <!-- SECTION:NOTES:BEGIN -->
 **Summary.** The test failed on load, not on behaviour. Its children got fixed wall budgets (60/360/60/300/60 s) inside a 480 s test limit. A loaded host stretches their wall time five-fold or more while their CPU barely changes. I changed the waiting:
 - Each child fails once its process tree uses no CPU for 60 s (TASK-40306), which catches a blocked hang at any load.
-- A hang that keeps polling still uses CPU. Every restore lock wait polls (`admission.py` `flock(LOCK_NB)` every 0.01 s, `lock.acquire(timeout=0.05)` loops), so for those only each child's own wall cap stops the hang. The caps are set per child from measurements.
+- A hang that keeps polling still uses CPU. Most restore lock waits poll: the admission waits that have a deadline or cancel event (`flock(LOCK_NB)` every 0.01 s) and the `lock.acquire(timeout=0.05)` loops. For those, only each child's own wall cap stops the hang. Admission waits with neither block in native `flock` (`admission.py:94`, `:106`, `:529`), and the idle detector does catch them (review r15pb-rev2). The caps are set per child from measurements.
 
 No product code changed: restore and authority logic belong to the concurrent fu-r15-plga stream, so the "make the restore faster" alternative was not taken.
 
@@ -66,6 +66,7 @@ No product code changed: restore and authority logic belong to the concurrent fu
   - It sums CPU per process and skips one that cannot be read. Before, an unreaped zombie descendant threw the whole sample away, and a busy child was killed as idle.
   - The `_child` and `_wait_while_busy` docstrings name the polling-hang limit.
   - Two negative controls: `test_child_wait_kills_a_hung_childs_descendants` and `test_child_wait_counts_a_busy_child_beside_a_zombie_descendant`. Red before the fix ("the hung child's own child is still running"; the busy child was killed "after 2 seconds"); 4 of 4 helper tests green after.
+  - Review r15pb-rev2: Linux reads a zombie's CPU without raising, so the zombie test could not fail on Linux CI. It now keeps a sleeping grandchild and monkeypatches `psutil.Process.cpu_times` to raise `psutil.ZombieProcess(pid)` for that pid, on every platform. Red on the old helper (the busy child `timed out after 2 seconds`, load ~77); the four `child_wait` tests pass with the fix (load ~82).
   - The reviewer's probes after the fix: the orphan is gone, and the busy child beside a zombie exits rc 0 after 15.4 s. With `timeout=20`, the 0.01 s and 0.05 s poll hangs are stopped only by the cap (20.8 s, 21.3 s), as the comments now say.
 
 **CI times.** No passing run keeps per-child times: captured output is shown only on failure, and the JUnit has no `system-out` (lesson added). The whole test's `--durations` line in 24 macOS qualification runs carrying 314eb9c4d2 (runs 43698619087 to 43737692261) read 66-310 s; the slowest was 310 s, in run 43698653112.

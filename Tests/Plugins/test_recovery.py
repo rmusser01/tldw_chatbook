@@ -1835,8 +1835,9 @@ print('PLUGIN_RESTORE_REVIEW_COMPLETE',flush=True)
 
 
 # TASK-41104: a child whose process tree uses no CPU for this long has hung
-# (TASK-40306), at any load. A hang that keeps polling (every restore lock wait
-# retries every 0.01-0.05 s) keeps using CPU, so only the child's cap stops it.
+# (TASK-40306), at any load. Most restore lock waits poll, though (admission
+# waits with a deadline or cancel event, and `lock.acquire(timeout=0.05)`
+# loops), and a hang that keeps polling keeps using CPU: only its cap stops it.
 _RESTORE_CHILD_IDLE = 60
 # Each child's wall cap, from its slowest local run (shared 18-core host, load
 # 13-127; the children's CPU stays ~95 s in all, so the rest is contention). The

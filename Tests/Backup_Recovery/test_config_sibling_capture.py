@@ -617,15 +617,37 @@ def test_child_wait_kills_a_hung_childs_descendants():
             grandchild.kill()
 
 
-def test_child_wait_counts_a_busy_child_beside_a_zombie_descendant():
+def test_child_wait_counts_a_busy_child_beside_a_zombie_descendant(monkeypatch):
     """TASK-41104 review: a descendant whose CPU cannot be read (an unreaped
-    zombie) must not hide the busy child's CPU and get it killed as idle."""
+    zombie) must not hide the busy child's CPU and get it killed as idle.
+    Linux reads a zombie's CPU, so the unreadable read is forced here."""
+    import psutil
+
     body = (
         "import subprocess,sys,time\n"
-        "z=subprocess.Popen([sys.executable,'-c','pass'])\n"
+        "g=subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)'])\n"
+        "print(g.pid,flush=True)\n"
         "end=time.monotonic()+8\n"
         "while time.monotonic()<end:pass\n"
-        "z.wait()\n"
+        "g.kill();g.wait()\n"
     )
-    process = subprocess.Popen([sys.executable, "-c", body])
-    assert _wait_while_busy(process, idle=2, timeout=60) == 0
+    process = subprocess.Popen(
+        [sys.executable, "-c", body], stdout=subprocess.PIPE, text=True
+    )
+    grandchild = int(process.stdout.readline())
+    process.stdout.close()
+    read = psutil.Process.cpu_times
+
+    def unreadable(self):
+        if self.pid == grandchild:
+            raise psutil.ZombieProcess(self.pid)
+        return read(self)
+
+    monkeypatch.setattr(psutil.Process, "cpu_times", unreadable)
+    try:
+        assert _wait_while_busy(process, idle=2, timeout=60) == 0
+    finally:
+        try:  # The old helper left it running when it killed the child.
+            psutil.Process(grandchild).kill()
+        except psutil.Error:
+            pass
