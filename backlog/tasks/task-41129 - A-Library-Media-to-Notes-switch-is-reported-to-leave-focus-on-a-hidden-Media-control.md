@@ -4,7 +4,7 @@ title: "A Library Media-to-Notes switch is reported to leave focus on a hidden M
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-17 03:30'
+updated_date: '2026-11-17 05:35'
 created_date: 2026-11-15 02:20
 labels:
 - follow-up
@@ -56,7 +56,7 @@ Reproduced on base cc6006fcf5, and fixed.
 - **Lane.** The test sits in `test_library_shell.py` (push-to-dev `library-shell-dev` job), not on a PR lane; no census entry was added.
 **Fix round 1 (review r15lf-rev1, 2026-11-17).**
 - **A second Media -> Notes switch landed in the filter.** If Notes had been opened earlier in the session, its canvas is resident, and the swap repaints it with `_sync_library_canvas`. That sync's default `_restore_library_notes_after_targeted_sync` replayed an identity captured while focus was None, which resolves to the filter, and it ran after the entry attempt had already landed on the first row. Fix: `LibraryNotesController._restore_library_notes_after_targeted_sync` skips its focus restore while the list entry channel is armed. Its scroll restore still runs. This is the guard `_restore_library_media_focus` already applies for Media.
-- **Test.** `test_media_to_notes_switch_never_leaves_focus_on_a_hidden_media_row` gained `[120x36-revisit]` and `[235x52-revisit]`: Notes opened first, then Media, then `press()` Notes, landing exactly on the first note row. Every case now waits past the entry arm and pauses 0.5 s before asserting, so a late restore shows. With the guard removed, both revisit cases fail with focus on `library-notes-filter`, in 2 of 2 runs (load ~50). Before the fix they were also red in the first runs, 1 or 2 of 2. They pass with the guard.
+- **Test.** (Corrected in fix round 3: the revisit cases are load-dependent reds for the guard, not deterministic ones; on the round-2 tree, review r15lf-rev2 found `test_notes_entry_waits_for_rows_that_are_still_loading[late]` to be the guard's deterministic pin.) `test_media_to_notes_switch_never_leaves_focus_on_a_hidden_media_row` gained `[120x36-revisit]` and `[235x52-revisit]`: Notes opened first, then Media, then `press()` Notes, landing exactly on the first note row. Every case now waits past the entry arm and pauses 0.5 s before asserting, so a late restore shows. With the guard removed, both revisit cases fail with focus on `library-notes-filter`, in 2 of 2 runs (load ~50). Before the fix they were also red in the first runs, 1 or 2 of 2. They pass with the guard.
 - **The unexplained `[235x52]` failure.** It did not reproduce: 8 of 8 passed at load ~70 through the reviewer's repeat plugin. The likely cause is the one the reviewer named. On a first visit the Notes rows can arrive after the filter is focusable, and `_focus_library_list_entry` then lands in the filter (task-31946's empty-list rule). It does not check that the list has settled. That is a visible Notes control, so a first-visit case now accepts the first row or the filter, and fails only on focus outside Notes or outside the focus chain. The revisit cases, whose rows are resident, still demand the first row. Not settling before the fallback is pre-existing and listed as a follow-up in the report.
 - **Size.** `library_notes_controller.py` ratchet 7457 -> 7463.
 - **Wording.** The swap comment and the lesson now say the check misses a display-hidden *ancestor*. `visible_siblings` does check each sibling's own `display`.
@@ -87,3 +87,27 @@ Reproduced on base cc6006fcf5, and fixed.
   - Ratchets and Library wiring: 103 passed (serial).
 - **Size.** `library_screen.py` 38188 -> 38232 lines, 1377 -> 1379 methods. `library_notes_controller.py` 7463 -> 7459.
 - **Still a follow-up.** At 170x48, rail entry into an empty Notes list sometimes lands on the Library grip. It is pre-existing and was not touched.
+
+**Fix round 3 (review r15lf-rev2, 2026-11-17).**
+- **An exit taken while the list reloads parked focus on a grip.** Removing the focused Create or Add from files control made Textual reset focus to `#library-browse-items-grip`. The expiry gate then never opened, because it required focus None, and a later repaint put focus in the filter even though notes existed. Three changes in `library_screen.py`:
+  - **Arm.** `_arm_library_list_entry_focus` clears a grip landing on the Notes route, so the reset's queued focus event reads as stale. I put this in the arm rather than in `_land_on_library_notes_page`, so that Refresh and the other Notes arms get it too.
+  - **Expiry.** `_expire_library_list_entry_focus` counts a grip as unset, and lands only on a target in `screen.focus_chain`.
+  - **Revocation.** `on_descendant_focus` no longer disarms a pending Notes entry for the app's own landings: the programmatic restore target, or a grip, which it also clears. A real key or click has already disarmed in `on_key` or `on_mouse_down`.
+- **Recommendation 2.** The empty-list fallback in `_focus_library_list_entry` now retries instead of focusing a control outside `screen.focus_chain` (a hidden ancestor), and the expiry uses the focus chain the same way.
+- **Tests.**
+  - New `test_an_exit_while_the_notes_list_reloads_never_parks_on_a_grip[create|add-from-files × inside-window|past-window]`. Notes is open, the flow is entered, placements are held, a reload is started (as an import settling does) and Escape is pressed.
+  - Inside the window (10 s), the waiting entry must hold no grip, then land on the first row once released.
+  - Past the window (1 s), focus must land on New, the exit's empty-list target, and stay there after the rows arrive.
+  - Red on the round-2 head (`986634a8b2`) 4 of 4 in each of 2 runs: focus on `library-browse-items-grip` while waiting, and at expiry. Green with the fix.
+  - The grip clearing alone is pinned by the inside-window cases (2 red without it). The expiry's grip clause is not independently pinned while the clearing is present: removing only that clause leaves all four green.
+- **Census node re-pinned.** `test_library_notes_move_never_false_conflicts.py::test_a_genuine_conflict_offers_a_working_refresh` asserted the old "empty list → filter" landing after Refresh. It now waits for the first note row, with the entry window raised to the file's `WAIT` (10 s) so CI load cannot close it first, and Tab still moves on.
+  - With only the arm-level grip clearing it still failed 4 of 5 serial runs. A trace showed the waiting arm revoked by the sync's own restore landing on the filter (a stale "notice-refresh" identity) and by a grip reset. The `on_descendant_focus` rule above fixed it.
+  - It then passed 5 of 5 serial runs and 3 runs of 4 copies at `-n 4` (12 of 12, load 20-27). Lesson added under the TASK-41129 entry in `lessons-textual.md`.
+- **The restore guard (round 1) is no longer independently pinned.** With the descendant-focus rule, the reviewer's `noguard` mode leaves `[late]` and both revisit cases green, 2 of 2. The guard is kept because it stops the stale restore from moving focus at all.
+- **Runs.**
+  - The 16 changed shell cases passed 3 of 3 at `-n 4` (load 23-44).
+  - Widened covering set (16 Library files, adding folder navigator, tree keys, the filter files and the census file, plus every Notes node of `test_library_shell.py`, run through the reviewer's `bootstrap_ui` mode): 537 passed, 21 failed (load 22-32). 2 of the failures were `RecoveryRequired`.
+  - The other 19 were re-run on the round-2 head and on cc6006fcf5 (base source for the controller, the swap and the screen): 17 failed on both and on this tree, the same set. None is a regression.
+  - Other destinations' filter and entry tests (conversations continuity, crit9 shell, prompt journeys, skills canvas, filter fast path extended): 37 passed.
+  - Ratchets and wiring: 103 passed.
+- **Size.** `library_screen.py` 38232 -> 38268 lines, 1379 methods.

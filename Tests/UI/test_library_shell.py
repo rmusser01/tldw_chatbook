@@ -34403,6 +34403,96 @@ async def test_media_to_notes_switch_never_leaves_focus_on_a_hidden_media_row(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("timing", ["inside-window", "past-window"])
+@pytest.mark.parametrize("flow", ["create", "add-from-files"])
+async def test_an_exit_while_the_notes_list_reloads_never_parks_on_a_grip(
+    flow, timing, monkeypatch
+) -> None:
+    """TASK-41128, review r15lf-rev2: Escape from Create or Add from files
+    while the list reloads (an import settling starts one).
+
+    Removing the focused control made Textual park focus on the Items grip,
+    which the window's expiry did not count as unset. Inside the window
+    focus waited on the grip; past it, focus stayed there and a later
+    repaint put it in the filter, with notes on the way. Now the grip is
+    cleared while the entry waits, the rows take focus when they arrive,
+    and past the window the exit's empty-list target, New, does.
+    """
+    from tldw_chatbook.Widgets.Library import LIBRARY_ADAPTIVE_READER_GRIP_CLASS
+
+    monkeypatch.setattr(
+        library_screen_module,
+        "LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS",
+        10.0 if timing == "inside-window" else 1.0,
+    )
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    service = app.notes_scope_service
+    release = asyncio.Event()
+    hold = {"on": False}
+    page_placements = service.page_note_placements
+
+    async def maybe_held(**kwargs):
+        if hold["on"]:
+            await release.wait()
+        return await page_placements(**kwargs)
+
+    service.page_note_placements = maybe_held
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_NOTES}").press()
+        await _wait_for_notes_entry_focus_landing(screen, pilot)
+        opener, ready = {
+            "create": ("#library-notes-new", "#library-notes-create-blank"),
+            "add-from-files": (
+                "#library-notes-add-from-files",
+                "#notes-add-import-once",
+            ),
+        }[flow]
+        screen.query_one(opener, Button).press()
+        await _wait_for_selector(screen, pilot, ready)
+        await pilot.pause(0.3)
+        hold["on"] = True
+        screen._request_library_notes_tree_initial_load()
+        await pilot.press("escape")
+
+        def on_grip() -> bool:
+            focused = screen.focused
+            return focused is not None and focused.has_class(
+                LIBRARY_ADAPTIVE_READER_GRIP_CLASS
+            )
+
+        if timing == "inside-window":
+            await pilot.pause(0.5)  # the entry waits for the held rows
+            assert screen._library_pending_list_entry_focus and not on_grip(), (
+                f"waiting entry: focus={screen.focused!r}"
+            )
+            release.set()
+            await _wait_for_notes_entry_focus_landing(screen, pilot)
+        else:
+            def on_new() -> bool:
+                return getattr(screen.focused, "id", None) == "library-notes-new"
+
+            await _wait_for_condition(
+                pilot,
+                lambda: not screen._library_pending_list_entry_focus,
+                message="The entry window never closed.",
+            )
+            await _wait_for_condition(
+                pilot,
+                on_new,
+                message=lambda: f"Window closed with focus on {screen.focused!r}.",
+            )
+            release.set()
+            await _wait_for_selector(screen, pilot, ".library-notes-row")
+            await pilot.pause(0.5)
+            assert on_new(), f"after the rows: {screen.focused!r}"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("load", ["late", "past-window"])
 async def test_notes_entry_waits_for_rows_that_are_still_loading(
     load, monkeypatch

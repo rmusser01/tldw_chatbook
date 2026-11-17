@@ -1376,7 +1376,11 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: (``_expire_library_list_entry_focus``), and the arm carries the
     #: TASK-41128 empty-list target: 38188 -> 38232 lines, 1377 -> 1379
     #: methods (measured).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38232, 1379),
+    #: 2026-11-17, TASK-41129 review r15lf-rev2: a waiting Notes entry clears
+    #: a grip landing when it arms, is not revoked by the app's own restore or
+    #: a grip reset, counts a grip as unset at expiry, and lands its fallback
+    #: only inside the focus chain: 38232 -> 38268 lines, 1379 methods.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38268, 1379),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

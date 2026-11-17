@@ -405,6 +405,7 @@ from ...Widgets.workbench_focus import (
     widget_has_visible_region,
 )
 from ...Widgets.Library import (
+    LIBRARY_ADAPTIVE_READER_GRIP_CLASS,
     AdaptiveReaderShellResized,
     CollectionsCaptureReaderPresentation,
     LIBRARY_SKILLS_FILTER_ID,
@@ -11032,6 +11033,17 @@ class LibraryScreen(BaseAppScreen):
         live.
         """
         self._media_state.successful_focus_ownership = None
+        focused = self.focused
+        if (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+            and focused is not None
+            and focused.has_class(LIBRARY_ADAPTIVE_READER_GRIP_CLASS)
+        ):
+            # TASK-41129 review: a Notes repaint that removed the focused
+            # control (Create, Add from files, Refresh) left Textual's reset
+            # on a pane grip. Clear it, so that reset's queued focus event is
+            # stale rather than a user move that revokes this arm.
+            self.set_focus(None)
         # Same reason PR #1410's review stopped the settle timer below: a
         # retry tick left over from the PREVIOUS arm carries that arm's
         # generation, so it no-ops when it fires -- while its stored handle
@@ -11139,20 +11151,27 @@ class LibraryScreen(BaseAppScreen):
 
         TASK-41129: a Notes list that is still loading keeps the entry
         waiting for its first row. If the window closes before the rows
-        arrive and nothing holds focus, the empty-list target takes it, so
-        focus is never left unset.
+        arrive and nothing holds focus -- or only a pane grip, where
+        Textual's reset parks it when a recompose removes the focused
+        control -- the empty-list target takes it, so focus is never left
+        unset.
         """
+        focused = self.focused
         if (
             self._library_pending_list_entry_focus
-            and self.focused is None
+            and (
+                focused is None
+                or focused.has_class(LIBRARY_ADAPTIVE_READER_GRIP_CLASS)
+            )
             and self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
         ):
+            chain = self.focus_chain
             for selector in (
                 self._library_pending_list_entry_empty_target,
                 "#library-notes-filter",
             ):
                 found = self.query(selector)
-                if found and found.first().focusable:
+                if found and found.first() in chain:
                     self.set_focus(found.first())
                     break
         self._disarm_library_list_entry_focus()
@@ -11362,6 +11381,19 @@ class LibraryScreen(BaseAppScreen):
             and self._library_pending_list_entry_media_return is not None
         ):
             return
+        if row_class == "library-notes-row" and (
+            target_restore
+            or (widget is not None and widget.has_class(LIBRARY_ADAPTIVE_READER_GRIP_CLASS))
+        ):
+            # TASK-41129 review: neither is the user leaving the list -- a
+            # key or a click disarms first, in ``on_key``/``on_mouse_down``.
+            # A Notes repaint's own focus restore (a stale identity resolving
+            # to the filter) keeps the entry waiting for its rows; so does a
+            # grip, Textual's reset off a control the repaint removed, which
+            # is also not left holding focus.
+            if not target_restore:
+                self.set_focus(None)
+            return
         self._disarm_library_list_entry_focus()
 
     def _focus_library_list_entry_if_current(self, generation: int) -> None:
@@ -11533,9 +11565,13 @@ class LibraryScreen(BaseAppScreen):
                 except (NoMatches, QueryError):
                     pass
                 else:
-                    if getattr(control, "_pruning", False):
+                    if getattr(control, "_pruning", False) or (
+                        control not in self.focus_chain
+                    ):
                         # TASK-34000.26: the filter the recompose is
-                        # replacing; wait for its replacement instead.
+                        # replacing; wait for its replacement instead. Also
+                        # one a hidden ancestor keeps out of reach, which
+                        # ``set_focus`` would accept (TASK-41129 review).
                         self._retry_library_list_entry_focus_while_armed()
                         return
                     self.set_focus(control)
