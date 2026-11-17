@@ -1,7 +1,7 @@
 ---
 id: TASK-41312
 title: "Project-instruction dispatch cancels before its confirm callback when a chat start is accepted: product or harness?"
-status: To Do
+status: In Progress
 created_date: 2026-11-16 19:55
 labels:
 - follow-up
@@ -34,3 +34,11 @@ Filed from the 2026-11-13..16 burn-down. TASK-40715's notes list it as "found, n
 - [ ] #1 The task notes say whether a real Console session can reach this branch with a pending project-instruction prompt, with the evidence (a mounted reproduction, or the code path that rules it out)
 - [ ] #2 If it can, the user is asked (or told why the run stopped) instead of the run being silently cancelled, pinned by a test that is red on dev; if it cannot, the ordinary-tree test host is fixed so its agent runs reach the model
 <!-- AC:END -->
+
+## Implementation Plan
+
+ADR required: no. A test-harness fix, plus findings recorded in these notes; no product behaviour changes.
+
+1. Trace why agent runs in the ordinary-tree host never reach the model (probe the dispatch callback on the base tree).
+2. Find whether a real Console session can reach `is_accepted` with a pending consent prompt (agent chat start path), and record the code path and pinning test.
+3. If unreachable, fix the shared test double so host agent runs reach the model; show red-on-base nodes go green, and the mutation check.

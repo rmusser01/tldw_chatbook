@@ -1,7 +1,7 @@
 ---
 id: TASK-41311
 title: "A direct store.close_session while a fleet child runs leaves the turn's claim retained: does the Console's close protocol avoid it?"
-status: To Do
+status: In Progress
 created_date: 2026-11-16 19:55
 labels:
 - follow-up
@@ -34,3 +34,10 @@ Filed from the 2026-11-13..16 burn-down. TASK-40715 found it while testing (PR #
 - [ ] #1 A test closes a session through the Console's own close path while a fleet child runs, and records whether the turn's claim is released once the child returns
 - [ ] #2 If the claim stays retained on that path, it is released once the child returns, pinned by that test (red on dev); if not, the task notes say which step of the close protocol prevents it, and any test that closes through the store directly is changed to use the real close path
 <!-- AC:END -->
+
+## Implementation Plan
+
+ADR required: no. It extends the existing disposal carve-out for a retained tree's storage check to a closed session; no new decision.
+
+1. Add a test that closes a chat through the Console's own close path (the tab's impact, then `ConsoleRuntime.close_session`) while a fleet child runs, both when the child observes cancellation and when it outlives the close grace, and records whether the claim is released once the child returns.
+2. If it stays retained, find the step that keeps it and fix that step; show the test red on base and the mutation check.
