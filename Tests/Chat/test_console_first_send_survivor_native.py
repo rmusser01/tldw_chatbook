@@ -148,25 +148,28 @@ async def exercise():
     assert config.current_config_identity() == before, 'first-send publication raced original live child'
     assert app.app_config['console']['onboarding']['first_send_completed'] is True
     if sys.argv[2] == 'source_loss':
-        failed_child = threading.Event()
-        failures = []
-        original_hook = threading.excepthook
-        def observe_child_failure(args):
-            failures.append((args.exc_type, str(args.exc_value)))
-            failed_child.set()
-        threading.excepthook = observe_child_failure
+        # Owner decision (TASK-41316, 2026-11-17): retain. The surviving child's
+        # reply stays in its original runs database; its host return under the
+        # changed source settles unproven and the claim stays held (TASK-40716);
+        # nothing is written through the changed source, and Quit still returns.
+        original_config = Path(os.environ['TLDW_CONFIG_PATH'])
         store.set_session_draft(session.id, 'preserve after selected source change')
         os.environ['TLDW_CONFIG_PATH'] = str(Path(os.environ['XDG_CONFIG_HOME']) / 'replaced.toml')
         child_release.set()
-        async with asyncio.timeout(10):
-            while not failed_child.is_set():
+        async with asyncio.timeout(60):
+            while not member.host_returned:
                 await asyncio.sleep(.01)
-        threading.excepthook = original_hook
-        assert failures and failures[0][0] is RuntimeError
-        assert 'original agent storage source changed' in failures[0][1]
-        assert not tree.retired.done() and not runtime._first_send_task.done()
+        assert bridge._db.get_run(member.run_id)['status'] == 'done'
+        assert not member.durable
+        assert tree.unproven_only() and not tree.retired.done()
         assert store.session_draft(session.id) == 'preserve after selected source change'
+        disposal = asyncio.ensure_future(runtime.dispose())
+        await asyncio.wait({disposal}, timeout=30)
+        assert disposal.done(), 'dispose waited on a turn that can only be held'
+        disposal.result()
+        assert runtime._first_send_task.done() and not tree.retired.done()
         assert not Path(os.environ['TLDW_CONFIG_PATH']).exists()
+        assert 'first_send_completed' not in original_config.read_text()
         print('FIX1_SOURCE_RETAINED', flush=True)
         os._exit(0)
     writer_calls = []
