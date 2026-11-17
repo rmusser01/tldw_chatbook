@@ -51,12 +51,21 @@ def _settled(console) -> bool:
     )
 
 
+def _character_idle(console) -> bool:
+    """No Character refresh worker in flight; the tick hands its check to one."""
+    return not any(
+        worker.group == "console-character-context-refresh" and not worker.is_finished
+        for worker in console.workers
+    )
+
+
 async def _tick(console) -> None:
-    """One whole sync tick, after any in-flight, owed or scheduled sync settles."""
+    """One whole sync tick and its Character check, after earlier work settles."""
     for _ in range(3):
-        await until(lambda: _settled(console), timeout=30)
+        await until(lambda: _settled(console) and _character_idle(console), timeout=30)
         await asyncio.sleep(0.01)
     await console._sync_native_console_chat_ui()
+    await until(lambda: _character_idle(console), timeout=30)
 
 
 def _count_scope_reads(console) -> dict[str, int]:
