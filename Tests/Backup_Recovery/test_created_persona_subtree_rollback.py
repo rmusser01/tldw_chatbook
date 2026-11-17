@@ -769,13 +769,20 @@ try:
         assert route=='nested-target',route
         root=Path(produce('prepare','223e4567-e89b-42d3-a456-426614174000')['root'])
         before=trees(root)
+        # The target's own persona store: the restore replaces it, so only the
+        # created-file rule's previous-is-None test keeps the rollback from
+        # retiring it as restore-created (TASK-41113 review).
+        store=root/'tldw_chatbook_personas.json'
+        own=store.read_bytes()
         incoming=json.loads((shared/'created-trees.json').read_text())
         assert before and not set(before)&set(incoming),(before,incoming)
         operation=restore(service,shared/'created.tldw-backup.zip')
         assert trees(root)==incoming,'restore did not replace the target pack'
+        assert store.read_bytes()!=own,'restore did not replace the own persona store'
         # The restore created the source's pack folder inside each existing
         # root and retired the target's own; the rollback reverses both.
         roll_back(service,operation,root,before)
+        assert store.is_file() and store.read_bytes()==own,'rollback lost the own persona store'
 finally:
     service.close()
 assert not network_guard.blocked_attempts()
