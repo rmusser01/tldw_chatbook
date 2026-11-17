@@ -263,7 +263,7 @@ corresponding capability inactive.
 
 Restored settings have their own review. Until you approve them, model-catalog
 auto-refresh and workspace change tracking stay off: **Current profile** lists
-`config` under **Needs setup**, followed by a **Settings review** note and
+**Profile settings** under **Needs setup**, followed by a **Settings review** note and
 **Approve settings**. Approving records the review for the generation shown, which
 covers every profile that recovery restored, and turns both back on: workspace change
 tracking at once, model-catalog auto-refresh from the next start. Local model files
@@ -276,8 +276,8 @@ shown, approval is refused; open **Restored profiles** again and review the new
 summary.
 
 Restored voices and voice profiles have their own review as well. Until you approve
-them, speech start-up stays off: **Current profile** lists `tts / profile store` and
-`tts / voices` under **Needs setup**, followed by a **Speech review** note and
+them, speech start-up stays off: **Current profile** lists **Voice profiles** and
+**Saved voices** under **Needs setup**, followed by a **Speech review** note and
 **Approve voices**. Approving records the review for the generation shown, which
 covers every profile that recovery restored, and approves only those two. Speech
 also needs the restored settings (**Approve settings**) and model files (**Approve
@@ -286,7 +286,7 @@ model files**) approved; it starts from the next start once all three are.
 Restored model files have their own review too. Until you approve them, local model
 files (downloading, installing, activating or using them), speech start-up and a
 restored local embedding model stay off: **Current profile** lists
-`models / artifacts` under **Needs setup**, followed by a **Model files review** note
+**Model files** under **Needs setup**, followed by a **Model files review** note
 and **Approve model files**. Approving records the review for the generation shown,
 which covers every profile that recovery restored, and approves only the model files.
 A local embedding model for RAG also keeps its own review in **Settings →

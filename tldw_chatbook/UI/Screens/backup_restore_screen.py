@@ -905,6 +905,9 @@ class BackupRestoreScreen(Screen):
         self._delete_copy_id = None
         self.query_one("#backup-delete-copy", Button).disabled = True
         self.query_one("#backup-delete-preview", Static).update("")
+        # TASK-41302: the names every other review uses (TASK-41111).
+        from tldw_chatbook.Backup_Recovery.recovery_service import owner_label
+
         if current is not None:
             if current["status"] == "no_verified_generation":
                 setup = "No verified recovery generation for this current profile. Optional features may still require setup."
@@ -914,7 +917,7 @@ class BackupRestoreScreen(Screen):
                 setup = (
                     "Needs setup\nReview these features in their settings before enabling them:\n"
                     + "\n".join(
-                        "• " + owner.replace(".", " / ").replace("_", " ")
+                        "• " + owner_label(owner)
                         for owner in current["pending_owners"]
                     )
                 )
@@ -1100,7 +1103,7 @@ class BackupRestoreScreen(Screen):
                     setup = (
                         "Needs setup\nReview these features in their settings before enabling them:\n"
                         + "\n".join(
-                            "• " + owner.replace(".", " / ").replace("_", " ")
+                            "• " + owner_label(owner)
                             for owner in entry["pending_owners"]
                         )
                     )

@@ -796,7 +796,8 @@ async def test_restored_profiles_settings_review_approves_config_alone(
             assert approved == ["generation-1"]
             assert not screen.query("#backup-approve-config")
             summary = _text(screen, "#backup-current-requirements")
-            assert "• runtime / sync state" in summary and "• config" not in summary
+            # TASK-41302: named through owner_label, not the owner id.
+            assert "• Server sync state" in summary and "• Profile settings" not in summary
             assert "Server sync stays off." in message
     finally:
         service.close()
@@ -1252,3 +1253,72 @@ async def test_restored_profiles_model_files_review_approves_models_alone(
     finally:
         service.close()
 
+
+@pytest.mark.asyncio
+async def test_restored_profiles_needs_setup_names_owners_by_their_labels(
+    tmp_path, monkeypatch
+):
+    """TASK-41302: Current profile and each restored profile list pending
+    owners under Needs setup by the names every other review uses
+    (`owner_label`, TASK-41111), not by internal ids such as `tts / voices`."""
+    import asyncio
+    from types import MappingProxyType
+
+    from textual.widgets import Static
+
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+
+    def requirements(pending):
+        return {
+            "generation": "generation-1",
+            "required_owners": pending,
+            "pending_owners": pending,
+            "requirements_checked": True,
+            "needs_setup": True,
+        }
+
+    service = RecoveryService(tmp_path / "control")
+    monkeypatch.setattr(
+        service,
+        "current_requirements",
+        lambda: MappingProxyType(
+            {
+                "config": str(tmp_path / "config.toml"),
+                "operation_id": "restore",
+                "status": "requirements_checked",
+                **requirements(("models.artifacts", "tts.voices")),
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        service,
+        "profiles",
+        lambda: (
+            MappingProxyType(
+                {
+                    "profile_id": "restored-1",
+                    "config": str(tmp_path / "restored" / "config.toml"),
+                    "data": str(tmp_path / "restored" / "data"),
+                    "status": "restoration_validated",
+                    **requirements(("ui.themes",)),
+                }
+            ),
+        ),
+    )
+    app = _harness(service)
+    try:
+        async with app.run_test(size=(100, 36)) as pilot:
+            screen = app.screen
+            await pilot.click("#backup-open-profiles")
+            async with asyncio.timeout(10):
+                while not screen.query(".backup-open-profile"):
+                    await pilot.pause(0.02)
+            current = _text(screen, "#backup-current-requirements")
+            assert "• Model files\n• Saved voices" in current, current
+            text = "\n".join(
+                str(widget.render()) for widget in screen.query("#backup-list Static")
+            )
+            assert "• Themes" in text, text
+            assert " / " not in current and "• ui" not in text
+    finally:
+        service.close()
