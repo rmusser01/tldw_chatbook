@@ -172,12 +172,13 @@ def _chat_with_openai_compatible_local_server(
     thinking_budget_tokens: Optional[int] = None,
     thinking_wire_key: Optional[str] = None,
     provider_name: str = "Local OpenAI-Compatible Server",
+    provider_key: str | None = None,
     timeout: int = 120,
     api_retries: int = 1,
     api_retry_delay: int = 1,
     chat_template_kwargs: dict[str, Any] | None = None,
 ):
-    _refuse_a_refused_endpoint(provider_name, api_base_url)
+    _refuse_a_refused_endpoint(provider_name, api_base_url, provider=provider_key)
     start_time = time.time()
     logged_api_base = safe_llm_url_host(api_base_url)
     logging.debug(
@@ -796,6 +797,7 @@ def chat_with_local_llm(
         chat_template_kwargs=chat_template_kwargs,
         # Same pre-existing dict-.capitalize() crash as chat_with_custom_openai.
         provider_name="Local-LLM",
+        provider_key="local-llm",
         timeout=timeout,
         api_retries=api_retries,
         api_retry_delay=api_retry_delay,
@@ -1050,6 +1052,7 @@ def chat_with_llama(
         thinking_budget_tokens=thinking_budget_tokens,
         thinking_wire_key=provider_name or "llama_cpp",
         provider_name=provider_display_name,
+        provider_key=llama_cpp_config_key_in_api_settings,
         timeout=timeout,
         api_retries=api_retries,
         api_retry_delay=api_retry_delay,
@@ -1521,6 +1524,7 @@ def chat_with_oobabooga(
         user_identifier=current_user_identifier,
         # tools, tool_choice, logprobs, top_logprobs might be supported by some ooba setups
         provider_name="Oobabooga (OpenAI Extension)",
+        provider_key="oobabooga",
         timeout=timeout,
         api_retries=api_retries,
         api_retry_delay=api_retry_delay,
@@ -1614,6 +1618,7 @@ def chat_with_tabbyapi(
         seed=current_seed,
         stop=current_stop,
         provider_name="TabbyAPI",
+        provider_key="tabbyapi",
         timeout=timeout,
         api_retries=api_retries,
         api_retry_delay=api_retry_delay,
@@ -1805,6 +1810,7 @@ def chat_with_vllm(
         thinking_budget_tokens=thinking_budget_tokens,
         thinking_wire_key=provider_name or "vllm",
         provider_name="vLLM",
+        provider_key=vllm_config_key,
         timeout=timeout,
         api_retries=api_retries,
         api_retry_delay=api_retry_delay,
@@ -1929,6 +1935,7 @@ def chat_with_aphrodite(
         logprobs=current_logprobs,
         user_identifier=current_user_identifier,
         provider_name="Aphrodite Engine",
+        provider_key="aphrodite",
         timeout=timeout,
         api_retries=api_retries,
         api_retry_delay=api_retry_delay,
@@ -2141,6 +2148,7 @@ def chat_with_ollama(
         # logprobs, top_logprobs not in Ollama's map, pass if supported
         # tools, tool_choice not in Ollama's map, pass if supported by Ollama's OpenAI endpoint
         provider_name="Ollama",  # For logging within _chat_with_openai_compatible_local_server
+        provider_key=ollama_config_key,
         timeout=timeout,
         api_retries=api_retries,
         api_retry_delay=api_retry_delay,
@@ -2332,6 +2340,7 @@ def chat_with_custom_openai(
         # AttributeError on EVERY call, making this provider unusable
         # (pre-existing; surfaced by the task-243 native-tools live gate).
         provider_name="Custom OpenAI",
+        provider_key="custom-openai-api",
         timeout=timeout,
         api_retries=api_retries,
         api_retry_delay=api_retry_delay,
@@ -2519,7 +2528,8 @@ def chat_with_custom_openai_2(
         reasoning_effort=reasoning_effort,
         thinking_budget_tokens=thinking_budget_tokens,
         thinking_wire_key="custom-openai-api-2",
-        provider_name=cfg_section.capitalize(),
+        provider_name="Custom OpenAI API 2",
+        provider_key="custom-openai-api-2",
         timeout=timeout,
         api_retries=api_retries,
         api_retry_delay=api_retry_delay,
@@ -2679,7 +2689,8 @@ def chat_with_mlx_lm(
         reasoning_effort=reasoning_effort,
         thinking_budget_tokens=thinking_budget_tokens,
         thinking_wire_key=provider_name or "local_mlx_lm",
-        provider_name=provider_name,
+        provider_name=provider_display_name,
+        provider_key=mlx_config_key,
         timeout=timeout,
         api_retries=api_retries,
         api_retry_delay=api_retry_delay,

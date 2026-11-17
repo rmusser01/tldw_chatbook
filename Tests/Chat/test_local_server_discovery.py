@@ -4228,3 +4228,58 @@ def test_the_shared_local_transport_keeps_its_recovery_wrapper():
     transport = local_calls._chat_with_openai_compatible_local_server
     assert transport.__wrapped__.__name__ == "_chat_with_openai_compatible_local_server"
     assert not hasattr(local_calls._refuse_a_refused_endpoint, "__wrapped__")
+
+
+#: Review r15ep-rev1 M-2: the name each refusal shows and the provider key it
+#: carries.
+_REFUSAL_NAMES = {
+    "local-llm": ("Local-LLM", "local-llm"),
+    "vllm": ("vLLM", "vllm"),
+    "local_vllm": ("vLLM", "local_vllm"),
+    "ollama": ("Ollama", "ollama"),
+    "local_ollama": ("Ollama", "local_ollama"),
+    "oobabooga": ("Oobabooga (OpenAI Extension)", "oobabooga"),
+    "tabbyapi": ("TabbyAPI", "tabbyapi"),
+    "aphrodite": ("Aphrodite Engine", "aphrodite"),
+    "custom-openai-api": ("Custom OpenAI", "custom-openai-api"),
+    "custom-openai-api-2": ("Custom OpenAI API 2", "custom-openai-api-2"),
+    "koboldcpp": ("KoboldCpp", "koboldcpp"),
+    "llama_cpp": ("Llama.cpp", "llama_cpp"),
+    "custom-hosted": ("Custom Hosted", "custom-hosted"),
+    "together": ("Together", "together"),
+}
+
+
+@pytest.mark.parametrize(("dispatch", "table", "key", "route"), _DISPATCH_OWN_ENDPOINTS)
+def test_a_refusal_names_the_adapter_and_carries_its_key(dispatch, table, key, route, monkeypatch):
+    """Review r15ep-rev1 M-2: the copy read "Custom_openai_api_2 API URL" and
+    "mlx_lm API URL", and the provider was a display name."""
+    from tldw_chatbook.Provider_Contract import ChatConfigurationError
+
+    config: dict = {}
+    node = config
+    for part in table:
+        node = node.setdefault(part, {})
+    node[key] = _with_path(route, "http://127.1:8000")
+    _local_world(monkeypatch, config)
+
+    with pytest.raises(ChatConfigurationError) as caught:
+        _dispatch(dispatch)
+
+    name, provider = _REFUSAL_NAMES[dispatch]
+    assert str(caught.value).startswith(f"{name} API ")
+    assert caught.value.provider == provider
+
+
+@pytest.mark.parametrize("dispatch", ["mlx_lm", "local_mlx_lm"])
+def test_an_mlx_refusal_names_mlx_lm_and_carries_its_key(dispatch, monkeypatch):
+    """Review r15ep-rev1 M-2."""
+    from tldw_chatbook.Provider_Contract import ChatConfigurationError
+
+    _local_world(monkeypatch, {"api_settings": {dispatch: {"host": "127.1", "port": 8000}}})
+
+    with pytest.raises(ChatConfigurationError) as caught:
+        _dispatch(dispatch)
+
+    assert str(caught.value).startswith("MLX-LM API URL: ")
+    assert caught.value.provider == dispatch
