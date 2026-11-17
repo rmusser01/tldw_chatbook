@@ -10,7 +10,7 @@ from typing import Any
 def run_sql_version_step(
     db: Any, conn: sqlite3.Connection, start: int, path: Path
 ) -> None:
-    """Run ``path`` and move the stamp from ``start`` to ``start + 1`` in one transaction.
+    """Run ``path`` (the caller has checked the entry version) and move the stamp from ``start`` to ``start + 1`` in one transaction.
 
     Args:
         db: The ``CharactersRAGDB`` being migrated.
@@ -19,13 +19,12 @@ def run_sql_version_step(
         path: The installed migration script.
 
     Raises:
-        SchemaError: If the entry version, a statement or the stamp fails; the
+        SchemaError: If a statement or the stamp fails; the
             transaction rolls the step back to its entry state.
     """
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDBError, SchemaError
 
     label = f"V{start}→V{start + 1}"
-    db._require_migration_entry_version(conn, start, label)
     try:
         with db.transaction() as cursor:
             db._execute_migration_statements(

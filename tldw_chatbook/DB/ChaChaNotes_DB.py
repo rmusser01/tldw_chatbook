@@ -8116,13 +8116,13 @@ DELETE FROM keywords
 
     def _migrate_from_v86_to_v87(self, conn: sqlite3.Connection) -> None:
         """Link a spawned child's own trace segment to its parent's owner."""
-        run_sql_version_step(self, conn, 86, Path(__file__).parent / "migrations" /
-                             "chachanotes_v86_to_v87_console_trace_child_segments.sql")
+        self._require_migration_entry_version(conn, 86, "V86→V87")
+        run_sql_version_step(self, conn, 86, Path(__file__).parent / "migrations" / "chachanotes_v86_to_v87_console_trace_child_segments.sql")
 
     def _migrate_from_v85_to_v86(self, conn: sqlite3.Connection) -> None:
         """Install conversation-owned operational prompt mix-in records."""
-        run_sql_version_step(self, conn, 85, Path(__file__).parent / "migrations" /
-                             "chachanotes_prompt_mixins.sql")
+        self._require_migration_entry_version(conn, 85, "V85→V86")
+        run_sql_version_step(self, conn, 85, Path(__file__).parent / "migrations" / "chachanotes_prompt_mixins.sql")
 
     def _migrate_from_v84_to_v85(self, conn: sqlite3.Connection) -> None:
         """Add local archive chronology while retaining shared sync events."""
