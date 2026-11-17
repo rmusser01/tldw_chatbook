@@ -1,0 +1,37 @@
+# Accepted backend preparation gap: source diagnostic
+
+Source-only, 2026-11-17. No product imports, native execution, or live edits. The diagnostic draft passed a stdlib AST-only smoke: parse succeeds; its only imports are `sys`, `time`, and `types`; no global monitoring, frame sampling, wrappers, or callable replacement exists. This is not runtime validation.
+
+## Concrete path and likely cost boundaries
+
+The existing `agent schema request` log is `Agents/agent_request_execution.py:123`, inside `make_call_model.<locals>.call_model`, **after** optional `initial_context_for_chain` at line 101. It is not provider entry. The 09:02:40.927 ChaChaNotes read completion cannot identify its caller by timestamp alone.
+
+| Original boundary | What its interval identifies |
+| --- | --- |
+| `Chat/console_chat_controller.py:26694` / `Chat/console_agent_reply.py:9`, `_run_agent_reply` | Outer reply setup: startup instructions, provider composition (line 432), personal/review/profile setup (648–695), then worker submission (771). |
+| Controller `_run_maintenance_agent_call`, line 6083; bridge `run_reply`, `console_agent_bridge.py:6129` | Time between original async submission and original worker body. Includes worker guard, retained source activation, and original `operation_owned_connection` entry (`console_automatic_submission.py:466`). |
+| `console_agent_preparation.py:9`, `_prepare_native_reply`, **start to first yield** at line 2448 | Actual native preparation. Do not time its whole generator lifetime as preparation: the yielded interval includes the entire model run. |
+| `ConsoleChatStore.prepare_progress_inbox`, `console_chat_store.py:5446`; `FleetProgressRepository.load`, `DB/fleet_progress_repository.py:56` | First saved progress-inbox load on the Chat DB, before first-request planning. This is one plausible owner of the observed ChaChaNotes read, not an attribution established by source. |
+| `build_console_first_request_plan`, `console_agent_bridge.py:4582`; `_compose_first_request_catalog`, line 4476; `AgentService.build_first_request_schema_plan`, `agent_service.py:902` | Fresh registry/catalog construction; workspace context and config reads; schema budgeting/token counting; optional personal-context budgeting. All precede AgentService run creation. |
+| Nested `console_agent_preparation._prepare_native_reply.<locals>.run_primary`, line 2327; `AgentService.run_turn`, line 9249 | Original primary owner admission, lifeline start, continuation durability qualification, run-log setup and catalog reset before `_run_one`. |
+| `AgentService._run_one`, line 5163; `_prepare_run_lifecycle`, 4182; `_persist_run_lifecycle`, 4208; `AgentRunsDB.create_run`, 1891, `get_run`, 2660, `insert_steps_at_indices`, 2209 | Native initial run persistence and lifecycle work. Windows already batches initial create/read/sequence under `core_operation`; lifecycle insertion still has its own original path. The diagnostic must measure the full existing path, not infer a redundant admission. |
+| `RunLogWriter.bind`, `Agents/run_log.py:552` | Runs at `agent_service.py:5461`, before model invocation. It enters scratch/access scope, checks storage, and creates/validates the run-log directory. This can contain substantial native filesystem work even for a short prompt. |
+| `_make_call_model`, `agent_service.py:3387`; underlying `agent_request_execution.make_call_model`, line 27 | Small factory and its imports. Timing the factory alone does not measure the first request. |
+| `run_agent_loop`, `agent_runtime.py:1096`; nested `_run_one.observe_trace_step`, `agent_service.py:8488`; actual nested `call_model`, line 87 | First loop entry performs original context-trace sequence allocation and the `model_request_started` trace before invoking the model callback (runtime 1882–1931). `observe_trace_step` writes AgentRuns rows. `reserve_context_trace` itself only records in-memory references (service 8551); do not blame it for a DB write. |
+| `_ProjectInstructionDispatchContext.initial_context_for_chain`, `console_agent_bridge.py:2881` | Optional gap from actual `call_model` entry until the existing schema-request log. No instruction body is recorded. |
+
+These are candidate costs, not measurements. The first useful split is bridge entry → preparation first yield → `run_primary`/`_run_one` → loop entry → actual `call_model` entry → existing log. Only inspect inner intervals that account for the gap.
+
+## Draft installer and exact placement
+
+Artifact: `task62-preparation-diagnostic.py.draft`. Root can temporarily copy it to `tldw_chatbook/Chat/console_preparation_diagnostic.py` and include it in source freezing.
+
+The first-cut artifact instruments only eight preparation boundaries: controller maintenance call, bridge run_reply, first-request planner, underlying preparation generator, nested run_primary, service _run_one, runtime loop, and actual call_model. The larger table above is a source map for a later refinement only if needed; its individual DB/run-log hooks are not installed. Backend start additionally supplies the bootstrap registration marker.
+
+In `console_execution_worker._serve_backend`, call `install()` **after the existing `open_console_backend_profile(...)` returns and before `backend = channel = service = None`** (currently line 834). This is before original backend composition. The already-imported backend class exposes `start.__code__` at this point. Retain the returned cleanup callable and invoke it at the end of the existing `finally`, after channel teardown, before inspecting/raising `error`. The fixed import is of the diagnostic module only; it has no product imports.
+
+The installer scans only modules already in `sys.modules`. On the original backend `start` return it scans again. Two exact original shims receive local CALL registration events: bridge `_prepare_native_reply` and service `_make_call_model`. Their actual called function objects expose the newly imported helper code and existing `__wrapped__` generator code. Registering those objects plus nested code constants before invocation captures lazy helper entry without warming imports, running factories, or changing any original identity. These two discovery shims and their CALL events produce no timing lines and do not inspect arguments. No global PY_START or frame observer is installed.
+
+Timing uses local PY_START, PY_RESUME, PY_YIELD and PY_RETURN only. Each stderr record contains elapsed monotonic time since installation, current-thread CPU time, and a fixed event/function name. No values, rows, IDs, prompts, source bodies or returned objects are recorded. Output caps at 512 timing lines, with a forced cleanup marker. Tool-ID exhaustion prints `error.tool_id_unavailable` and returns no-op cleanup. Registration/observation errors print a fixed error marker and disable this tool. No active frames are retained, so missing PY_RETURN on exception cannot leak a frame ledger; this draft intentionally does not install global PY_UNWIND.
+
+Use same-thread synchronous entry/exit CPU deltas only; do not subtract CPU timestamps across the async caller and worker thread, and do not add overlapping inclusive intervals. Yield/resume markers expose suspension but are not native-retirement evidence. Missing registration, observer errors, cap exhaustion, or interrupted cleanup invalidate coverage of the affected interval. Stderr instrumentation itself adds overhead: this is an attribution run, not the five-second performance gate.

@@ -1,0 +1,215 @@
+"""Temporary local-only monitoring; no product imports or callable replacement."""
+
+import cProfile
+import sys
+import time
+from types import CodeType, FunctionType, MethodType, ModuleType
+
+
+_TARGETS = {
+    "Chat.console_execution_backend": ("ConsoleExecutionBackend.start",),
+    "Chat.console_chat_controller": (
+        "ConsoleChatController._run_maintenance_agent_call",
+    ),
+    "Chat.console_agent_bridge": (
+        "ConsoleAgentBridge.run_reply",
+        "ConsoleAgentBridge._prepare_native_reply",
+        "build_console_first_request_plan",
+    ),
+    "Chat.console_agent_preparation": (
+        "_prepare_native_reply",
+        "_prepare_native_reply.<locals>.run_primary",
+    ),
+    "Agents.agent_service": (
+        "AgentService._run_one",
+        "AgentService._make_call_model",
+    ),
+    "Agents.agent_request_execution": (
+        "make_call_model.<locals>.call_model",
+    ),
+    "Agents.agent_runtime": ("run_agent_loop",),
+}
+_DISCOVERY = frozenset({
+    "ConsoleAgentBridge._prepare_native_reply",
+    "AgentService._make_call_model",
+})
+
+
+def install():
+    """Return cleanup; register only original code already loaded or called later."""
+    monitoring = sys.monitoring
+    events = monitoring.events
+    origin = time.monotonic()
+    stream = sys.stderr
+    labels = {}
+    seen = set()
+    closed = False
+    emitted = 0
+    limit = 512
+    slot = None
+    active_profile = None
+    profile_phase = None
+    selectors = {
+        ("/tldw_chatbook/" + module.replace(".", "/") + ".py", name)
+        for module, names in _TARGETS.items()
+        for name in names
+    }
+
+    def emit(name, *, force=False):
+        nonlocal emitted
+        if emitted >= limit and not force:
+            return
+        emitted += 1
+        try:
+            stream.write(
+                f"PREP_DIAG elapsed={time.monotonic() - origin:.9f} "
+                f"thread_cpu={time.thread_time():.9f} name={name}\n"
+            )
+        except BaseException:
+            pass  # Diagnostic output cannot change the original operation.
+
+    for candidate in (3, 4, 5, 2):
+        if monitoring.get_tool(candidate) is not None:
+            continue
+        try:
+            monitoring.use_tool_id(candidate, "task62-original-preparation")
+        except ValueError:
+            continue
+        slot = candidate
+        break
+    if slot is None:
+        emit("error.tool_id_unavailable")
+        return lambda: None
+
+    def close():
+        nonlocal closed
+        if closed:
+            return
+        closed = True
+        for code, _name in tuple(labels.values()):
+            monitoring.set_local_events(slot, code, 0)
+        for event in (
+            events.PY_START, events.PY_RESUME, events.PY_YIELD,
+            events.PY_RETURN, events.CALL,
+        ):
+            monitoring.register_callback(slot, event, None)
+        monitoring.free_tool_id(slot)
+        emit("closed.limit_reached" if emitted >= limit else "closed", force=True)
+
+    def finish_profile():
+        nonlocal active_profile, profile_phase
+        if active_profile is None:
+            return
+        active_profile.disable()
+        entries = sorted(active_profile.getstats(), key=lambda row: row.totaltime, reverse=True)
+        for row in entries[:35]:
+            code = row.code
+            name = (
+                code.co_filename.replace("\\", "/").rsplit("/", 1)[-1]
+                + ":" + str(code.co_firstlineno) + ":" + code.co_name
+                if type(code) is CodeType else code
+            )
+            emit(
+                f"profile.{profile_phase} calls={row.callcount} "
+                f"total={row.totaltime:.9f} own={row.inlinetime:.9f} code={name}"
+            )
+        active_profile = profile_phase = None
+
+    def register_code(code):
+        if id(code) in seen:
+            return
+        seen.add(id(code))
+        filename = code.co_filename.replace("\\", "/")
+        name = code.co_qualname
+        if any(filename.endswith(suffix) and name == selected
+               for suffix, selected in selectors):
+            labels[id(code)] = (code, name)
+            mask = events.PY_START | events.PY_RESUME | events.PY_YIELD | events.PY_RETURN
+            if name in _DISCOVERY:
+                mask |= events.CALL
+            monitoring.set_local_events(slot, code, mask)
+        for value in code.co_consts:
+            if type(value) is CodeType:
+                register_code(value)
+
+    def register_callable(value):
+        if type(value) is MethodType:
+            value = value.__func__
+        for _ in range(4):
+            if type(value) is not FunctionType:
+                return
+            register_code(value.__code__)
+            value = value.__dict__.get("__wrapped__")
+
+    def scan_loaded():
+        for module_name, names in _TARGETS.items():
+            module = sys.modules.get("tldw_chatbook." + module_name)
+            if type(module) is not ModuleType:
+                continue
+            for name in names:
+                value = module
+                for part in name.split(".<locals>.", 1)[0].split("."):
+                    if type(value) not in (ModuleType, type):
+                        value = None
+                        break
+                    value = vars(value).get(part)
+                register_callable(value)
+
+    def on_call(_code, _offset, callable_object, _arg0):
+        if closed:
+            return
+        try:
+            register_callable(callable_object)
+        except BaseException:
+            emit("error.registration")
+            close()
+
+    def callback(event_name):
+        def observe(code, *_ignored):
+            nonlocal active_profile, profile_phase
+            if closed:
+                return
+            try:
+                label = labels.get(id(code))
+                if label is None:
+                    return
+                name = label[1]
+                if (
+                    name == "_prepare_native_reply" and event_name == "yield"
+                    or name == "run_agent_loop" and event_name == "start"
+                ):
+                    finish_profile()
+                if event_name == "start" and name in {
+                    "_prepare_native_reply", "AgentService._run_one"
+                }:
+                    if active_profile is not None:
+                        raise RuntimeError("Diagnostic profiles overlapped")
+                    profile_phase = name
+                    active_profile = cProfile.Profile()
+                    active_profile.enable()
+                if label[1] not in _DISCOVERY:
+                    emit(event_name + "." + label[1])
+                if (
+                    event_name == "return"
+                    and label[1] == "ConsoleExecutionBackend.start"
+                ):
+                    scan_loaded()
+                    emit(f"registered.after_composition.{len(labels)}")
+            except BaseException:
+                emit("error.observation")
+                close()
+        return observe
+
+    try:
+        monitoring.register_callback(slot, events.CALL, on_call)
+        for event, name in (
+            (events.PY_START, "start"), (events.PY_RESUME, "resume"),
+            (events.PY_YIELD, "yield"), (events.PY_RETURN, "return"),
+        ):
+            monitoring.register_callback(slot, event, callback(name))
+        scan_loaded()
+        emit(f"installed.{len(labels)}")
+    except BaseException:
+        emit("error.installation")
+        close()
+    return close
