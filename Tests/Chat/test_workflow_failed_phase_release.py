@@ -52,6 +52,16 @@ def test_ownership_error_in_a_phase_keeps_a_claim_it_does_not_own(tmp_path):
     _run(tmp_path, "ownership_error", "native", script=_SCRIPT, timeout=180)
 
 
+def test_open_unlaunched_preparation_is_reconciled_without_effects(tmp_path):
+    """A phase that failed after preparing task-1 but before launching it kept
+    the run retained: the open preparation counted as live work, so reconcile
+    refused with `workflow_resources_still_live` and the chat stayed held until
+    restart (TASK-41320). Reconcile now closes that never-launched preparation
+    without launching or dispatching anything, records the review, and returns
+    the chat's claim."""
+    _run(tmp_path, "unlaunched_preparation", "native", script=_SCRIPT, timeout=180)
+
+
 async def _started(rig):
     rig.provider.plan["phases"][0]["tasks"].append(
         dict(
@@ -379,6 +389,70 @@ async def ownership_error(tmp_path):
         with wake._registry_lock:
             if wake._automatic_primary_claims.get(session_id) is foreign:
                 del wake._automatic_primary_claims[session_id]
+        await rig.close()
+
+
+async def unlaunched_preparation(tmp_path):
+    import asyncio
+
+    from Tests.Chat.workflow_rig import WorkflowProvider, build_workflow_rig
+    from tldw_chatbook.Agents.goal_storage_lifetime import owned_goal_storage
+    from tldw_chatbook.Agents.workflow_models import WorkflowExecutionRecovery
+    from tldw_chatbook.Chat import console_workflow_wave
+
+    rig = await build_workflow_rig(tmp_path, None, WorkflowProvider())
+    session_id = "workflow-test-chat"
+
+    async def refused_before_launch(phase, selected, **kwargs):
+        raise RuntimeError("wave refused before launch")
+
+    try:
+        decision = await _started(rig)
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(
+                console_workflow_wave, "run_workflow_wave", refused_before_launch
+            )
+            await rig.coordinator.approve(decision, command_id="approved-once")
+            run = rig.coordinator._runs[rig.workflow.id]
+            await asyncio.wait_for(asyncio.shield(run.driver), 60)
+        # task-1 is prepared and was never enrolled in a wave or launched.
+        (item,) = run.preparations.values()
+        assert item in rig.runtime._workflow_preparations and not item._closed
+        assert item._wave is None and not item.authorization._native_launch
+        assert rig.coordinator._runs.get(rig.workflow.id) is run
+        snapshot = await rig.coordinator.get(rig.workflow.id)
+        assert snapshot.status == "recovery_required"
+        assert not (
+            await rig.controller.submit_draft("Still held", session_id=session_id)
+        ).accepted
+        closed = await rig.coordinator.reconcile(
+            rig.workflow.id,
+            expected_control_revision=snapshot.control_revision,
+            decision=WorkflowExecutionRecovery(reason="reviewed_prior_effects"),
+            command_id="reconcile-unlaunched",
+        )
+        # Closed without effects: nothing launched or dispatched.
+        assert item._closed and item not in rig.runtime._workflow_preparations
+        assert not item.authorization._native_launch
+        assert [key for key, _ in rig.provider.calls] == ["planning"]
+        assert not rig.runtime.execution_capacity.snapshot().executions
+        assert closed.status == "stopped"  # Closed history displays as stopped.
+        assert rig.workflow.id not in rig.coordinator._runs
+        service = rig.service
+        with owned_goal_storage(service), service.db.connection() as conn:
+            row = conn.execute(
+                "SELECT status,recovery_reviewed_revision FROM workflow_runs WHERE id=?",
+                (rig.workflow.id,),
+            ).fetchone()
+        assert tuple(row) == ("closed", closed.control_revision)
+        sent = await rig.controller.submit_draft(
+            "A new turn after the review", session_id=session_id
+        )
+        assert sent.accepted, sent
+        stream = rig.controller._active_stream_tasks.get(session_id)
+        if stream is not None:
+            await asyncio.wait_for(asyncio.shield(stream), 15)
+    finally:
         await rig.close()
 
 
