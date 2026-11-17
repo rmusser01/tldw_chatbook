@@ -147,6 +147,7 @@ from tldw_chatbook.Utils.fts5_match_forms import (
     quote_fts5_prefix,
 )
 from tldw_chatbook.DB.store_errors import StoreConflictError, StoreInputError, StoreSchemaError
+from tldw_chatbook.DB.chachanotes_sql_steps import run_sql_version_step
 #
 ########################################################################################################################
 #
@@ -8115,47 +8116,13 @@ DELETE FROM keywords
 
     def _migrate_from_v86_to_v87(self, conn: sqlite3.Connection) -> None:
         """Link a spawned child's own trace segment to its parent's owner."""
-        self._require_migration_entry_version(conn, 86, "V86→V87")
-        path = (
-            Path(__file__).parent
-            / "migrations"
-            / "chachanotes_v86_to_v87_console_trace_child_segments.sql"
-        )
-        try:
-            with self.transaction() as cursor:
-                self._execute_migration_statements(
-                    cursor, path.read_text(encoding="utf-8"), "V86→V87"
-                )
-                updated = cursor.execute(
-                    "UPDATE db_schema_version SET version=87 WHERE schema_name=? AND version=86",
-                    (self._SCHEMA_NAME,),
-                )
-                if updated.rowcount != 1:
-                    raise SchemaError("V86→V87 version update failed")
-        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
-            raise SchemaError(
-                f"Migration V86→V87 failed: {type(exc).__name__}"
-            ) from exc
+        run_sql_version_step(self, conn, 86, Path(__file__).parent / "migrations" /
+                             "chachanotes_v86_to_v87_console_trace_child_segments.sql")
 
     def _migrate_from_v85_to_v86(self, conn: sqlite3.Connection) -> None:
         """Install conversation-owned operational prompt mix-in records."""
-        self._require_migration_entry_version(conn, 85, "V85→V86")
-        path = Path(__file__).parent / "migrations" / "chachanotes_prompt_mixins.sql"
-        try:
-            with self.transaction() as cursor:
-                self._execute_migration_statements(
-                    cursor, path.read_text(encoding="utf-8"), "V85→V86"
-                )
-                updated = cursor.execute(
-                    "UPDATE db_schema_version SET version=86 WHERE schema_name=? AND version=85",
-                    (self._SCHEMA_NAME,),
-                )
-                if updated.rowcount != 1:
-                    raise SchemaError("V85→V86 version update failed")
-        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
-            raise SchemaError(
-                f"Migration V85→V86 failed: {type(exc).__name__}"
-            ) from exc
+        run_sql_version_step(self, conn, 85, Path(__file__).parent / "migrations" /
+                             "chachanotes_prompt_mixins.sql")
 
     def _migrate_from_v84_to_v85(self, conn: sqlite3.Connection) -> None:
         """Add local archive chronology while retaining shared sync events."""

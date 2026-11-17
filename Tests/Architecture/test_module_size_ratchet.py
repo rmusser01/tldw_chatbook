@@ -916,7 +916,9 @@ _BUDGETS: dict[str, int] = {
     # internal call sites use the public seams and the three aliases are gone.
     # 2026-11-10: the deltas above were measured on different bases; with all
     # of them on dev e78b62f0e7 the file measures 22552.
-    "tldw_chatbook/DB/ChaChaNotes_DB.py": 22552,
+    # 2026-11-17, TASK-41310: 22552 -> 22544 (-8). The v86->v87 child trace
+    # segment step and the v85->v86 step share DB/chachanotes_sql_steps.py.
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": 22544,
     # TASK-39147: the rebased report reader and workflow migrations cross 4000.
     # 2026-11-12, TASK-36948.1 (owner rule: a size ratchet raises the row with a dated
     # comment): +2, the store's @declare_store backup-participant declaration and import.
@@ -1140,6 +1142,11 @@ _BUDGETS: dict[str, int] = {
     # (ADR-337 amendment 2026-11-06): the planner cuts a rewritten tail into
     # links, and the writer validates and writes each link in dispatch binding.
     "tldw_chatbook/Chat/console_trace_service.py": 6739,
+    # 2026-11-17, TASK-41310 (owner rule 2026-10-04: a fix over a size ratchet
+    # raises the row): crosses 4000 at 4017, exact measurement. The owner-
+    # approved child trace segments (ADR-337 amendment 2026-11-17): create and
+    # read a child run's segment, and its owner resolution.
+    "tldw_chatbook/Chat/console_trace_repository.py": 4017,
     "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,
     "tldw_chatbook/MCP/unified_control_plane_service.py": 6049,
