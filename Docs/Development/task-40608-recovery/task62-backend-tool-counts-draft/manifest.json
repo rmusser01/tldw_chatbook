@@ -1,0 +1,95 @@
+{
+  "task": "TASK-40608 fixed backend tool-count publication",
+  "mode": "artifact-only; no Python/import/native/test execution",
+  "targets": [
+    {
+      "path": "tldw_chatbook/Chat/console_chat_controller.py",
+      "proposed": "proposed/console_chat_controller.py",
+      "proposed_sha256": "9ded0e138bead44af2b64682faafdd7ef5b22e009b4143b9dafc6bb4387a5aa6",
+      "original_sha256": "e6206de5a4f0d89bdbaf1b0f0adde5da2873d21f67daf5713dd1235361317b7b",
+      "original_absent": false
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_backend_tool_counts.py",
+      "proposed": "proposed/console_backend_tool_counts.py",
+      "proposed_sha256": "0fa617be9b1740bc2fd154d4d3e8c8d5c686298712c1424c616e16c065a35699",
+      "original_sha256": null,
+      "original_absent": true
+    },
+    {
+      "path": "Tests/Chat/test_console_backend_tool_counts.py",
+      "proposed": "proposed/test_console_backend_tool_counts.py",
+      "proposed_sha256": "8165be5b106bac184a577214b5cdab8b8c265677f0f170997ba6c4d9b7497389",
+      "original_sha256": null,
+      "original_absent": true
+    }
+  ],
+  "dependencies": [
+    {
+      "path": "tldw_chatbook/Chat/console_backend_presentation.py",
+      "snapshot": "source-dependencies/console_backend_presentation.py",
+      "sha256": "eead85ac83346a0b48a21590cb2724a304546e29f4f1eac9c0f6ec5026a4eced"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_execution_backend.py",
+      "snapshot": "source-dependencies/console_execution_backend.py",
+      "sha256": "dea433a1f061b79a94bda5b53d90ebde13a69f24b720d7ac0daee4221bb99e0b"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_domain_services.py",
+      "snapshot": "source-dependencies/console_domain_services.py",
+      "sha256": "176b2440b8bfe8cda7ea039b33d873927c55ea74d216085b542a09d776840494"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_chat_store.py",
+      "snapshot": "source-dependencies/console_chat_store.py",
+      "sha256": "9ac3033afce35eb0bd5beedbf46082994b1eab97f9c66b7b1e23075c8b6c05dc"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_runtime.py",
+      "snapshot": "source-dependencies/console_runtime.py",
+      "sha256": "3da077c4d01d6e8d2582a10d3a64cffd8a3bcbb25ad6dc6fb1b450f9686d258e"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_execution_profile.py",
+      "snapshot": "source-dependencies/console_execution_profile.py",
+      "sha256": "5097d850a8b704035730f027816af198a65d07aeac6c78890a91ff09d9dfc619"
+    },
+    {
+      "path": "tldw_chatbook/Agents/plain_chat_tool_surface.py",
+      "snapshot": "source-dependencies/plain_chat_tool_surface.py",
+      "sha256": "eabe9ffa8ae151ff6709109bd81757b8e3f58072ff8b316aaa17f4d956b74a1b"
+    },
+    {
+      "path": "Tests/Chat/test_console_execution_profile.py",
+      "snapshot": "source-dependencies/test_console_execution_profile.py",
+      "sha256": "ab3bfbef68bf213203f7af72eb66a589c81a3e9268fe573224af8d68daa1594f"
+    },
+    {
+      "path": "Tests/Chat/test_console_control_trace.py",
+      "snapshot": "source-dependencies/test_console_control_trace.py",
+      "sha256": "ff72a51a8d1bb9a3d5de0fdb7262fb76411c027aa35013b9ebe155859d4d8c08"
+    },
+    {
+      "path": ".superpowers/sdd/2026-11-13-task-40608-sub-five/task62-backend-tool-counts-contract.md",
+      "snapshot": "source-dependencies/task62-backend-tool-counts-contract.md",
+      "sha256": "0ca57db588c212ec3231282f2b1e2d4ad652bbac8e80f3d90dfb63da74b6c17e"
+    }
+  ],
+  "patches": [
+    {
+      "path": "product.patch",
+      "sha256": "69ea373048910c34f5f7047e8dfd8ca08b4d99e562b180db7b61848bdc318f41",
+      "git_apply_check": "passed; not applied",
+      "line_endings": "LF"
+    },
+    {
+      "path": "tests-only.patch",
+      "sha256": "7e8f613e95a6fe47481eee3137cea3948a81a2611d20ae4251dff73cb7641cc3",
+      "git_apply_check": "passed; not applied",
+      "line_endings": "LF"
+    }
+  ],
+  "report_sha256": "2c840bc9b337be613dcb1dfd2db643813e04b63f47a0c2112fff4ecb768e791b",
+  "checked_utc": "2026-11-17T17:57:39.2904732Z"
+}

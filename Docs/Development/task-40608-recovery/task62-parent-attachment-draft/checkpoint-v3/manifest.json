@@ -1,0 +1,233 @@
+{
+  "status": "artifact-only incomplete parent integration; no mounted UI qualification",
+  "files": [
+    {
+      "path": "tldw_chatbook/app.py",
+      "baseline": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v3\\baseline\\tldw_chatbook\\app.py",
+      "before_sha256": "a5bb093a5476fc257e1bdf11bfe72597efdddd6a34e58f77c5ddac29711acd81",
+      "absence_observed": false,
+      "proposed": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v3\\proposed\\tldw_chatbook\\app.py",
+      "after_sha256": "aabb326e29f6be6583410b6e11c2967524cfe6e02ee973ffe853c2f1f751dbd4",
+      "changed": true,
+      "ast_parse": true
+    },
+    {
+      "path": "tldw_chatbook/app_lifecycle.py",
+      "baseline": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v3\\baseline\\tldw_chatbook\\app_lifecycle.py",
+      "before_sha256": "076490bad73a56c88f5012964a9251b6c84c9e83257c3065e88bf006ab64cac2",
+      "absence_observed": false,
+      "proposed": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v3\\proposed\\tldw_chatbook\\app_lifecycle.py",
+      "after_sha256": "330b3b500d0d5852561652dbbea3881c97b4e1fd53e498658529af58329ab141",
+      "changed": true,
+      "ast_parse": true
+    },
+    {
+      "path": "tldw_chatbook/app_service_wiring.py",
+      "baseline": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v3\\baseline\\tldw_chatbook\\app_service_wiring.py",
+      "before_sha256": "9152b7757cc11265db73d01eda633c8c56cb1c26721e9ffeba943b9e275ed1f6",
+      "absence_observed": false,
+      "proposed": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v3\\proposed\\tldw_chatbook\\app_service_wiring.py",
+      "after_sha256": "0813965716b2e10e0ebf51970f13e5bdb6ba1c63c91fbd1812662ee615546f9a",
+      "changed": true,
+      "ast_parse": true
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/chat_screen.py",
+      "baseline": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v3\\baseline\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+      "before_sha256": "372dc2e818e39e7b4e010468b148206b60163aa19f7948bd5e0de7e9438db8ec",
+      "absence_observed": false,
+      "proposed": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v3\\proposed\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+      "after_sha256": "d8f26dc18a1a48b8db503598e9ee590aa5523dc4164019b2511a6bf14cd496aa",
+      "changed": true,
+      "ast_parse": true
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_backend_readiness.py",
+      "baseline": null,
+      "before_sha256": null,
+      "absence_observed": true,
+      "proposed": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v3\\proposed\\tldw_chatbook\\Chat\\console_backend_readiness.py",
+      "after_sha256": "8cefdf8e168c1824781b6714b98c267bc9968d481339a9201a61acde80537b25",
+      "changed": true,
+      "ast_parse": true
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_backend_tool_counts.py",
+      "baseline": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v3\\baseline\\tldw_chatbook\\Chat\\console_backend_tool_counts.py",
+      "before_sha256": "16fffdc77bf1d1f35c0ee71127b5aaf9729f65df77bdc9153a1adb99ef1b6751",
+      "absence_observed": false,
+      "proposed": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v3\\proposed\\tldw_chatbook\\Chat\\console_backend_tool_counts.py",
+      "after_sha256": "16fffdc77bf1d1f35c0ee71127b5aaf9729f65df77bdc9153a1adb99ef1b6751",
+      "changed": false,
+      "ast_parse": true
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_chat_controller.py",
+      "baseline": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v3\\baseline\\tldw_chatbook\\Chat\\console_chat_controller.py",
+      "before_sha256": "9ded0e138bead44af2b64682faafdd7ef5b22e009b4143b9dafc6bb4387a5aa6",
+      "absence_observed": false,
+      "proposed": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v3\\proposed\\tldw_chatbook\\Chat\\console_chat_controller.py",
+      "after_sha256": "9ded0e138bead44af2b64682faafdd7ef5b22e009b4143b9dafc6bb4387a5aa6",
+      "changed": false,
+      "ast_parse": true
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_control_dispatch.py",
+      "baseline": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v3\\baseline\\tldw_chatbook\\Chat\\console_control_dispatch.py",
+      "before_sha256": "7aaaeba0ff97d75bc38be9a287b806b37c8c0edaef96af52cbe1a6739dda7c82",
+      "absence_observed": false,
+      "proposed": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v3\\proposed\\tldw_chatbook\\Chat\\console_control_dispatch.py",
+      "after_sha256": "f2db90c33c80113948db304b1e89097404da0117d93ba76248889bcd614cbb94",
+      "changed": true,
+      "ast_parse": true
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_execution_composition_values.py",
+      "baseline": null,
+      "before_sha256": null,
+      "absence_observed": true,
+      "proposed": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v3\\proposed\\tldw_chatbook\\Chat\\console_execution_composition_values.py",
+      "after_sha256": "00a2d7c75ec3e0177dced30c0b8510229929d7e83bca9ad5a8f6ea703c29d60b",
+      "changed": true,
+      "ast_parse": true
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_execution_process.py",
+      "baseline": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v3\\baseline\\tldw_chatbook\\Chat\\console_execution_process.py",
+      "before_sha256": "f01912e11a843fd08b77ff773f8b7d419e4b83914c7850341061b94350c26a1a",
+      "absence_observed": false,
+      "proposed": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v3\\proposed\\tldw_chatbook\\Chat\\console_execution_process.py",
+      "after_sha256": "b722fb6562de8d83e85697a45cd6cfb36d81528d8955a807173253a6b92d6c3c",
+      "changed": true,
+      "ast_parse": true
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_execution_projection_result.py",
+      "baseline": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v3\\baseline\\tldw_chatbook\\Chat\\console_execution_projection_result.py",
+      "before_sha256": "3bbfbcd1da4d222e600acb37629e489e83ba09cea323357e9d2ec26dc6751470",
+      "absence_observed": false,
+      "proposed": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v3\\proposed\\tldw_chatbook\\Chat\\console_execution_projection_result.py",
+      "after_sha256": "bac58cd68ffe3c611125a47c6542cdb042093e8b157f87c6625b0761bb6ec8f3",
+      "changed": true,
+      "ast_parse": true
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_execution_readiness_values.py",
+      "baseline": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v3\\baseline\\tldw_chatbook\\Chat\\console_execution_readiness_values.py",
+      "before_sha256": "69c23860fc192e87fee4361ba91a93ec31342e0030d48cabb1051bbc1b2ae39e",
+      "absence_observed": false,
+      "proposed": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v3\\proposed\\tldw_chatbook\\Chat\\console_execution_readiness_values.py",
+      "after_sha256": "69c23860fc192e87fee4361ba91a93ec31342e0030d48cabb1051bbc1b2ae39e",
+      "changed": false,
+      "ast_parse": true
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_execution_session_surface.py",
+      "baseline": null,
+      "before_sha256": null,
+      "absence_observed": true,
+      "proposed": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v3\\proposed\\tldw_chatbook\\Chat\\console_execution_session_surface.py",
+      "after_sha256": "0afdbd9567cf9daf6608cb989c705494e0dc4f69fb9a74498bd6c0b4fa2d3438",
+      "changed": true,
+      "ast_parse": true
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_runtime.py",
+      "baseline": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v3\\baseline\\tldw_chatbook\\Chat\\console_runtime.py",
+      "before_sha256": "3da077c4d01d6e8d2582a10d3a64cffd8a3bcbb25ad6dc6fb1b450f9686d258e",
+      "absence_observed": false,
+      "proposed": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v3\\proposed\\tldw_chatbook\\Chat\\console_runtime.py",
+      "after_sha256": "cb863ad352d8ddc73749d6fc7a2f4b68f4045b3277a93b261649757336079cd2",
+      "changed": true,
+      "ast_parse": true
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/execution_projection.py",
+      "baseline": null,
+      "before_sha256": null,
+      "absence_observed": true,
+      "proposed": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v3\\proposed\\tldw_chatbook\\UI\\Console_Modules\\execution_projection.py",
+      "after_sha256": "3075eb9860ce5b408fa5406acf1fa15f6b40afad1b55b68305cc0ec139ea4e25",
+      "changed": true,
+      "ast_parse": true
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/execution_sessions.py",
+      "baseline": null,
+      "before_sha256": null,
+      "absence_observed": true,
+      "proposed": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v3\\proposed\\tldw_chatbook\\UI\\Console_Modules\\execution_sessions.py",
+      "after_sha256": "c2db80fecc724fa98e12553223d7b7c1e8bdfd2fffb3502ccadfb754c8004b56",
+      "changed": true,
+      "ast_parse": true
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/execution_state.py",
+      "baseline": null,
+      "before_sha256": null,
+      "absence_observed": true,
+      "proposed": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v3\\proposed\\tldw_chatbook\\UI\\Console_Modules\\execution_state.py",
+      "after_sha256": "8e962892b4b8ca39f3370e2c773e4072bd0489a0a3bed9bec4e77c18d39e6ca1",
+      "changed": true,
+      "ast_parse": true
+    },
+    {
+      "path": "Tests/Chat/test_console_backend_tool_counts.py",
+      "baseline": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v3\\baseline\\Tests\\Chat\\test_console_backend_tool_counts.py",
+      "before_sha256": "b287ffe140d505d8036587885fc833eff973031661bc198b4794bc7e05593d2c",
+      "absence_observed": false,
+      "proposed": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v3\\proposed\\Tests\\Chat\\test_console_backend_tool_counts.py",
+      "after_sha256": "b287ffe140d505d8036587885fc833eff973031661bc198b4794bc7e05593d2c",
+      "changed": false,
+      "ast_parse": true
+    },
+    {
+      "path": "Tests/Chat/test_console_execution_composition_values.py",
+      "baseline": null,
+      "before_sha256": null,
+      "absence_observed": true,
+      "proposed": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v3\\proposed\\Tests\\Chat\\test_console_execution_composition_values.py",
+      "after_sha256": "78a20eb0a7e38af661e602e1624f50a07b24219e93719d8dcb2ab6f3f410147c",
+      "changed": true,
+      "ast_parse": true
+    },
+    {
+      "path": "Tests/Chat/test_console_execution_readiness_values.py",
+      "baseline": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v3\\baseline\\Tests\\Chat\\test_console_execution_readiness_values.py",
+      "before_sha256": "4f6f3f56cf897b5550b2da98913b1280f95b5689396eace8696e5614e43d9fb5",
+      "absence_observed": false,
+      "proposed": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v3\\proposed\\Tests\\Chat\\test_console_execution_readiness_values.py",
+      "after_sha256": "4f6f3f56cf897b5550b2da98913b1280f95b5689396eace8696e5614e43d9fb5",
+      "changed": false,
+      "ast_parse": true
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_execution_context_summary_values.py",
+      "before_sha256": "fe8f0b401f2468839ecbd988d2a56d60f7aaa116e8d7916da0addbb4211653c2",
+      "after_sha256": "fe8f0b401f2468839ecbd988d2a56d60f7aaa116e8d7916da0addbb4211653c2",
+      "changed": false,
+      "role": "installed context codec dependency"
+    },
+    {
+      "path": "Tests/Chat/test_console_execution_context_summary_values.py",
+      "before_sha256": "cfdfca562bca901f5e04a141d912f6dc52179211c700b1d877a3bf512f0b710d",
+      "after_sha256": "cfdfca562bca901f5e04a141d912f6dc52179211c700b1d877a3bf512f0b710d",
+      "changed": false,
+      "role": "installed context codec dependency"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_backend_presentation.py",
+      "baseline": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v3\\baseline\\tldw_chatbook\\Chat\\console_backend_presentation.py",
+      "before_sha256": "3e7a1170575ef2f6fe10dd2e83641af25aea95eb82dd12d2fbe8899b0f06c639",
+      "absence_observed": false,
+      "proposed": ".superpowers\\sdd\\2026-11-13-task-40608-sub-five\\task62-parent-attachment-draft\\checkpoint-v3\\proposed\\tldw_chatbook\\Chat\\console_backend_presentation.py",
+      "after_sha256": "b3ca36225fa3fae0b4c7562800c1c99d392f74928e382b3336e2e7691f2c49c4",
+      "changed": true,
+      "ast_parse": true,
+      "reconciliation": "Only live delta from original preimage is exact inert tool_counts constructor assignment; proposal already contains it once."
+    }
+  ],
+  "conflicts": [],
+  "patch_sha256": "e74c5e565fb3abc740a52ba069a247417c14fe11166b73a6f9ebf5b2572fbe21",
+  "prior_checkpoint": "checkpoint-v2"
+}

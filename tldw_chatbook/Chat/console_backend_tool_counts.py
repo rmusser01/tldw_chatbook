@@ -1,0 +1,215 @@
+"""Original backend tool-count publications, retained only as presentation values."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from inspect import getattr_static
+from types import FunctionType
+
+from tldw_chatbook.Agents import plain_chat_tool_surface as _surface
+
+from .console_backend_presentation import ConsoleBackendPresentation
+from .console_chat_controller import ConsoleChatController
+from .console_domain_services import (
+    ConsoleDomainServices,
+    _definition,
+    _definition_current,
+)
+from .console_execution_backend import ConsoleExecutionBackend
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleBackendToolCountSnapshot:
+    published: bool
+    builtin_count: int | None
+    mcp_count: int | None
+    not_connected_count: int | None
+    selected_count: int | None
+
+
+class ConsoleBackendToolCounts:
+    """Keep the original global MCP counts and per-session selected counts."""
+
+    def __init__(self, presentation: ConsoleBackendPresentation) -> None:
+        if type(presentation) is not ConsoleBackendPresentation:
+            raise TypeError("Original backend presentation is required")
+        self.presentation = presentation
+        self._association = presentation.association
+        self._mcp: tuple[int | None, int | None, int | None] | None = None
+        self._selected: dict[str, tuple[str, int]] = {}
+
+    def _require(self, controller: ConsoleChatController, session_id: str | None):
+        if (
+            type(self) is not ConsoleBackendToolCounts
+            or any(
+                getattr_static(self, name, None) is not record[0]
+                or not _definition_current(record)
+                for name, record in _METHODS
+            )
+            or type(controller) is not ConsoleChatController
+            or any(
+                getattr_static(controller, name, None) is not record[0]
+                or not _definition_current(record)
+                for name, record in _CONTROLLER_METHODS
+            )
+            or any(
+                getattr(_surface, name, None) is not record[0]
+                or not _definition_current(record)
+                for name, record in _SURFACE_METHODS
+            )
+        ):
+            raise RuntimeError("Backend tool-count definitions changed")
+        presentation = self.presentation
+        if (
+            type(presentation) is not ConsoleBackendPresentation
+            or getattr(presentation, "tool_counts", None) is not self
+            or any(
+                getattr_static(presentation, name, None) is not record[0]
+                or not _definition_current(record)
+                for name, record in _PRESENTATION_METHODS
+            )
+        ):
+            raise RuntimeError("Backend tool-count presentation changed")
+        backend = presentation.backend
+        if (
+            type(backend) is not ConsoleExecutionBackend
+            or any(
+                getattr_static(backend, name, None) is not record[0]
+                or not _definition_current(record)
+                for name, record in _BACKEND_METHODS
+            )
+            or controller is not backend.controller
+            or controller.app is not None
+            or controller.domain_services is not backend.domain
+            or backend.runtime._chat_controller is not controller
+            or backend.runtime._chat_store is not backend.store
+            or controller.store is not backend.store
+            or controller._agent_bridge is not backend.runtime._agent_bridge
+        ):
+            raise RuntimeError("Backend tool-count controller changed")
+        backend._require_owner_loop()
+        presentation.require_association(self._association)
+        store = controller.store
+        with store._preparation_lock:
+            session = None if session_id is None else store._sessions.get(session_id)
+            if session_id is not None and session is None:
+                raise RuntimeError("Backend tool-count session changed")
+        return store, session
+
+    def publish_mcp(
+        self,
+        controller: ConsoleChatController,
+        tool_count: int | None,
+        not_connected_count: int | None,
+        session_id: str | None = None,
+        *,
+        composed_switch: tuple[object, bool] | None = None,
+    ) -> None:
+        store, session = _REQUIRE[0](self, controller, session_id)
+        incarnation = None if session is None else session.incarnation_id
+        bridge = controller._agent_bridge
+        builtin_count = _surface.offered_builtin_tool_count(
+            bridge, session_id, composed_switch=composed_switch
+        )
+        current_store, current_session = _REQUIRE[0](self, controller, session_id)
+        if (
+            current_store is not store
+            or current_session is not session
+            or controller._agent_bridge is not bridge
+        ):
+            raise RuntimeError("Backend tool-count session changed")
+        with store._preparation_lock:
+            if session_id is not None and (
+                store._sessions.get(session_id) is not session
+                or session.incarnation_id != incarnation
+            ):
+                raise RuntimeError("Backend tool-count session changed")
+            self._selected.pop(session_id, None)
+            self._mcp = (builtin_count, tool_count, not_connected_count)
+
+    def publish_selected(
+        self, controller: ConsoleChatController, session_id: str, count: int
+    ) -> None:
+        store, session = _REQUIRE[0](self, controller, session_id)
+        if session is None:
+            raise RuntimeError("Backend tool-count session changed")
+        with store._preparation_lock:
+            if store._sessions.get(session_id) is not session:
+                raise RuntimeError("Backend tool-count session changed")
+            self._selected[session_id] = (session.incarnation_id, count)
+
+    def snapshot(
+        self, controller: ConsoleChatController, session_id: str | None
+    ) -> ConsoleBackendToolCountSnapshot:
+        store, session = _REQUIRE[0](self, controller, session_id)
+        with store._preparation_lock:
+            if session_id is not None and store._sessions.get(session_id) is not session:
+                raise RuntimeError("Backend tool-count session changed")
+            for removed in self._selected.keys() - store._sessions.keys():
+                del self._selected[removed]
+            selected = self._selected.get(session_id)
+            selected_count = (
+                selected[1]
+                if selected is not None
+                and session is not None
+                and selected[0] == session.incarnation_id
+                else None
+            )
+            counts = self._mcp
+            return ConsoleBackendToolCountSnapshot(
+                counts is not None,
+                *(counts if counts is not None else (None, None, None)),
+                selected_count,
+            )
+
+
+def backend_tool_counts(
+    controller: ConsoleChatController,
+) -> ConsoleBackendToolCounts | None:
+    """Select only the installed concrete backend endpoint; legacy stays unchanged."""
+    if type(controller) is not ConsoleChatController:
+        return None
+    domain = getattr(controller, "domain_services", None)
+    if type(domain) is not ConsoleDomainServices:
+        return None
+    presentation = domain.presentation
+    if type(presentation) is not ConsoleBackendPresentation:
+        return None
+    counts = getattr(presentation, "tool_counts", None)
+    if type(counts) is not ConsoleBackendToolCounts or any(
+        getattr_static(counts, name, None) is not record[0]
+        or not _definition_current(record)
+        for name, record in _METHODS
+    ):
+        raise RuntimeError("Backend tool-count definitions changed")
+    return counts
+
+
+_METHODS = tuple(
+    (name, _definition(value))
+    for name, value in vars(ConsoleBackendToolCounts).items()
+    if type(value) is FunctionType
+)
+_REQUIRE = dict(_METHODS)["_require"]
+_CONTROLLER_METHODS = tuple(
+    (name, _definition(getattr(ConsoleChatController, name)))
+    for name in ("_publish_mcp_inspector_counts", "_publish_selected_tool_count")
+)
+_PRESENTATION_METHODS = tuple(
+    (name, _definition(getattr(ConsoleBackendPresentation, name)))
+    for name in ("require_association", "definitions_current")
+)
+_BACKEND_METHODS = tuple(
+    (name, _definition(getattr(ConsoleExecutionBackend, name)))
+    for name in ("require_sources", "_require_owner_loop")
+)
+_SURFACE_METHODS = tuple(
+    (name, _definition(getattr(_surface, name)))
+    for name in (
+        "offered_builtin_tool_count",
+        "_bridge_is_light",
+        "_bridge_local_tools_available",
+        "light_surface_tool_schemas",
+    )
+)
+_RESOLVER = _definition(backend_tool_counts)

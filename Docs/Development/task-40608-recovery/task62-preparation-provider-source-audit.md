@@ -1,0 +1,31 @@
+# TASK-40608: next bounded preparation attribution
+
+Runnable artifact: `task62-preparation-provider-diagnostic.py.draft`.
+
+SHA256: `260138d19cc0abbc518868ead597c2298252564d12983feedd2f6d71f1304d67`.
+
+Root's grouping-diagnostic-a1 passed and proved the real DB route selected, with every observed qualification true. Its DB collector took .156 s; run-log bind took .750 s. The actual total remained 8.64 s, so this evidence does not establish an end-to-end timing improvement.
+
+## Source findings
+
+| Remaining interval | Concrete original source and implication |
+| --- | --- |
+| Plan/accepted commit | `console_control_dispatch.py:1049–1100` separates reservation, the exact plan ACK, and the native commit. `ConsoleChatStore.reserve_durable_commit_plan` at `console_chat_store.py:6475` and `commit_reserved_durable_turn` at 6873 are finite worker bodies. The observed .828 s suspension cannot be assigned to their native work without those markers; neither the ACK wait nor the surrounding async method is a CONFIG batching boundary. |
+| Postcommit → reply, 1.046 s | `resume_durable_postcommit` at `console_chat_controller.py:12560` invokes named finite effects. `publish_identity_and_settings` at 12986 reads original Library policy through `ConsoleChatStore.publish_durable_turn_identity`/`repository.read` (store 7431). Unchanged settings and roleplay reconciliations return early (7515/7592). Workspace projection, prompt history, checkpoint transition, and the worker-owned hook admission read remain distinct owners. No repeated live CONFIG getter cohort was found across this async sequence. |
+| Reply → bridge worker, .891 s | Original reply setup calls provider composition at `console_agent_reply.py:432`, personal-service bootstrap at 648, review composition at 666, then schedules the worker at 771+. `console_provider_composition.py:505,769,924` prefers the captured `turn_context.tool_configuration`; the corresponding `get_cli_setting` calls are legacy fallback branches. Measure composition and personal bootstrap before attributing this interval to CONFIG admission. |
+| `call_model`, 1.234 s | Calling-worker CPU advanced only .03125 s, but this is not the CPU of the work it waits on. `_StreamingModelAdapter._chat_call_impl` (`console_agent_bridge.py:3570`) lazily enters `console_streaming_request.chat_call_impl`; its `_consume_body` at 235 runs on the turn's separate lifeline loop through `run_coroutine_threadsafe` at 669. Request preparation, trace claim, client creation, and provider IO occur there. |
+| Provider loop | `ConsoleProviderGateway.prepare_chat_request` (3788) delegates to `console_provider_request_preparation.prepare_chat_request:8`. `stream_chat:5921` reserves trace custody through `_reserve_trace_call:3587`; `_trace_dispatch_admission:7719` commits via `_commit_trace_dispatch_started:7687`. `_active_http_client:3860` either reuses/claims its exact loop client or calls `_new_owned_http_client:3833`. Its `tls_trust.build_httpx_async_client:253` reads `tls_verify_setting` and constructs the client. Default TLS policy has one config read, not a demonstrated redundant cohort. No provider optimization is justified yet. |
+
+The next concrete small grouping candidate is the remaining container collector, `sensitive_paths._direct_child_rule_container_dirs:552`. It calls original `get_user_data_dir`, then `rag_state_paths.default_chroma_persist_directory:56` and `default_rag_profiles_dir:72` can call the same guarded accessor twice more. This is a finite synchronous group with a natural return-after-scope boundary. It would still need original config/RAG helper qualification, original bodies and environment/path checks, unchanged custom behavior, and propagation of failed admission/retirement. The new diagnostic measures this collector and both RAG helpers; its share of bind's remaining .594 s is not yet known. Do not broaden the full raw-input memo or lazy Skills imports on this evidence.
+
+## Diagnostic scope and verification
+
+The new draft extends `9cbb7e64d61ab140cc3d024fa0c1c82332e17288a2316ed853abe13c59deb2db` and preserves every prior selector. It adds the exact finite bodies named above, the separate-loop `_consume_body`, gateway preparation/trace/client/HTTP boundaries, and the container/RAG helpers. Named postcommit callbacks are found in original code constants. Lazy provider/composition/request shims receive local CALL registration. Loaded-module rescans at existing entry markers never import a product module or run a factory. Original staticmethod/classmethod descriptors are unwrapped solely to register their existing function code; no callable is replaced.
+
+Hook registration follows both controller shims: public `hook_admission_reason` reaches the retained read chain, whose original private `_hook_admission_reason` callback directly imports/calls the selected `console_automatic_submission.hook_admission_reason` body. Both shims receive local CALL registration; the private shim is discovery-only. TLS helpers are ordinary imports of the gateway module (line 199), so the loaded-module scan registers them before accepted calls; no TLS warm-up is added.
+
+Installation remains the same fixed worker-bootstrap point used for the previous artifact. Root owns its current source freeze, temporary installer, actual execution, and restoration. The last independently observed restored worker hash was `b71ea8aa484f03586384f7666ca44965e1e59604bd6412233cfe627de79e1c9a`; this note does not recapture or relabel a concurrently instrumented worker.
+
+Output remains elapsed monotonic time, current-thread CPU, and fixed function/event names, capped at 512 lines with the existing cleanup/error behavior. No values, IDs, paths, bodies, global monitoring, frames, profile hooks, or warm imports are added. Interpret CPU only within the actual executing thread; inclusive intervals overlap, and cap/error/missing-cleanup markers limit coverage.
+
+AST/compile-only smoke passed. Every selected qualified name was checked against current source AST; every prior selector remains; imports are exactly `sys`, `time`, and `types`; prohibited global-event/profile/frame APIs are absent. No diagnostic execution, product import, tests, native launch, or live product edit was performed by this subagent.

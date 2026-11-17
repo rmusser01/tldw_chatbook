@@ -15712,6 +15712,17 @@ class ConsoleChatController:
         their own next pass.
         """
         if self.app is None:
+            from .console_backend_tool_counts import _RESOLVER, backend_tool_counts
+            from .console_domain_services import _definition_current
+
+            if backend_tool_counts is not _RESOLVER[0] or not _definition_current(_RESOLVER):
+                raise RuntimeError("Backend tool-count resolver changed")
+            counts = backend_tool_counts(self)
+            if counts is not None:
+                counts.publish_mcp(
+                    self, tool_count, not_connected_count, session_id,
+                    composed_switch=composed_switch,
+                )
             return
         from tldw_chatbook.Agents.plain_chat_tool_surface import offered_builtin_tool_count
 
@@ -15737,6 +15748,15 @@ class ConsoleChatController:
                 counts = {}
             counts[session_id] = count
             self.app.console_selected_tool_counts = counts
+        else:
+            from .console_backend_tool_counts import _RESOLVER, backend_tool_counts
+            from .console_domain_services import _definition_current
+
+            if backend_tool_counts is not _RESOLVER[0] or not _definition_current(_RESOLVER):
+                raise RuntimeError("Backend tool-count resolver changed")
+            counts = backend_tool_counts(self)
+            if counts is not None:
+                counts.publish_selected(self, session_id, count)
 
     def _console_tool_kill_switch_reader(self) -> Callable[[], bool] | None:
         """Forward to the documented InterruptRoundHost implementation."""

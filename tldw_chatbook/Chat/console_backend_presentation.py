@@ -29,6 +29,9 @@ class ConsoleBackendPresentation:
         self._display_character_demands = {}
         self.parent_attachment = None
         self._projection_views = {}
+        from .console_backend_tool_counts import ConsoleBackendToolCounts
+
+        self.tool_counts = ConsoleBackendToolCounts(self)
 
     def capture_projection_view(self, controls, identity, projection) -> None:
         """Retain inert row facts at the original synchronous projection boundary."""

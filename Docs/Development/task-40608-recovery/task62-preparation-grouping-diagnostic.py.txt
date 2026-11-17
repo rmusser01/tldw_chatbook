@@ -1,0 +1,248 @@
+"""Temporary local-only monitoring; no product imports or callable replacement."""
+
+import sys
+import time
+from types import CodeType, FunctionType, MethodType, ModuleType
+
+
+_TARGETS = {
+    "Chat.console_execution_backend": ("ConsoleExecutionBackend.start",),
+    "Chat.console_chat_controller": (
+        "ConsoleChatController._run_maintenance_agent_call",
+        "ConsoleChatController._accept_durable_turn",
+        "ConsoleChatController.resume_durable_postcommit",
+        "ConsoleChatController._run_agent_reply",
+    ),
+    "Chat.console_native_commit": ("_controller_accept_durable_turn",),
+    "Chat.console_agent_reply": ("_run_agent_reply",),
+    "Chat.console_agent_bridge": (
+        "ConsoleAgentBridge.run_reply",
+        "ConsoleAgentBridge._prepare_native_reply",
+        "build_console_first_request_plan",
+    ),
+    "Chat.console_agent_preparation": (
+        "_prepare_native_reply",
+        "_prepare_native_reply.<locals>.run_primary",
+    ),
+    "Agents.agent_service": (
+        "AgentService._run_one",
+        "AgentService._make_call_model",
+    ),
+    "Agents.agent_request_execution": (
+        "make_call_model.<locals>.call_model",
+    ),
+    "Agents.agent_runtime": ("run_agent_loop",),
+    "Agents.run_log": ("RunLogWriter.bind", "RunLogWriter._bind_under_scope"),
+    "Utils.sensitive_paths": (
+        "resolve_sensitive_context",
+        "_raw_inputs",
+        "_sensitive_db_paths",
+        "_sensitive_db_paths.<locals>.current",
+        "_sensitive_db_paths.<locals>.collect",
+    ),
+}
+_DISCOVERY = frozenset({
+    "ConsoleAgentBridge._prepare_native_reply",
+    "AgentService._make_call_model",
+    "ConsoleChatController._accept_durable_turn",
+    "ConsoleChatController.resume_durable_postcommit",
+    "ConsoleChatController._run_agent_reply",
+    "_controller_accept_durable_turn",
+    "RunLogWriter.bind",
+    "RunLogWriter._bind_under_scope",
+    "resolve_sensitive_context",
+    "_raw_inputs",
+    "_sensitive_db_paths",
+})
+_DISCOVERY_ONLY = frozenset({
+    "ConsoleAgentBridge._prepare_native_reply",
+    "AgentService._make_call_model",
+    "RunLogWriter._bind_under_scope",
+    "resolve_sensitive_context",
+    "_raw_inputs",
+})
+_CHAIN_CALLERS = frozenset({
+    "ConsoleChatController._accept_durable_turn",
+    "ConsoleChatController.resume_durable_postcommit",
+    "ConsoleChatController._run_agent_reply",
+    "_controller_accept_durable_turn",
+})
+
+
+def install():
+    """Return cleanup; register only original code already loaded or called later."""
+    monitoring = sys.monitoring
+    events = monitoring.events
+    origin = time.monotonic()
+    stream = sys.stderr
+    labels = {}
+    seen = set()
+    closed = False
+    emitted = 0
+    limit = 512
+    slot = None
+    selectors = {
+        ("/tldw_chatbook/" + module.replace(".", "/") + ".py", name)
+        for module, names in _TARGETS.items()
+        for name in names
+    }
+
+    def emit(name, *, force=False):
+        nonlocal emitted
+        if emitted >= limit and not force:
+            return
+        emitted += 1
+        try:
+            stream.write(
+                f"PREP_DIAG elapsed={time.monotonic() - origin:.9f} "
+                f"thread_cpu={time.thread_time():.9f} name={name}\n"
+            )
+        except BaseException:
+            pass  # Diagnostic output cannot change the original operation.
+
+    for candidate in (3, 4, 5, 2):
+        if monitoring.get_tool(candidate) is not None:
+            continue
+        try:
+            monitoring.use_tool_id(candidate, "task62-original-preparation")
+        except ValueError:
+            continue
+        slot = candidate
+        break
+    if slot is None:
+        emit("error.tool_id_unavailable")
+        return lambda: None
+
+    def close():
+        nonlocal closed
+        if closed:
+            return
+        closed = True
+        for code, _name in tuple(labels.values()):
+            monitoring.set_local_events(slot, code, 0)
+        for event in (
+            events.PY_START, events.PY_RESUME, events.PY_YIELD,
+            events.PY_RETURN, events.CALL,
+        ):
+            monitoring.register_callback(slot, event, None)
+        monitoring.free_tool_id(slot)
+        emit("closed.limit_reached" if emitted >= limit else "closed", force=True)
+
+    def register_code(code):
+        if id(code) in seen:
+            return
+        seen.add(id(code))
+        filename = code.co_filename.replace("\\", "/")
+        name = code.co_qualname
+        if any(filename.endswith(suffix) and name == selected
+               for suffix, selected in selectors):
+            labels[id(code)] = (code, name)
+            mask = events.PY_START | events.PY_RESUME | events.PY_YIELD | events.PY_RETURN
+            if name in _DISCOVERY:
+                mask |= events.CALL
+            monitoring.set_local_events(slot, code, mask)
+        for value in code.co_consts:
+            if type(value) is CodeType:
+                register_code(value)
+
+    def register_callable(value):
+        selected = None
+        if type(value) is MethodType:
+            value = value.__func__
+        for _ in range(4):
+            if type(value) is not FunctionType:
+                break
+            register_code(value.__code__)
+            label = labels.get(id(value.__code__))
+            if label is not None:
+                selected = label[1]
+            value = value.__dict__.get("__wrapped__")
+        return selected
+
+    def scan_loaded():
+        for module_name, names in _TARGETS.items():
+            module = sys.modules.get("tldw_chatbook." + module_name)
+            if type(module) is not ModuleType:
+                continue
+            for name in names:
+                value = module
+                for part in name.split(".<locals>.", 1)[0].split("."):
+                    if type(value) not in (ModuleType, type):
+                        value = None
+                        break
+                    value = vars(value).get(part)
+                register_callable(value)
+
+    def on_call(code, _offset, callable_object, arg0):
+        if closed:
+            return
+        try:
+            called = register_callable(callable_object)
+            caller = labels.get(id(code))
+            if caller is None:
+                return
+            if caller[1] in _CHAIN_CALLERS and called is not None:
+                emit("call." + caller[1] + "->" + called)
+            if (caller[1] == "_sensitive_db_paths"
+                    and called == "_sensitive_db_paths.<locals>.collect"):
+                # The sole permitted argument observation is whether the exact
+                # nested qualification function was supplied. No value escapes.
+                selected = (
+                    type(arg0) is FunctionType
+                    and any(arg0.__code__ is nested
+                            and nested.co_qualname == "_sensitive_db_paths.<locals>.require_current"
+                            for nested in code.co_consts if type(nested) is CodeType)
+                )
+                route = "selected" if selected else (
+                    "ungrouped" if arg0 is monitoring.MISSING else "unexpected"
+                )
+                emit("route._sensitive_db_paths.collect." + route)
+        except BaseException:
+            emit("error.registration")
+            close()
+
+    def callback(event_name):
+        def observe(code, *event_args):
+            if closed:
+                return
+            try:
+                label = labels.get(id(code))
+                if label is None:
+                    return
+                if label[1] == "_sensitive_db_paths.<locals>.current":
+                    if event_name == "return":
+                        result = event_args[-1]
+                        outcome = "true" if result is True else (
+                            "false" if result is False else "unexpected"
+                        )
+                        emit("return." + label[1] + "." + outcome)
+                elif label[1] not in _DISCOVERY_ONLY:
+                    emit(event_name + "." + label[1])
+                if event_name == "start" and label[1] == "AgentService._run_one":
+                    # run_log is an ordinary import of this defining module;
+                    # register its original bind before the first call to it.
+                    scan_loaded()
+                if (
+                    event_name == "return"
+                    and label[1] == "ConsoleExecutionBackend.start"
+                ):
+                    scan_loaded()
+                    emit(f"registered.after_composition.{len(labels)}")
+            except BaseException:
+                emit("error.observation")
+                close()
+        return observe
+
+    try:
+        monitoring.register_callback(slot, events.CALL, on_call)
+        for event, name in (
+            (events.PY_START, "start"), (events.PY_RESUME, "resume"),
+            (events.PY_YIELD, "yield"), (events.PY_RETURN, "return"),
+        ):
+            monitoring.register_callback(slot, event, callback(name))
+        scan_loaded()
+        emit(f"installed.{len(labels)}")
+    except BaseException:
+        emit("error.installation")
+        close()
+    return close
