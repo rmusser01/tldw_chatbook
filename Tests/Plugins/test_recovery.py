@@ -1257,7 +1257,7 @@ def test_replace_restore_lists_and_removes_a_fetch_folder_added_since_the_backup
 def test_recovery_cli_lists_newer_plugin_downloads_and_removes_them_on_its_flag(
     tmp_path, monkeypatch, capsys, flag
 ):
-    """TASK-41106: ``tldw-chatbook recovery restore`` is the path for a user who
+    """TASK-41106: ``tldw-cli recovery restore`` is the path for a user who
     cannot start the app. Over a download folder the backup lacks, it lists the
     folder's members and the Backup screen's no-safety-copy warning. Without
     ``--remove-newer-plugin-downloads`` it refuses and names the flag and the
@@ -2384,8 +2384,8 @@ async def test_restored_authority_review_names_the_changes_it_undoes(
         )
         text = adoption_review_text(review)
         assert "This undoes 2 plugin changes made after this backup:" in text
-        for generation, intent in ((backed_up + 1, "disabled"), (backed_up + 2, "enabled")):
-            line = f"Generation {generation}: activate {intent} · {alias} · {installation}"
+        for generation, words in ((backed_up + 1, "disable"), (backed_up + 2, "enable")):
+            line = f"Generation {generation}: {words} · {alias} · {installation}"
             assert line in text
         (root.path.parent.parent / CHANGES).unlink()
         review = await plugins.review_restored_authority("test passphrase")
@@ -2395,6 +2395,124 @@ async def test_restored_authority_review_names_the_changes_it_undoes(
         assert not any(r.phase == "recovery_required" for r in receipts)
     finally:
         await plugins.aclose()
+
+
+@platform_support.package_capture
+def test_change_list_names_only_an_unbroken_chain_from_the_backup(tmp_path):
+    """TASK-41105 review r15pa-rev1: the review names changes only when each
+    undone generation has an entry of this namespace whose parent is the entry
+    before it (the first one's is the backup's marker) and the last is the
+    protected marker's operation. A gap, a mismatched newest entry, another
+    namespace, or a commit left unrecorded after a rewind falls back to the
+    count, and the list keeps its last ``MAX_CHANGES`` entries."""
+    import json
+    from types import SimpleNamespace as Marker
+
+    from tldw_chatbook.Plugins.backup import (
+        CHANGES,
+        MAX_CHANGES,
+        changes_since,
+        record_change,
+    )
+
+    root = tmp_path / "plugins"
+    root.mkdir(mode=0o700)
+    namespace = "n" * 64
+
+    def entry(generation, operation, parent, kind="activate", detail="disabled"):
+        return {
+            "namespace_id": namespace,
+            "generation": generation,
+            "operation_id": operation,
+            "parent": parent,
+            "kind": kind,
+            "installation_id": "a" * 32,
+            "alias": "helper",
+            "detail": detail,
+        }
+
+    def since(marker, current, *, of=namespace):
+        return changes_since(
+            root,
+            of,
+            Marker(generation=marker[0], operation_id=marker[1]),
+            Marker(generation=current[0], operation_id=current[1]),
+        )
+
+    def timeline(*rows):
+        (root / CHANGES).unlink(missing_ok=True)
+        for row in rows:
+            record_change(root, entry(*row))
+
+    timeline(*((g, f"a{g}", f"a{g - 1}") for g in range(1, 11)))
+    assert since((5, "a5"), (7, "a7")) == (
+        (6, "activate", "a" * 32, "helper", "disabled"),
+        (7, "activate", "a" * 32, "helper", "disabled"),
+    )
+    # The newest entry is not the protected marker's operation.
+    assert since((5, "a5"), (7, "b7")) is None
+    # Entries of another authority namespace are never named.
+    assert since((5, "a5"), (7, "a7"), of="m" * 64) is None
+    # A gap: generation 7 was never recorded.
+    timeline((6, "a6", "a5"), (8, "a8", "a7"))
+    assert since((5, "a5"), (8, "a8")) is None
+    # The probe's rewind: adoption rewound the marker to a5, b6 committed
+    # unrecorded, b7 recorded. a6 belongs to the undone timeline.
+    timeline(
+        *((g, f"a{g}", f"a{g - 1}") for g in range(1, 11)),
+        (7, "b7", "b6", "uninstall", None),
+    )
+    assert since((5, "a5"), (7, "b7")) is None
+    # The cap: a full list drops its oldest entry for the next one.
+    (root / CHANGES).write_text(
+        json.dumps(
+            {"changes": [entry(g, f"c{g}", f"c{g - 1}") for g in range(1, MAX_CHANGES + 1)]}
+        )
+    )
+    (root / CHANGES).chmod(0o600)
+    record_change(root, entry(MAX_CHANGES + 1, "next", f"c{MAX_CHANGES}"))
+    kept = json.loads((root / CHANGES).read_text())["changes"]
+    assert len(kept) == MAX_CHANGES
+    assert (kept[0]["generation"], kept[-1]["operation_id"]) == (2, "next")
+    assert not (root / (CHANGES + ".tmp")).exists()
+
+
+def test_a_long_change_list_never_hides_the_plugins_or_the_confirmation():
+    """TASK-41105 review r15pa-rev1: about 200 named changes used to fill the
+    dialog's text limit and cut off the plugin rows and the confirmation. They
+    now come first, at most 20 changes are named with the rest counted, and
+    the changes read as the User Guide words them."""
+    from types import SimpleNamespace as Marker
+
+    from tldw_chatbook.Plugins.review import RestoredAuthorityReview
+    from tldw_chatbook.UI.Plugins_Modules.details import display_text
+    from tldw_chatbook.Widgets.plugin_review_modal import adoption_review_text
+
+    kinds = [("activate", "disabled"), ("uninstall", None), ("root_data", "delete")]
+    changes = tuple(
+        (5 + index, *kinds[(index - 1) % 3][:1], "b" * 32, "helper", kinds[(index - 1) % 3][1])
+        for index in range(1, 1001)
+    )
+    review = RestoredAuthorityReview(
+        "token",
+        Marker(generation=5),
+        Marker(generation=1005),
+        1000,
+        (("b" * 32, "helper", "c" * 64),),
+        1,
+        0.0,
+        changes,
+    )
+    text = display_text(adoption_review_text(review), limit=16384)
+    assert not text.endswith("[truncated]")
+    assert "Plugin: helper · " + "b" * 32 in text
+    assert "Confirm recovery makes this backup's plugin authority current" in text
+    assert text.index("Plugin: ") < text.index("This undoes 1000 plugin changes")
+    assert f"Generation 6: disable · helper · {'b' * 32}" in text
+    assert f"Generation 7: removal · helper · {'b' * 32}" in text
+    assert f"Generation 8: delete saved data · helper · {'b' * 32}" in text
+    assert "Generation 26:" not in text
+    assert "…and 980 more (generations 26 to 1005)" in text
 
 
 @platform_support.package_capture

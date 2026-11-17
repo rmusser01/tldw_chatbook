@@ -47,8 +47,10 @@ and each repository fetch's checked snapshot and fetch record, which recovery
 needs to re-verify a plugin installed from a repository. Left out, and shown as
 excluded in the review: the plugin runtime lock file, the plugin change list
 (`authority-changes.json`, which a later restore keeps so recovery can name the
-changes it undoes), the `reset-…` folder a
-plugin authority reset after a restore sets aside (a later restore keeps it),
+changes it undoes), every `reset-…` folder that setting plugin authority up
+again after a reset sets plugin files aside in (after a restore: the restored
+registry, downloads and package files; otherwise: downloads made under the old
+authority; a later restore keeps it),
 and everything else in each fetch folder, such as the copies of your git and SSH configuration the fetch used
 (they can hold credential helpers), its git object store (`repository.git`) and
 its working copy (`content/`). Each is one excluded entry; Chatbook does not look

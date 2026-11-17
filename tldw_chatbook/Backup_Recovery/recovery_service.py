@@ -170,7 +170,7 @@ _ISSUE_MESSAGES = {
         "source refresh, an update check, an install or an update). Restoring "
         "Tools and skills removes those download folders, and they hold files a "
         "backup never includes. Review the restore on the Backup screen, which "
-        "lists them and removes them when you confirm; or run tldw-chatbook "
+        "lists them and removes them when you confirm; or run tldw-cli "
         "recovery restore again with --remove-newer-plugin-downloads, which lists "
         "them and removes them when you type remove; or restore without the Tools "
         "and skills group."

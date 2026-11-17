@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-15 02:20
-updated_date: 2026-11-15 19:13
+updated_date: 2026-11-17 00:25
 labels:
 - follow-up
 - plugins
@@ -59,4 +59,5 @@ AC#3 does not apply: listing failed.
 **Covering run** (TASK-41106/41107/41108 together, before TASK-41105; `-n 4`, load 62→107): `Tests/Plugins/{test_recovery,test_coordinator,test_authority_store,test_surviving_process_recovery,test_source_service}.py`, `Tests/UI/{test_plugin_review,test_plugins_browse,test_backup_data_groups,test_backup_restore_screen}.py`, `Tests/Backup_Recovery/{test_group_cli,test_launcher,test_recovery_cli_actions,test_restore_plan_excluded_directories}.py`, end to end deselected: 476 passed, 6 failed.
 - `test_surviving_process_recovery.py::test_actual_native_fields_stable_in_separate_processes` fails on base sources too (TASK-40308's notes). `test_plugin_review.py::test_installed_manager_collects_all_51_exact_root_refs` hit its 300 s timeout (passes alone, TASK-40712's notes).
 - `test_plugin_review.py::test_candidate_reload_requires_fresh_discard_review[next]` and three `test_backup_restore_screen.py` nodes (`test_actual_archive_inspection_survives_navigation`, `test_replacement_omissions_require_explicit_review_after_untouched_abort[destination]`, `test_retention_review_survives_target_omissions_only_for_same_selection[restore]`) are load-flaky: a rerun of those three tests and the reload test at head (load ~100) failed 4 of 13, a different parameter set; the same command with every changed `tldw_chatbook/` file swapped to base failed 3 of 13 (`…survives_navigation`, `…untouched_abort[profile]`, `…discard_review[next]`), then the changes were restored.
+**Review r15pa-rev1 (2026-11-16).** M7: the same docstrings and docs now say setup after a reset outside a restore also creates `reset-<id>/`.
 <!-- SECTION:NOTES:END -->

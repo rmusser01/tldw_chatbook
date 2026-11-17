@@ -150,9 +150,13 @@ SQLite owner (backup route, WAL folded) against the frozen v5 catalog
 `REGISTRY_SCHEMAS`; everything else is raw bytes. Excluded: `runtime.lock`,
 `authority-changes.json` (TASK-41105: the advisory change list the coordinator
 appends after each commit; replace restore preserves the excluded target file,
-so adopting a restored authority can name the changes it undoes), a
-post-restore reset's set-aside folder `reset-<id>/` (whole, and kept whole by
-replace restores through `kept_whole`, TASK-40308) and, inside each
+so adopting a restored authority can name the changes it undoes; its write's
+temporary `authority-changes.json.tmp` too), every set-aside folder `reset-<id>/`
+(whole, and kept whole by replace restores through `kept_whole`): setup after a
+post-restore reset moves the restored registry, download records, downloads and
+package bytes there (TASK-40308, TASK-41107), and setup after a reset outside a
+restore moves the old authority's download records and downloads there
+(TASK-41108). Also excluded, inside each
 `staging/<name>/`, every member but `snapshot/` (an allow-list: only
 `snapshot/` and the custody record serve recovery). The owner passes
 `_staging_excluded` to the tree walk as `prune`, so each excluded member is one

@@ -682,7 +682,7 @@ def _parser() -> argparse.ArgumentParser:
         "--remove-newer-plugin-downloads",
         action="store_true",
         help="Delete the files of plugin downloads made since the backup, after "
-        "listing them, with no safety copy (TASK-41106).",
+        "listing them, with no safety copy.",
     )
     recover = commands.add_parser("recover", allow_abbrev=False)
     recover.add_argument("operation")

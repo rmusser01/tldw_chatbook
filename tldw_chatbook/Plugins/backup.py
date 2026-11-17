@@ -5,11 +5,14 @@ SQLite member, captured through the SQLite backup route (committed WAL frames
 fold in) and validated against the exact frozen catalog below. Every other file
 is raw bytes, including staging snapshots and ``acquisition-custody/``: plugin
 recovery re-verifies git-installed packages from them. Left out: the runtime
-owner's ``runtime.lock``, and inside each ``staging/<name>/`` everything but
-``snapshot/`` (owner decision D1, 2026-11-10, as an allow-list): the fetch-time
-host git/SSH configuration copies (they can hold credential helpers and SSH
-config), ``repository.git``, ``content/`` and whatever a later fetch leaves there.
-Each is one excluded row whose contents are never listed.
+owner's ``runtime.lock``; ``authority-changes.json``, the advisory list of
+authority changes a restore must keep (TASK-41105); every ``reset-<id>/`` folder
+setup sets plugin state aside in (TASK-40308, TASK-41107, TASK-41108); and
+inside each ``staging/<name>/`` everything but ``snapshot/`` (owner decision D1,
+2026-11-10, as an allow-list): the fetch-time host git/SSH configuration copies
+(they can hold credential helpers and SSH config), ``repository.git``,
+``content/`` and whatever a later fetch leaves there. Each is one excluded row
+whose contents are never listed.
 
 While a plugin process may be running, or a live runtime owner holds the lock,
 the preview shows one unavailable plugin root and the issue
@@ -87,13 +90,15 @@ def _fetch_excluded(relative: str) -> bool:
 
 
 def _reset_aside(relative: str) -> bool:
-    """Whether a root-relative path is a post-restore reset's set-aside folder.
+    """Whether a root-relative path is a reset's set-aside folder.
 
-    TASK-40308: setup after a reset moves the restored registry, download
-    records and downloads to ``reset-<id>/``. Backups exclude it whole, never
+    TASK-40308, TASK-41107: setup after a post-restore reset moves the restored
+    registry, download records, downloads and package bytes to ``reset-<id>/``.
+    TASK-41108: setup after a reset outside a restore moves the old authority's
+    download records and downloads there. Backups exclude it whole, never
     walked, so its downloads' host configuration copies never enter an
-    archive, and restores keep it whole (``kept_whole``): it is the only record
-    of which kept saved-data folder belonged to which plugin.
+    archive, and restores keep it whole (``kept_whole``): a post-restore one is
+    the only record of which kept saved-data folder belonged to which plugin.
     """
     parts = Path(relative).parts
     return len(parts) == 1 and RESET_ASIDE.fullmatch(parts[0]) is not None
@@ -102,10 +107,15 @@ def _reset_aside(relative: str) -> bool:
 def _staging_excluded(relative: str) -> bool:
     """Whether the owner excludes a root-relative path whole, never walked.
 
-    ``authority-changes.json`` too (TASK-41105): it must outlive a restore,
-    and a replace restore keeps an excluded target file in place.
+    ``authority-changes.json`` too, and its write's temporary file
+    (TASK-41105): it must outlive a restore, and a replace restore keeps an
+    excluded target file in place.
     """
-    return _fetch_excluded(relative) or _reset_aside(relative) or relative == CHANGES
+    return (
+        _fetch_excluded(relative)
+        or _reset_aside(relative)
+        or relative in (CHANGES, CHANGES + ".tmp")
+    )
 
 
 def record_change(root: Path, change: dict) -> None:
@@ -113,79 +123,79 @@ def record_change(root: Path, change: dict) -> None:
 
     After a restore, ``<plugins>/authority-changes.json`` still names the
     changes made since the backup, so adopting the restored authority can list
-    what it undoes. Entries of another authority namespace, or at or after this
-    generation (a timeline a restore undid), are dropped. Advisory only: the
-    restored-authority review reads it, nothing grants authority from it.
+    what it undoes. Each entry names its parent operation; ``changes_since``
+    keeps only an unbroken chain, so stale entries of an undone timeline or of
+    another namespace can stay (the newest of a generation wins), bounded to
+    the last ``MAX_CHANGES``. Advisory only: nothing grants authority from it.
     """
+    import json
     import os
 
-    from tldw_chatbook.Utils.private_paths import (
-        PrivateFileWritePrecondition,
-        open_private_binary,
-    )
+    from tldw_chatbook.Utils.private_paths import open_private_binary
 
-    from .authority_store import _decode, _write
+    from .authority_store import _decode
 
-    path = root / CHANGES
-    condition, rows = PrivateFileWritePrecondition.missing(), []
+    path, rows = root / CHANGES, []
     if os.path.lexists(path):
         with open_private_binary(path) as opened:
             if not opened.result.verified_private:
                 raise ValueError("unqualified plugin change list")
-            condition = PrivateFileWritePrecondition.from_opened(opened)
             try:
                 rows = list(_decode(opened.stream.read(1024 * 1024))["changes"])
             except (ValueError, KeyError, TypeError):
                 rows = []  # Unreadable: start again; the review falls back.
-    rows = [
-        row
-        for row in rows
-        if isinstance(row, dict)
-        and row.get("namespace_id") == change["namespace_id"]
-        and type(row.get("generation")) is int
-        and row["generation"] < change["generation"]
-    ]
-    _write(path, {"changes": [*rows, change][-MAX_CHANGES:]}, precondition=condition)
+    data = json.dumps({"changes": [*rows, change][-MAX_CHANGES:]}).encode()
+    # ponytail: private atomic replace without fsync (review r15pa-rev1: the
+    # durable chain cost 160-240 ms a commit). A list lost to a crash only
+    # makes the review fall back to its count.
+    temporary = root / (CHANGES + ".tmp")
+    if os.path.lexists(temporary):
+        os.unlink(temporary)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        with open(os.open(temporary, flags, 0o600), "wb") as handle:
+            handle.write(data)
+        os.replace(temporary, path)
+    except BaseException:
+        if os.path.lexists(temporary):
+            os.unlink(temporary)
+        raise
 
 
 def changes_since(root: Path, namespace_id: str, marker, current):
     """The recorded changes after ``marker`` up to ``current``, oldest first.
 
-    ``None`` unless every generation in between has one entry of this
-    namespace and the newest is the protected marker's own operation: the
-    review then falls back to its count.
+    ``None`` unless each generation in between has an entry of this namespace
+    whose parent is the entry before it (the first one's is ``marker``), and the
+    last is the protected marker's own operation. A gap, an unrecorded commit
+    after a rewind, or a list from another timeline breaks the chain, and the
+    review falls back to its count (review r15pa-rev1).
     """
     from .authority_store import _read
 
     try:
-        rows = _read(root / CHANGES)["changes"]
-        by_generation = {
-            row["generation"]: (
-                row["generation"],
-                row["kind"],
-                row["installation_id"],
-                row["alias"],
-                row["detail"],
-                row["operation_id"],
-            )
-            for row in rows
+        rows = {
+            row["generation"]: row
+            for row in _read(root / CHANGES)["changes"]
             if row["namespace_id"] == namespace_id
         }
     except (OSError, ValueError, KeyError, TypeError):
         return None
-    found = [
-        by_generation.get(generation)
-        for generation in range(marker.generation + 1, current.generation + 1)
-    ]
-    if not found or None in found or found[-1][5] != current.operation_id:
+    named, parent = [], marker.operation_id
+    for generation in range(marker.generation + 1, current.generation + 1):
+        row = rows.get(generation, {})
+        if row.get("parent") != parent:
+            return None
+        parent = row.get("operation_id")
+        named.append(
+            tuple(
+                row.get(key)
+                for key in ("generation", "kind", "installation_id", "alias", "detail")
+            )
+        )
+    if parent != current.operation_id:
         return None
-    if any(
-        not all(isinstance(value, str) for value in row[1:3])
-        or not all(value is None or isinstance(value, str) for value in row[3:5])
-        for row in found
-    ):
-        return None
-    return tuple(row[:5] for row in found)
+    return tuple(named)
 
 
 def kept_whole(items) -> set[Path]:

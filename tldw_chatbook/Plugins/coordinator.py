@@ -1525,6 +1525,7 @@ class PluginCoordinator:
                     "namespace_id": self.authority.namespace_id(),
                     "generation": new.generation,
                     "operation_id": operation_id,
+                    "parent": review.authority_marker.operation_id,
                     "kind": review.kind,
                     "installation_id": review.installation_id,
                     "alias": getattr(review, "alias", None) or (named and named[0]),
