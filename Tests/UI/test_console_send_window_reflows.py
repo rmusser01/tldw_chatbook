@@ -207,6 +207,17 @@ async def _drive(host, pilot, console, composer, store, window, finished) -> Non
         )
         await pilot.pause(0.3)
         if index == 2:
+            # Draft loading can shrink the composer one frame before the
+            # transcript's anchored tail catches up with its new viewport.
+            await _until(
+                pilot,
+                lambda: (
+                    composer.region.height == 1
+                    and (end := transcript._row_widgets.get("rule:end")) is not None
+                    and end.region.bottom == transcript.scrollable_content_region.bottom
+                ),
+                "the measured draft and transcript tail never settled",
+            )
             # A later send in a chat longer than the screen, the everyday
             # case: the first overflow adds the scrollbar and re-wraps
             # every row, once per chat.
