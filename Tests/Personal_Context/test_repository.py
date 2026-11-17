@@ -2285,16 +2285,17 @@ def _scope_record_heads(db_path, scope_id) -> list[str]:
         )
 
 
-@pytest.mark.parametrize("kind", ["global", "workspace"])
+@pytest.mark.parametrize("kind", ["global", "workspace", "workspace_off"])
 def test_a_damaged_current_scope_is_rebuilt_with_its_records(
     tmp_path, record_factory, proposal_factory, kind
 ) -> None:
     """TASK-41121, owner decision 2026-11-16 ("Rebuild the scope"): the review
     counts the damaged current scope and its records; re-encryption gives the
     scope a fresh version under its own id and kind, its records stay attached,
-    listed and readable, and its own settings reset (agent access to the
-    default; a workspace keeps its mapping, renamed "Recovered scope"). With a
-    rebuilt global scope, context building still works."""
+    listed and readable, and a workspace keeps its mapping, renamed "Recovered
+    scope". Its readable agent access row is a separate, undamaged object and
+    stays exactly as it was, Off included (coordinator ruling, fix round 2).
+    With a rebuilt global scope, context building still works."""
     from tldw_chatbook.Personal_Context.runtime_policy import AgentAuthority
 
     db_path, backend = _every_kind(tmp_path, record_factory, proposal_factory)
@@ -2304,6 +2305,10 @@ def test_a_damaged_current_scope_is_rebuilt_with_its_records(
         for s in service.list_scopes()
         if s.kind is (ScopeKind.GLOBAL if kind == "global" else ScopeKind.WORKSPACE)
     )
+    if kind == "workspace_off":
+        service.set_scope_authority(scope.scope_id, AgentAuthority.OFF)
+    authority = service.get_scope_authority(scope.scope_id)
+    policy = service._repo().get_runtime_policy_version(scope.scope_id)
     listed = sorted(
         r.record_id for r in service.list_records(scope_ids=(scope.scope_id,))
     )
@@ -2325,8 +2330,9 @@ def test_a_damaged_current_scope_is_rebuilt_with_its_records(
         sorted(r.record_id for r in service.list_records(scope_ids=(scope.scope_id,)))
         == listed
     )
-    assert service.get_scope_authority(scope.scope_id) is AgentAuthority.PROPOSE
-    if kind == "workspace":
+    assert service.get_scope_authority(scope.scope_id) is authority
+    assert service._repo().get_runtime_policy_version(scope.scope_id) == policy
+    if kind != "global":
         assert service.list_workspace_bindings()[scope.scope_id] == {
             "version": 1,
             "local_workspace_id": "w",

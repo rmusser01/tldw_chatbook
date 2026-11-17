@@ -173,8 +173,10 @@ Each record has two independent controls:
 
 Authority is runtime-local and configured separately for every scope:
 
-- **Off** gives agents no access to the scope. A restored profile whose
-  setting for a scope was damaged gets Off for it.
+- **Off** gives agents no access to the scope: no context and no tools. You
+  can choose it for any scope, global or workspace, and change it back the
+  same way. A restored profile whose setting for a scope was damaged gets Off
+  for that scope.
 - **Read only** permits bounded context plus search/get tools.
 - **Propose changes** also lets an agent create a reviewable proposal. This is
   the default.
@@ -406,8 +408,9 @@ Personal Context merge or resolution action in Settings.
   again. A damaged scope is rebuilt instead, and the review says so with the
   number of its records, which are kept: the global scope stays global, a named
   workspace is renamed "Recovered scope" (still mapped to its workspace), and the
-  scope's agent authority goes back to the default. When the review cannot be
-  read, Settings says sync stays off and why.
+  scope keeps its agent authority (Off stays Off) unless that setting was damaged
+  too, in which case it is Off. When the review cannot be read, Settings says
+  sync stays off and why.
 - Encryption does not hide all metadata, such as object counts and update
   timing. Under `server_trusted_v1`, the authorized home server can decrypt
   syncable content and re-encrypt it with its own keys. HTTPS protects that

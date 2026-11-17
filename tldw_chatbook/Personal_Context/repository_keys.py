@@ -513,8 +513,11 @@ class RepositoryKeyCustody:
     def _rebuild_scopes(self, connection, rebuilt) -> None:
         """Owner decision 2026-11-16 ("Rebuild the scope"): a fresh version of
         each damaged current scope under its own id, so its records stay
-        attached. Its own settings reset: its agent access goes back to the
-        default, and a workspace keeps its mapping under "Recovered scope"."""
+        attached. The scope object's own fields reset (fresh times; only the id
+        and kind carry over), and a workspace keeps its mapping under
+        "Recovered scope". Its agent access row is a separate object: a
+        readable one stays exactly as it was (Off stays Off); only a damaged one
+        is replaced, by Off (coordinator ruling, fix round 2)."""
         from tldw_profile_core import ProfileScope
 
         from .repository import _now, _uuid
@@ -538,26 +541,16 @@ class RepositoryKeyCustody:
                 ),
                 expected_version_id=None,
             )
-            for table, object_type in (
-                ("local_runtime_policy", "runtime_policy"),
-                ("local_scope_bindings", "scope_binding"),
-            ):
-                body = self._local_body(connection, table, object_type, scope_id)
-                connection.execute(
-                    f"DELETE FROM {table} WHERE scope_id = ?",  # nosec B608 - fixed names
-                    (scope_id,),
+            body = self._local_body(
+                connection, "local_scope_bindings", "scope_binding", scope_id
+            )
+            if body is not None:
+                self._put_local_body(
+                    connection,
+                    "scope_binding",
+                    scope_id,
+                    {**body, "label": RECOVERED_SCOPE_LABEL},
                 )
-                connection.execute(
-                    "DELETE FROM object_heads WHERE object_type = ? AND object_id = ?",
-                    (object_type, scope_id),
-                )
-                if object_type == "scope_binding" and body is not None:
-                    self._put_local_body(
-                        connection,
-                        object_type,
-                        scope_id,
-                        {**body, "label": RECOVERED_SCOPE_LABEL},
-                    )
 
     def _local_body(self, connection, table, object_type, scope_id):
         """The current local body for a scope (already under the new key), or
