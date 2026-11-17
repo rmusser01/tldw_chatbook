@@ -155,7 +155,10 @@ def test_full_suite_job_is_bounded_and_manual_only() -> None:
     all_tests_job = _all_tests_job_block()
 
     assert "timeout-minutes:" in all_tests_job
-    assert "if: github.workflow == 'Tests' && github.event_name == 'workflow_dispatch'" in all_tests_job
+    assert (
+        "if: github.workflow == 'Tests' && github.event_name == 'workflow_dispatch'"
+        in all_tests_job
+    )
     assert "pull_request" not in all_tests_job
     assert "name: Full Test Suite (Manual)" in all_tests_job
     assert "pytest ./Tests/" in all_tests_job
@@ -191,6 +194,17 @@ def test_ci_exercises_mcp_against_minimum_textual() -> None:
         "needs: [core-tests, ui-tests, textual-minimum, artifact-lease-gate]"
         in test_summary
     )
+
+
+def test_textual_floor_uses_two_workers_within_the_existing_job_budget() -> None:
+    block = _textual_minimum_job_block()
+    assert "timeout-minutes: 10" in block
+    assert "pip install pytest pytest-asyncio pytest-timeout pytest-xdist" in block
+    assert len(_pytest_invocations(block)) == 1
+    invocation = _pytest_invocations(block)[0]
+    assert invocation[invocation.index("-n") + 1] == "2"
+    assert "--dist=load" in invocation
+    assert "--timeout=180" in invocation
 
 
 def test_native_lease_windows_checkout_enables_long_paths_first() -> None:
