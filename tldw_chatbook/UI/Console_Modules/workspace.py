@@ -2582,10 +2582,17 @@ class ConsoleWorkspaceController:
             )
             source_rows = self._rows_with_latest_canonical_owner(source_rows)
             source_rows = self._overlay_current_console_browser_markers(source_rows)
-        bridge = self._ensure_console_agent_bridge()
-        read_counts = getattr(bridge, "progress_counts", None)
+        from .execution_state import selected_workspace_surface
+
+        surface = selected_workspace_surface(self._screen)
+        if surface is None:
+            bridge = self._ensure_console_agent_bridge()
+            read_counts = getattr(bridge, "progress_counts", None)
+            progress_counts = read_counts() if callable(read_counts) else {}
+        else:
+            progress_counts = {item.owner_id: item.count for item in surface.progress_counts}
         return build_workspace_tree_state(
-            progress_counts=read_counts() if callable(read_counts) else {},
+            progress_counts=progress_counts,
             workspaces=(
                 (str(record.workspace_id), str(record.name or record.workspace_id))
                 for record in records
@@ -3063,8 +3070,19 @@ class ConsoleWorkspaceController:
         by_conversation = {}
         by_session = {}
         store = self._console_chat_store
-        controller = self._console_chat_controller
-        read_attention = getattr(controller, "conversation_attention_for", None)
+        from .execution_state import selected_workspace_surface
+
+        surface = selected_workspace_surface(self._screen)
+        if surface is None:
+            controller = self._console_chat_controller
+            read_attention = getattr(controller, "conversation_attention_for", None)
+            runtime = getattr(self.app_instance, "console_runtime", None)
+            receipts = getattr(runtime, "activity_receipts", None)
+            unseen_receipts = receipts.unseen_snapshot() if receipts is not None else ()
+        else:
+            captured = {item.session_id: item.attention for item in surface.sessions}
+            read_attention = captured.__getitem__
+            unseen_receipts = surface.unseen_receipts
         if store is not None and callable(read_attention):
             for session in store.sessions():
                 facts = read_attention(session.id)
@@ -3073,8 +3091,6 @@ class ConsoleWorkspaceController:
                     by_conversation.setdefault(
                         session.persisted_conversation_id, []
                     ).extend(facts)
-        runtime = getattr(self.app_instance, "console_runtime", None)
-        receipts = getattr(runtime, "activity_receipts", None)
         known_outcomes = set()
         labels = {
             "done": ("ready", "New result ready"),
@@ -3087,7 +3103,7 @@ class ConsoleWorkspaceController:
             "stopped": ("stopped", "Stopped"),
             "cancelled": ("stopped", "Cancelled"),
         }
-        for receipt in receipts.unseen_snapshot() if receipts is not None else ():
+        for receipt in unseen_receipts:
             if receipt.conversation_id:
                 kind, label = labels.get(
                     receipt.status,
@@ -3138,6 +3154,13 @@ class ConsoleWorkspaceController:
         rows: Iterable[ConsoleConversationBrowserInputRow],
         current_conversation_id: str | None = None,
     ) -> tuple[ConsoleConversationBrowserInputRow, ...]:
+        from .execution_state import selected_workspace_surface
+
+        surface = selected_workspace_surface(self._screen)
+        facts = (
+            {item.session_id: item for item in surface.sessions}
+            if surface is not None else {}
+        )
         row_tuple = tuple(rows)
         unseen_ids = self._console_fleet_unseen_ids()
         unseen_marker = resolve_glyph(
@@ -3148,16 +3171,27 @@ class ConsoleWorkspaceController:
         }
         live_conversation_ids: set[str] = set()
         store = self._console_chat_store
-        controller = self._console_chat_controller
-        if store is not None and controller is not None:
+        if surface is None:
+            controller = self._console_chat_controller
+            controller_present = controller is not None
+        else:
+            controller_present = surface.controller_present
+        if store is not None and controller_present:
             for session in store.sessions():
                 conversation_id = str(session.persisted_conversation_id or "").strip()
                 if not conversation_id:
                     continue
                 live_conversation_ids.add(conversation_id)
-                marker = self._console_run_marker_with_unseen(
-                    controller, session, unseen_ids
-                )
+                if surface is None:
+                    marker = self._console_run_marker_with_unseen(
+                        controller, session, unseen_ids
+                    )
+                else:
+                    marker = facts[session.id].run_marker
+                    if marker is ConsoleRunMarker.NONE and (
+                        (session.persisted_conversation_id or session.id) in unseen_ids
+                    ):
+                        marker = ConsoleRunMarker.SUBAGENT_UNSEEN
                 run_markers[conversation_id] = resolve_glyph(
                     CONSOLE_RUN_MARKER_GLYPHS.get(marker, "")
                 )
@@ -4686,8 +4720,29 @@ class ConsoleWorkspaceController:
             self._flat_conversation_search.settled_rows = ordinary_rows
             self._flat_conversation_search.settled_total = total
             self._flat_conversation_search.settled_query = ""
-        bridge = self._ensure_console_agent_bridge()
-        subagent_counts = self._console_subagent_counts_for_rows(bridge, rows)
+        from .execution_state import selected_client, selected_workspace_surface
+
+        surface = selected_workspace_surface(self._screen)
+        if surface is None:
+            bridge = self._ensure_console_agent_bridge()
+            subagent_counts = self._console_subagent_counts_for_rows(bridge, rows)
+            progress_counts = (
+                bridge.progress_counts()
+                if callable(getattr(bridge, "progress_counts", None)) else {}
+            )
+        else:
+            client = selected_client(self._screen)
+            if client is None:
+                raise RuntimeError("Console workspace count owner changed")
+            # The original badge reader also publishes after its off-loop read.
+            # These IDs are read interest only; the backend owns the DB read.
+            ids = tuple(sorted({row.conversation_id for row in rows if row.conversation_id}))
+            client._workspace_count_ids = ids
+            subagent_counts = (
+                {item.owner_id: item.count for item in surface.subagent_counts}
+                if ids == surface.subagent_count_ids else {}
+            )
+            progress_counts = {item.owner_id: item.count for item in surface.progress_counts}
         browser = build_console_conversation_browser_state(
             rows=rows,
             active_workspace_id=(
@@ -4702,11 +4757,7 @@ class ConsoleWorkspaceController:
             result_total_count=total,
             result_limit=CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
             subagent_counts=subagent_counts,
-            progress_counts=(
-                bridge.progress_counts()
-                if callable(getattr(bridge, "progress_counts", None))
-                else {}
-            ),
+            progress_counts=progress_counts,
             # The visible-row cap grows with the measured rail body height so
             # the Chats section expands to fill its even share of the rail
             # alongside the Workspaces tree; the historical 12-row default

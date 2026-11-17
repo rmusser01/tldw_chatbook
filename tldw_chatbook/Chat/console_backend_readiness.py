@@ -56,6 +56,105 @@ class ConsoleBackendReadiness:
         self.prompt_history_payload = None
         self.history_key = None
         self.send_selection = None
+        self.workspace_counts = {}
+        self.workspace_count_ids = ()
+        self._workspace_counts_key = None
+        self._workspace_counts_at = 0.0
+
+    async def warm_workspace_counts(self, identity) -> None:
+        """Retain the original batched badge read for materialized browser IDs."""
+        from ..DB.base_db import operation_owned_connection
+        from ..Backup_Recovery.participants import core_operation
+        from ..UI.Console_Modules.agent import ConsoleAgentController
+        from ..UI.Screens.chat_screen import CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS
+        from .console_execution_protocol import encode_message
+        from .console_execution_retirement import _ReadResources
+
+        backend = self.backend
+        backend._require_owner_loop()
+        source = require_control_source(backend.runtime)
+        session = backend.store._sessions.get(identity.session_id)
+        if session is None or source.identity is not identity:
+            raise RuntimeError("Console workspace count command changed")
+        settings = session.settings
+        message = backend.adapter._receipts[identity.request_id][0]
+        if message.operation != "ReadProjection":
+            raise RuntimeError("Console workspace count request changed")
+        ids = tuple(sorted(encode_message(message)["payload"].get("workspace_count_ids", ())))
+        row_ids = frozenset(ids)
+        bridge, database = backend.runtime._agent_bridge, backend.runtime._agent_runs_db
+        local, path = database._thread_local, database.db_path
+
+        def current():
+            self._current(session, settings, identity.source_revision, source)
+            if (database._thread_local is not local or database.db_path != path
+                or _workspace_marker_read._factory_sources_current is not _WORKSPACE_FACTORY[0]
+                or not _definition_current(_WORKSPACE_FACTORY)
+                or not _WORKSPACE_FACTORY[0](database)
+                or not _workspace_definitions_current(_WORKSPACE_CONNECTIONS)):
+                raise RuntimeError("Console workspace count database changed")
+            for name, descriptor, record in _WORKSPACE_COUNT_READERS:
+                if (getattr_static(ConsoleAgentController, name) is not descriptor
+                    or not _definition_current(record)):
+                    raise RuntimeError("Console workspace count reader changed")
+            if backend.runtime._agent_bridge is not bridge or bridge._db is not database:
+                raise RuntimeError("Console workspace count owner changed")
+            query, definition, query_key, stock = ConsoleAgentController._subagent_count_query(bridge, database)
+            if not stock:
+                raise RuntimeError("Console workspace count source changed")
+            token = ConsoleAgentController._subagent_count_live_token(bridge, row_ids, stock_query=True)
+            return (bridge, database, identity.source_revision, row_ids, query_key, token), query, definition
+
+        key, query, _query_definition = current()
+        if self._workspace_counts_key != key:
+            self._workspace_counts_key, self._workspace_counts_at = key, 0.0
+            self.workspace_count_ids, self.workspace_counts = (), {}
+        if not ids:
+            return  # Original empty-row branch never opens the database.
+        if self._workspace_counts_at and time.monotonic() - self._workspace_counts_at < CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS:
+            return
+        task = asyncio.current_task()
+        observations = []
+        effect = backend.controls._begin_effect("workspace_subagent_counts", self, source)
+
+        def require_current():
+            if current()[0] != key:
+                raise RuntimeError("Console workspace count selection changed")
+
+        def read():
+            handoff = preparation_read_for(self)
+            if handoff is None or handoff.creator is not self or handoff.task is not task:
+                raise RuntimeError("Console workspace count handoff changed")
+            observation = _ReadResources(None, handoff)
+            observations.append(observation)
+            with observation.observe():
+                require_current()
+                try:
+                    with operation_owned_connection(database), core_operation(database):
+                        return query(list(ids))
+                except Exception:
+                    return None  # Original optional count read remains retryable.
+
+        try:
+            values = await run_preparation_read(
+                read, creator=self, session_id=session.id, reads=self.reads,
+                observers=(backend.runtime._preparation_reads,),
+                require_current=require_current,
+                submission_slot=backend.runtime._display_submission_slot,
+            )
+            require_current()
+            if not observations or not all(item.confirmed() for item in observations):
+                raise RuntimeError("Console workspace count retirement is unproven")
+            if values is not None:
+                self.workspace_counts = values
+                self.workspace_count_ids = ids
+                self._workspace_counts_at = time.monotonic()
+        finally:
+            # Retain the selected bound function through native retirement.
+            _query_definition = None
+            backend.controls._finish_effect(
+                effect, retired=all(item.confirmed() for item in observations),
+            )
 
     def _current(self, session, settings, revision, source) -> None:
         backend = self.backend
@@ -627,3 +726,16 @@ _HISTORY_INIT = _definition(PromptHistory.__init__)
 _HISTORY_RETIREMENT_DESCRIPTOR = getattr_static(FileJob, "native_retired")
 _HISTORY_RETIREMENT_BODY = _definition(_HISTORY_RETIREMENT_DESCRIPTOR.fget)
 _CONTEXT_GUARD = _definition(_require_context_readers)
+
+from tldw_chatbook.UI.Console_Modules.agent import ConsoleAgentController
+from ..DB import base_db as _workspace_database
+from ..Utils.definition_records import definitions_current as _workspace_definitions_current
+from . import console_change_review_read as _workspace_marker_read
+
+_WORKSPACE_CONNECTIONS = _workspace_database._KEY_PROCESS_DEFINITIONS
+_WORKSPACE_FACTORY = _definition(_workspace_marker_read._factory_sources_current)
+_WORKSPACE_COUNT_READERS = tuple(
+    (name, descriptor, _definition(descriptor.__func__))
+    for name in ("_subagent_count_query", "_subagent_count_live_token")
+    for descriptor in (getattr_static(ConsoleAgentController, name),)
+)

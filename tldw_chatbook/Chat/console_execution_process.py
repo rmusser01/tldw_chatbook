@@ -239,6 +239,7 @@ class ConsoleExecutionClient:
         self.context_summary = None
         self.agent_rail = None
         self.workspace_surface = None
+        self._workspace_count_ids = ()
         self.session_surface = None
         from .console_execution_prompt_history import ConsolePromptHistoryView
 
@@ -781,6 +782,7 @@ class ConsoleExecutionClient:
             else None
         )
         payload = {"known_display_revision": known}
+        payload["workspace_count_ids"] = list(self._workspace_count_ids)
         payload["known_marker_revision"] = previous.marker_revision if known is not None else None
         if _run_history is not None:
             payload["run_history"] = _run_history

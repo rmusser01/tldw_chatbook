@@ -8,6 +8,10 @@ from types import MethodType
 
 from ..DB import base_db
 from ..DB.AgentRuns_DB import AgentRunsDB
+from ..Utils.definition_records import definitions_current
+from . import console_change_review_read as marker_reads
+from . import console_preparation_reads as preparation_reads
+from .console_agent_bridge import ConsoleAgentBridge
 from .console_domain_services import _definition, _definition_current
 from .console_execution_protocol import (
     ConsoleProtocolError,
@@ -75,18 +79,12 @@ class ConsoleBackendRunHistoryRead:
         self.presentation, self.identity = presentation, identity
         self.controls = presentation.backend.controls
         self.source = require_control_source(presentation._runtime)
-        self.request = _detach(
-            _detach(request, "run_history", 0, set(), thaw=False),
-            "run_history",
-            0,
-            set(),
-            thaw=True,
-        )
-        _REQUEST(
-            _detach(self.request, "run_history", 0, set(), thaw=False), "run_history"
-        )
+        self.request = _detach(request, "run_history", 0, set(), thaw=False)
+        _REQUEST(self.request, "run_history")
         self.bridge = presentation._runtime._agent_bridge
         self.database = self.bridge._db if self.bridge is not None else None
+        self.local = getattr(self.database, "_thread_local", None)
+        self.path = getattr(self.database, "db_path", None)
         self.task = asyncio.current_task()
         self.reads = set()
         self.observation = None
@@ -105,16 +103,23 @@ class ConsoleBackendRunHistoryRead:
             or session.incarnation_id != self.identity.incarnation_id
             or session.persisted_conversation_id != self.request["conversation_id"]
             or backend.runtime._agent_bridge is not self.bridge
+            or type(self.bridge) is not ConsoleAgentBridge
             or self.bridge._db is not self.database
             or type(self.database) is not AgentRunsDB
+            or self.database._thread_local is not self.local
+            or self.database.db_path != self.path
             or self.database.is_memory_db
+            or marker_reads._factory_sources_current is not _FACTORY[0]
+            or not _definition_current(_FACTORY)
+            or not _FACTORY[0](self.database)
             or any(
                 getattr(type(self), name) is not record[0]
                 or not _definition_current(record)
                 for name, record in _METHODS
             )
-            or base_db.operation_owned_connection is not _CONNECTION[0]
-            or not _definition_current(_CONNECTION)
+            or not definitions_current(_CONNECTIONS)
+            or preparation_reads.run_preparation_read is not _PREPARATION[0]
+            or not _definition_current(_PREPARATION)
         ):
             raise RuntimeError("Console run history source changed")
         for name, record in _DATABASE:
@@ -145,9 +150,8 @@ class ConsoleBackendRunHistoryRead:
         return tuple(values)
 
     async def run(self):
-        from .console_preparation_reads import run_preparation_read
-
-        return await run_preparation_read(
+        self.require_current()
+        result = await _PREPARATION[0](
             self.read,
             creator=self,
             session_id=self.identity.session_id,
@@ -156,6 +160,9 @@ class ConsoleBackendRunHistoryRead:
             require_current=self.require_current,
             source=self.source,
         )
+        if self.observation is None:
+            raise RuntimeError("Console original history read was not enrolled")
+        return result
 
     def register(self, read, source):
         from .console_execution_retirement import _ReadResources
@@ -190,4 +197,6 @@ _DATABASE = tuple(
     (name, _definition(getattr(AgentRunsDB, name)))
     for name in ("list_runs", "_rows_to_dicts", "_batch_hydrate_steps")
 )
-_CONNECTION = _definition(base_db.operation_owned_connection)
+_CONNECTIONS = base_db._KEY_PROCESS_DEFINITIONS
+_FACTORY = _definition(marker_reads._factory_sources_current)
+_PREPARATION = _definition(preparation_reads.run_preparation_read)

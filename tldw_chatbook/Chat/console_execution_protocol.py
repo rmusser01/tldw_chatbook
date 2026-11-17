@@ -660,6 +660,8 @@ def _projection_request(value, path):
     fields = {"known_display_revision": _MAYBE_REVISION}
     if "known_marker_revision" in value:
         fields["known_marker_revision"] = _MAYBE_REVISION
+    if "workspace_count_ids" in value:
+        fields["workspace_count_ids"] = _array(_NONEMPTY, unique=True)
     if "run_history" in value:
         fields["run_history"] = _record(
             conversation_id=_NONEMPTY, include_superseded=_boolean,

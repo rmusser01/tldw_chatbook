@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 from dataclasses import dataclass
-from types import FunctionType
+from types import FunctionType, MethodType
 
 from .console_execution_projection_values import ConsoleSessionView
 from .console_execution_projection_view import (
@@ -97,6 +97,7 @@ class ConsoleRunHistoryReader:
 
     def __init__(self, client):
         self._client = client
+        self._read_history = _definition(type(client).read_run_history)
 
     @property
     def _db(self):
@@ -108,7 +109,14 @@ class ConsoleRunHistoryReader:
     ):
         client = self._client
         client.store_reader._current()
-        if client.controller_reader._agent_bridge is not self:
+        reader = client.read_run_history
+        if (
+            client.controller_reader._agent_bridge is not self
+            or type(reader) is not MethodType
+            or reader.__self__ is not client
+            or reader.__func__ is not self._read_history[0]
+            or not _definition_current(self._read_history)
+        ):
             raise ConsoleProjectionUnavailable("Console history reader changed")
         try:
             asyncio.get_running_loop()
@@ -123,7 +131,7 @@ class ConsoleRunHistoryReader:
             "agent_kind": agent_kind,
         }
         return asyncio.run_coroutine_threadsafe(
-            client.read_run_history(request), client._loop
+            reader(request), client._loop
         ).result()
 
 
@@ -140,6 +148,12 @@ class ConsoleControllerReader:
         if self._client.controller_reader is not self:
             raise ConsoleProjectionUnavailable("Console controller reader changed")
         return self._client.store_reader
+
+    @property
+    def run_state(self):
+        """Read the original active-session run state from this publication."""
+        view = self.store._current()
+        return view._projection_for_session(view.active_session_id).run_state
 
     @property
     def _parked_approval_payloads(self):

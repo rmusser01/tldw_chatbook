@@ -104,12 +104,13 @@ class ConsoleBackendPresentation:
     async def prepare_readiness(self, identity) -> None:
         """Join the fixed readiness read while its original command owns intake."""
         self.require_association(self.association)
+        await self.readiness.warm_workspace_counts(identity)
         await self.readiness.warm(identity)
 
     async def prepare_run_history(self, identity):
         """Read original run metadata only for this explicit projection request."""
         from .console_execution_protocol import encode_message
-        from .console_backend_run_history import ConsoleBackendRunHistoryRead
+        from .console_domain_services import _definition_current
 
         self.require_association(self.association)
         message = self.backend.adapter._receipts[identity.request_id][0]
@@ -118,7 +119,16 @@ class ConsoleBackendPresentation:
         request = encode_message(message)["payload"].get("run_history")
         if request is None:
             return None
-        return await ConsoleBackendRunHistoryRead(self, identity, request).run()
+        if (
+            _history_module.ConsoleBackendRunHistoryRead is not _HistoryRead
+            or any(
+                getattr(_HistoryRead, name) is not record[0]
+                or not _definition_current(record)
+                for name, record in _HISTORY_METHODS
+            )
+        ):
+            raise RuntimeError("Console original history producer changed")
+        return await _HistoryRead(self, identity, request).run()
 
     def _require_marker_projection(self, identity, projection) -> None:
         from types import MethodType
@@ -257,12 +267,32 @@ class ConsoleBackendPresentation:
             if store.active_session_id is not None else None
         )
         from .console_execution_workspace_values import (
+            ConsoleWorkspaceCount, ConsoleWorkspaceReceipt,
             ConsoleWorkspaceSessionFacts, ConsoleWorkspaceSurface, encode_workspace_surface,
         )
         from .console_chat_store import ConsoleChatSession
         from .console_domain_services import _definition_current
         from types import MethodType
 
+        bridge = self._runtime._agent_bridge
+        if (getattr_static(type(self._runtime), "activity_receipts") is not _WORKSPACE_RECEIPTS_PROPERTY
+            or not _definition_current(_WORKSPACE_RECEIPTS_GETTER)):
+            raise RuntimeError("Console workspace receipts getter changed")
+        receipts = self._runtime.activity_receipts
+        if receipts is not None and type(receipts) is not ConsoleActivityReceiptService:
+            raise RuntimeError("Console workspace receipts owner changed")
+        for receiver, name, record in (
+            (bridge, "progress_counts", _WORKSPACE_PROGRESS),
+            (receipts, "unseen_snapshot", _WORKSPACE_RECEIPTS),
+        ):
+            if receiver is None:
+                continue
+            method = getattr(receiver, name, None)
+            if (type(method) is not MethodType or method.__self__ is not receiver
+                or method.__func__ is not record[0] or not _definition_current(record)):
+                raise RuntimeError("Console workspace display source changed")
+        progress_counts = bridge.progress_counts() if bridge is not None else {}
+        unseen_receipts = receipts.unseen_snapshot() if receipts is not None else ()
         workspace_facts = []
         for row in sessions:
             original = store._sessions[row.id]
@@ -282,6 +312,7 @@ class ConsoleBackendPresentation:
                 handoff_label=launch.label if launch is not None else None,
                 queued_count=self._controller.activity_for(row.id).queued_count,
                 run_marker=self._controller.run_marker_for(row.id),
+                attention=tuple(self._controller.conversation_attention_for(row.id)),
             ))
         from .console_execution_project_values import encode_project_head
 
@@ -320,6 +351,14 @@ class ConsoleBackendPresentation:
             "workspace": encode_workspace_surface(ConsoleWorkspaceSurface(
                 active_workspace_id=store.workspace_context.active_workspace_id,
                 controller_present=True, sessions=tuple(workspace_facts),
+                progress_counts=tuple(ConsoleWorkspaceCount(key, value)
+                                      for key, value in progress_counts.items()),
+                subagent_counts=tuple(ConsoleWorkspaceCount(key, value)
+                                      for key, value in self.readiness.workspace_counts.items()),
+                subagent_count_ids=self.readiness.workspace_count_ids,
+                unseen_receipts=tuple(ConsoleWorkspaceReceipt(
+                    item.conversation_id, item.session_id, item.status,
+                ) for item in unseen_receipts),
             )),
             "session_surface": {
                 "streaming_session_id": self._controller.streaming_session_id(),
@@ -640,6 +679,7 @@ _COMPOSITION_CONTROLLER_METHODS = tuple(
         "has_pending_approval_round", "pending_round_count", "pending_round_kinds",
         "trace_call_recovery_preparation", "context_compaction_hold", "preparation_outcome",
         "activity_for", "run_marker_for", "streaming_session_id", "run_state_for",
+        "conversation_attention_for",
     )
 )
 _COMPOSITION_START_METHODS = (("is_prepared", _definition(_CompositionStart.is_prepared)),)
@@ -694,3 +734,15 @@ _COMPOSITION_RUNTIME_METHODS = tuple(
     (name, _definition(getattr(_CompositionRuntime, name)))
     for name in ("snapshot_console_staged_evidence", "_staged_evidence_state")
 )
+
+from .console_activity_receipts import ConsoleActivityReceiptService
+
+_WORKSPACE_PROGRESS = _definition(_CompositionBridge.progress_counts)
+_WORKSPACE_RECEIPTS = _definition(ConsoleActivityReceiptService.unseen_snapshot)
+_WORKSPACE_RECEIPTS_PROPERTY = getattr_static(_CompositionRuntime, "activity_receipts")
+_WORKSPACE_RECEIPTS_GETTER = _definition(_WORKSPACE_RECEIPTS_PROPERTY.fget)
+
+from . import console_backend_run_history as _history_module
+
+_HistoryRead = _history_module.ConsoleBackendRunHistoryRead
+_HISTORY_METHODS = _history_module._METHODS
