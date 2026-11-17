@@ -689,7 +689,10 @@ FeedbackRequested = ConsoleSelectionFeedbackRequested
 SelectionRequest = ConsoleSelectionNoteRequested | ConsoleTraceCopyRequested
 
 if TYPE_CHECKING:
-    from tldw_chatbook.Chat.console_execution_projection_view import ConsoleProjectionView
+    from tldw_chatbook.Chat.console_execution_readers import (
+        ConsoleControllerReader,
+        ConsoleStoreReader,
+    )
     from tldw_chatbook.app import TldwCli
     from tldw_chatbook.Chat.console_environment_state import EnvironmentSnapshot
     from tldw_chatbook.UI.Console_Modules.environment import (
@@ -9270,8 +9273,8 @@ class ChatScreen(BaseAppScreen):
         self._console_runtime().set_console_staged_evidence_notice(value)
 
     @property
-    def _console_chat_store(self) -> "ConsoleChatStore | ConsoleProjectionView | None":
-        """The original local store or the selected client's read-only view."""
+    def _console_chat_store(self) -> "ConsoleChatStore | ConsoleStoreReader | None":
+        """The local store or a stable reader of current backend publications."""
         if getattr(getattr(self, "app_instance", None), "console_execution_client", None) is not None:
             from ..Console_Modules.execution_state import selected_client
 
@@ -9292,8 +9295,8 @@ class ChatScreen(BaseAppScreen):
         self._console_runtime().set_provider_gateway(value)
 
     @property
-    def _console_chat_controller(self) -> "ConsoleChatController | None":
-        """The runtime's Console chat controller, or `None`."""
+    def _console_chat_controller(self) -> "ConsoleChatController | ConsoleControllerReader | None":
+        """The local controller or the selected client's read-only observer."""
         if getattr(getattr(self, "app_instance", None), "console_execution_client", None) is not None:
             from ..Console_Modules.execution_state import selected_client
 
@@ -9311,8 +9314,10 @@ class ChatScreen(BaseAppScreen):
             or self._resume_navigation_startup_in_progress
         )
 
-    def _ensure_console_chat_store(self) -> ConsoleChatStore:
-        """Return the native Console chat store, creating it lazily.
+    def _ensure_console_chat_store(self) -> "ConsoleChatStore | ConsoleStoreReader":
+        """Return the local store or the stable selected publication reader.
+
+        The selected route never constructs a parent-side store.
 
         task-15860: CONSTRUCTED and OWNED by the app-owned `ConsoleRuntime`
         (`Chat/console_runtime.py`). Name, laziness, return type and
@@ -13348,15 +13353,18 @@ class ChatScreen(BaseAppScreen):
     def _build_console_inspector_state(
         self,
         pending_launch: Optional[ConsoleLiveWorkLaunch],
+        *,
+        workspace_context_state: ConsoleWorkspaceContextState | None = None,
     ) -> ConsoleInspectorState:
         # Share derivation only within this synchronous build. In particular,
         # FULL's post-await inspector still starts from fresh config/session data.
         with self._console_derivation_scope():
-            return self._derive_console_inspector_state(pending_launch)
+            return self._derive_console_inspector_state(pending_launch, workspace_context_state)
 
     def _derive_console_inspector_state(
         self,
         pending_launch: Optional[ConsoleLiveWorkLaunch],
+        workspace_context_state: ConsoleWorkspaceContextState | None = None,
     ) -> ConsoleInspectorState:
         _provider_display, model, _settings = (
             self._active_console_provider_model_display()
@@ -13483,7 +13491,7 @@ class ChatScreen(BaseAppScreen):
                 rows=setup_rows + inspector_state.rows,
             )
         selected_rows = self._selected_console_message_inspector_rows()
-        conversation_rows = self._selected_console_conversation_inspector_rows()
+        conversation_rows = self._selected_console_conversation_inspector_rows(workspace_context_state)
         if conversation_rows:
             inspector_state = replace(
                 inspector_state,
@@ -13753,6 +13761,7 @@ class ChatScreen(BaseAppScreen):
 
     def _selected_console_conversation_inspector_rows(
         self,
+        workspace_context_state: ConsoleWorkspaceContextState | None = None,
     ) -> tuple[ConsoleDisplayRow, ...]:
         """Return inspector rows for the active Console conversation/session."""
         store = self._console_chat_store
@@ -13776,8 +13785,9 @@ class ChatScreen(BaseAppScreen):
                 ConsoleDisplayRow("Conversation source", "none"),
             )
 
-        workspace_state = self._workspace._build_console_workspace_context_state()
-        workspace_value = workspace_state.workspace_label
+        if workspace_context_state is None:
+            workspace_context_state = self._workspace._build_console_workspace_context_state()
+        workspace_value = workspace_context_state.workspace_label
         if isinstance(workspace_value, str) and workspace_value.startswith(
             "Workspace: "
         ):
@@ -15119,9 +15129,11 @@ class ChatScreen(BaseAppScreen):
     def _compose_console_content(self, pending_launch, control_state) -> ComposeResult:
         """Yield the unchanged content after its once-only original prefix."""
         staged_context_state = self._build_console_staged_context_state(pending_launch)
-        inspector_state = self._build_console_inspector_state(pending_launch)
         workspace_context_state = (
             self._workspace._build_console_workspace_context_state()
+        )
+        inspector_state = self._build_console_inspector_state(
+            pending_launch, workspace_context_state=workspace_context_state
         )
         # task-10: built once, shared verbatim by the header's "Scope" chip
         # and the Inspector's retrieval-scope row below -- one zero-DB

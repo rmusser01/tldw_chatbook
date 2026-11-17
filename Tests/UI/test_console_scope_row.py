@@ -438,11 +438,18 @@ async def test_conversation_inspector_projects_raw_title_and_workspace_to_one_li
         session = console._session._active_native_console_session()
         session.title = raw_title
         session.workspace_id = raw_workspace
-        console._workspace._build_console_workspace_context_state = lambda: (
-            SimpleNamespace(workspace_label=f"Workspace: {raw_workspace}")
-        )
+        workspace_state = SimpleNamespace(workspace_label=f"Workspace: {raw_workspace}")
+        reads = []
+
+        def read_workspace():
+            reads.append(1)
+            return workspace_state
+
+        console._workspace._build_console_workspace_context_state = read_workspace
 
         rows = console._selected_console_conversation_inspector_rows()
+        assert console._selected_console_conversation_inspector_rows(workspace_state) == rows
+        assert len(reads) == 1
         values = {row.label: row.value for row in rows}
 
         assert values["Selected conversation"] == ("Ops ?[bold]Alpha[/bold][/broken]")

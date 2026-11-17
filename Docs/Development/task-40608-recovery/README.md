@@ -4,6 +4,8 @@ This directory preserves source patches and continuation state for the owner's c
 
 ## Windows checkpoint on November 17
 
+Commit `48b730c594` connects workspace creation and New Chat, Send, project disclosure, approvals, and the saved-run reader to the selected backend. The preceding Windows 10 run exposed a second local runtime lookup during conversation marker rendering. Its failed-close test passed with the connection still held and retirement refused. The selected process route and both original journey timings are under verification. Production still selects the local route.
+
 The raw-command constructor fix let the selected Chat screen open. The next native run passed both raw-draft checks and identified a missing prompt-history owner during its first checked display read. Commit `c9b381ba6e` wires the backend domain and controller to the same history object. Its local rerun reached a pending ReadProjection at the 10-second mount limit and subsequently reported expired readiness. The next change uses the same-host monotonic capture timestamp and charges elapsed transport and decoding against the original one-second freshness limit. The process selector is still disabled in production.
 
 The selected Send and Settings access paths now have implementation and focused tests in the branch. Native compatibility and both original journey timings remain open.
