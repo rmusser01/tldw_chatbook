@@ -149,13 +149,13 @@ def test_closing_worker_does_not_hold_other_writers_behind_a_live_reader(tmp_pat
         db.close_connection()
 
 
-def test_cleanup_deadline_preserves_borrowed_timeout_and_transaction(tmp_path):
+def test_cleanup_preserves_borrowed_timeout_and_transaction(tmp_path):
     db = CharactersRAGDB(tmp_path / "borrowed-deadline.sqlite", "borrowed-deadline")
     try:
         connection = db.get_connection()
         connection.execute("PRAGMA busy_timeout = 3141")
         connection.execute("BEGIN")
-        with operation_owned_connection(db, operation_deadline=0):
+        with operation_owned_connection(db):
             assert connection.execute("SELECT 1").fetchone()[0] == 1
         assert connection.in_transaction
         assert connection.execute("PRAGMA busy_timeout").fetchone()[0] == 3141
@@ -164,7 +164,7 @@ def test_cleanup_deadline_preserves_borrowed_timeout_and_transaction(tmp_path):
 
 
 @pytest.mark.parametrize("body_fails", [False, True])
-def test_cleanup_deadline_tolerates_already_retired_native_handle(tmp_path, body_fails):
+def test_cleanup_tolerates_already_retired_native_handle(tmp_path, body_fails):
     db = CharactersRAGDB(tmp_path / "retired-deadline.sqlite", "retired-deadline")
     db.close_connection()
     error = (
@@ -173,7 +173,7 @@ def test_cleanup_deadline_tolerates_already_retired_native_handle(tmp_path, body
         else nullcontext()
     )
     try:
-        with error, operation_owned_connection(db, operation_deadline=0):
+        with error, operation_owned_connection(db):
             connection = db.get_connection()
             with db.quiesce_connections(timeout_seconds=2):
                 pass

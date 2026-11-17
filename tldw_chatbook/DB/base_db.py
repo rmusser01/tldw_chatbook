@@ -42,9 +42,7 @@ _OPERATION_OWNERS = threading.local()
 
 
 @contextmanager
-def operation_owned_connection(
-    database: object, *, operation_deadline: float | None = None
-) -> Iterator[None]:
+def operation_owned_connection(database: object) -> Iterator[None]:
     """Close only the thread-local handle opened by this synchronous operation.
 
     Inspect without acquiring a handle. A pre-existing registered connection,
@@ -61,18 +59,14 @@ def operation_owned_connection(
         return
     owners.add(id(database))
     try:
-        with _operation_owned_connection(
-            database, operation_deadline=operation_deadline
-        ):
+        with _operation_owned_connection(database):
             yield
     finally:
         owners.discard(id(database))
 
 
 @contextmanager
-def _operation_owned_connection(
-    database: object, *, operation_deadline: float | None = None
-) -> Iterator[None]:
+def _operation_owned_connection(database: object) -> Iterator[None]:
     local = getattr(database, "_local", None)
     registry = getattr(database, "_connection_quiescence", None)
     close = getattr(database, "close_connection", None)
