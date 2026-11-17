@@ -7,6 +7,7 @@ import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from operator import attrgetter
 from typing import Any
 
 import pytest
@@ -152,16 +153,16 @@ def _capture_finished_case(
 
 
 def _preferences(screen, destination: str):
-    return getattr(screen, DESTINATION_CONTRACT[destination][3])
+    return attrgetter(DESTINATION_CONTRACT[destination][3])(screen)
 
 
 def _layout(screen, destination: str):
-    return getattr(screen, DESTINATION_CONTRACT[destination][4])
+    return attrgetter(DESTINATION_CONTRACT[destination][4])(screen)
 
 
 def _identity_truth(screen, destination: str) -> dict[str, Any]:
     if destination == "media":
-        state = screen._library_media_reader_session
+        state = screen._media_state.reader_session
         return {
             "selected": state.selected_id,
             "pending": getattr(state.pending_request, "requested_id", None),
@@ -220,6 +221,8 @@ def _identity_truth(screen, destination: str) -> dict[str, Any]:
 
 
 async def _work_focus_target(screen, pilot, destination: str):
+    if destination == "media" and not screen._media_state.find_open:
+        screen.action_library_media_reader_find()
     candidates = {
         "media": (("#library-media-content-search", Input),),
         "conversations": (("#library-conversation-reader-find", Input),),
@@ -337,7 +340,7 @@ async def _exercise_modes(screen, pilot, destination: str) -> tuple[str, ...]:
     controls: list[str] = []
     if destination == "media":
         modes = ("analysis", "highlights", "info", "read")
-        current = screen._library_media_reader_session.mode
+        current = screen._media_state.reader_session.mode
         for mode in (*[mode for mode in modes if mode != current], current):
             selector = f"#library-media-reader-select-{mode}"
             control = await visible_button(selector)
@@ -829,10 +832,12 @@ async def run_media_capability() -> dict[str, Any]:
             await _wait_for_library_shell(screen, pilot)
             shell = await _open_destination(screen, pilot, "media")
             work_id = id(shell.work)
-            selected = screen._library_media_reader_session.selected_id
-            loaded = screen._library_media_reader_session.loaded_id
+            selected = screen._media_state.reader_session.selected_id
+            loaded = screen._media_state.reader_session.loaded_id
             assert selected == loaded and selected is not None
 
+            screen.action_library_media_reader_find()
+            await _wait_for_selector(screen, pilot, "#library-media-content-search")
             search = screen.query_one("#library-media-content-search", Input)
             search.value = "Transcript"
             search.focus()
@@ -844,7 +849,7 @@ async def run_media_capability() -> dict[str, Any]:
                     in str(
                         screen.query_one(
                             "#library-media-content-search-status", Static
-                        ).renderable
+                        ).render()
                     )
                 ),
                 message="Media Find did not settle an exact transcript match",
@@ -852,7 +857,7 @@ async def run_media_capability() -> dict[str, Any]:
             find_status = str(
                 screen.query_one(
                     "#library-media-content-search-status", Static
-                ).renderable
+                ).render()
             )
             screen.query_one("#library-media-reader-select-analysis", Button).press()
             await _wait_for_selector(
@@ -860,8 +865,8 @@ async def run_media_capability() -> dict[str, Any]:
             )
             screen.query_one("#library-media-reader-select-read", Button).press()
             await _wait_for_selector(screen, pilot, "#library-media-reader-mode-read")
-            assert screen._library_media_reader_session.selected_id == selected
-            assert screen._library_media_reader_session.loaded_id == loaded
+            assert screen._media_state.reader_session.selected_id == selected
+            assert screen._media_state.reader_session.loaded_id == loaded
 
             service = app.media_reading_scope_service
             item_count = len(service.media_items)
@@ -882,7 +887,7 @@ async def run_media_capability() -> dict[str, Any]:
                     in str(
                         screen.query_one(
                             "#library-media-selected-count", Static
-                        ).renderable
+                        ).render()
                     )
                 ),
                 message="Media bulk selection count did not settle",
@@ -891,8 +896,8 @@ async def run_media_capability() -> dict[str, Any]:
             preview = await _wait_for_selector(
                 screen, pilot, "#library-media-bulk-delete-confirm-copy"
             )
-            preview_copy = str(preview.renderable)
-            assert str(screen._library_media_reader_session.loaded_id) == str(selected)
+            preview_copy = str(preview.render())
+            assert str(screen._media_state.reader_session.loaded_id) == str(selected)
             screen.query_one("#library-media-bulk-delete-cancel", Button).press()
             await _wait_for_condition(
                 pilot,
@@ -901,17 +906,18 @@ async def run_media_capability() -> dict[str, Any]:
             )
             assert len(service.media_items) == item_count
             assert id(shell.work) == work_id
+            await _wait_for_selector(screen, pilot, "#library-media-select-toggle")
             screen.query_one("#library-media-select-toggle", Button).press()
 
             def capture_is_settled() -> bool:
-                session = screen._library_media_reader_session
+                session = screen._media_state.reader_session
                 matching_rows = [
                     row
                     for row in screen.query(".library-media-row")
                     if str(getattr(row, "media_id", "")) == str(selected)
                 ]
                 return bool(
-                    not screen._library_media_select_mode
+                    not screen._media_state.select_mode
                     and session.selected_id == session.loaded_id == selected
                     and session.pending_request is None
                     and len(matching_rows) == 1
@@ -930,7 +936,7 @@ async def run_media_capability() -> dict[str, Any]:
                 "catalogue_ids": ["ME-01", "ME-02"],
                 "find_status": find_status,
                 "selected_loaded_identity": str(selected),
-                "mode_after_round_trip": screen._library_media_reader_session.mode,
+                "mode_after_round_trip": screen._media_state.reader_session.mode,
                 "bulk_preview_copy": preview_copy,
                 "bulk_selected_count": 1,
                 "item_count_after_cancel": len(service.media_items),
