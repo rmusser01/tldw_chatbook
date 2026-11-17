@@ -25,6 +25,9 @@ def _ready_app():
     )
     assert config.save_settings_to_cli_config(
         {
+            # load_settings(force_reload=True) below drops the factory's
+            # override, so the splash must be off on disk too.
+            "splash_screen": {"enabled": False},
             "first_run": {"setup_completed": True},
             "chat_defaults": {"provider": "llama_cpp", "model": "local-model"},
             "api_settings.llama_cpp": {
