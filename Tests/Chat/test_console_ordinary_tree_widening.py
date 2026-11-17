@@ -484,17 +484,18 @@ async def test_fleet_child_script_after_its_parent_runs_only_while_the_turn_is_c
         ), script_result
 
 
-@pytest.mark.parametrize("child", ["cancellable", "outlives_grace"])
 async def test_closing_a_chat_while_its_fleet_child_runs_releases_the_claim(
-    ordinary_host, monkeypatch, child
+    ordinary_host, monkeypatch
 ):
     """TASK-41311: the tab's own close, not ``store.close_session``.
 
     The close enters where the tab's confirmed close does (``session.py``'s
     ``_complete_close``): the same impact, then ``ConsoleRuntime.close_session``.
-    ``outlives_grace`` blocks the child's thread, so the close finishes while
-    the child still runs. Either way, once the child returns its OPAQUE claim
-    is released and another chat can send.
+    A fleet child's cancel is observed only at its next call boundary, so a
+    child still inside its provider call when the close's grace ends returns
+    after the session is gone. Its tool call then runs nothing (the close's
+    cancel stops it; the turn's own gate refuses the closed chat too), and once
+    it returns its OPAQUE claim is released and another chat can send.
     """
     from Tests.Chat.test_console_agent_bridge import SUBAGENT_PROMPT_PREFIX
     from tldw_chatbook.UI.Console_Modules.loss_inventory import session_close_impact
@@ -504,18 +505,25 @@ async def test_closing_a_chat_while_its_fleet_child_runs_releases_the_claim(
     h = ordinary_host
     closing = _chat(h)
     entered, release = threading.Event(), threading.Event()
+    effects, child_payloads = [], []
+    h.bridge._skills_service = _ScriptSkills(lambda: effects.append("ran"))
+    h.controller.set_pending_skill_script = lambda *args, **kwargs: None
 
     class Gateway(_RecordingGateway):
         async def stream_chat(self, resolution, messages, **kwargs):
             self.payloads.append(messages)
             system = str(messages[0].get("content", "")) if messages else ""
             if system.startswith(SUBAGENT_PROMPT_PREFIX):
-                entered.set()
-                if child == "outlives_grace":
-                    assert release.wait(30)  # ignores cancellation
+                child_payloads.append(messages)
+                if len(child_payloads) == 1:
+                    entered.set()
+                    assert release.wait(30)  # a provider call the close cannot cut
+                    yield fence(
+                        "run_skill_script",
+                        {"skill": "demo", "script": "scripts/x.py", "args": []},
+                    )
                 else:
-                    assert await asyncio.to_thread(release.wait, 30)
-                yield "child done"
+                    yield "child done"
                 return
             if len(self.payloads) == 1:
                 yield fence(SPAWN_TOOL_NAME, {"task": "CHILD-TASK outlive the parent"})
@@ -541,9 +549,8 @@ async def test_closing_a_chat_while_its_fleet_child_runs_releases_the_claim(
         )
         assert all(item.id != closing.id for item in h.store.sessions())
         with pytest.raises(RuntimeError, match="ordinary turn source changed"):
-            tree.check()  # every tool effect's gate still refuses the closed chat
-        if child == "outlives_grace":
-            assert not tree.retired.done(), "the child returned before the close"
+            tree.check()  # every effect's own gate refuses the closed chat
+        assert not tree.retired.done(), "the child returned before the close"
         release.set()
         assert await _eventually(lambda: tree.retired.done()), (
             "the closed chat's claim outlived its child"
@@ -554,6 +561,14 @@ async def test_closing_a_chat_while_its_fleet_child_runs_releases_the_claim(
             # Fail here, not in teardown: disposal waits for every turn.
             tree.retired.set_result(None)
             h.runtime._ordinary_turns.discard(tree)
+    assert effects == [], "the closed chat's child ran a tool effect"
+    child_rows = [
+        row
+        for row in h.database.list_runs(closing.persisted_conversation_id)
+        if row["agent_kind"] == "subagent"
+    ]
+    # The close's cancel stopped the tool call at its next boundary.
+    assert [row["status"] for row in child_rows] == ["cancelled"]
     result = await h.controller.submit_draft("other chat", session_id=_chat(h).id)
     assert result.accepted, "the closed chat's claim outlived its child"
 

@@ -135,19 +135,21 @@ class _AgentSources:
 
     def _check_original_bindings(self):
         tree = getattr(self, "ordinary_tree", None)
-        retained = tree is not None and tree.has_admitted_members()
+        tree_retained = tree is not None and tree.has_admitted_members()
         prepared = getattr(self, "workflow_preparation", None)
-        retained = retained or (
+        retained = tree_retained or (
             prepared is not None
             and prepared.source is self
             and prepared in self.runtime._workflow_preparations
             and prepared._source_scope is not None
         )
-        # As after disposal, a retained tree may return and release after its
-        # session closed (TASK-41311); a replaced session never matches. Tool
-        # effects still pass ``OrdinaryTurn.check``, which refuses a closed one.
+        # An ordinary tree with admitted members passes this check after its
+        # session closed, so its members can return and release the claim
+        # (TASK-41311); a replaced session never matches. This check does not
+        # gate effects after the close: each effect's own check does
+        # (``OrdinaryTurn.check`` refuses a closed session).
         session = self.store._sessions.get(
-            self.session.id, self.session if retained else None
+            self.session.id, self.session if tree_retained else None
         )
         if (
             self.controller._hooks_v2_runtime is not self.runtime
