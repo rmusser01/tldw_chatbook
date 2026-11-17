@@ -22,7 +22,7 @@ pytestmark = pytest.mark.bootstrap_profile
 BUSY = "Workspace activity is busy; retry after it finishes."
 
 _SCRIPT = r"""
-import asyncio, json, os, sys, threading
+import asyncio, functools, json, os, sys, threading
 from pathlib import Path
 from Tests import network_guard, real_profile_guard
 from Tests.windows_private_fixture_runner import user_fixture_default_owner
@@ -73,6 +73,11 @@ async def exercise():
 
     entered, release = threading.Event(), threading.Event()
 
+    # Keep the dispatcher's signature: the trace verifier projects the final
+    # provider values through inspect.signature(chat_api_call). A bare
+    # ``**kwargs`` double made that fail, so every call's trace surface was an
+    # omission and any tool-loop follow-up was refused (TASK-41310).
+    @functools.wraps(Chat_Functions.chat_api_call)
     def reply(**kwargs):
         messages = kwargs.get("messages", kwargs.get("messages_payload", ())) or ()
         text = " ".join(
@@ -165,6 +170,10 @@ async def exercise():
             assert await _until(lambda: not runtime._ordinary_turns, 30)
             runs = controller._agent_bridge._db.list_runs(first.persisted_conversation_id)
             facts["first_runs"] = sorted([row["agent_kind"], row["status"]] for row in runs)
+            facts["trace_omissions"] = app.chachanotes_db.get_connection().execute(
+                "SELECT COUNT(*) FROM console_trace_surface_nodes "
+                "WHERE reference_kind = 'omission'"
+            ).fetchone()[0]
     finally:
         release.set()
         print("FACTS " + json.dumps(facts, sort_keys=True, default=str), flush=True)
@@ -200,6 +209,9 @@ def test_default_config_second_chat_reaches_provider_while_first_reply_runs(
     first = facts["captures"][0]
     assert facts["first_agent_eligible"] and first["agent_eligible"], why
     assert facts["first_runs"] == [["primary", "done"]], why
+    # The double keeps the dispatcher's signature, so the captured surface is
+    # the real one, not an omission placeholder (TASK-41310).
+    assert facts["trace_omissions"] == 0, why
     if surface in ("default", "writable"):
         # Nothing the light surface offers is undeclarable or writes the
         # project: both chats run, their provider calls open at once.
