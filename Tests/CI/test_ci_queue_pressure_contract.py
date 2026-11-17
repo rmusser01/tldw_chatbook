@@ -28,7 +28,7 @@ PR_TEST_RUNNER = (
 )
 #: Dev regression jobs retain push cadence until the nightly tier is enabled.
 DEV_PUSH = "(github.event_name == 'push' && github.ref == 'refs/heads/dev' && vars.CI_TIERED_ENABLED != 'true') || (github.event_name == 'workflow_dispatch' && inputs.nightly)"
-LANES = "needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.pr != '' || github.ref != 'refs/heads/dev')))"
+LANES = "needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))"
 PLUGIN_RECOVERY_UI_TARGETS = (
     "Tests/UI/test_plugins_browse.py::test_restored_plugins_recover_from_the_plugins_screen",
     "Tests/UI/test_plugins_browse.py::test_reset_after_restore_sets_plugins_aside_and_kept_data_reattaches",
