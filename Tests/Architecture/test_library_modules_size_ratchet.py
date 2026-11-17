@@ -560,7 +560,14 @@ _BUDGETS: dict[str, int] = {
     # byte-for-byte as a staticmethod with its separator and a section comment
     # (+30), its group-(e) callback out (-15), its two imports (+1), prose
     # (+12).
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 10997,
+    # 2026-11-17, TASK-36952.3.8 commit 2 (ruling R4, the typed host): 10997
+    # -> 11084 (+87): the `LibraryMediaHost` Protocol in place of the
+    # type-checking `LibraryScreen` import (+65); the three named
+    # dependencies that replace the direct screen reaches (+18) and the
+    # unfiltered total's body reduced to one call (-11); the three Notes
+    # getters read off `_notes_state` instead of their own accessors (-6);
+    # prose (+21).
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 11084,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only

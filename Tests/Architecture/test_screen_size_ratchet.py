@@ -890,7 +890,8 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # `_restore_library_media_scope`,
     # `_valid_library_media_trash_delete_ack`), its own 4-line function-local
     # import of the controller class, since a static delegator forwards to the
-    # CLASS and the class is deliberately NOT a module-level name here);
+    # CLASS and the class is deliberately NOT a module-level name here;
+    # TASK-36952.3.8 pruned the two Trash ones once nothing called them);
     # -12 for four module-level constants relocated verbatim (with their
     # comments) to `Library_Modules/screen_constants.py`, because moved bodies
     # read them as bare module globals (`_MEDIA_VIEW_LIST`,
@@ -1480,7 +1481,16 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: R3, 28 -> 9 lines, -19) and its callback kwarg left the controller
     #: call (-3): 32912 -> 32890 lines, 1324 methods (measured with
     #: ``_measure``).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32974, 1326),
+    #: Commit 2 of 2 (ruling R4, the typed host): 30 media delegators nothing
+    #: reached through the screen any more were pruned, the two dead Trash
+    #: statics among them (-157, -30 methods); the
+    #: ``_library_source_total`` shell helper the media controller's
+    #: unfiltered total now calls arrived (+22, +1 method); the three Notes
+    #: getter kwargs left and the stage-pick getter, ``_land_stage_pick`` and
+    #: ``_library_source_total`` kwargs arrived (0); a comment at the
+    #: ``resolve_ingest_analysis_provider`` import (+2): 32890 -> 32757 lines,
+    #: 1324 -> 1295 methods (measured with ``_measure``).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32841, 1297),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard
@@ -1629,7 +1639,11 @@ def test_budget_is_not_left_slack_after_a_wave(rel_path: str) -> None:
 #: whose bodies it now owns, and gained 5 shell-helper callbacks, 1 getter and
 #: 1 setter (`_review_dismiss_undo_in_flight`).
 #: TASK-36952.3.8 lowered it to 397: the media controller lost its last
-#: media-named callback, `_sanitize_media_field` (ruling R3).
+#: media-named callback, `_sanitize_media_field` (ruling R3). Its typed-host
+#: commit (ruling R4) holds it at 397: the three Notes getters collapsed onto
+#: the bound `_notes_state` (-3), and the direct screen reaches became the
+#: `_library_stage_pick_landing` getter and the `_land_stage_pick` and
+#: `_library_source_total` callbacks (+3).
 _LIBRARY_INIT_LAMBDAS = 397
 #: Measured at dev 26b2e677dd by `_unbound_class_calls` over Tests/**/*.py:
 #: 724 in 59 files. TASK-36952.2 lowered it to 722 (still 59 files): the two

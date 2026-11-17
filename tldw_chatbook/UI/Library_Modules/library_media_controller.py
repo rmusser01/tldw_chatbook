@@ -371,8 +371,8 @@ moved bodies for every ``self.<attr>`` load/store AND every
 state fields and the movers themselves -- **90 names** -- and then adding
 **2 more the walk cannot see**, for **92**, every one pinned in
 ``test_media_controller_binds_every_name_its_moved_bodies_use``. That pin
-holds **83** since TASK-36952.3.8 (measured: 18 framework services, the 24
-state accessors of groups (b)/(b')/(c) and 41 group-(a) helpers; group (e)
+holds **86** since TASK-36952.3.8 (measured: 18 framework services, the 25
+state accessors of groups (b)/(b')/(c) and 43 group-(a) helpers; group (e)
 is empty):
 
 1. **Framework services** (``app``, ``app_instance``, ``call_after_refresh``,
@@ -385,15 +385,17 @@ is empty):
    for the reason the skills series established: six movers reach it, and an
    unbound ``getattr(self, "focused", None)`` returns its default silently,
    forever.
-2. **Everything else** is a NAMED constructor dependency: (a) 41 general
+2. **Everything else** is a NAMED constructor dependency: (a) 43 general
    Library-wide shell helpers a moved body calls with explicit arguments (24
    at wave 7; TASK-36952.3.1 added five, TASK-36952.3.3 four,
-   TASK-36952.3.5 one, TASK-36952.3.6 two, TASK-36952.3.7 five) --
+   TASK-36952.3.5 one, TASK-36952.3.6 two, TASK-36952.3.7 five,
+   TASK-36952.3.8 two) --
    including the five review-set entry points the One Home Rule kept on the
    screen (``_active_review_set_banner``, ``_review_dismiss_receipt_name``,
    ``_review_selected_worker``, ``_review_set_picker_worker``,
-   ``_review_these_worker``, ``_walk_active_review_set``); (b) 15 shared
-   shell state accessors this cluster READS and never writes; (b') **7 it
+   ``_review_these_worker``, ``_walk_active_review_set``); (b) 16 shared
+   shell state accessors this cluster READS and never writes (TASK-36952.3.8
+   added ``_library_stage_pick_landing``); (b') **7 it
    also WRITES** (``_library_selected_row_id``,
    ``_library_notes_programmatic_focus_target``,
    ``_library_notes_restoring_focus``, ``_library_list_entry_focus_timer``,
@@ -603,9 +605,28 @@ tokens resolve.
 ``@staticmethod``, so its group-(e) callable is gone and group (e) is empty.
 ``LibraryScreen`` keeps a static delegator at the old name, because it
 imports this module lazily: the Prompts, Skills and Notes clusters' bindings
-to the screen name are unchanged. ``_toggle_library_media_reader_pane``
-(class 7) stays on the screen: it is the parent task's one AC #1 exception,
-the multi-subsystem reader-pane dispatcher.
+to the screen name are unchanged. The slice also pruned 30 screen
+delegators that the earlier slices left with no caller through the screen
+(``_MEDIA_CLUSTER_SCREEN_DELEGATOR_PRUNED``), the two dead Trash statics
+among them. ``_toggle_library_media_reader_pane`` (class 7) stays on the
+screen: it is the parent task's one AC #1 exception, the multi-subsystem
+reader-pane dispatcher.
+
+Ruling R4 (the parent's AC #2): the constructor takes a ``LibraryMediaHost``
+(the Protocol above this class) instead of ``LibraryScreen``, and this
+module no longer imports ``LibraryScreen``, even for type checking. Every
+read through the host is one of the Protocol's framework services. The
+direct screen reaches became named dependencies: ``_library_media_unfiltered_total``'s
+four shell-state reads go through the ``_library_source_total`` shell
+helper; the TASK-38981 stage-pick landing reads the
+``_library_stage_pick_landing`` getter and calls the ``_land_stage_pick``
+helper; and TASK-40293's emptied-page landing calls this controller's own
+``_library_media_empty_list_fallback_target`` rather than the screen's
+delegator for it. The three per-field Notes getters (``_library_notes_compact``,
+``_library_notes_focus_intent_generation``, ``_library_notes_source``) now
+read the bound ``_notes_state``. No constructor argument calls a
+media-named screen method; the remaining shell, review-set, Notes and
+workspace callbacks are not media behaviour.
 """
 from __future__ import annotations
 
@@ -616,7 +637,7 @@ import webbrowser
 from collections.abc import Callable, Coroutine, Mapping, Sequence
 from contextlib import suppress
 from functools import partial
-from typing import Any, Literal, TYPE_CHECKING
+from typing import Any, Literal, Protocol
 
 from loguru import logger
 from textual import on
@@ -753,8 +774,73 @@ from .screen_support_types import (
     _LibraryMediaSuccessfulFocusOwnership,
 )
 
-if TYPE_CHECKING:
-    from ..Screens.library_screen import LibraryScreen
+
+class LibraryMediaHost(Protocol):
+    """The DOM node this controller works through (coordinator ruling R4).
+
+    ``LibraryScreen`` implements it. This controller owns no DOM of its own,
+    so it reads these framework services off the host and nothing else; the
+    shell state and shell helpers it needs arrive as named constructor
+    dependencies instead. The host's identity matters too: the four
+    ``<widget>.ancestors`` membership checks (ruling R2(a)) test it.
+    """
+
+    @property
+    def app(self) -> Any: ...
+
+    @property
+    def app_instance(self) -> Any: ...
+
+    @property
+    def call_after_refresh(self) -> Callable[..., Any]: ...
+
+    @property
+    def call_next(self) -> Callable[..., Any]: ...
+
+    @property
+    def check_action(self) -> Callable[..., Any]: ...
+
+    @property
+    def focus_chain(self) -> list[Widget]: ...
+
+    @property
+    def focused(self) -> Widget | None: ...
+
+    @property
+    def is_attached(self) -> bool: ...
+
+    @property
+    def is_mounted(self) -> bool: ...
+
+    @property
+    def is_running(self) -> bool: ...
+
+    @property
+    def notify(self) -> Callable[..., Any]: ...
+
+    @property
+    def post_message(self) -> Callable[..., Any]: ...
+
+    @property
+    def query(self) -> Callable[..., Any]: ...
+
+    @property
+    def query_one(self) -> Callable[..., Any]: ...
+
+    @property
+    def refresh(self) -> Callable[..., Any]: ...
+
+    @property
+    def run_worker(self) -> Callable[..., Any]: ...
+
+    @property
+    def set_focus(self) -> Callable[..., Any]: ...
+
+    @property
+    def set_timer(self) -> Callable[..., Any]: ...
+
+    @property
+    def size(self) -> Any: ...
 
 
 class LibraryMediaController:
@@ -775,12 +861,12 @@ class LibraryMediaController:
     TASK-36952.3.6 moved 16 more and kept a delegator for 8;
     TASK-36952.3.7 moved 23 more and kept a delegator for 17.
     TASK-36952.3.8 moved ``_sanitize_media_field`` here behind a static
-    screen delegator.
+    screen delegator and pruned 30 delegators nothing reached.
     """
 
     def __init__(
         self,
-        screen: "LibraryScreen",
+        screen: LibraryMediaHost,
         *,
         media_state_accessor,
         # -- shared shell state this cluster READS (group (b), getter-only).
@@ -788,13 +874,11 @@ class LibraryMediaController:
         library_compose_generation_accessor,
         library_list_entry_focus_deadline_accessor,
         library_list_entry_focus_generation_accessor,
-        library_notes_compact_accessor,
-        library_notes_focus_intent_generation_accessor,
-        library_notes_source_accessor,
         library_pending_list_entry_focus_accessor,
         library_pending_list_entry_focus_anchor_accessor,
         library_pending_list_entry_media_return_accessor,
         library_snapshot_state_generation_accessor,
+        library_stage_pick_landing_accessor,
         local_source_counts_accessor,
         local_source_records_accessor,
         notes_controller_accessor,
@@ -836,9 +920,11 @@ class LibraryMediaController:
         focus_library_list_entry_if_current,
         focus_library_rail_action,
         invalidate_library_workspace_depth_state,
+        land_stage_pick,
         library_adaptive_reader_allocation_is_current,
         library_entry_route_key,
         library_open_choice_strip,
+        library_source_total,
         library_workspace_depth_state,
         notify_review_set,
         open_library_export_canvas,
@@ -877,15 +963,13 @@ class LibraryMediaController:
         the full per-parameter derivation.
 
         Args:
-            screen: The Library screen. Used for the eighteen framework
-                services below and, since TASK-36952.3.7, as the screen
-                identity the four moved ``<widget>.ancestors`` membership
-                checks test (coordinator ruling R2(a)): ``app``, ``app_instance``,
-                ``call_after_refresh``, ``call_next``, ``check_action``, ``focused``,
-                ``is_attached``, ``is_mounted``, ``is_running``, ``notify``, ``post_message``,
-                ``query``, ``query_one``, ``refresh``, ``run_worker``,
-                ``set_focus``, ``set_timer``, ``size``) -- this cluster owns
-                no DOM of its own.
+            screen: The host, a ``LibraryMediaHost`` (``LibraryScreen``
+                implements it; TASK-36952.3.8, coordinator ruling R4). Used
+                only for the host's framework services (the eighteen
+                properties below, plus ``focus_chain`` read directly) and,
+                since TASK-36952.3.7, as the identity the four moved
+                ``<widget>.ancestors`` membership checks test (ruling
+                R2(a)) -- this cluster owns no DOM of its own.
             media_state_accessor: Returns the live ``LibraryMediaState``
                 (``LibraryScreen._media_state``, task 1). Backs every
                 generated flat media-field property below.
@@ -896,13 +980,11 @@ class LibraryMediaController:
         self._library_compose_generation_accessor = library_compose_generation_accessor
         self._library_list_entry_focus_deadline_accessor = library_list_entry_focus_deadline_accessor
         self._library_list_entry_focus_generation_accessor = library_list_entry_focus_generation_accessor
-        self._library_notes_compact_accessor = library_notes_compact_accessor
-        self._library_notes_focus_intent_generation_accessor = library_notes_focus_intent_generation_accessor
-        self._library_notes_source_accessor = library_notes_source_accessor
         self._library_pending_list_entry_focus_accessor = library_pending_list_entry_focus_accessor
         self._library_pending_list_entry_focus_anchor_accessor = library_pending_list_entry_focus_anchor_accessor
         self._library_pending_list_entry_media_return_accessor = library_pending_list_entry_media_return_accessor
         self._library_snapshot_state_generation_accessor = library_snapshot_state_generation_accessor
+        self._library_stage_pick_landing_accessor = library_stage_pick_landing_accessor
         self._local_source_counts_accessor = local_source_counts_accessor
         self._local_source_records_accessor = local_source_records_accessor
         self._notes_controller_accessor = notes_controller_accessor
@@ -937,11 +1019,13 @@ class LibraryMediaController:
         self._focus_library_list_entry_if_current_fn = focus_library_list_entry_if_current
         self._focus_library_rail_action_fn = focus_library_rail_action
         self._invalidate_library_workspace_depth_state_fn = invalidate_library_workspace_depth_state
+        self._land_stage_pick_fn = land_stage_pick
         self._library_adaptive_reader_allocation_is_current_fn = (
             library_adaptive_reader_allocation_is_current
         )
         self._library_entry_route_key_fn = library_entry_route_key
         self._library_open_choice_strip_fn = library_open_choice_strip
+        self._library_source_total_fn = library_source_total
         self._library_workspace_depth_state_fn = library_workspace_depth_state
         self._notify_review_set_fn = notify_review_set
         self._open_library_export_canvas_fn = open_library_export_canvas
@@ -1099,17 +1183,19 @@ class LibraryMediaController:
     def _library_list_entry_focus_generation(self) -> Any:
         return self._library_list_entry_focus_generation_accessor()
 
+    # TASK-36952.3.8: the three Notes fields read straight off the bound
+    # Notes state object rather than through a getter each.
     @property
     def _library_notes_compact(self) -> Any:
-        return self._library_notes_compact_accessor()
+        return self._notes_state.compact
 
     @property
     def _library_notes_focus_intent_generation(self) -> Any:
-        return self._library_notes_focus_intent_generation_accessor()
+        return self._notes_state.focus_intent_generation
 
     @property
     def _library_notes_source(self) -> Any:
-        return self._library_notes_source_accessor()
+        return self._notes_state.source
 
     @property
     def _library_pending_list_entry_focus(self) -> Any:
@@ -1126,6 +1212,10 @@ class LibraryMediaController:
     @property
     def _library_snapshot_state_generation(self) -> Any:
         return self._library_snapshot_state_generation_accessor()
+
+    @property
+    def _library_stage_pick_landing(self) -> Any:
+        return self._library_stage_pick_landing_accessor()
 
     @property
     def _local_source_counts(self) -> Any:
@@ -1147,28 +1237,17 @@ class LibraryMediaController:
     def _library_media_unfiltered_total(self) -> int | None:
         """The rail's whole-Media count, for the scope line's "N of M".
 
-        task-32350. Read straight off the screen: the accessor-injection
-        site lives in a ``library_screen.py`` range this branch does not
-        own, and these three names are getter-only shell state of exactly
-        the kind ``local_source_records_accessor`` already carries.
+        task-32350. TASK-36952.3.8 moved the four shell-state reads behind
+        the named ``library_source_total`` shell helper
+        (``LibraryScreen._library_source_total``), so this controller no
+        longer reaches into the screen for them.
 
         Returns:
             The Library's Media count, or ``None`` while the snapshot is
             not trustworthy -- the count's ``0`` default would otherwise
             render as "1 of 0".
         """
-        screen = self._screen
-        if not screen._library_loaded or screen._library_lookup_error:
-            return None
-        # Review finding 2 (fix round 1): the count is sometimes a LOWER
-        # BOUND -- a bounded preview page with no `total` -- which is why
-        # the screen keeps this flag and why every other consumer renders
-        # "5+" rather than "5". A scope line stating a flat "of 5" beside a
-        # rail saying "5+" is exactly the claim this line exists to avoid,
-        # so an unknown total drops the "of M" half instead.
-        if not screen._local_source_total_known.get("media", True):
-            return None
-        return screen._local_source_counts.get("media")
+        return self._library_source_total("media")
 
 
     # -- shared shell state this cluster also writes (group (b')) ----------
@@ -1300,6 +1379,10 @@ class LibraryMediaController:
         return self._invalidate_library_workspace_depth_state_fn
 
     @property
+    def _land_stage_pick(self) -> Any:
+        return self._land_stage_pick_fn
+
+    @property
     def _library_adaptive_reader_allocation_is_current(self) -> Any:
         return self._library_adaptive_reader_allocation_is_current_fn
 
@@ -1310,6 +1393,10 @@ class LibraryMediaController:
     @property
     def _library_open_choice_strip(self) -> Any:
         return self._library_open_choice_strip_fn
+
+    @property
+    def _library_source_total(self) -> Any:
+        return self._library_source_total_fn
 
     @property
     def _library_workspace_depth_state(self) -> Any:
@@ -4701,7 +4788,7 @@ class LibraryMediaController:
                 partial(self._restore_library_media_loaded_progress, loaded_id),
                 viewer,
             )
-        if loaded_id is not None and self._screen._library_stage_pick_landing == (
+        if loaded_id is not None and self._library_stage_pick_landing == (
             "media",
             str(loaded_id),
         ):
@@ -4709,7 +4796,7 @@ class LibraryMediaController:
             # the opened item's controls exist.
             self._queue_after_library_media_viewer_recompose(
                 partial(
-                    self._screen._land_stage_pick,
+                    self._land_stage_pick,
                     "media",
                     loaded_id,
                     ".library-media-route",
@@ -4936,7 +5023,7 @@ class LibraryMediaController:
         def land() -> None:
             if not self._screen.is_attached or not owns_focus():
                 return
-            target = self._screen._library_media_empty_list_fallback_target()
+            target = self._library_media_empty_list_fallback_target()
             if (
                 target is not None
                 and not getattr(target, "_pruning", False)
