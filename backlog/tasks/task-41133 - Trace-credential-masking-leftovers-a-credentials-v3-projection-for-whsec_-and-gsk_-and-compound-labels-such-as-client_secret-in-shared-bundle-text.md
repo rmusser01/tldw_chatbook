@@ -434,3 +434,22 @@ AC #3 was added for it.
   - Serial with lane flags: the recovered-suites slice (20 targets) gives 642 passed in 328 s at load 68-77; `Tests/Utils/test_log_sanitizer.py` gives 209 passed.
   - `Tests/CI` gives 1640 passed, 1 skipped. The module ratchet gives 207 passed, and the ruff gate is OK.
   - `./scripts/preflight.sh` passes (rc 0, load 52-80).
+
+**Review r15tr-rev10.** The reviewer found no under-masking.
+- **Inner labels in a kept call were not pinned.**
+  - With `kept = _inner_values_look_alike(...)` replaced by `kept = True`, all 245 must-mask rows stayed green, though `client_secret=build(2, access_token=hunter2x)` and `client_secret=build(g(x), db_password=letmein99)` leaked. Head masked both.
+  - Both are now in `_MUST_MASK`, with a sibling for a quoted inner literal under a strict label: `client_secret=build(2, db_password="changeme")`. "changeme" passes the outer, non-strict judgement and fails the inner, strict one.
+  - All three are red under that loosening and green at head.
+  - The adapted probe9 (`$FU/r15tr-probe9-r10.py`) gains "inner labels not judged", which turns those 3 rows red. That makes 65 loosenings, baseline 0 red, every one red.
+- **A secret in a quoted-key position reached the label cache.**
+  - `_lone_value` and `_expression_end` passed `quoted_key` to the cached `_credential_label_text`, so `client_secret = cfg.x "GOCSPX-...": 1` cached one entry per distinct key.
+  - Both now use the uncached `_is_credential_label`. `_lone_value` skips the check when the key repeats the current label, which is a label the pattern matched (the repeated-field case).
+  - `test_masking_never_caches_value_text` gains `cfg.x "GOCSPX-...{n}": 1` and `CLIENT_SECRET "GOCSPX-...{n}": 1`. It was red before the fix and is green after.
+- **Unchanged:**
+  - `probe_equiv` (corpus 4882): 0 diffs.
+  - probe17 and probe16: 0 kept. probe12: no swallowed fields. probe10: only the three declined rows. probe8: 0 kept.
+- **Costs against the rev9 commit, same load, best of three:** every shape is within 3%.
+  - Quoted-prose, interleaved six times each: rev9 0.809/0.831 s and head 0.822/0.829 s (minimum/median).
+  - probe11: ratio 3.9; escaped 1.36 s, quoted-prose 1.68 s, mixed-unclosed 2.60 s.
+  - probe13 (rev5/head): 0.32/0.35 s, 0.27/0.29 s, 0.36/0.37 s. probe15 chain/plain: 1.2 and 1.0.
+- **Tables:** `_MUST_MASK` now has 248 rows.

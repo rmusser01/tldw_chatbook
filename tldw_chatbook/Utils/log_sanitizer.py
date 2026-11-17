@@ -264,8 +264,9 @@ _DIAGNOSTIC_METADATA_SUFFIXES = (
 @lru_cache(maxsize=1024)
 def _credential_label_text(label: str) -> bool:
     """``_is_credential_label`` for label text, cached: the same labels recur
-    on every line. Only label text (a name before ``:`` or ``=``) is passed
-    here, never a value (review r15tr-rev7)."""
+    on every line. Only a label the label pattern matched is passed here; a
+    quoted key after a value can be any text, a secret included, so it goes
+    through the uncached check (reviews r15tr-rev7, rev10)."""
     return _is_credential_label(label)
 
 
@@ -972,7 +973,7 @@ _LONE_VALUE_END = re.compile(
 _OPENER = re.compile(r"[(\[{]")
 
 
-def _lone_value(text: str, value: str, end: int, quoted: bool) -> bool:
+def _lone_value(text: str, value: str, end: int, quoted: bool, label: str) -> bool:
     """A value with no bracket of its own that its expression ends right
     after (``_LONE_VALUE_END``): judged as it is, with no expression scan."""
     if not quoted and _OPENER.search(value):
@@ -981,7 +982,9 @@ def _lone_value(text: str, value: str, end: int, quoted: bool) -> bool:
     if lone is None:
         return False
     key = lone.group("quoted_key")
-    return not key or _credential_label_text(key)  # '"note": "..."' belongs to the value
+    # A quoted key can be any text (a secret too), so it is not cached; the
+    # same label again (a repeated field) needs no check.
+    return not key or key == label or _is_credential_label(key)  # '"note": "..."' belongs to the value
 #: A call, read whole by its brackets when the grammar does not parse it.
 _CALL_HEAD = re.compile(rf"{_CODE_NAME}(?:\.{_CODE_NAME})*\(")
 #: A comparison with space before its operator (``a == b``, not ``abc==``):
@@ -1072,7 +1075,7 @@ def _expression_end(text: str, start: int) -> tuple[int, bool]:
             continue  # a tuple or argument list runs on
         elif ternaries and token.group("separator") == ":":
             ternaries -= 1  # "a ? b : c": the colon answers the "?"
-        elif token.group("quoted_key") and not _credential_label_text(token.group("quoted_key")):
+        elif token.group("quoted_key") and not _is_credential_label(token.group("quoted_key")):
             continue  # '"note": "..."' after a value belongs to it
         else:
             return token.start(), True
@@ -1152,7 +1155,7 @@ def mask_credential_labels(text: str, marker: str = REDACTION_MARKER) -> str:
             if not (
                 prose_follows
                 or text.startswith(('\\"', "\\'"), value_start)
-                or _lone_value(text, value, end, quoted)
+                or _lone_value(text, value, end, quoted, name)
             ):
                 # Every value is judged with the whole expression it starts
                 # (reviews r15tr-rev7, rev8): kept only when every literal in

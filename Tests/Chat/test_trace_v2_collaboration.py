@@ -957,6 +957,10 @@ _MUST_MASK: dict[str, tuple[str, str]] = {
     "quoted-key-after-name": ("client" + _L + 'secret = CLIENT_SECRET "note": "' + _G + '"', _G),
     "annotation-like-word": ("db" + _L + "password: Secretpassword", "Secretpassword"),
     "path-key-token": ("client" + _L + 'secret = vault.read("secret/k9mp2vl7wq8z")', "k9mp2vl7wq8z"),
+    # rev10: a credential label inside a kept call is judged under its own label
+    "inner-label-word": ("client" + _L + "secret=build(2, access" + _L + "token=hunter2x)", "hunter2x"),
+    "inner-label-after-call": ("client" + _L + "secret=build(g(x), db" + _L + "password=letmein99)", "letmein99"),
+    "inner-label-quoted-strict": ("client" + _L + 'secret=build(2, db' + _L + 'password="changeme")', "changeme"),
 }
 
 #: name -> text that must survive a shared bundle unchanged.
@@ -1254,6 +1258,9 @@ def test_masking_never_caches_value_text() -> None:
             "client" + f"_secret=super_secret_{index}",
             "refresh" + f"_token: the token{index}",
             f"https://x.example/api?key=python{index}x",
+            # rev10: a secret in a quoted-key position after a value
+            "client" + f'_secret = cfg.x "GOCSPX-{_P8}{index}": 1',
+            "client" + f'_secret = CLIENT_SECRET "GOCSPX-{_P8}{index}": 1',
         ):
             trajectory_export._credential_text(text)
 
