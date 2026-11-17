@@ -89,7 +89,7 @@ def _count_document_passes():
     Three seams, all module globals (never ``@on`` handlers, so class-free
     monkeypatching is dispatch-safe):
 
-    * ``find_content_matches`` as the screen imported it,
+    * ``find_content_matches`` as the media controller imported it,
     * ``find_content_matches`` as the content widget imported it,
     * the content widget's renderable builder and -- once TASK-22209 adds
       it -- its highlight-plan builder, each of which walks every line.

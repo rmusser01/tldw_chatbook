@@ -1847,7 +1847,7 @@ class CountingProgressMediaService(ControlledDetailMediaService):
 
 
 def _bind_progress_methods(fake) -> None:
-    """Bind every progress-write method the screen currently defines."""
+    """Bind every progress-write method ``LibraryMediaController`` defines."""
     for name in (
         "_write_library_media_loaded_progress",
         "_queue_library_media_progress_write",

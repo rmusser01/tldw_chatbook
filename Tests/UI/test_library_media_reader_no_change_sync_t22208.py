@@ -141,7 +141,7 @@ def _make_image_item(service, backing_id: int, *, content: str, png: bytes) -> d
 
 @contextmanager
 def _count_state_builds():
-    """Count ``build_library_media_viewer_state`` calls through the screen module.
+    """Count ``build_library_media_viewer_state`` calls through the media controller.
 
     Every call with trailing-whitespace content performs at least one full
     O(document) copy (``str(content).strip()``), so the call count times the
