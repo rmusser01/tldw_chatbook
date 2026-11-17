@@ -18,7 +18,7 @@ from textual.widgets import Button
 from tldw_chatbook.Chat.console_message_actions import ConsoleMessageAction
 from tldw_chatbook.UI.Navigation.surface_swap_guard import finish_removal
 
-from .console_transcript_input import (
+from .console_selection_menu import (
     guard_transcript_action,
     transcript_callback,
     transcript_focus,

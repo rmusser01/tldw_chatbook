@@ -575,7 +575,7 @@ from ...Widgets.Console.console_background_effect import (
     active_console_transcript,
     sync_console_transcript,
 )
-from ...Widgets.Console.console_transcript_input import (
+from ...Widgets.Console.console_selection_menu import (
     guard_transcript_action,
     transcript_focus,
 )

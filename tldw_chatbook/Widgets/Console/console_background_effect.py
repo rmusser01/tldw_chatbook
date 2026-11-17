@@ -44,7 +44,7 @@ from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleRoleplayMarkdown,
     ConsoleTranscript,
 )
-from tldw_chatbook.Widgets.Console.console_transcript_input import TranscriptInputVisit
+from tldw_chatbook.Widgets.Console.console_selection_menu import TranscriptInputVisit
 
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_chat_store import (

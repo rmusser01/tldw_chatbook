@@ -160,7 +160,7 @@ from tldw_chatbook.Widgets.Console.console_selection_menu import (
     ConsoleTraceCopyRequested,
     selection_menus_on_screen,
 )
-from tldw_chatbook.Widgets.Console.console_transcript_input import (
+from tldw_chatbook.Widgets.Console.console_selection_menu import (
     _current_visit,
     guard_transcript_action,
     transcript_action_current,

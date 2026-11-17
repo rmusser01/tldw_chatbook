@@ -78,7 +78,7 @@ from tldw_chatbook.Widgets.Console.console_selection_menu import (
     selection_menus_on_screen,
 )
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleMarkdownMessage
-from tldw_chatbook.Widgets.Console.console_transcript_input import transcript_callback
+from tldw_chatbook.Widgets.Console.console_selection_menu import transcript_callback
 
 
 class _SpeechHeaderHarness(App):
