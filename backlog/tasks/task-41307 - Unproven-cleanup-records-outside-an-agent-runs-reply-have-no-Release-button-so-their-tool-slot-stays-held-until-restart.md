@@ -1,7 +1,7 @@
 ---
 id: TASK-41307
 title: "Unproven-cleanup records outside an agent run's reply have no Release button, so their tool slot stays held until restart"
-status: To Do
+status: In Progress
 created_date: 2026-11-16 19:55
 labels:
 - follow-up
@@ -52,3 +52,42 @@ Filed from the 2026-11-13..16 burn-down. These are the follow-ups TASK-40716 (PR
 - [ ] #3 Release still frees only the tool-worker slot; the workspace, storage and claim stay held until restart (ADR-134), pinned by a test
 - [ ] #4 The User Guide and the affected ADR amendments describe the new release paths
 <!-- AC:END -->
+
+## Implementation Plan
+
+ADR required: yes. The owner decision in ADR-084/093/094/134/285 puts the abandon action "on the run's terminal card". A record with no run card needs a new owner decision, recorded as an amendment (AC #4).
+
+**Status: DRAFT, design first.** No product change until the owner rules on where Release lives.
+
+**Evidence check** (read on fbf1c9ea74, which is dev 5e3c8b2bd4 plus the filing commits; not run). Every cited line holds. Refinements:
+- The pre-run case is not log-only. The reply placeholder goes into dispatch recovery and the status line reads "Response recovery failed. Try again or discard." (`_restore_dispatch_recovery_after_settlement_failure`). That names the wrong cause and no tool. Two pre-run reservations trigger it: MCP capture (`Chat/console_ordinary_tree.py:286`) and skill-catalog capture (`:229`).
+- Raw CLI records do have a run id: the `local_command` run, bound at `console_raw_cli_custody.py:242`. Only the card mapping is missing. Their tool marker (`raw-cli-<invocation>`) already reads "Cleanup: Unproven".
+- A change-review snapshot job that borrows an ordinary turn's owner carries that turn's run id, so the existing reply row already covers it. A job with its own owner (outside an ordinary tree, e.g. Windows) has no run id, and neither does a consent initialization job (`conversation_id=""`).
+- An `@git` reference inside an ordinary tree either ends the run at its first tool call (existing row) or stops the turn before the run exists (AC #2). Outside a tree it has its own owner, which is never bound to a run.
+- Child records are bound to the child run id (`agent_service.py:5290`, `agent_native_execution.py:1064/1205`). Only root runs get a card in `run_terminal_rows`.
+- Trap: `console_unproven_cleanup._capacity` reads the bridge's private `_runtime_capacity`. That stays None until an agent turn allocates it, because `bind_runtime_capacity` stores `existing_capacity`, which can be None. In a session that only ran Raw CLI or Undo, it would find no records. Read `runtime._execution_capacity` instead.
+- `UnprovenRetention.abandon()` already works on any record. The capacity API needs only a stable key: `run_id`, else `operation.owner.execution_id`.
+
+**Where each kind shows today**
+
+| Kind | Run id on the record | What the user sees | Possible Release spot |
+|---|---|---|---|
+| Raw CLI user command | yes (`local_command`) | Raw CLI tool marker: "Cleanup: Unproven" | under that marker |
+| Undo (turn card Undo All, Change Review Revert) | no | a warning toast, which fades | **none** |
+| Change-review snapshot (own owner), consent init | no | turn file card hides the root; init shows nothing | **none** |
+| `@git` outside a tree | no | `@-references:` row "REFUSED — reference source unavailable" (wrong cause) | that row |
+| Child agent | child run id, no card | Inspect rail Agents row; parent's `⤷ spawned sub-agent` | fleet row, or parent's card (needs a child-to-root map) |
+| Startup SSH read / `@git` in tree, pre-run | no | the recovery prompt above; SSH read itself: log only | a new explanation row under that reply |
+
+**Options**
+1. *Per-surface rows.* Map each kind's own row to its record. Covers Raw CLI, `@git` and pre-run. Undo, the consent and own-owner snapshot jobs, and children (without a child-to-root map) have no row. That needs new buttons in the Change Review screen, the turn file card and the fleet panel. Release stays next to the failure, but this touches about 6 files and the controller, chat_screen and transcript size ratchets, and still leaves gaps.
+2. *One Console-wide "Held tool slots" list.* A status chip appears only while an unreleased record exists. It opens a small modal that lists every `capacity.retained()` record (label, released state) with the reused `cleanup_release_widget`, and one line saying what stays held. AC #2 adds an explanation row naming the tool that points to the list. This covers every kind, including the future ones, with the smallest diff. It is detached from context, though: the user has to notice the chip. Labels are coarse ("native Git" covers snapshot, `@git` and Undo's Git).
+3. *Recommended: option 2 plus rows where a transcript row already names the failure.* Key records by run id, else execution id. Put the existing Release row under the new pre-run explanation row (AC #2) and under the Raw CLI marker. Everything else goes through the list. The run card stays as it is.
+
+**Steps after the ruling (option 3)**
+1. Red tests on base, one per kind, each using the real retention site (Raw CLI, Undo, native Git snapshot, `@git` outside a tree, a child run), plus the pre-run SSH/`@git` turn, plus an AC #3 pin (after Release: slot free, claim held, drain unproven).
+2. Group records by `run_id or owner.execution_id`. `CleanupUnprovenRefused` carries its retention. Read capacity from the runtime.
+3. Settlement catch: when the cause is `CleanupUnprovenRefused`, append the `cleanup_unproven_result` explanation naming the label instead of the recovery prompt, and map its row to the record.
+4. Raw CLI: map the marker id to the record when the marker finishes (on the UI thread).
+5. Chip and modal for the list. Release calls `record.abandon()` off the UI thread, as the button does now.
+6. User Guide paragraph and ADR-084/093/094/134/285 amendments. Size ratchets get dated notes.
