@@ -4309,3 +4309,34 @@ async def test_an_eval_never_retries_an_endpoint_refusal():
     assert context.is_retryable is False
     assert _contract_reason("vllm", "http://127.1:8000/v1") in context.message
     assert "connect" not in context.message.lower()
+
+
+@pytest.mark.parametrize(
+    "configured",
+    [
+        "http://127.1:8080",
+        "http://0x7f.1:8080/v1",
+        "http://user:pw@127.0.0.1:8080",
+        "http://-bad.corp:8080/completion",
+        "http://127.0.0.1:8080/v1?token=not-a-real-secret",
+    ],
+)
+def test_the_word_bench_never_targets_an_endpoint_the_contract_refuses(configured):
+    """Review r15ep-rev1 I-3: the Evals word bench posts to
+    ``[api_settings.llama_cpp] api_url`` through its own httpx client, so a
+    refused URL was benched; normalising to the root even dropped the query.
+    A refused URL now reads as not configured."""
+    from tldw_chatbook.UI.Evals import sample_bench
+
+    app_config = {"api_settings": {"llama_cpp": {"api_url": configured}}}
+
+    assert sample_bench.configured_llama_cpp_url(app_config) is None
+
+
+def test_the_word_bench_still_targets_an_accepted_endpoint():
+    """Review r15ep-rev1 I-3 control: llama.cpp's own route still benches."""
+    from tldw_chatbook.UI.Evals import sample_bench
+
+    app_config = {"api_settings": {"llama_cpp": {"api_url": "http://localhost:8080/completion"}}}
+
+    assert sample_bench.configured_llama_cpp_url(app_config) == "http://localhost:8080"
