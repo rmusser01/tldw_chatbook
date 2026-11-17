@@ -1,0 +1,17 @@
+[
+  {
+    "path": "tldw_chatbook/Chat/console_execution_process.py",
+    "before": "36cd9429dba602e0f02a88d8d29e99d8f5ad2cd19392c693e0fd4967a09c448a",
+    "after": "96a13c20a458a088809affc29ca3df34f6d9353354671ba469f711677132877c"
+  },
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/execution_state.py",
+    "before": "e93f0d92c18bcf62278061ba7d2e9ec43e756bccbb8a503b8e789771847f7b19",
+    "after": "f7724d12bf6363fb7a59238f66c9fb16af79cc6d2ae29091bbe6168ec3c8f5d8"
+  },
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/composer_run_controls.py",
+    "before": "51cd899596274204d613a23a42aa2eed57b5f25f6b1f4476c77ac64d23c59d6a",
+    "after": "81c16c745f26c9eb0fb4f2f55d21998942d4ae03e77f5248a70ed29fa75f1160"
+  }
+]

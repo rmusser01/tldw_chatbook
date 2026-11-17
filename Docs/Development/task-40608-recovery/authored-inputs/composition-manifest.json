@@ -1,0 +1,17 @@
+[
+  {
+    "path": "tldw_chatbook/Chat/console_execution_composition_values.py",
+    "before": "2b9aab584452ff4afadb279f19291bc968820b7bca95e96c1771117ee21fefaf",
+    "after": "55341fc3999fae593d8f0c89c3e300b82ce9930ec6bf4cc7ee1e5c2334271ce7"
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_backend_presentation.py",
+    "before": "0d4499db8394af843aa222e17aaff687ba1839714ddbd8cc28efc8ae4bade19a",
+    "after": "e729ce8b447e7cacfd72f4584ee54c8a579c07eaa8dcdafab3a02385c9e53b79"
+  },
+  {
+    "path": "Tests/Chat/test_console_execution_composition_values.py",
+    "before": "c86284d1150fc4130ea8bd6a09b223dcf12d067deda65c4dcb264d62cf9f9729",
+    "after": "eafc5049613b50642206300a067de2832e68e229bd2e78428053bd4488a62025"
+  }
+]

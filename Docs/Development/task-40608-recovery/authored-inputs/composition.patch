@@ -1,0 +1,93 @@
+--- a/tldw_chatbook/Chat/console_execution_composition_values.py
++++ b/tldw_chatbook/Chat/console_execution_composition_values.py
+@@ -66,6 +66,7 @@
+     pending_interrupt_copy: str
+     blocked_turn_reason: str
+     is_stop_allowed: bool
++    acknowledgement_idle: bool
+     chat_start_prepared: bool
+     change_tracking_enabled: bool
+     tools_published: bool
+@@ -93,6 +94,7 @@
+     "pending_interrupt_copy": _text,
+     "blocked_turn_reason": _text,
+     "is_stop_allowed": _boolean,
++    "acknowledgement_idle": _boolean,
+     "chat_start_prepared": _boolean,
+     "change_tracking_enabled": _boolean,
+     "tools_published": _boolean,
+@@ -113,6 +115,7 @@
+     pending_interrupt_copy: str,
+     blocked_turn_reason: str,
+     is_stop_allowed: bool,
++    acknowledgement_idle: bool,
+     chat_start_prepared: bool,
+     change_tracking_enabled: bool,
+     tools_published: bool, builtin_tool_count: int | None,
+@@ -145,6 +148,7 @@
+         pending_interrupt_copy,
+         blocked_turn_reason,
+         is_stop_allowed,
++        acknowledgement_idle,
+         chat_start_prepared,
+         change_tracking_enabled,
+         tools_published, builtin_tool_count, mcp_tool_count,
+--- a/tldw_chatbook/Chat/console_backend_presentation.py
++++ b/tldw_chatbook/Chat/console_backend_presentation.py
+@@ -267,14 +267,20 @@
+         counts = counts_owner.snapshot(controller, session.id)
+         launch, staged_revision, sent_notice = self._runtime.snapshot_console_staged_evidence(session.id)
+         pending = controller.has_pending_approval_round(session.id)
++        activity = controller.activity_for(session.id)
++        blocked = _COMPOSITION_COPY[1][2][0](controller)
+         return encode_session_composition(
+             session,
+             pending_approval_count=controller.pending_round_count(session.id),
+             pending_interrupt_copy=(
+                 _COMPOSITION_COPY[0][2][0](controller, session.id) if pending else ""
+             ),
+-            blocked_turn_reason=_COMPOSITION_COPY[1][2][0](controller),
++            blocked_turn_reason=blocked,
+             is_stop_allowed=controller.is_stop_allowed,
++            acknowledgement_idle=not (
++                activity.accepted_live_turn or activity.occupies_slot or activity.queued_count
++                or controller.run_state_for(session.id).is_stop_allowed or blocked
++            ),
+             chat_start_prepared=controller._chat_start.is_prepared(session.id),
+             change_tracking_enabled=controller._agent_bridge.change_tracking_enabled,
+             tools_published=counts.published,
+@@ -470,7 +476,7 @@
+     for name in (
+         "has_pending_approval_round", "pending_round_count", "pending_round_kinds",
+         "trace_call_recovery_preparation", "context_compaction_hold", "preparation_outcome",
+-        "activity_for", "run_marker_for", "streaming_session_id",
++        "activity_for", "run_marker_for", "streaming_session_id", "run_state_for",
+     )
+ )
+ _COMPOSITION_START_METHODS = (("is_prepared", _definition(_CompositionStart.is_prepared)),)
+--- a/Tests/Chat/test_console_execution_composition_values.py
++++ b/Tests/Chat/test_console_execution_composition_values.py
+@@ -23,6 +23,7 @@
+         pending_interrupt_copy="Waiting for review",
+         blocked_turn_reason="recovery needed",
+         is_stop_allowed=True,
++        acknowledgement_idle=False,
+         chat_start_prepared=False,
+         change_tracking_enabled=True,
+         tools_published=False, builtin_tool_count=None, mcp_tool_count=None,
+@@ -43,6 +44,7 @@
+     assert result.pending_approval_count == 2
+     assert result.blocked_turn_reason == "recovery needed"
+     assert result.is_stop_allowed and not result.chat_start_prepared
++    assert result.acknowledgement_idle is False
+     assert result.selected_tool_count == 0 and not result.tools_published
+     assert not result.staged_evidence_present
+     assert result.staged_evidence_revision == 0
+@@ -70,6 +72,7 @@
+         dict(payload, library_policy=session.library_policy_holder),
+         dict(payload, controller=object()),
+         dict(payload, is_stop_allowed=1),
++        dict(payload, acknowledgement_idle=1),
+     ):
+         with pytest.raises(ConsoleProtocolError):
+             decode_session_composition(changed, row)

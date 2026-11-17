@@ -51,6 +51,20 @@ def _raw_composer():
     return composer
 
 
+@pytest.mark.parametrize("captured", [False, True])
+def test_raw_command_without_local_owner_keeps_the_draft(captured):
+    composer = _raw_composer()
+    original = composer.draft_text()
+    stash = composer.capture_draft_for_send() if captured else None
+    _, _, provider_text, handled = prepare_visible_send(
+        stash, lambda: composer, None,
+        commit_captured=lambda _: pytest.fail("A refused command consumed its stash"),
+        captured=captured,
+    )
+    assert handled and not provider_text
+    assert composer.draft_text() == original
+
+
 @pytest.mark.parametrize("banked", [False, True])
 @pytest.mark.parametrize("later_kind", ["paste", "file", "confirm", "typed"])
 def test_delayed_refusal_never_trusts_a_combined_newer_draft(

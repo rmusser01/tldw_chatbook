@@ -15627,7 +15627,7 @@ class ChatScreen(BaseAppScreen):
                     lambda: self._console_pending_image_attachment() is not None
                 ),
                 raw_cli_authority_provider=lambda: raw_cli_ui.raw_cli_authority(
-                    self.app_instance.raw_cli_runtime
+                    self.app_instance.raw_cli_runtime if self._raw_cli is not None else None
                 ),
             )
             # TASK-1364: the composer shares the screen's prompt-history
@@ -18913,7 +18913,7 @@ class ChatScreen(BaseAppScreen):
             stash, composer, draft, raw_cli_handled = raw_cli_ui.prepare_visible_send(
                 stash,
                 self._console_composer_or_none,
-                self._raw_cli.start_user_command,
+                self._raw_cli.start_user_command if self._raw_cli is not None else None,
                 commit_captured=partial(
                     _commit_captured_console_draft, self, session_id
                 ),
@@ -18928,6 +18928,8 @@ class ChatScreen(BaseAppScreen):
             self.app_instance.notify(str(error), severity="warning")
             return False
         if raw_cli_handled:
+            if self._raw_cli is None:
+                self.app_instance.notify("Host commands are unavailable in this Console.", severity="warning")
             return False
         if not draft.strip() and self._console_pending_image_attachment() is None:
             self._focus_console_composer_if_needed(force=True)

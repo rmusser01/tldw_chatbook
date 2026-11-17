@@ -129,7 +129,7 @@ def restore_refused_raw_cli_stash(
 def prepare_visible_send(
     stash: ConsoleDraftStash | None,
     composer_accessor: Callable[[], Any | None],
-    start_user_command: Callable[[ConsoleDraftStash], Any],
+    start_user_command: Callable[[ConsoleDraftStash], Any] | None,
     commit_captured: Callable[[ConsoleDraftStash], Any] | None = None,
     *,
     captured: bool = False,
@@ -151,6 +151,8 @@ def prepare_visible_send(
     if stash is not None:
         classified = classify_console_raw_draft(stash)
         if classified.kind == "raw":
+            if start_user_command is None:
+                return stash, None, "", True
             with raw_capture_scope():
                 if commit_captured is not None:
                     commit_captured(stash)
@@ -171,6 +173,8 @@ def prepare_visible_send(
             candidate is not None
             and classify_console_raw_draft(candidate).kind == "raw"
         ):
+            if start_user_command is None:
+                return candidate, composer, "", True
             with raw_capture_scope():
                 composer.commit_captured_draft(candidate)
                 start_user_command(candidate)
@@ -216,7 +220,7 @@ def handle_raw_cli_message_action(controller: Any, event: Any, store: Any) -> bo
         ),
         None,
     )
-    if marker is not None:
+    if marker is not None and controller is not None:
         controller.stop_user_command(marker)
     return True
 

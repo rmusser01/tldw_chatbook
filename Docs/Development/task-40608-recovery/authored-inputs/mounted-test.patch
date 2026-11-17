@@ -1,0 +1,42 @@
+--- a/Tests/Chat/test_console_execution_mounted.py
++++ b/Tests/Chat/test_console_execution_mounted.py
+@@ -123,6 +123,39 @@
+                     request.node.user_properties.append(
+                         ("selected_original_compose_mounted", True)
+                     )
++                    # Actual widget authorship reaches the existing UpdateInputs
++                    # command; no parent setter or guessed revision is involved.
++                    composer.focus_draft_from(None)
++                    await pilot.press("a")
++                    async with asyncio.timeout(10):
++                        key = (row.id, row.incarnation_id)
++                        first = client._authored_inputs[key]
++                        first_applied = await asyncio.shield(first[2].applied)
++                        assert await asyncio.shield(first[2].retired) is True
++                        stash = composer.capture_draft_for_send()
++                        assert stash is not None and stash.text == "a"
++                        press = client.retain_authored_press(
++                            screen, client._visit, stash.text,
++                            (stash.generation, stash.edit_serial),
++                        )
++                        try:
++                            await pilot.press("b")
++                            assert composer.draft_text() == "ab"
++                            assert client._authored_inputs[key] is first
++                            assert client._deferred_inputs
++                            await client.read_projection(row.id, row.incarnation_id)
++                            assert client.pressed_inputs["draft"] == "a"
++                            assert client.projection_view.session(row.id).draft_revision == first_applied["draft_revision"]
++                        finally:
++                            client.release_authored_press(press)
++                        latest = client._authored_inputs[key]
++                        latest_applied = await asyncio.shield(latest[2].applied)
++                        assert await asyncio.shield(latest[2].retired) is True
++                        await client.read_projection(row.id, row.incarnation_id)
++                        assert client.pressed_inputs["draft"] == "ab"
++                        assert client.pressed_inputs["authored_token"] == list(latest[1])
++                        assert client.projection_view.session(row.id).draft_revision == latest_applied["draft_revision"]
++                    request.node.user_properties.append(("actual_authored_input_barrier", True))
+                     # The original navigation ends only the visit; its backend survives.
+                     async with asyncio.timeout(10):
+                         await app.handle_screen_navigation(NavigateToScreen(TAB_HOME))

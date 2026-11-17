@@ -1292,6 +1292,87 @@ async def _wait_for_terminal_screen_result(screen: Any, modal: Any) -> Any:
     return await worker.wait()
 
 
+def _build_local_raw_cli_controller(screen: Any) -> ConsoleRawCliController | None:
+    """Bind raw commands only to the local runtime that owns their scratch and stashes."""
+    if getattr(screen.app_instance, "console_execution_client", None) is not None:
+        return None
+    raw_runtime = screen._console_runtime()
+    raw_store = screen._ensure_console_chat_store()
+    return ConsoleRawCliController(
+        raw_cli_runtime=lambda: screen.app_instance.raw_cli_runtime,
+        native_source=raw_runtime.raw_cli_source,
+        active_session_id=lambda: str(raw_store.ensure_session().id),
+        persist_session_if_needed=(raw_store.persist_session_if_needed),
+        active_leaf_anchor=(raw_store.active_leaf),
+        persisted_leaf_anchor=(raw_store.persisted_message_id_for_session_node),
+        selected_local_root=(
+            lambda session_id: _selected_console_local_root(screen, session_id)
+        ),
+        private_scratch_root=(
+            lambda session_id: raw_runtime.scratch_spaces.snapshot(session_id).root
+        ),
+        refusal_stash_bank=raw_runtime.raw_cli_refusal_stash_bank,
+        accepts_raw_cli_refusal_callbacks=(
+            lambda: raw_runtime.accepts_raw_cli_refusal_callbacks
+        ),
+        restore_stash=(
+            lambda session_id, stash: restore_refused_raw_cli_stash(
+                session_id,
+                stash,
+                composer=(
+                    screen._console_composer_or_none()
+                    if screen._console_runtime() is raw_runtime
+                    and raw_runtime._chat_store is raw_store
+                    else None
+                ),
+                active_session_id=(raw_store.active_session_id),
+                visible_session_id=screen._console_visible_draft_session_id,
+            )
+        ),
+        append_local_error=(
+            lambda session_id, text: screen.run_worker(
+                screen._append_native_console_system_message(
+                    text, session_id=session_id
+                ),
+                exclusive=False,
+                name="_append_console_raw_cli_refusal",
+            )
+        ),
+        append_store_marker=(raw_store.append_message),
+        update_store_marker=(raw_store.update_tool_marker),
+        agent_runs_db=(
+            lambda: (
+                raw_runtime.ensure_activity_receipt_service()
+                and raw_runtime._agent_runs_db
+            )
+        ),
+        run_log_access=lambda: _raw_cli_run_log_root(),
+        start_worker=lambda work, **kwargs: screen.run_worker(
+            work,
+            group="console-raw-cli",
+            **kwargs,
+        ),
+        marshal_to_ui=(
+            lambda callback, *args: screen.app.call_from_thread(callback, *args)
+        ),
+        schedule_projection=(
+            lambda session_id: _schedule_raw_cli_projection(screen, session_id)
+        ),
+        # TASK-33622.9: the composer's in-place Arm…, behind Settings' own
+        # confirmation (Cancel focused) and disclosure.
+        confirm_arm=lambda title, message: _wait_for_terminal_screen_result(
+            screen,
+            ConfirmationDialog(
+                title=title, message=message, confirm_label="Arm host access"
+            ),
+        ),
+        notify=lambda text, severity: screen.app_instance.notify(
+            text, severity=severity, markup=False
+        ),
+        authority_changed=lambda: _raw_cli_authority_changed(screen),
+    )
+
+
 class _DeferredConsoleTerminalController:
     """Keep Terminal's user-only controller graph behind its explicit action."""
 
@@ -2411,8 +2492,9 @@ def build_console_controllers(
         ),
         composer_accessor=lambda: screen._console_composer_or_none(),
         restore_banked_raw_cli_stashes=(
-            lambda session_id, composer: screen._raw_cli.restore_banked_stashes(
-                session_id, composer
+            lambda session_id, composer: (
+                screen._raw_cli.restore_banked_stashes(session_id, composer)
+                if screen._raw_cli is not None else 0
             )
         ),
         effective_console_provider_model=(
@@ -3119,81 +3201,7 @@ def build_console_controllers(
     )
     screen._console_terminal_workspace = None
     screen._terminal = _DeferredConsoleTerminalController(screen)
-    raw_runtime = screen._console_runtime()
-    raw_store = screen._ensure_console_chat_store()
-    screen._raw_cli = ConsoleRawCliController(
-        raw_cli_runtime=lambda: screen.app_instance.raw_cli_runtime,
-        native_source=raw_runtime.raw_cli_source,
-        active_session_id=lambda: str(raw_store.ensure_session().id),
-        persist_session_if_needed=(raw_store.persist_session_if_needed),
-        active_leaf_anchor=(raw_store.active_leaf),
-        persisted_leaf_anchor=(raw_store.persisted_message_id_for_session_node),
-        selected_local_root=(
-            lambda session_id: _selected_console_local_root(screen, session_id)
-        ),
-        private_scratch_root=(
-            lambda session_id: raw_runtime.scratch_spaces.snapshot(session_id).root
-        ),
-        refusal_stash_bank=raw_runtime.raw_cli_refusal_stash_bank,
-        accepts_raw_cli_refusal_callbacks=(
-            lambda: raw_runtime.accepts_raw_cli_refusal_callbacks
-        ),
-        restore_stash=(
-            lambda session_id, stash: restore_refused_raw_cli_stash(
-                session_id,
-                stash,
-                composer=(
-                    screen._console_composer_or_none()
-                    if screen._console_runtime() is raw_runtime
-                    and raw_runtime._chat_store is raw_store
-                    else None
-                ),
-                active_session_id=(raw_store.active_session_id),
-                visible_session_id=screen._console_visible_draft_session_id,
-            )
-        ),
-        append_local_error=(
-            lambda session_id, text: screen.run_worker(
-                screen._append_native_console_system_message(
-                    text, session_id=session_id
-                ),
-                exclusive=False,
-                name="_append_console_raw_cli_refusal",
-            )
-        ),
-        append_store_marker=(raw_store.append_message),
-        update_store_marker=(raw_store.update_tool_marker),
-        agent_runs_db=(
-            lambda: (
-                raw_runtime.ensure_activity_receipt_service()
-                and raw_runtime._agent_runs_db
-            )
-        ),
-        run_log_access=lambda: _raw_cli_run_log_root(),
-        start_worker=lambda work, **kwargs: screen.run_worker(
-            work,
-            group="console-raw-cli",
-            **kwargs,
-        ),
-        marshal_to_ui=(
-            lambda callback, *args: screen.app.call_from_thread(callback, *args)
-        ),
-        schedule_projection=(
-            lambda session_id: _schedule_raw_cli_projection(screen, session_id)
-        ),
-        # TASK-33622.9: the composer's in-place Arm…, behind Settings' own
-        # confirmation (Cancel focused) and disclosure.
-        confirm_arm=lambda title, message: _wait_for_terminal_screen_result(
-            screen,
-            ConfirmationDialog(
-                title=title, message=message, confirm_label="Arm host access"
-            ),
-        ),
-        notify=lambda text, severity: screen.app_instance.notify(
-            text, severity=severity, markup=False
-        ),
-        authority_changed=lambda: _raw_cli_authority_changed(screen),
-    )
+    screen._raw_cli = _build_local_raw_cli_controller(screen)
     screen._prompt_queue = ConsolePromptQueueUIController(
         chat_controller_accessor=(lambda: screen._ensure_console_chat_controller()),
         capture_configuration=(
