@@ -23,6 +23,7 @@ async def test_selected_process_home_to_chat_composes_original_surface(request):
     from tldw_chatbook.Chat.console_execution_process import ConsoleExecutionClient
     from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
     from tldw_chatbook.Constants import TAB_CHAT, TAB_HOME
+    from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
     from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
     from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
@@ -42,6 +43,19 @@ async def test_selected_process_home_to_chat_composes_original_surface(request):
         parent_runtime_entries.append(frame.f_locals["self"])
 
     stderr_tail = bytearray()
+    composition_failures = []
+
+    def error_panel_yield(frame):
+        import traceback
+
+        error = frame.f_locals.get("exc")
+        if error is not None:
+            stack = traceback.extract_tb(error.__traceback__)
+            composition_failures.append((
+                type(error).__name__, getattr(error, "name", None),
+                [(os.path.basename(f.filename), f.name, f.lineno) for f in stack],
+            ))
+
     try:
         # Observe the original parent constructor without replacing its definition.
         # A real child has a separate interpreter and owns its actual runtime.
@@ -59,8 +73,11 @@ async def test_selected_process_home_to_chat_composes_original_surface(request):
                     process.stderr = _ObservedStderr(process.stderr, stderr_tail)
 
             assert app.console_runtime is None
-            with _observe(subprocess.Popen.__init__.__code__,
-                          sys.monitoring.events.PY_RETURN, created):
+            with (
+                _observe(subprocess.Popen.__init__.__code__, sys.monitoring.events.PY_RETURN, created),
+                _observe(BaseAppScreen._compose_content_or_failure.__code__,
+                         sys.monitoring.events.PY_YIELD, error_panel_yield),
+            ):
                 async with app.run_test(size=(120, 40)) as pilot:
                     await app._initial_screen_setup_task
                     await app._console_execution_start_task
@@ -78,18 +95,6 @@ async def test_selected_process_home_to_chat_composes_original_surface(request):
                         import inspect
 
                         selected_screen = app.screen
-                        from textual.widgets import Static
-                        import re
-
-                        error_panel = next(iter(selected_screen.query("#screen-content-error-message")), None)
-                        missing_attribute = None
-                        if isinstance(error_panel, Static):
-                            missing = re.search(
-                                r"'(\w+)' object has no attribute '(\w+)'",
-                                str(getattr(error_panel, "content", getattr(error_panel, "renderable", ""))),
-                            )
-                            if missing:
-                                missing_attribute = missing.groups()
                         task = getattr(selected_screen, "_task", None)
                         current = task.get_coro() if type(task) is asyncio.Task else None
                         frames = []
@@ -106,7 +111,7 @@ async def test_selected_process_home_to_chat_composes_original_surface(request):
                         diagnostic = {
                             "app_exception": type(getattr(app, "_exception", None)).__name__,
                             "screen": type(selected_screen).__name__,
-                            "missing_attribute": missing_attribute,
+                            "composition_failures": composition_failures,
                             "compose_exception": type(getattr(selected_screen, "_console_process_compose_error", None)).__name__,
                             "channel_exception": type(client._channel_error).__name__,
                             "screen_task_done": task.done() if type(task) is asyncio.Task else None,
@@ -127,7 +132,8 @@ async def test_selected_process_home_to_chat_composes_original_surface(request):
                     projection = client.projection_view
                     assert projection is not None
                     row = projection.session(projection.active_session_id)
-                    assert screen._console_chat_store is projection
+                    assert screen._console_chat_store is client.store_reader
+                    assert client.store_reader._current() is projection
                     assert screen._session._ensure_active_console_session_settings() == row.settings
                     assert screen._active_console_settings_readiness() is not None
                     assert screen.query_one("#console-shell").is_mounted

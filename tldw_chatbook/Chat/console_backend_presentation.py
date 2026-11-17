@@ -32,6 +32,9 @@ class ConsoleBackendPresentation:
         from .console_backend_view_lifecycle import ConsoleBackendViewLifecycle
 
         self.view_lifecycle = ConsoleBackendViewLifecycle(self)
+        from .console_backend_project_decisions import ConsoleBackendProjectDecisions
+
+        self.project_decisions = ConsoleBackendProjectDecisions(self)
         self._projection_views = {}
         self._marker_projection = None
         self._marker_session = None
@@ -51,6 +54,8 @@ class ConsoleBackendPresentation:
         checkpoint = self.view_lifecycle.admit(
             value["attachment_id"], value["visit"], value["action"],
         )
+        if value["action"] in {"mount", "hidden"}:
+            self.project_decisions.pause()
         self._view_checkpoints[message.identity.request_id] = (message.identity, checkpoint)
         return checkpoint
 
@@ -84,6 +89,8 @@ class ConsoleBackendPresentation:
         from .console_backend_view_lifecycle import ConsoleBackendViewLifecycle, _METHODS
         from .console_domain_services import _definition_current
 
+        if self.project_decisions._shown is not None:
+            self.project_decisions.pause()
         owner = self.view_lifecycle
         method = owner.drain
         record = dict(_METHODS)["drain"]
@@ -99,6 +106,20 @@ class ConsoleBackendPresentation:
         self.require_association(self.association)
         await self.readiness.warm(identity)
 
+    async def prepare_run_history(self, identity):
+        """Read original run metadata only for this explicit projection request."""
+        from .console_execution_protocol import encode_message
+        from .console_backend_run_history import ConsoleBackendRunHistoryRead
+
+        self.require_association(self.association)
+        message = self.backend.adapter._receipts[identity.request_id][0]
+        if message.operation != "ReadProjection":
+            raise RuntimeError("Console history request owner changed")
+        request = encode_message(message)["payload"].get("run_history")
+        if request is None:
+            return None
+        return await ConsoleBackendRunHistoryRead(self, identity, request).run()
+
     def _require_marker_projection(self, identity, projection) -> None:
         from types import MethodType
         from .console_domain_services import _definition_current
@@ -113,6 +134,10 @@ class ConsoleBackendPresentation:
             or projection is not self._marker_projection
             or type(projection) is not _MarkerProjection
             or _marker_module.ConsoleChangeReviewProjection is not _MarkerProjection
+            or _MarkerProjection._same_selection is not _MARKER_SAME[0]
+            or not _definition_current(_MARKER_SAME)
+            or any(getattr(module, name) is not record[0] or not _definition_current(record)
+                   for module, name, record in _MARKER_HELPERS)
         ):
             raise RuntimeError("Console marker projection owner changed")
         for name, record in _MARKER_METHODS:
@@ -131,6 +156,13 @@ class ConsoleBackendPresentation:
         if session is None or session.incarnation_id != identity.incarnation_id:
             raise RuntimeError("Console marker session changed")
         if self._marker_session is not session:
+            from .console_domain_services import _definition_current
+
+            if (_marker_module.ConsoleChangeReviewProjection is not _MarkerProjection
+                or any(getattr(_MarkerProjection, name) is not record[0]
+                       or not _definition_current(record)
+                       for name, record in _MARKER_METHODS)):
+                raise RuntimeError("Console marker constructor source changed")
             self._marker_projection = _MarkerProjection(
                 runtime_accessor=lambda: self._runtime,
                 conversation_id_accessor=lambda: session.persisted_conversation_id,
@@ -157,6 +189,38 @@ class ConsoleBackendPresentation:
         if not projection._same_selection(selected, projection._selection()):
             raise RuntimeError("Console marker publication changed")
         return rows, selected[5]
+
+    def register_marker_read(self, source, read):
+        """Enroll the actual original marker worker in this command's effect."""
+        import asyncio
+        from types import MethodType
+        from .console_change_review_read import _MarkerRead
+        from .console_domain_services import _definition_current
+        from .console_execution_retirement import _ReadResources
+
+        self._require_marker_projection(source.identity, read.creator)
+        controls = self.backend.controls
+        callback = read.callback
+        if (
+            source.controls is not controls
+            or read.task is not asyncio.current_task()
+            or controls._settings_command_tasks.get(read.task) is not source
+            or read not in read.creator._preparation_reads
+            or type(callback) is not MethodType
+            or type(callback.__self__) is not _MarkerRead
+            or callback.__func__ is not dict(_MARKER_READ_METHODS)["read"][0]
+            or callback.__self__.runtime is not self._runtime
+            or callback.__self__.conversation_id != self._marker_session.persisted_conversation_id
+        ):
+            raise RuntimeError("Console original marker handoff changed")
+        for name, record in _MARKER_READ_METHODS:
+            method = getattr(callback.__self__, name, None)
+            if (type(method) is not MethodType or method.__self__ is not callback.__self__
+                or method.__func__ is not record[0] or not _definition_current(record)):
+                raise RuntimeError("Console original marker reader changed")
+        observation = _ReadResources(source, read)
+        observation.effect = controls._begin_effect("transcript_marker_read", observation, source)
+        return observation
 
     def capture_projection_view(self, controls, identity, projection) -> None:
         """Retain inert row facts at the original synchronous projection boundary."""
@@ -219,6 +283,9 @@ class ConsoleBackendPresentation:
                 queued_count=self._controller.activity_for(row.id).queued_count,
                 run_marker=self._controller.run_marker_for(row.id),
             ))
+        from .console_execution_project_values import encode_project_head
+
+        project_head = encode_project_head(self.project_decisions.capture(identity))
         captured_at = time.monotonic()
         body = {
             "sessions": [encode_session_projection(session) for session in sessions],
@@ -242,6 +309,7 @@ class ConsoleBackendPresentation:
                 ),
                 "prompt_history": self.readiness.prompt_history_payload,
                 "send_selection": self.readiness.send_selection,
+                "project_head": project_head,
                 "provider_label": provider,
                 "control_provider_label": provider_chip,
                 "model": model,
@@ -535,8 +603,8 @@ class ConsoleBackendPresentation:
 
     def present_decision(self, kind, payload) -> None:
         self.require_association(self.association)
-        if self.parent_attachment is not None:
-            raise RuntimeError("Backend decision requires its parent presentation")
+        # The original host retains the payload. ReadProjection publishes its
+        # exact mixed head; only the real card's checkpoint claims answerability.
 
     def clear_decision(self, kind) -> None:
         self.present_decision(kind, None)
@@ -603,6 +671,23 @@ _MARKER_METHODS = tuple(
     (name, _definition(value))
     for name, value in vars(_MarkerProjection).items()
     if type(value) is FunctionType and name != "_same_selection"
+)
+from .console_change_review_read import _MarkerRead
+
+_MARKER_READ_METHODS = tuple(
+    (name, _definition(getattr(_MarkerRead, name)))
+    for name in ("read", "run", "require_current")
+)
+_MARKER_SAME = _definition(_MarkerProjection._same_selection)
+from . import console_change_review_read as _marker_read_module
+from . import console_agent_bridge as _marker_bridge_module
+
+_MARKER_HELPERS = tuple(
+    (module, name, _definition(getattr(module, name)))
+    for module, name in (
+        (_marker_read_module, "capture_marker_read"),
+        (_marker_bridge_module, "inject_resume_agent_markers"),
+    )
 )
 
 _COMPOSITION_RUNTIME_METHODS = tuple(

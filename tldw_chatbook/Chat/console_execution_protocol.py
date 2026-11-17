@@ -474,6 +474,10 @@ _DECISION = _tagged(
             "call_ids": _IDS,
             "decisions": _map(_APPROVAL_VALUE, keys=_NONEMPTY),
         },
+        "ApprovalPresentationDecision": {
+            "round_id": _REFERENCE, "call_ids": _IDS,
+            "attachment_id": _REFERENCE, "visit": _SEQUENCE,
+        },
         "ProjectBindingDecision": {
             "decision_id": _REFERENCE,
             "action": _enum("select", "disable", "cancel"),
@@ -515,6 +519,21 @@ _DECISION = _tagged(
         "WorktreeMergeDecision": {"request_id": _REFERENCE, "allow": _boolean},
     }
 )
+
+def _decision_with_reasons(value, path):
+    """Retain optional original denial provenance on the fixed approval variant."""
+    _object(value, path)
+    if value.get("kind") != "ApprovalRoundDecision" or "denial_reasons" not in value:
+        _DECISION(value, path)
+        return
+    _DECISION(MappingProxyType({
+        key: item for key, item in value.items() if key != "denial_reasons"
+    }), path)
+    reasons = value["denial_reasons"]
+    _map(_TEXT, keys=_NONEMPTY)(reasons, f"{path}.denial_reasons")
+    if any(value["decisions"].get(key) != "deny" for key in reasons):
+        _reject(path, "denial reason does not address an explicit denial")
+
 
 _HUB_TOOL = _record(
     server_key=_NONEMPTY,
@@ -641,6 +660,11 @@ def _projection_request(value, path):
     fields = {"known_display_revision": _MAYBE_REVISION}
     if "known_marker_revision" in value:
         fields["known_marker_revision"] = _MAYBE_REVISION
+    if "run_history" in value:
+        fields["run_history"] = _record(
+            conversation_id=_NONEMPTY, include_superseded=_boolean,
+            limit=_optional(_INT), agent_kind=_MAYBE_TEXT,
+        )
     if "view_checkpoint" in value:
         fields["view_checkpoint"] = _record(
             attachment_id=_NONEMPTY, visit=_SEQUENCE,
@@ -677,7 +701,11 @@ _COMMANDS = {
     "ApplySettings": _record(submission=_SUBMISSION),
     "OpenSession": _open_session_request,
     "CloseSession": _record(expected_revision=_REVISION),
-    "ResolveDecision": _record(decision=_DECISION),
+    "ResolveDecision": _record(decision=_decision_with_reasons),
+    "ProjectDecisionPresentation": _record(
+        attachment_id=_REFERENCE, visit=_SEQUENCE, decision_id=_REFERENCE,
+        action=_enum("mounted", "hidden"),
+    ),
     "ReadProjection": _projection_request,
     "CancelTurn": _record(turn_id=_TURN_ID),
     "PermissionAction": _record(operation=_PERMISSION),
@@ -1043,6 +1071,7 @@ _APPLIED = {
     "OpenSession": _record(session_id=_REFERENCE, incarnation_id=_REFERENCE),
     "CloseSession": _APPLIED_BOOL,
     "ResolveDecision": _APPLIED_BOOL,
+    "ProjectDecisionPresentation": _APPLIED_BOOL,
     "PermissionAction": _PERMISSION_RESULT,
     "CancelTurn": _APPLIED_BOOL,
     "FenceSource": _record(source=_SOURCE, revision=_REVISION),

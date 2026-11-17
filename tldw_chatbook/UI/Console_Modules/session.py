@@ -4036,6 +4036,11 @@ class ConsoleSessionController:
         Args:
             ephemeral: Create the session temporary (never saved locally).
         """
+        if getattr(self.app_instance, "console_execution_client", None) is not None:
+            from .execution_workspace import create_selected_chat
+
+            await create_selected_chat(self._screen, ephemeral=ephemeral)
+            return
         # TASK-339: new_session activates the fresh session inline; snapshot
         # first so the deferred draft swap attributes settle-window typing
         # to the new tab instead of clobbering it.

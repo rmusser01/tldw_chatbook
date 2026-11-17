@@ -38,6 +38,48 @@ def _identity(case, sequence, *, revision=0, session=True):
 
 
 @pytest.mark.parametrize("domain_case", ["control"], indirect=True)
+async def test_new_chat_uses_original_controller_and_rejects_changed_origin(domain_case):
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+    from tldw_chatbook.Chat.console_control_dispatch import OpenSession
+
+    case = domain_case
+    controls = _controls(case)
+    observed = []
+    monitoring = sys.monitoring
+    slot = next(value for value in range(6) if monitoring.get_tool(value) is None)
+    code = ConsoleChatController.new_session.__code__
+    monitoring.use_tool_id(slot, "task62-new-chat")
+
+    def observe(_code, *_args):
+        frame = sys._getframe(1)
+        if frame.f_locals.get("self") is case.controller:
+            observed.append(dict(frame.f_locals))
+
+    monitoring.register_callback(slot, monitoring.events.PY_START, observe)
+    monitoring.set_local_events(slot, code, monitoring.events.PY_START)
+    try:
+        receipt = controls.dispatch(OpenSession(
+            _identity(case, 1), workspace_id=case.session.workspace_id,
+            new_chat=True, ephemeral=True, new_chat_default_generation=3,
+        ))
+        session_id, incarnation_id = await receipt.applied
+        current = next(row for row in case.store.sessions() if row.id == session_id)
+        assert current.incarnation_id == incarnation_id
+        assert case.store.active_session_id == session_id
+        assert current.ephemeral and current.new_chat_default_generation == 3
+        assert len(observed) == 1
+        assert observed[0]["settings"] is observed[0]["canonical_settings_baseline"]
+        assert observed[0]["workspace_id"] == case.session.workspace_id
+        with pytest.raises(RuntimeError, match="origin changed"):
+            controls.dispatch(OpenSession(_identity(case, 2), new_chat=True))
+        assert len(case.store.sessions()) == 2 and len(observed) == 1
+    finally:
+        monitoring.set_local_events(slot, code, 0)
+        monitoring.register_callback(slot, monitoring.events.PY_START, None)
+        monitoring.free_tool_id(slot)
+
+
+@pytest.mark.parametrize("domain_case", ["control"], indirect=True)
 async def test_original_configuration_publication_rolls_only_configuration(domain_case):
     from tldw_chatbook.Chat.console_control_dispatch import FenceSource, UpdateInputs
     from tldw_chatbook.Chat.console_control_publication import (

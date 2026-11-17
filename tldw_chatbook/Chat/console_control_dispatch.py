@@ -242,6 +242,15 @@ class ResolveDecision:
 
 
 @dataclass(frozen=True, slots=True)
+class ProjectDecisionPresentation:
+    identity: ControlIdentity
+    attachment_id: str
+    visit: int
+    decision_id: str
+    action: str
+
+
+@dataclass(frozen=True, slots=True)
 class ReadProjection:
     identity: ControlIdentity
 
@@ -256,6 +265,7 @@ class ConsoleProjection:
     run_state: Any
     decision: Any = field(repr=False)
     marker_revision: int | None = None
+    run_history: tuple | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -473,6 +483,7 @@ class ConsoleLocalControls:
         association = self._domain.presentation.association
         self._domain.presentation.require_association(association)
         prepared_transcript = None
+        run_history = None
         if view is None:
             from .console_backend_presentation import ConsoleBackendPresentation
 
@@ -492,8 +503,9 @@ class ConsoleLocalControls:
             from .console_backend_presentation import ConsoleBackendPresentation
 
             if type(self._domain.presentation) is ConsoleBackendPresentation:
-                await self._domain.presentation.prepare_readiness(identity)
                 prepared_transcript = await self._domain.presentation.prepare_transcript(identity)
+                run_history = await self._domain.presentation.prepare_run_history(identity)
+                await self._domain.presentation.prepare_readiness(identity)
         else:
             if (
                 type(view) is not ChatScreen
@@ -534,6 +546,7 @@ class ConsoleLocalControls:
                 self._controller.run_state_for(session.id),
                 self._controller.pending_decision_projection(session.id),
                 marker_revision,
+                run_history,
             )
             from .console_backend_presentation import ConsoleBackendPresentation
 
@@ -1343,6 +1356,7 @@ class ConsoleLocalControls:
             OpenSession,
             CloseSession,
             ResolveDecision,
+            ProjectDecisionPresentation,
             ReadProjection,
         ):
             raise TypeError("Unsupported local Console command")
@@ -1370,6 +1384,7 @@ class ConsoleLocalControls:
                 Shutdown,
                 CloseSession,
                 ResolveDecision,
+                ProjectDecisionPresentation,
                 ReplaceConfiguration,
                 RefreshConfiguration,
                 SetWorkspaceBindingAccess,
@@ -1524,6 +1539,17 @@ class ConsoleLocalControls:
             receipt.applied.set_result(
                 resolve_original_decision(self, identity, command.decision)
             )
+            return receipt
+        if type(command) is ProjectDecisionPresentation:
+            from .console_backend_presentation import ConsoleBackendPresentation
+
+            presentation = self._domain.presentation
+            if type(presentation) is not ConsoleBackendPresentation:
+                raise RuntimeError("Console project presentation requires its backend")
+            receipt.applied.set_result(presentation.project_decisions.present(
+                identity, command.attachment_id, command.visit,
+                command.decision_id, command.action,
+            ))
             return receipt
         if type(command) is ReadProjection:
             receipt.retired = self._loop.create_future()

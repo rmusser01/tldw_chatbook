@@ -13,6 +13,15 @@ class ApprovalRoundDecision:
     round_id: str
     call_ids: tuple[str, ...]
     decisions: dict[str, str]
+    denial_reasons: dict[str, str] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ApprovalPresentationDecision:
+    round_id: str
+    call_ids: tuple[str, ...]
+    attachment_id: str
+    visit: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +79,7 @@ class WorktreeMergeDecision:
 
 Decision = (
     ApprovalRoundDecision
+    | ApprovalPresentationDecision
     | ProjectBindingDecision
     | ProjectDispatchDecision
     | InitialHookDecision
@@ -102,6 +112,7 @@ def resolve_original_decision(controls, identity, decision):
 
     kinds = {
         ApprovalRoundDecision: "approval",
+        ApprovalPresentationDecision: "approval",
         InitialHookDecision: "hook_review",
         ChatCreateDecision: "chat_create",
         QuestionDecision: "question",
@@ -113,7 +124,7 @@ def resolve_original_decision(controls, identity, decision):
         raise TypeError("Unsupported local Console decision")
     key = (
         decision.round_id
-        if type(decision) is ApprovalRoundDecision
+        if type(decision) in (ApprovalRoundDecision, ApprovalPresentationDecision)
         else decision.review_id
         if type(decision) is InitialHookDecision
         else decision.request_id
@@ -123,13 +134,36 @@ def resolve_original_decision(controls, identity, decision):
         if state is None or state.get("session_id") != identity.session_id:
             return False
         if (
-            type(decision) is ApprovalRoundDecision
+            type(decision) in (ApprovalRoundDecision, ApprovalPresentationDecision)
             and tuple(state["names"]) != decision.call_ids
         ):
             return False
+    if type(decision) is ApprovalPresentationDecision:
+        from .console_backend_presentation import ConsoleBackendPresentation
+
+        presentation = controls._domain.presentation
+        if type(presentation) is not ConsoleBackendPresentation:
+            raise RuntimeError("Console approval presentation requires its backend")
+        presentation.project_decisions._require()
+        if (
+            presentation.parent_attachment != (decision.attachment_id, decision.visit)
+            or not host.view_visible
+            or not controls._intake_open
+            or identity.source_revision != controls.source_revision
+        ):
+            return False
+        head = controls._controller.pending_decision_projection(identity.session_id)
+        if head is None or head.decision_type != "approval" or head.decision_id != decision.round_id:
+            return False
+        return controls._controller.set_answerable_decision(identity.session_id, decision.round_id)
     if type(decision) is ApprovalRoundDecision:
+        choices = decision.decisions
+        if decision.denial_reasons is not None:
+            from ..Agents.approval_provenance import ApprovalDecisions
+
+            choices = ApprovalDecisions(choices, denial_reasons=decision.denial_reasons)
         controls._permissions.resolve_approval_round(
-            decision.decisions, round_id=decision.round_id
+            choices, round_id=decision.round_id
         )
     elif type(decision) is InitialHookDecision:
         return runtime.resolve_initial_hook_review(

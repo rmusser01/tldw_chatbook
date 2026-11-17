@@ -237,7 +237,7 @@ class ConsoleRetrievalController:
                     selected_client(view) is not client
                     or view._retrieval is not self
                     or client.projection_view.active_session_id != session.id
-                    or client.projection_view.session(session.id) is not session
+                    or client.projection_view.session(session.id).incarnation_id != session.incarnation_id
                 ):
                     raise RuntimeError("Console retrieval display session changed")
                 return client.session_composition.held_retrieval_scope

@@ -5546,6 +5546,52 @@ class ConsoleWorkspaceController:
                     self.app_instance, result.project_skills
                 )
             return
+        if getattr(self.app_instance, "console_execution_client", None) is not None:
+            from .execution_workspace import create_selected_chat
+
+            screen = self._screen
+            client = self.app_instance.console_execution_client
+
+            def current() -> bool:
+                return (
+                    screen.is_mounted and screen.is_current
+                    and self.app_instance.screen is screen
+                    and self.app_instance.console_execution_client is client
+                    and self.app_instance.workspace_registry_service is registry_service
+                    and registry_service.get_active_workspace().id == result.workspace_id
+                )
+
+            async def activate() -> None:
+                if not current():
+                    return
+                try:
+                    applied = await create_selected_chat(
+                        screen, workspace_id=result.workspace_id,
+                        title=self._console_workspace_session_title(result.workspace_id),
+                    )
+                except Exception:
+                    logger.opt(exception=True).warning("Unable to open new Console workspace")
+                    if current():
+                        self.app_instance.notify(
+                            "Workspace created but Console could not switch to it.", severity="error",
+                        )
+                    return
+                if applied and current():
+                    self.app_instance.notify(
+                        f"Created {result.name} and switched Console to it.",
+                        severity="information",
+                    )
+                    if result.project_skills:
+                        maybe_offer_project_skills_import(self.app_instance, result.project_skills)
+
+            def start() -> None:
+                if current():
+                    screen._start_console_attach_reconciliation()
+                    screen.run_worker(activate, group="console-workspace-create", exclusive=False)
+
+            # Resume owns attachment on the actual screen message pump.
+            screen.call_after_refresh(start)
+            return
         self._sync_console_chat_core_state()
         self._activate_console_session_for_workspace(result.workspace_id)
         self._sync_console_workspace_context()

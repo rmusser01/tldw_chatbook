@@ -166,10 +166,12 @@ async def test_optional_seed_error_keeps_independent_sticky_native_outcome(
             receipt = seed.receipt
             assert failed and seed.task.result() == 0  # Original optional behavior.
             assert receipt.observation.connections
-            assert isinstance(
-                receipt.producer.exception(),
-                sqlite3.OperationalError if failure == "query" else OSError,
-            )
+            if failure == "query":
+                assert isinstance(receipt.producer.exception(), sqlite3.OperationalError)
+            else:
+                # The stock DB context catches close errors. Its optional
+                # result can succeed while the observed connection stays live.
+                assert receipt.producer.result() == 0
             assert receipt.confirmed() is (failure == "query")
             if failure == "close":
                 assert not backend.controller._interrupt_host.view_visible

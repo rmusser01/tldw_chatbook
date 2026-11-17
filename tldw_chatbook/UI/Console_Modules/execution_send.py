@@ -14,6 +14,7 @@ from ...Widgets.Console.console_composer_bar import (
     ConsoleDraftStash,
     classify_console_raw_draft,
 )
+from ...Widgets.Console import console_composer_bar as composer_source
 from ..Screens import chat_screen as screen_source
 from . import send_acknowledgement as sending
 from . import sent_draft
@@ -284,6 +285,7 @@ _ACK_METHODS = tuple(
 _SOURCES = tuple(
     (module, name, _definition(getattr(module, name)))
     for module, names in (
+        (composer_source, ("classify_console_raw_draft",)),
         (sending, ("_schedule_visible_send_capture", "acknowledgement_for")),
         (screen_source, ("_console_library_rag_source_scope",)),
         (

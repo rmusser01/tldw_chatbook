@@ -66,6 +66,50 @@ async def _retrieve(receipt):
 
 
 @pytest.mark.asyncio
+async def test_projection_observer_cancel_keeps_next_read_behind_actual_retirement():
+    from Tests.Chat.test_console_execution_workspace import _until
+
+    client = _ready_client()
+    first = asyncio.create_task(client.read_projection("session", "incarnation"))
+    second = None
+    try:
+        await _until(lambda: len(client._channel.messages) == 1)
+        receipt = next(iter(client._requests.values()))
+        client._receive(_reply(client, receipt, 1, "failed", {
+            "code": "source_changed", "stage": "admission",
+        }))
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        second = asyncio.create_task(client.read_projection("session", "incarnation"))
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert len(client._channel.messages) == 1
+        assert client._projection_lock.locked() and not receipt.retired.done()
+        client._receive(_reply(client, receipt, 2, "retired", {
+            "operation_id": receipt.identity.request_id, "retired": True,
+        }))
+        await _until(lambda: len(client._channel.messages) == 2)
+        next_receipt = next(iter(client._requests.values()))
+        client._receive(_reply(client, next_receipt, 3, "failed", {
+            "code": "source_changed", "stage": "admission",
+        }))
+        client._receive(_reply(client, next_receipt, 4, "retired", {
+            "operation_id": next_receipt.identity.request_id, "retired": True,
+        }))
+        with pytest.raises(ConsoleRemoteFailure):
+            await second
+        await asyncio.sleep(0)
+        assert not client._projection_lock.locked() and not client._projection_reads
+    finally:
+        client._fail(RuntimeError("test cleanup"))
+        await asyncio.gather(*client._projection_reads, return_exceptions=True)
+        if second is not None:
+            await asyncio.gather(second, return_exceptions=True)
+        await asyncio.gather(first, return_exceptions=True)
+
+
+@pytest.mark.asyncio
 async def test_pre_admission_failure_ends_receipt_wait_without_inventing_retirement():
     client = _ready_client()
     receipt = client.submit(

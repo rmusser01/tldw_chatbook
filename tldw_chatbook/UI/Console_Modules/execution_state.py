@@ -39,6 +39,9 @@ def selected_client(screen: ChatScreen) -> ConsoleExecutionClient | None:
     if type(screen) is not ChatScreen or type(client) is not ConsoleExecutionClient:
         raise TypeError("Original Console screen and client are required")
     _require_methods(client, _CLIENT_METHODS)
+    from ...Chat.console_execution_readers import require_reader_sources
+
+    require_reader_sources()
     client.require_view(screen, client._visit)
     view, frame = client.projection_view, client._projection
     composition = client.session_composition
@@ -130,6 +133,8 @@ _PREPARE_METHODS = tuple(
         "prepare_view", "attach_view", "detach_view", "require_view",
         "_require_view_preparation", "_retain_open_session", "_open_initial_session",
         "read_projection", "_join_hidden_checkpoint", "_view_checkpoint_finished",
+        "open_new_chat", "_read_projection_locked", "_projection_read_finished",
+        "read_run_history",
     )
 )
 
@@ -210,6 +215,10 @@ def detach_selected_view(screen: ChatScreen) -> ConsoleProjectionView:
     if client._view is screen:
         if client._visit != visit:
             raise RuntimeError("Console teardown visit changed")
+        from .execution_decisions import is_owned_project_modal
+
+        if is_owned_project_modal(client, screen, visit):
+            return view
         client.detach_view(screen, visit)
     return view
 
@@ -248,6 +257,11 @@ async def refresh_selected_view(screen: ChatScreen, *, checkpoint: str | None = 
     if selected_client(screen) is not client:
         raise RuntimeError("Console refreshed publication changed")
     screen._console_process_projection_view = client.projection_view
+    from .execution_decisions import is_owned_project_modal, present_selected_decision
+
+    if is_owned_project_modal(client, screen, visit):
+        await present_selected_decision(screen, client, visit)
+        return True
     if not await apply_console_process_sessions(
         screen, client, client.session_surface, visit=visit,
     ):
@@ -262,6 +276,7 @@ async def refresh_selected_view(screen: ChatScreen, *, checkpoint: str | None = 
             control, screen._build_console_workbench_state(control),
         )
         screen._sync_console_settings_summary()
+    await present_selected_decision(screen, client, visit)
     client.require_view(screen, visit)
     return True
 
@@ -295,7 +310,8 @@ def resume_selected_view(screen: ChatScreen) -> None:
 async def reconcile_selected_view(screen: ChatScreen) -> None:
     """Join the real remote visit and publish its original mounted values."""
     client = selected_client(screen)
-    if client is None or screen._console_attach_reconcile_running:
+    if (client is None or screen._console_attach_reconcile_running
+        or getattr(screen, "_console_process_draft_switch", None) is not None):
         return
     visit = client._visit
     screen._console_attach_reconcile_running = True
@@ -333,10 +349,15 @@ async def reconcile_selected_view(screen: ChatScreen) -> None:
 
 def refresh_selected_when_due(screen: ChatScreen) -> None:
     """Request the original readiness refresh after its published expiry."""
+    from .execution_decisions import is_owned_project_modal
+
+    owner = screen.app_instance.console_execution_client
+    modal_visible = owner is not None and is_owned_project_modal(owner, screen, owner._visit)
     if (
-        not screen.is_attached or not screen.is_current
+        not screen.is_attached or (not screen.is_current and not modal_visible)
         or getattr(screen, "_console_sync_maintenance_paused", False)
         or screen._console_attach_reconcile_running
+        or getattr(screen, "_console_process_draft_switch", None) is not None
     ):
         return
     client = selected_client(screen)
@@ -380,3 +401,138 @@ def publish_authored_draft(screen: ChatScreen, draft: str, token: tuple[int, int
     client = selected_client(screen)
     require_authored_owner(screen, client, client._visit)
     return client.publish_authored_inputs(screen, client._visit, draft, token)
+
+
+def begin_selected_session_switch(screen: ChatScreen) -> None:
+    """Retain the original switch snapshot before the new-session await."""
+    client = selected_client(screen)
+    require_authored_owner(screen, client, client._visit)
+    if getattr(screen, "_console_process_draft_switch", None) is not None:
+        raise RuntimeError("Console draft switch is already pending")
+    if client._input_press is not None:
+        raise RuntimeError("Console pressed input still owns its draft")
+    owner = screen._session
+    composer = screen._console_composer_or_none()
+    if composer is None:
+        raise RuntimeError("Console switch composer is unavailable")
+    snapshot = owner._console_draft_switch_snapshot
+    if snapshot is None or snapshot[0] != owner._console_visible_draft_session_id:
+        raise RuntimeError("Console original switch snapshot is unavailable")
+    screen._console_process_draft_switch = (
+        client, client._visit, snapshot, composer, client._source_revision,
+        composer.capture_draft_snapshot(),
+    )
+
+
+async def _join_selected_switch_entries(client, entries) -> None:
+    import asyncio
+
+    for receipt in entries:
+        await asyncio.shield(receipt.applied)
+        if await asyncio.shield(receipt.retired) is not True:
+            raise RuntimeError("Console switched draft did not retire")
+
+
+async def cancel_selected_session_switch(screen: ChatScreen) -> None:
+    """Preserve actual typing if the original session command was refused."""
+    transition = getattr(screen, "_console_process_draft_switch", None)
+    if transition is None:
+        return
+    client, visit, snapshot, composer, revision, _original_draft = transition
+    try:
+        require_authored_owner(screen, client, visit)
+        if (client._source_revision != revision
+            or client.projection_view.active_session_id != snapshot[0]):
+            raise RuntimeError("Console cancelled switch destination changed")
+        captured = composer.capture_draft_snapshot()
+        client.publish_authored_inputs(
+            screen, visit, composer.draft_text(),
+            (captured.generation, captured.edit_serial), _switch=transition,
+        )
+        row = client.projection_view.session(snapshot[0])
+        receipt = client._authored_inputs[(row.id, row.incarnation_id)][2]
+    finally:
+        if getattr(screen, "_console_process_draft_switch", None) is transition:
+            screen._console_process_draft_switch = None
+    await _join_selected_switch_entries(client, (receipt,))
+
+
+async def bind_selected_session_draft(screen: ChatScreen) -> None:
+    """Apply the original draft/undo/suffix transition to retired row values."""
+    client = selected_client(screen)
+    owner = screen._session
+    transition = getattr(screen, "_console_process_draft_switch", None)
+    if transition is None:
+        return
+    retained, visit, snapshot, composer, revision, original_draft = transition
+    require_authored_owner(screen, client, visit)
+    if retained is not client or client._source_revision != revision:
+        raise RuntimeError("Console draft switch source changed")
+    row = client.projection_view.session(client.projection_view.active_session_id)
+    visible = owner._console_visible_draft_session_id
+    if snapshot[0] != visible or composer is not screen._console_composer_or_none():
+        raise RuntimeError("Console draft switch composer changed")
+    if row.id == visible:
+        await cancel_selected_session_switch(screen)
+        return
+    live_text = composer.draft_text()
+    save_text, suffix, resident_changed = live_text, "", False
+    snap_text, snap_serial = snapshot[1:]
+    if composer.edit_serial != snap_serial and live_text.startswith(snap_text):
+        save_text, suffix = snap_text, live_text[len(snap_text):]
+    try:
+        old = client.projection_view.session(visible)
+    except KeyError:
+        old = None
+    if (old is not None and live_text.startswith(snap_text)
+        and owner._console_visible_draft_revision is not None
+        and old.draft_revision != owner._console_visible_draft_revision):
+        save_text, resident_changed = old.draft, True
+    receipts = []
+    captured = composer.capture_draft_snapshot()
+    if old is not None:
+        if save_text != old.draft:
+            token = ((original_draft.generation, snap_serial) if suffix
+                     else (captured.generation, captured.edit_serial))
+            client.publish_authored_inputs(
+                screen, visit, save_text, token,
+                _switch=transition, _session_id=old.id,
+            )
+            receipts.append(client._authored_inputs[(old.id, old.incarnation_id)][2])
+        if resident_changed:
+            owner._console_undo_histories.pop(old.id, None)
+        else:
+            owner._console_undo_histories[old.id] = composer.export_undo_history()
+    observer = getattr(composer, "_authored_draft_observer", None)
+    composer._authored_draft_observer = None
+    try:
+        composer.load_draft(row.draft)
+        composer.restore_undo_history(owner._console_undo_histories.get(row.id))
+        owner._restore_banked_raw_cli_stashes_fn(row.id, composer)
+        if suffix:
+            composer.insert_text(suffix)
+        owner._sync_console_command_popup()
+        if owner._on_draft_session_changed is not None:
+            owner._on_draft_session_changed()
+        owner._console_visible_draft_session_id = row.id
+        owner._console_visible_draft_revision = row.draft_revision
+        owner._console_draft_switch_snapshot = None
+        owner._initial_composer_sync_pending = False
+        composition = client.session_composition
+        owner._visible_agent_handoff_draft = (
+            (row.id, row.incarnation_id, composition.agent_handoff_revision,
+             composer.capture_draft_snapshot())
+            if composition.agent_handoff_state == "pending" else None
+        )
+        if suffix:
+            captured = composer.capture_draft_snapshot()
+            client.publish_authored_inputs(
+                screen, visit, composer.draft_text(),
+                (captured.generation, captured.edit_serial), _switch=transition,
+            )
+            receipts.append(client._authored_inputs[(row.id, row.incarnation_id)][2])
+    finally:
+        composer._authored_draft_observer = observer
+        if getattr(screen, "_console_process_draft_switch", None) is transition:
+            screen._console_process_draft_switch = None
+    await _join_selected_switch_entries(client, receipts)

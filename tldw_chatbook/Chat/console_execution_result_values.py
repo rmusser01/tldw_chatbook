@@ -178,6 +178,7 @@ _OPERATIONS = {
     controls.OpenSession: "OpenSession",
     controls.CloseSession: "CloseSession",
     controls.ResolveDecision: "ResolveDecision",
+    controls.ProjectDecisionPresentation: "ProjectDecisionPresentation",
     controls.CancelTurn: "CancelTurn",
     controls.CommitPlanAck: "CommitPlanAck",
     controls.CloseIntake: "CloseIntake",

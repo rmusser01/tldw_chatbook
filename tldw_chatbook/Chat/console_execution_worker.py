@@ -229,6 +229,7 @@ class _BackendCommandAdapter:
         plain = {
             "OpenSession": controls.OpenSession,
             "CloseSession": controls.CloseSession,
+            "ProjectDecisionPresentation": controls.ProjectDecisionPresentation,
             "CancelTurn": controls.CancelTurn,
             "FenceSource": controls.FenceSource,
             "CloseIntake": controls.CloseIntake,
@@ -322,6 +323,7 @@ class _BackendCommandAdapter:
             return decisions.InitialHookDecision(**arguments)
         classes = (
             decisions.ApprovalRoundDecision,
+            decisions.ApprovalPresentationDecision,
             decisions.ProjectBindingDecision,
             decisions.ProjectDispatchDecision,
             decisions.ChatCreateDecision,
@@ -330,7 +332,7 @@ class _BackendCommandAdapter:
             decisions.SkillScriptDecision,
             decisions.WorktreeMergeDecision,
         )
-        if kind == "ApprovalRoundDecision":
+        if kind in {"ApprovalRoundDecision", "ApprovalPresentationDecision"}:
             arguments["call_ids"] = tuple(arguments["call_ids"])
         selected = next((item for item in classes if item.__name__ == kind), None)
         if selected is None:
@@ -722,6 +724,7 @@ class _BackendService:
             FenceSource,
             OpenSession,
             ResolveDecision,
+            ProjectDecisionPresentation,
             SetWorkspaceBindingAccess,
             Shutdown,
             UpdateInputs,
@@ -784,6 +787,7 @@ class _BackendService:
             elif receipt.work is None and type(command) in (
                 UpdateInputs,
                 ResolveDecision,
+                ProjectDecisionPresentation,
                 CommitPlanAck,
                 CloseIntake,
                 ApplySourceRevision,

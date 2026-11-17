@@ -9275,7 +9275,7 @@ class ChatScreen(BaseAppScreen):
         if getattr(getattr(self, "app_instance", None), "console_execution_client", None) is not None:
             from ..Console_Modules.execution_state import selected_client
 
-            return selected_client(self).projection_view
+            return selected_client(self).store_reader
         return self._console_runtime().chat_store
 
     @_console_chat_store.setter
@@ -9294,6 +9294,10 @@ class ChatScreen(BaseAppScreen):
     @property
     def _console_chat_controller(self) -> "ConsoleChatController | None":
         """The runtime's Console chat controller, or `None`."""
+        if getattr(getattr(self, "app_instance", None), "console_execution_client", None) is not None:
+            from ..Console_Modules.execution_state import selected_client
+
+            return selected_client(self).controller_reader
         return self._console_runtime().chat_controller
 
     @_console_chat_controller.setter
@@ -9328,7 +9332,7 @@ class ChatScreen(BaseAppScreen):
 
         selected = selected_client(self)
         if selected is not None:
-            return selected.projection_view
+            return selected.store_reader
 
         if run_controls.preparing_display_read(self):
             return self._console_chat_store
@@ -13797,7 +13801,20 @@ class ChatScreen(BaseAppScreen):
             else "local session, not persisted yet"
         )
         prefill_rows: list[ConsoleDisplayRow] = []
-        one_shot = active_session.one_shot_prefill
+        client = getattr(self.app_instance, "console_execution_client", None)
+        if client is None:
+            one_shot = active_session.one_shot_prefill
+        else:
+            from ..Console_Modules.execution_state import selected_client
+
+            if selected_client(self) is not client:
+                raise RuntimeError("Console conversation Inspector owner changed")
+            inputs = client.pressed_inputs
+            if (inputs["session_id"], inputs["incarnation_id"]) != (
+                active_session.id, active_session.incarnation_id
+            ):
+                raise RuntimeError("Console conversation Inspector session changed")
+            one_shot = inputs["one_shot_prefill"]
         if one_shot:
             prefill_rows.append(
                 ConsoleDisplayRow(

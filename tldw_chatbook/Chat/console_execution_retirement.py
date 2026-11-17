@@ -232,7 +232,23 @@ def register_preparation_read(read: object) -> _ReadResources | None:
     from .console_control_dispatch import _CommandSource, _command_source
 
     source = _command_source.get()
-    if type(source) is not _CommandSource or source.turn_retirement is None:
+    if type(source) is not _CommandSource:
+        return None
+    if source.turn_retirement is None:
+        from .console_backend_presentation import ConsoleBackendPresentation
+        from .console_backend_run_history import ConsoleBackendRunHistoryRead
+
+        if type(read.creator) is ConsoleBackendRunHistoryRead:
+            read.creator.require_current()
+            return read.creator.register(read, source)
+
+        presentation = source.controls._domain.presentation
+        if (
+            type(presentation) is ConsoleBackendPresentation
+            and read.creator is presentation._marker_projection
+        ):
+            presentation.require_association(presentation.association)
+            return presentation.register_marker_read(source, read)
         return None
     if _independent_display_read(read):
         # Its actual private display effect owns retirement. An inherited old

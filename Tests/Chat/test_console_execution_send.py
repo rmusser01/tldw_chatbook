@@ -16,8 +16,8 @@ from Tests.private_profile import private_profile_test
 @private_profile_test
 @pytest.mark.asyncio
 async def test_selected_original_enter_reaches_provider_and_durable_terminal(
-    request, accepted_process_provider
-):  # noqa: F811 -- imported pytest fixture
+    request, accepted_process_provider  # noqa: F811 -- imported pytest fixture
+):
     from Tests.Chat.test_console_control_trace import _observe
     from Tests.Chat.test_console_execution_backend_process import (
         _ACCEPTED_REPLY,
@@ -95,6 +95,9 @@ async def test_selected_original_enter_reaches_provider_and_durable_terminal(
                             await pilot.pause()
                     screen = app.screen
                     assert type(screen) is ChatScreen and app.console_runtime is None
+                    held_store = screen._console_chat_store
+                    held_session = held_store.session(held_store.active_session_id)
+                    held_controller = screen._console_chat_controller
                     composer = screen.query_one(
                         "#console-native-composer", ConsoleComposerBar
                     )
@@ -146,6 +149,15 @@ async def test_selected_original_enter_reaches_provider_and_durable_terminal(
                     await client.read_projection(row.id, row.incarnation_id)
                     row = client.projection_view.session(row.id)
                     assert row.persisted_conversation_id
+                    assert screen._console_chat_store is held_store
+                    assert held_controller.store is held_store
+                    assert held_session.persisted_conversation_id == row.persisted_conversation_id
+                    run_rows = await asyncio.to_thread(
+                        held_controller._agent_bridge._db.list_runs,
+                        held_session.persisted_conversation_id,
+                    )
+                    assert len(run_rows) == 1 and run_rows[0]["status"] == "done"
+                    assert run_rows[0]["conversation_id"] == row.persisted_conversation_id
                     # Independent original repository observation; this is not a
                     # mirrored controller or a decoded transcript persistence claim.
                     rows = app.chachanotes_db.get_messages_for_conversation(

@@ -39,7 +39,7 @@ def encode_projection_payload(
 
     if type(value) is not ConsoleProjection:
         raise ConsoleProtocolError("invalid_original_projection")
-    return {
+    body = {
         "source_revision": value.source_revision,
         "session_id": value.session_id,
         "incarnation_id": value.incarnation_id,
@@ -49,6 +49,9 @@ def encode_projection_payload(
         "run_state": encode_run_projection(value.run_state),
         "decision": encode_pending_decision(value.decision),
     }
+    if value.run_history is not None:
+        body["run_history"] = list(value.run_history)
+    return body
 
 
 def _shape(value: object) -> None:
@@ -61,11 +64,13 @@ def _shape(value: object) -> None:
         "run_state",
         "decision",
     }
-    if type(value) is not dict or set(value) not in (
-        fields, fields | {"session_view"}, fields | {"marker_revision"},
-        fields | {"session_view", "marker_revision"},
-    ):
+    if (type(value) is not dict or not fields <= set(value)
+        or set(value) - fields - {"session_view", "marker_revision", "run_history"}):
         raise ConsoleProtocolError("invalid_projection_fields")
+    if "run_history" in value:
+        from .console_backend_run_history import validate_run_history
+
+        validate_run_history(value["run_history"])
     marker = value.get("marker_revision")
     if marker is not None and (type(marker) is not int or marker < 0):
         raise ConsoleProtocolError("invalid_projection_marker_revision")
@@ -213,7 +218,10 @@ def _readiness(value, row) -> tuple:
     }
     if (
         type(value) is not dict
-        or set(value) not in (readiness_fields, readiness_fields | {"send_selection"})
+        or set(value) not in (
+            readiness_fields, readiness_fields | {"send_selection"},
+            readiness_fields | {"send_selection", "project_head"},
+        )
         or type(value["provider_label"]) is not str
         or type(value["control_provider_label"]) is not str
         or value["model"] is not None and type(value["model"]) is not str
@@ -242,7 +250,7 @@ def _readiness(value, row) -> tuple:
     if "send_selection" in value:
         _SELECTION(_detach(send_selection, "send_selection", 0, set()), "send_selection")
 
-    return (
+    result = (
         effective, readiness, value["provider_label"], value["model"],
         value["remaining_seconds"], value["captured_at_monotonic"],
         value["control_provider_label"], decode_context_summary(value["context_summary"]),
@@ -250,6 +258,16 @@ def _readiness(value, row) -> tuple:
         decode_prompt_history(value["prompt_history"]),
         send_selection,
     )
+    if "project_head" not in value:
+        return result
+    from .console_execution_project_values import decode_project_head
+
+    head = decode_project_head(value["project_head"])
+    if head is not None and (
+        head.session_id != row.id or head.incarnation_id != row.incarnation_id
+    ):
+        raise ConsoleProtocolError("project_head_session_changed")
+    return (*result, head)
 
 
 def decode_projection_readiness(payload: dict, view: ConsoleProjectionView) -> tuple:
@@ -376,4 +394,5 @@ def decode_projection_payload(
         decode_run_projection(value["run_state"]),
         decision,
         value.get("marker_revision"),
+        tuple(value["run_history"]) if "run_history" in value else None,
     )

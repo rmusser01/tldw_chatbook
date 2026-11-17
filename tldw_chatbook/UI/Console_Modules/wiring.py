@@ -4033,6 +4033,10 @@ def handle_approval_card_event(screen, event) -> None:
     if isinstance(event, ChatApprovalCard.ApprovalFeedbackChanged):
         _refresh_approval_feedback(screen, event.session_id, event.run_id)
         return
+    from .execution_decisions import handle_selected_approval_event
+
+    if handle_selected_approval_event(screen, event):
+        return
     controller = screen._console_chat_controller
     if controller is not None:
         controller.resolve_pending_approval(event.decisions, round_id=event.round_id)

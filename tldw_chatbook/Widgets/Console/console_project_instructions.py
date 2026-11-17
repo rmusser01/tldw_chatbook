@@ -508,6 +508,15 @@ class ProjectInstructionSetupModal(
         super().__init__()
         self._options = tuple(options)
 
+    def on_screen_suspend(self) -> None:
+        _report_process_modal_visibility(self, False)
+
+    def on_screen_resume(self) -> None:
+        _report_process_modal_visibility(self, True)
+
+    def on_unmount(self) -> None:
+        _report_process_modal_visibility(self, False)
+
     def compose(self) -> ComposeResult:
         with Vertical(id="console-project-setup-modal"):
             yield Static("Project instructions need a folder", markup=False)
@@ -609,6 +618,15 @@ class ProjectInstructionNoticeModal(SafeModalDismissMixin, ModalScreen[str]):
         super().__init__()
         self.notice = notice
 
+    def on_screen_suspend(self) -> None:
+        _report_process_modal_visibility(self, False)
+
+    def on_screen_resume(self) -> None:
+        _report_process_modal_visibility(self, True)
+
+    def on_unmount(self) -> None:
+        _report_process_modal_visibility(self, False)
+
     def compose(self) -> ComposeResult:
         source = self.notice.relative_source or "No root file found"
         with Vertical(id="console-project-notice-modal"):
@@ -685,3 +703,11 @@ class ProjectInstructionNoticeModal(SafeModalDismissMixin, ModalScreen[str]):
     def _disable(self, event: Button.Pressed) -> None:
         event.stop()
         self.action_disable()
+
+
+def _report_process_modal_visibility(modal, visible: bool) -> None:
+    if getattr(modal, "_console_process_modal_owner", None) is None:
+        return
+    from ...UI.Console_Modules.execution_decisions import project_modal_visibility_changed
+
+    project_modal_visibility_changed(modal, visible)

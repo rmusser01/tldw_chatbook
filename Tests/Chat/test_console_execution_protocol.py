@@ -45,6 +45,22 @@ def test_original_turn_checkpoints_remain_distinct_from_retirement():
             decode_message(envelope("ReceiveTurn", {"turn_id": "turn", flag: 1}, kind=kind))
 
 
+def test_open_session_keeps_stock_shape_and_closed_new_chat_intent():
+    original = {"title": "New chat", "workspace_id": None, "conversation_id": None}
+    assert encode_message(decode_message(envelope("OpenSession", original)))["payload"] == original
+    new_chat = dict(original, new_chat=True, ephemeral=True, new_chat_default_generation=3)
+    assert encode_message(decode_message(envelope("OpenSession", new_chat)))["payload"] == new_chat
+    for invalid in (
+        dict(new_chat, conversation_id="saved"),
+        dict(new_chat, new_chat=False),
+        dict(new_chat, ephemeral=1),
+        dict(new_chat, new_chat_default_generation=-1),
+        dict(original, ephemeral=True),
+    ):
+        with pytest.raises(ConsoleProtocolError):
+            decode_message(envelope("OpenSession", invalid))
+
+
 def attachment(identifier, content):
     return {
         "attachment_id": identifier,
