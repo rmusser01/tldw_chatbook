@@ -260,13 +260,13 @@ async def test_media_resize_focus_restore_yields_to_newer_user_focus(
         await pilot.pause()
 
         pending = []
-        transfer_focus = screen._focus_library_media_grip_if_current
+        transfer_focus = screen._media_controller._focus_library_media_grip_if_current
 
         def hold_transfer(generation, hidden_focus, grip):
             pending.append((generation, hidden_focus, grip))
 
         monkeypatch.setattr(
-            screen,
+            screen._media_controller,
             "_focus_library_media_grip_if_current",
             hold_transfer,
         )
@@ -283,7 +283,7 @@ async def test_media_resize_focus_restore_yields_to_newer_user_focus(
         library_grip.focus()
         await pilot.pause()
         monkeypatch.setattr(
-            screen,
+            screen._media_controller,
             "_focus_library_media_grip_if_current",
             transfer_focus,
         )
@@ -1050,7 +1050,7 @@ async def test_media_trash_compact_pane_priority_survives_page_and_filter_refres
             ),
             message="Compact Library pane did not become the explicit priority.",
         )
-        screen._sync_library_media_reader_layout_from_shell()
+        screen._media_controller._sync_library_media_reader_layout_from_shell()
         await pilot.pause()
         assert screen._media_state.reader_layout.library_open is True
         assert screen._media_state.reader_layout.items_open is False

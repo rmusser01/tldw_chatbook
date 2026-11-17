@@ -209,7 +209,7 @@ async def test_bulk_delete_confirm_copy_wraps_in_the_real_items_pane_floor() -> 
             custom_widths_enabled=True,
             items_width=ITEMS_MIN_WIDTH,
         )
-        screen._sync_library_media_reader_layout_from_shell()
+        screen._media_controller._sync_library_media_reader_layout_from_shell()
         screen.query_one("#library-media-select-toggle").press()
         await _wait_for_selector(screen, pilot, "#library-media-select-all")
         screen.query_one("#library-media-row-0", Button).press()

@@ -452,7 +452,6 @@ from ...Widgets.Library.library_media_canvas import (
     LibraryMediaRowScroll,
 )
 from ...Widgets.Library.library_emergency_return import LibraryEmergencyReturn
-from ...Widgets.glyph_fallback import ascii_glyph_mode
 from ...Widgets.Library.library_notes_canvas import (
     LibraryNotePresentationState,
     NoteEditorTextArea,
@@ -3119,6 +3118,12 @@ class LibraryScreen(BaseAppScreen):
             set_library_selected_row_id=(
                 lambda value: setattr(self, "_library_selected_row_id", value)
             ),
+            review_dismiss_undo_in_flight_accessor=(
+                lambda: self._review_dismiss_undo_in_flight
+            ),
+            set_review_dismiss_undo_in_flight=(
+                lambda value: setattr(self, "_review_dismiss_undo_in_flight", value)
+            ),
             # -- the 2 prior-extracted media WIRING controller instances.
             library_media_browse_controller_accessor=(
                 lambda: self._library_media_browse_controller
@@ -3129,6 +3134,9 @@ class LibraryScreen(BaseAppScreen):
             # -- general Library-wide shell helpers, not moved.
             acknowledge_library_destination_change=(
                 lambda *a, **k: self._acknowledge_library_destination_change(*a, **k)
+            ),
+            action_library_narrow_stage_return=(
+                lambda *a, **k: self.action_library_narrow_stage_return(*a, **k)
             ),
             active_review_set_banner=(
                 lambda *a, **k: self._active_review_set_banner(*a, **k)
@@ -3166,6 +3174,11 @@ class LibraryScreen(BaseAppScreen):
             invalidate_library_workspace_depth_state=(
                 lambda *a, **k: self._invalidate_library_workspace_depth_state(*a, **k)
             ),
+            library_adaptive_reader_allocation_is_current=(
+                lambda *a, **k: self._library_adaptive_reader_allocation_is_current(
+                    *a, **k
+                )
+            ),
             library_entry_route_key=(
                 lambda *a, **k: self._library_entry_route_key(*a, **k)
             ),
@@ -3175,6 +3188,7 @@ class LibraryScreen(BaseAppScreen):
             library_workspace_depth_state=(
                 lambda *a, **k: self._library_workspace_depth_state(*a, **k)
             ),
+            notify_review_set=(lambda *a, **k: self._notify_review_set(*a, **k)),
             open_library_export_canvas=(
                 lambda *a, **k: self._open_library_export_canvas(*a, **k)
             ),
@@ -3186,6 +3200,9 @@ class LibraryScreen(BaseAppScreen):
             ),
             review_dismiss_receipt_name=(
                 lambda *a, **k: self._review_dismiss_receipt_name(*a, **k)
+            ),
+            review_dismiss_undo_worker=(
+                lambda *a, **k: self._review_dismiss_undo_worker(*a, **k)
             ),
             review_selected_worker=(
                 lambda *a, **k: self._review_selected_worker(*a, **k)
@@ -3228,6 +3245,9 @@ class LibraryScreen(BaseAppScreen):
                     *a, **k
                 )
             ),
+            toggle_reviewed_unguarded=(
+                lambda *a, **k: self._toggle_reviewed_unguarded(*a, **k)
+            ),
             update_library_ingest_dynamic_regions=(
                 lambda *a, **k: self._update_library_ingest_dynamic_regions(*a, **k)
             ),
@@ -3239,48 +3259,7 @@ class LibraryScreen(BaseAppScreen):
             ),
             # -- named late-binding callables for the media exclusions a
             #    MOVER still calls internally.
-            arm_library_media_return_settlement=(
-                lambda *a, **k: self._arm_library_media_return_settlement(*a, **k)
-            ),
-            commit_library_media_return=(
-                lambda *a, **k: self._commit_library_media_return(*a, **k)
-            ),
-            library_media_content_signature=(
-                lambda *a, **k: self._library_media_content_signature(*a, **k)
-            ),
-            library_media_focus_target_matches_receipt=(
-                lambda *a, **k: self._library_media_focus_target_matches_receipt(
-                    *a, **k
-                )
-            ),
-            library_media_layout_signature=(
-                lambda *a, **k: self._library_media_layout_signature(*a, **k)
-            ),
-            library_media_return_candidate=(
-                lambda *a, **k: self._library_media_return_candidate(*a, **k)
-            ),
-            library_media_settlement_tree=(
-                lambda *a, **k: self._library_media_settlement_tree(*a, **k)
-            ),
-            reconcile_library_media_stage_presentation=(
-                lambda *a, **k: self._reconcile_library_media_stage_presentation(
-                    *a, **k
-                )
-            ),
-            restore_library_media_reader_width_on_open=(
-                lambda *a, **k: self._restore_library_media_reader_width_on_open(
-                    *a, **k
-                )
-            ),
             sanitize_media_field=(lambda *a, **k: self._sanitize_media_field(*a, **k)),
-            sync_library_media_reader_layout_from_shell=(
-                lambda *a, **k: self._sync_library_media_reader_layout_from_shell(
-                    *a, **k
-                )
-            ),
-            sync_library_media_surfaces_or_recompose=(
-                lambda *a, **k: self._sync_library_media_surfaces_or_recompose(*a, **k)
-            ),
         )
         # wave-8 task 2 (notes series 2/N): constructed right after the
         # Media controller, matching every other controller in this file.
@@ -6083,26 +6062,7 @@ class LibraryScreen(BaseAppScreen):
     def _library_media_settlement_tree(
         self,
     ) -> tuple[LibraryBrowseReaderShell, Vertical, LibraryMediaRowScroll] | None:
-        """Return the current attached Media shell, Items host, and row owner."""
-        try:
-            shell = self.query_one(
-                ".library-media-route",
-                LibraryBrowseReaderShell,
-            )
-            items_host = self.query_one("#library-canvas", Vertical)
-            owner = self.query_one(
-                "#library-media-row-scroll",
-                LibraryMediaRowScroll,
-            )
-        except (NoMatches, QueryError):
-            return None
-        if not (shell.is_attached and items_host.is_attached and owner.is_attached):
-            return None
-        if items_host not in owner.ancestors or shell not in items_host.ancestors:
-            return None
-        if self not in shell.ancestors:
-            return None
-        return shell, items_host, owner
+        return self._media_controller._library_media_settlement_tree()
 
     def _adopt_library_media_row_owner(self, owner: LibraryMediaRowScroll) -> bool:
         return self._media_controller._adopt_library_media_row_owner(owner)
@@ -6118,14 +6078,7 @@ class LibraryScreen(BaseAppScreen):
         self,
         receipt: _LibraryMediaReturnReceipt | None,
     ) -> bool:
-        """Return whether one retained receipt can enter Media settlement."""
-        return bool(
-            receipt is not None
-            and receipt.final_focus_policy in {"row", "control"}
-            and receipt.scroll_offset is not None
-            and receipt.scroll_offset[0] >= 0
-            and receipt.scroll_offset[1] >= 0
-        )
+        return self._media_controller._library_media_return_candidate(receipt)
 
     def _library_media_exact_return_candidate(
         self, receipt: _LibraryMediaReturnReceipt | None
@@ -6169,46 +6122,8 @@ class LibraryScreen(BaseAppScreen):
         receipt: _LibraryMediaReturnReceipt,
         stable_id: str,
     ) -> bool:
-        """Return whether a guarded target satisfies one receipt's policy."""
-        if not target.is_attached or self not in target.ancestors:
-            return False
-        target_is_semantic_row = bool(
-            target.has_class("library-media-row")
-            and str(getattr(target, "media_id", "") or "") == stable_id
-        )
-        if receipt.final_focus_policy == "row":
-            if target_is_semantic_row:
-                return True
-            revised = bool(
-                receipt.content_signature != self._library_media_content_signature()
-                or receipt.layout_signature != self._library_media_layout_signature()
-            )
-            return revised and bool(
-                target.has_class("library-media-row")
-                or target.id
-                in {
-                    "library-media-trash-open",
-                    "library-media-type-filter",
-                    "library-media-empty-import",
-                }
-            )
-        if (
-            receipt.final_focus_policy == "control"
-            and receipt.final_focus_identity
-            and target.id == receipt.final_focus_identity
-        ):
-            return True
-        responsive_layout_revised = bool(
-            receipt.layout_signature != self._library_media_layout_signature()
-        )
-        return responsive_layout_revised and bool(
-            target_is_semantic_row
-            or target.id
-            in {
-                "library-media-trash-open",
-                "library-media-type-filter",
-                "library-media-empty-import",
-            }
+        return self._media_controller._library_media_focus_target_matches_receipt(
+            target, receipt, stable_id
         )
 
     def _arm_library_media_return_settlement(
@@ -6217,108 +6132,9 @@ class LibraryScreen(BaseAppScreen):
         *,
         consume_latest_geometry: bool = True,
     ) -> _LibraryMediaReturnSettlement | None:
-        """Create current-owner authority and optionally consume ready geometry."""
-        if (
-            not self._library_pending_list_entry_focus
-            or self._library_pending_list_entry_media_return is not receipt
-            or not self._library_media_return_candidate(receipt)
-            or self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA
-            or self._media_state.view != "list"
-            or not self._library_media_live_focus_is_allowed(
-                self._library_pending_list_entry_focus_anchor,
-                receipt.stable_id,
-            )
-        ):
-            self._media_state.return_settlement = None
-            return None
-        tree = self._library_media_settlement_tree()
-        if tree is None:
-            self._media_state.return_settlement = None
-            return None
-        shell, items_host, owner = tree
-        self._adopt_library_media_row_owner(owner)
-        if (
-            receipt.final_focus_policy == "row"
-            and not self._library_media_exact_return_candidate(receipt)
-            and not self._library_media_semantic_row_is_current(receipt, items_host)
-        ):
-            # A revised list that removed the semantic origin uses the
-            # established retained-row/recovery focus path. It cannot mint a
-            # geometry settlement whose row identity is already gone.
-            self._media_state.return_settlement = None
-            return None
-
-        current = self._media_state.return_settlement
-        if current is not None:
-            if self._library_media_request_matches_current_authority(
-                current,
-                receipt,
-                tree,
-            ):
-                latest = owner.latest_geometry
-                if consume_latest_geometry and latest is not None:
-                    self._settle_library_media_return_from_geometry(
-                        current,
-                        owner,
-                        latest,
-                    )
-                return self._media_state.return_settlement
-            # A request that lost any non-geometry fence cannot renew itself
-            # from the geometry event it was waiting for. Real replacement or
-            # presentation seams clear the old request before arming authority
-            # for their current tree.
-            self._media_state.return_settlement = None
-            return None
-
-        last_success = self._media_state.last_successful_settlement
-        if (
-            last_success is not None
-            and self._library_media_request_matches_current_authority(
-                last_success[0],
-                receipt,
-                tree,
-            )
-            and last_success[2] == self._library_media_content_signature()
-            and last_success[3] == self._library_media_layout_signature()
-        ):
-            return None
-
-        self._media_state.return_request_id += 1
-        owner_identity = id(owner)
-        floor = (
-            self._media_state.geometry_floor
-            if self._media_state.geometry_floor_owner_identity == owner_identity
-            else 0
+        return self._media_controller._arm_library_media_return_settlement(
+            receipt, consume_latest_geometry=consume_latest_geometry
         )
-        request = _LibraryMediaReturnSettlement(
-            request_id=self._media_state.return_request_id,
-            receipt=receipt,
-            final_focus_policy=receipt.final_focus_policy,
-            final_focus_identity=receipt.final_focus_identity,
-            focus_intent_generation=self._notes_state.focus_intent_generation,
-            compose_generation=self._library_compose_generation,
-            media_lifecycle_generation=self._media_state.lifecycle_generation,
-            presentation_epoch=self._media_state.presentation_epoch,
-            content_signature=self._library_media_content_signature(),
-            layout_signature=self._library_media_layout_signature(),
-            route_identity=self._library_entry_route_key(),
-            media_view_identity=self._media_state.view,
-            shell_identity=id(shell),
-            items_host_identity=id(items_host),
-            owner_identity=owner_identity,
-            exclusive_geometry_floor=floor,
-            focus_anchor=self._library_pending_list_entry_focus_anchor,
-        )
-        self._media_state.return_settlement = request
-        self._media_state.last_exact_settlement = None
-        self._media_state.last_successful_settlement = None
-        self._media_state.last_settlement_attempt = None
-        self._media_state.last_settlement_outcome = None
-        self._bind_library_media_settlement_deadline(request.request_id)
-        latest = owner.latest_geometry
-        if consume_latest_geometry and latest is not None and latest.revision > floor:
-            self._settle_library_media_return_from_geometry(request, owner, latest)
-        return self._media_state.return_settlement
 
     def _bind_library_media_settlement_deadline(self, request_id: int) -> None:
         return self._media_controller._bind_library_media_settlement_deadline(
@@ -6335,235 +6151,6 @@ class LibraryScreen(BaseAppScreen):
             request, owner, geometry
         )
 
-    def _resolve_library_media_settlement_target(
-        self,
-        request: _LibraryMediaReturnSettlement,
-        items_host: Vertical,
-        *,
-        revised: bool,
-        responsive_layout_revised: bool,
-    ) -> tuple[Widget, bool] | None:
-        """Resolve final semantic/control focus before settlement mutation."""
-        rows = [
-            row
-            for row in self.query(".library-media-row")
-            if row.is_attached and items_host in row.ancestors
-        ]
-        semantic_row = next(
-            (
-                row
-                for row in rows
-                if str(getattr(row, "media_id", "") or "") == request.receipt.stable_id
-            ),
-            None,
-        )
-        if request.final_focus_policy == "row":
-            if semantic_row is not None:
-                return semantic_row, False
-            if not revised:
-                return None
-            if rows:
-                return rows[0], True
-
-        else:
-            control: Widget | None = None
-            identity = request.final_focus_identity
-            if identity:
-                try:
-                    candidate = self.query_one(f"#{identity}", Widget)
-                except (NoMatches, QueryError):
-                    pass
-                else:
-                    if (
-                        candidate.is_attached
-                        and self in candidate.ancestors
-                        and candidate.display
-                        and candidate.can_focus
-                        and not bool(getattr(candidate, "disabled", False))
-                    ):
-                        control = candidate
-            if semantic_row is None:
-                if not revised:
-                    return None
-                if rows:
-                    return rows[0], True
-            elif control is not None:
-                return control, False
-            if semantic_row is not None and not responsive_layout_revised:
-                return None
-            if semantic_row is not None:
-                return semantic_row, True
-        for selector in (
-            "#library-media-trash-open",
-            "#library-media-type-filter",
-            "#library-media-empty-import",
-        ):
-            try:
-                fallback = self.query_one(selector, Widget)
-            except (NoMatches, QueryError):
-                continue
-            if (
-                fallback.is_attached
-                and fallback.display
-                and fallback.can_focus
-                and not bool(getattr(fallback, "disabled", False))
-            ):
-                return fallback, True
-        return None
-
-    def _commit_library_media_return(
-        self,
-        request: _LibraryMediaReturnSettlement,
-        owner: LibraryMediaRowScroll,
-        geometry: LibraryMediaRowGeometry,
-        desired: tuple[int, int],
-        outcome: _LibraryMediaSettlementOutcome,
-        *,
-        allow_reused_geometry: bool = False,
-    ) -> bool:
-        """Transactionally apply scroll, guarded focus, and terminal outcome."""
-        tree = self._library_media_settlement_tree()
-        receipt = self._library_pending_list_entry_media_return
-        if (
-            tree is None
-            or receipt is None
-            or tree[2] is not owner
-            or not self._library_media_request_matches_current_authority(
-                request,
-                receipt,
-                tree,
-            )
-        ):
-            return False
-        current_content_signature = self._library_media_content_signature()
-        current_layout_signature = self._library_media_layout_signature()
-        responsive_layout_revised = bool(
-            receipt.layout_signature != current_layout_signature
-        )
-        revised = bool(
-            responsive_layout_revised
-            or receipt.content_signature != current_content_signature
-        )
-        resolved = self._resolve_library_media_settlement_target(
-            request,
-            tree[1],
-            revised=revised,
-            responsive_layout_revised=responsive_layout_revised,
-        )
-        if resolved is None:
-            return False
-        target, focus_fallback = resolved
-        if not self._library_media_live_focus_is_allowed(
-            request.focus_anchor,
-            receipt.stable_id,
-            target,
-        ):
-            return False
-        last_attempt = self._media_state.last_settlement_attempt
-        if (
-            not allow_reused_geometry
-            and last_attempt is not None
-            and last_attempt[0] == request.request_id
-            and last_attempt[1] >= geometry.revision
-        ):
-            return False
-
-        pre_scroll = (int(owner.scroll_x), int(owner.scroll_y))
-        pre_focus = self.focused
-        pre_selected_id = self._media_state.selected_media_id
-        pre_outcome = self._media_state.last_settlement_outcome
-        committed = False
-        self._media_state.last_settlement_attempt = (
-            request.request_id,
-            geometry.revision,
-        )
-        try:
-            owner.scroll_to(
-                x=desired[0],
-                y=desired[1],
-                animate=False,
-                force=True,
-                immediate=True,
-            )
-            if (int(owner.scroll_x), int(owner.scroll_y)) == desired and (
-                self._library_media_live_focus_is_allowed(
-                    request.focus_anchor,
-                    request.receipt.stable_id,
-                    target,
-                )
-            ):
-                self._library_notes_programmatic_focus_target = target
-                self.set_focus(target, scroll_visible=False)
-                committed = bool(
-                    self.focused is target
-                    and (int(owner.scroll_x), int(owner.scroll_y)) == desired
-                    and self._media_state.selected_media_id == pre_selected_id
-                )
-                if committed:
-                    if (
-                        request.final_focus_policy == "control"
-                        and focus_fallback
-                        and desired == receipt.scroll_offset
-                    ):
-                        outcome = "exact-scroll-focus-fallback"
-                    if outcome in {
-                        "exact-settled",
-                        "exact-scroll-focus-fallback",
-                    }:
-                        self._media_state.last_exact_settlement = (
-                            request,
-                            geometry.revision,
-                        )
-                    self._media_state.last_settlement_outcome = (
-                        request.request_id,
-                        outcome,
-                        geometry.revision,
-                    )
-                    self._media_state.last_successful_settlement = (
-                        request,
-                        geometry.revision,
-                        current_content_signature,
-                        current_layout_signature,
-                    )
-                    self._media_state.successful_focus_ownership = (
-                        _LibraryMediaSuccessfulFocusOwnership(
-                            request=request,
-                            outer_generation=self._library_list_entry_focus_generation,
-                            selected_media_id=pre_selected_id,
-                            target=target,
-                        )
-                        if outcome == "exact-settled"
-                        else None
-                    )
-                    self._media_state.return_settlement = None
-        finally:
-            self._library_notes_programmatic_focus_target = None
-            if not committed:
-                owner.scroll_to(
-                    x=pre_scroll[0],
-                    y=pre_scroll[1],
-                    animate=False,
-                    force=True,
-                    immediate=True,
-                )
-                valid_pre_focus = bool(
-                    pre_focus is not None
-                    and pre_focus.is_attached
-                    and self in pre_focus.ancestors
-                )
-                if self.focused is not pre_focus:
-                    self.set_focus(
-                        pre_focus if valid_pre_focus else None,
-                        scroll_visible=False,
-                    )
-                self._media_state.selected_media_id = pre_selected_id
-                self._media_state.last_settlement_outcome = pre_outcome
-        if committed:
-            # Keep the existing one-event guard for the queued Focus bubble;
-            # every failed path leaves it cleared by the finally block above.
-            self._library_notes_programmatic_focus_target = target
-        return committed
-
     def _expire_library_media_return_settlement(
         self, request_id: int, outer_generation: int
     ) -> None:
@@ -6578,16 +6165,7 @@ class LibraryScreen(BaseAppScreen):
         return self._media_controller._handle_library_media_speaker_renamed(event)
 
     def _reconcile_library_media_stage_presentation(self) -> bool:
-        """Equality-reconcile the mounted Media stage; return whether it changed."""
-        try:
-            self.query_one(".library-media-route", LibraryBrowseReaderShell)
-            shell_grid = self.query_one("#library-shell-grid", Widget)
-        except (NoMatches, QueryError):
-            return False
-        changed = self._project_library_media_stage_classes(shell_grid)
-        if changed:
-            self.refresh(layout=True)
-        return changed
+        return self._media_controller._reconcile_library_media_stage_presentation()
 
     def _apply_library_notes_stage_legs(self) -> None:
         return self._notes_controller._apply_library_notes_stage_legs()
@@ -7251,118 +6829,14 @@ class LibraryScreen(BaseAppScreen):
             )
 
     def _restore_library_media_reader_width_on_open(self) -> None:
-        """Reclaim the Reader's width when an item opens (task-31979).
-
-        Selecting an item flips the view to the viewer, so the list-view
-        widening -- which hands the empty Reader's columns to the Items list --
-        must be undone. Patched straight onto the shell so it does NOT advance
-        the presentation epoch or re-arm return settlement: the full resolver
-        sync (``_sync_library_media_reader_layout_from_shell``) does both, and
-        doing either mid-open corrupts the media-return settlement fence.
-        """
-        try:
-            shell = self.query_one(".library-media-route", LibraryBrowseReaderShell)
-        except (NoMatches, QueryError):
-            return
-        if not self._library_adaptive_reader_allocation_is_current(shell):
-            return
-        layout = resolve_media_reader_layout(
-            shell.region.width,
-            self._media_state.reader_preferences,
-            previous=self._media_state.reader_layout,
-            reader_has_item=self._media_state.view == _MEDIA_VIEW_VIEWER,
-        )
-        if layout == self._media_state.reader_layout:
-            return
-        shell.sync_layout(layout)
-        self._media_state.reader_layout = layout
-        self._sync_library_media_rail_return(layout, shell.region.width)
-
-    def _library_media_rail_return_visible(
-        self, layout: MediaReaderEffectiveLayout, width: int
-    ) -> bool:
-        """Whether the Media stage needs its own named way back to the rail.
-
-        task-32065: below the ordinary single-stage floor the Library pane
-        cannot be co-present, so the rail is otherwise reachable only through
-        a one-cell grip that says nothing about where it leads. Above the
-        floor the rail is one pane away and the control would be noise.
-
-        Args:
-            layout: The layout the shell is showing.
-            width: The shell's width in cells; a not-yet-measured 0 is not an
-                emergency (``ordinary_emergency_required`` rejects it).
-
-        Returns:
-            Whether the "‹ Library" control belongs on screen.
-        """
-        return (
-            width > 0
-            and not layout.library_open
-            and layout.items_open
-            and ordinary_emergency_required(width)
-        )
+        return self._media_controller._restore_library_media_reader_width_on_open()
 
     def _build_library_media_rail_return(self) -> Button:
-        """Build the Media stage's named way back to the rail (task-32065).
-
-        One builder for both the compose and the remount below, so the label
-        (and its ASCII fallback), the id and the initial visibility cannot
-        drift apart.
-
-        Returns:
-            The "‹ Library" control, already showing or hidden.
-        """
-        control = Button(
-            "< Library" if ascii_glyph_mode() else "‹ Library",
-            id="library-media-rail-return",
-            classes="library-canvas-action",
-            compact=True,
-        )
-        control.display = self._library_media_rail_return_visible(
-            self._media_state.reader_layout, self.size.width
-        )
-        return control
-
-    def _sync_library_media_rail_return(
-        self, layout: MediaReaderEffectiveLayout, width: int
-    ) -> None:
-        """Patch the "‹ Library" control's visibility in place (task-32065).
-
-        Args:
-            layout: The layout just applied to the shell.
-            width: The shell's settled width in cells.
-        """
-        visible = self._library_media_rail_return_visible(layout, width)
-        controls = self.query("#library-media-rail-return")
-        if controls:
-            controls.first(Button).display = visible
-            return
-        if not visible:
-            return
-        # Fix round 1: every route swap replaces the WHOLE child list of
-        # ``#library-canvas`` (four sites do ``remove_children(host.children)``
-        # then mount the new route), so this control is detached with the
-        # outgoing canvas -- live at 60x24 the second visit to Media had the
-        # list but no way back. The ordinary shell escapes that by nesting its
-        # route in ``#library-canvas-route-content``; the Media items host has
-        # no such wrapper, so the control puts itself back instead.
-        try:
-            host = self.query_one("#library-canvas", Vertical)
-        except (NoMatches, QueryError):
-            return
-        host.mount(self._build_library_media_rail_return(), before=0)
+        return self._media_controller._build_library_media_rail_return()
 
     @on(Button.Pressed, "#library-media-rail-return")
     def handle_library_media_rail_return(self, event: Button.Pressed) -> None:
-        """Reopen the Library pane through the grip's own seam (task-32065).
-
-        Args:
-            event: The ``Button.Pressed`` from the "‹ Library" control; stopped
-                here so the canvas-action handlers do not also see it.
-        """
-        event.stop()
-        self.action_library_narrow_stage_return()
+        return self._media_controller.handle_library_media_rail_return(event)
 
     def _library_slash_would_land(self) -> bool:
         """Whether "/" would actually move focus right now (re-review N4).
@@ -7518,132 +6992,9 @@ class LibraryScreen(BaseAppScreen):
         priority: Literal["library", "items"] | None = None,
         focus_intent: tuple[Widget, int] | None = None,
     ) -> None:
-        """Resolve the settled Media shell width and patch geometry in place."""
-        try:
-            shell = self.query_one(".library-media-route", LibraryBrowseReaderShell)
-        except (NoMatches, QueryError):
-            return
-        width = shell.region.width
-        if not self._library_adaptive_reader_allocation_is_current(shell):
-            return
-        if (
-            priority is None
-            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
-            and self._media_state.view == "trash"
-            and self._media_state.reader_preferences.items_open
-            and not (
-                self._media_state.reader_layout.priority_pane == "library"
-                and self._media_state.reader_preferences.library_open
-            )
-        ):
-            # Trash is an Items surface. At the compact allocation the reader
-            # otherwise consumes every cell after a screen recompose, even
-            # though the user's Items preference remains open. Reassert that
-            # existing preference as layout priority. A still-requested,
-            # explicitly prioritized Library pane wins until it is collapsed;
-            # an explicit Items close flips that preference first too.
-            priority = "items"
-        previous = self._media_state.reader_layout
-        # ``__init__`` resolves a zero-width sentinel before Textual has
-        # assigned the mounted shell its first real region. Treating that
-        # sentinel as a genuine previous layout lets hysteresis preserve its
-        # necessarily-collapsed panes at borderline usable widths forever.
-        # The first settled measurement has no user-visible prior layout, so
-        # resolve it without hysteresis; subsequent measurements keep the
-        # normal anti-flap behavior.
-        if (
-            previous.reader_width == 0
-            and previous.library_width == 0
-            and previous.items_width == 0
-        ):
-            previous = None
-        layout = resolve_media_reader_layout(
-            width,
-            self._media_state.reader_preferences,
-            previous=previous,
-            priority=priority,
-            # task-31979: only the viewer shows a real document; in the list
-            # and trash views the Reader holds just its placeholder, so its
-            # width goes to the Items list to stop long titles truncating.
-            reader_has_item=self._media_state.view == _MEDIA_VIEW_VIEWER,
+        return self._media_controller._sync_library_media_reader_layout_from_shell(
+            priority=priority, focus_intent=focus_intent
         )
-        layout_changed = layout != self._media_state.reader_layout
-        focused = self.focused
-        if focus_intent is not None and (
-            focus_intent[1] == self._notes_state.focus_intent_generation
-            or self._notes_state.resize_settling
-        ):
-            focused = focus_intent[0]
-        hidden_focus_target: tuple[Widget, Widget] | None = None
-        for now_open, pane, grip in (
-            (
-                layout.library_open,
-                shell.library,
-                shell.library_grip,
-            ),
-            (
-                layout.items_open,
-                shell.items,
-                shell.items_grip,
-            ),
-        ):
-            if (
-                not now_open
-                and focused is not None
-                and (focused is pane or pane in focused.ancestors)
-            ):
-                hidden_focus_target = (focused, grip)
-                break
-        generation = self._notes_state.focus_intent_generation
-        if layout_changed:
-            tree = self._library_media_settlement_tree()
-            self._advance_library_media_presentation_epoch(
-                tree[2] if tree is not None else None,
-                rearm=False,
-            )
-        shell.sync_layout(layout)
-        self._media_state.reader_layout = layout
-        self._sync_library_media_rail_return(layout, width)
-        if layout_changed:
-            receipt = self._library_pending_list_entry_media_return
-            if self._library_media_return_candidate(receipt):
-                self._arm_library_media_return_settlement(receipt)
-            # task-31272: the Reader's "‹ Back" control and its Escape chip
-            # both derive from this layout, and the first settled
-            # measurement always arrives AFTER the viewer was composed
-            # against __init__'s zero-width sentinel. The viewer sync is a
-            # no-op unless a compose input genuinely changed. Gated on the
-            # viewer being MOUNTED: ``_sync_library_media_viewer_or_
-            # recompose`` falls back to a whole-screen recompose when it is
-            # not, which task-21116 pins to zero on this path.
-            if (
-                self._media_state.view == _MEDIA_VIEW_VIEWER
-                and self._mounted_library_media_viewer() is not None
-            ):
-                self._sync_library_media_viewer_or_recompose()
-        if hidden_focus_target is not None:
-            self._focus_library_media_grip_if_current(
-                generation,
-                *hidden_focus_target,
-            )
-        elif (
-            layout.items_open
-            and self._library_pending_list_entry_focus
-            and not self._library_media_return_candidate(
-                self._library_pending_list_entry_media_return
-            )
-            and (
-                self._library_pending_list_entry_media_return is not None
-                or focused is None
-                or not focused.has_class("library-media-row")
-            )
-        ):
-            # Reapply only when focus has not already landed on a Media row,
-            # and cross one refresh so the Items host has final geometry.
-            self.call_after_refresh(
-                self._focus_library_list_entry_if_current,
-                self._library_list_entry_focus_generation,
-            )
 
     def _mirror_library_media_reader_preference(
         self, key: Literal["library_open", "items_open"], value: bool
@@ -7751,22 +7102,6 @@ class LibraryScreen(BaseAppScreen):
 
     def request_library_media_layout_refresh(self, generation: int) -> None:
         return self._media_controller.request_library_media_layout_refresh(generation)
-
-    def _focus_library_media_grip_if_current(
-        self,
-        generation: int,
-        hidden_focus: Widget,
-        grip: Widget,
-    ) -> None:
-        """Move focus only when no newer user focus intent superseded resize."""
-        if (
-            generation != self._notes_state.focus_intent_generation
-            and not self._notes_state.resize_settling
-        ):
-            return
-        focused = self.focused
-        if focused is hidden_focus or focused is None or not focused.display:
-            self.set_focus(grip, scroll_visible=False)
 
     @on(PaneToggleRequested)
     def _toggle_library_media_reader_pane(self, event: PaneToggleRequested) -> None:
@@ -11282,59 +10617,7 @@ class LibraryScreen(BaseAppScreen):
             self._focus_library_list_entry()
 
     def _library_media_empty_list_fallback_target(self) -> Widget | None:
-        """The control an EMPTY Media list can hand keyboard focus to.
-
-        The first of the candidates below that is both present and
-        enabled, or ``None`` when the page offers none. One owner for both
-        readers: ``_focus_library_list_entry`` lands on it, and
-        ``_library_focus_channel_owns_this_window`` asks whether there is
-        anything to land on at all, so the answer has to be the same in
-        both places or the seam stands down for a channel that never
-        arrives (Qodo #2483).
-
-        task-32213 changed the shape of this question. The empty page used
-        to compose NONE of the four recovery controls on a filter MISS --
-        the canvas returned right after its query-echoing status line --
-        and the whole point of the shared owner was to say "nothing to
-        land on" there. The toolbar now survives that page, so
-        ``#library-media-type-filter`` is always present and enabled on it
-        (``fresh_zero`` excludes ``mutation_action_reason``, so
-        ``_gate_mutation_action`` never disables it) and this helper no
-        longer returns ``None`` for a Media miss.
-
-        That would have landed entry focus on ``type:`` -- the facet the
-        user did NOT type into, and the same symptom task-32214 was filed
-        for. The intent recorded here still stands: with a query in force
-        the filter ``Input`` is the right place to retype, so it LEADS the
-        list rather than being left to the shared seam. ``#library-media-
-        filter-clear`` is still deliberately not a candidate: Clear
-        discards the query rather than letting the user fix it. TASK-40293:
-        the page's one recovery action leads ``type:``, which is last.
-        """
-        selectors = (
-            "#library-media-empty-clear-type",
-            "#library-media-empty-import",
-            "#library-media-retry",
-            "#library-media-type-filter",
-        )
-        applied = self._library_media_browse_controller.applied_scope
-        if applied is not None and applied.query:
-            selectors = ("#library-media-filter", *selectors)
-        for selector in selectors:
-            try:
-                control = self.query_one(selector, Widget)
-            except (NoMatches, QueryError):
-                continue
-            if getattr(control, "_pruning", False):
-                # TASK-34000.26 (fix round 1, M-4): a canvas recompose has
-                # already marked this control for removal. It is still the
-                # PREFERRED control, so stop here rather than fall through
-                # to a lower-preference one; the caller sees ``_pruning``
-                # and retries against the replacement (review S-10).
-                return control
-            if not getattr(control, "disabled", False):
-                return control
-        return None
+        return self._media_controller._library_media_empty_list_fallback_target()
 
     def _library_notes_entry_list_settled(self) -> bool:
         """Whether the Notes list has loaded with no note row (TASK-41129)."""
@@ -13069,37 +12352,6 @@ class LibraryScreen(BaseAppScreen):
 
     async def _apply_library_media_active_surface(self) -> None:
         return await self._media_controller._apply_library_media_active_surface()
-
-    def _sync_library_media_surfaces_or_recompose(self) -> None:
-        """Patch the mounted Reader and the Items rows in place, else recompose.
-
-        The shared tail of the two Media sync seams (task-28009 review M-3).
-        A viewer-scoped sync that succeeds must repaint the Items rows beside
-        it too: the row's review-state slot moves on a done mark that loads no
-        new item (`m`, and the final `]` completion gesture). A viewer that is
-        gone, or a sync that reports nothing patched, falls back to the
-        whole-screen recompose, which rebuilds both surfaces anyway.
-        """
-        viewer = self._mounted_library_media_viewer()
-        if viewer is None or not self._sync_library_media_viewer_state(viewer):
-            if getattr(self, "_library_canvas_projection_depth", 0) > 0:
-                # task-31249: the M3 suppression (see ``_sync_library_canvas``):
-                # a projection -- the canvas-child swap or the structural
-                # screen recompose it falls back to -- owns the surface
-                # across its awaits, and this seam's whole-screen fallback
-                # would fire a second rebuild racing it. Safe rather than
-                # lossy for the same reason: the projection rebuilds the
-                # destination from CURRENT screen state, and the pending
-                # flag replays this sync's state once it settles.
-                self._library_canvas_resync_pending = True
-                return
-            self.refresh(recompose=True)
-            return
-        try:
-            canvas = self.query_one("#library-media-canvas", LibraryMediaCanvas)
-        except (NoMatches, QueryError):
-            return
-        canvas.apply_reader_state(self._build_library_media_state())
 
     async def _apply_library_media_list_return(
         self, media_return: _LibraryMediaReturnReceipt | None
@@ -16779,37 +16031,10 @@ class LibraryScreen(BaseAppScreen):
         return self._media_controller._library_media_analyze_reason()
 
     def _library_media_content_signature(self) -> tuple[object, ...]:
-        """Return applied normal-Media scope plus ordered stable row IDs."""
-        controller = self._library_media_browse_controller
-        return (
-            controller.applied_scope,
-            tuple(str(item["id"]) for item in controller.retained_items),
-        )
+        return self._media_controller._library_media_content_signature()
 
     def _library_media_layout_signature(self) -> tuple[object, ...]:
-        """Return terminal allocation plus pure effective Media pane layout.
-
-        task-31979: derived from the canonical item-open reader width, not the
-        live tracker's, so the empty-reader list widening -- a deterministic,
-        reversible list-view state that hands the empty Reader's columns to the
-        Items list -- never reads as a layout change that would deny an exact
-        return across the list<->viewer transition.
-        """
-        canonical = resolve_media_reader_layout(
-            int(self.size.width),
-            self._media_state.reader_preferences,
-        )
-        pure_layout = resolve_media_reader_layout(
-            canonical.reader_width,
-            self._media_state.reader_preferences,
-        )
-        return (
-            int(self.size.width),
-            int(self.size.height),
-            self._notes_state.compact,
-            self._media_state.reader_preferences,
-            pure_layout,
-        )
+        return self._media_controller._library_media_layout_signature()
 
     def _library_media_canvas_presentation(self) -> dict[str, Any]:
         return self._media_controller._library_media_canvas_presentation()
@@ -22032,28 +21257,7 @@ class LibraryScreen(BaseAppScreen):
             return False
 
     def _rail_switch_keeps_media_reader(self) -> bool:
-        """Whether a rail press leaves the open Media Reader as it is.
-
-        TASK-34000.25 (S-02): true for a SETTLED LOCAL item -- the viewer is
-        the live view, no detail request is pending, the loaded identity is
-        the selected one and local (``local:media:<id>``), and the detail it
-        was composed from is still held. A server detail (reading progress
-        is local-only, and the row has no Items entry to mark), a mid-load
-        traversal and the list/Trash views all fall to the existing reset.
-        A pure read of state: safe to ask on the way OUT of Media and on the
-        way back IN, where the Reader is rebuilt from the retained detail.
-        """
-        session = self._media_state.reader_session
-        loaded_id = session.loaded_id
-        return (
-            self._media_state.view == "viewer"
-            and session.pending_request is None
-            and not session.external_detail
-            and loaded_id is not None
-            and loaded_id.startswith("local:media:")
-            and loaded_id == self._media_state.selected_media_id
-            and isinstance(self._media_state.detail, Mapping)
-        )
+        return self._media_controller._rail_switch_keeps_media_reader()
 
     async def _select_library_rail_row(self, row_id: str) -> None:
         """Apply a rail-row selection and recompose the canvas from it.
@@ -30917,53 +30121,10 @@ class LibraryScreen(BaseAppScreen):
             return False
 
     def action_library_media_exit_review(self) -> None:
-        """Exit review mode: deactivate the active set, keeping it resumable.
-
-        task-28241 (AC3): distinct from Escape (which keeps the set active and
-        just leaves the Reader). Only meaningful in the plain Reader with an
-        active set; a no-op otherwise.
-        """
-        if not self._library_media_item_traversal_active():
-            return
-        service = self._review_set_service()
-        if service is None:
-            return
-        # task-30042: surface a storage error instead of crashing the action.
-        try:
-            if service.get_active_review_set() is None:
-                return
-            service.deactivate_active()
-        except Exception:
-            logger.opt(exception=True).warning("review-set exit failed")
-            self._notify_review_set(
-                "Couldn't exit review — storage error.", severity="error"
-            )
-            return
-        self._sync_library_media_viewer_or_recompose()
+        return self._media_controller.action_library_media_exit_review()
 
     def action_library_media_toggle_reviewed(self) -> None:
-        """Toggle the current item's done mark in the active review set.
-
-        task-28241 (AC2): the explicit counterpart to forward-advance's
-        auto-mark -- lets a user un-mark a skimmed item, or mark the last one
-        without advancing. A no-op outside a plain Reader with an active set
-        whose cursor item is loaded.
-        """
-        if not self._library_media_item_traversal_active():
-            return
-        service = self._review_set_service()
-        if service is None:
-            return
-        # task-30042: a storage error on an explicit mark gesture surfaces
-        # instead of crashing the action or silently dropping the mark.
-        try:
-            self._toggle_reviewed_unguarded(service)
-        except Exception:
-            logger.opt(exception=True).warning("review-set toggle failed")
-            self._notify_review_set(
-                "Couldn't update the reviewed mark — storage error.",
-                severity="error",
-            )
+        return self._media_controller.action_library_media_toggle_reviewed()
 
     def _toggle_reviewed_unguarded(self, service) -> None:
         """The toggle body; storage exceptions are the caller's to surface."""
@@ -31277,44 +30438,15 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-media-review-dismiss-undo")
     def handle_library_media_review_dismiss_undo(self, event: Button.Pressed) -> None:
-        """Restore the set named by the dismiss receipt (task-31236).
-
-        Args:
-            event: The receipt row's "Undo" press.
-        """
-        event.stop()
-        receipt = self._media_state.review_dismiss_receipt
-        # Qodo on #2366: one in-flight undo owns the receipt until it
-        # settles -- a second press would CANCEL the first through the
-        # exclusive worker group, and a racing receipt-close would strand
-        # the restore without its receipt.
-        if receipt is None or getattr(self, "_review_dismiss_undo_in_flight", False):
-            return
-        self._review_dismiss_undo_in_flight = True
-        self.run_worker(
-            self._review_dismiss_undo_worker(receipt),
-            group="library_review_set",
-            exclusive=True,
-            exit_on_error=False,
-        )
+        return self._media_controller.handle_library_media_review_dismiss_undo(event)
 
     @on(Button.Pressed, "#library-media-review-dismiss-receipt-close")
     def handle_library_media_review_dismiss_receipt_close(
         self, event: Button.Pressed
     ) -> None:
-        """Clear the dismiss receipt without restoring anything.
-
-        Args:
-            event: The receipt row's "Dismiss" press.
-        """
-        event.stop()
-        # Qodo on #2366: the receipt belongs to a pending undo until that
-        # settles -- clearing it mid-restore left the restored set with no
-        # visible acknowledgment.
-        if getattr(self, "_review_dismiss_undo_in_flight", False):
-            return
-        self._media_state.review_dismiss_receipt = None
-        _sync_library_canvas(self, "media")
+        return self._media_controller.handle_library_media_review_dismiss_receipt_close(
+            event
+        )
 
     async def _review_dismiss_undo_worker(self, receipt: tuple[str, str, bool]) -> None:
         """Un-tombstone the receipt's set, restoring activation if it had it.
