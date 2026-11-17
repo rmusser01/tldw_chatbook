@@ -1,5 +1,11 @@
 # Lessons: what counts as evidence a change works
 
+## A crash can preserve source hashes while corrupting the test receipts (TASK-40608, 2026-11-17)
+
+**Incident.** A Windows interruption lost the running accepted-process test session. All 2,836 live source hashes and their frozen copies still matched, but the after-run JSON was entirely NUL-filled and both XML reports contained NUL bytes immediately after their headers. The log retained only a short prefix showing two passes and two failures. An independent actual-user process census found no surviving workers. Neither intact sources nor that later census recovered the missing test outcomes or established normal retirement. A fresh run exposed a protocol conversion failure; later runs exposed a cancellation-order defect.
+
+**What to do.** After an interrupted run, check receipt bytes before parsing large JSON/XML files. Preserve damaged evidence, verify source snapshots separately, and repeat the affected check with a fresh run label. Keep coherent source and continuation checkpoints in the PR when requested; local ignored snapshots alone are not a crash backup. Never count an interrupted run as passing from its source hashes or absence of workers.
+
 ## A private test child needs the original pytest context, not just a canonical node (TASK-40608, 2026-11-15)
 
 **Incident.** The complete key-preparation diagnostic lived under `.superpowers/sdd/`, outside `Tests/`. Its canonical node address and inert launcher checks passed, but the first actual-user Windows run failed during collection before recording any samples: pytest did not discover `Tests/conftest.py`. Explicitly loading `Tests.conftest` through `PYTEST_PLUGINS`, preserved in both the parent and private child's sanitized environment, allowed the original fixture and guards to run. The later complete-call measurements rejected the optimization; fixing collection was not evidence of a speedup.

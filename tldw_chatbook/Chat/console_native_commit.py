@@ -392,7 +392,10 @@ async def commit_durable_turn_owned(
 
 
 async def reserve_durable_commit_plan_owned(
-    store: ConsoleChatStore, acceptance: ConsoleDurableTurnAcceptance
+    store: ConsoleChatStore,
+    acceptance: ConsoleDurableTurnAcceptance,
+    *,
+    _retained_result: list | None = None,
 ) -> _ConsoleDurableCommitPlan | ConsoleDurableTurnCommit:
     """Seal on a retained preparation worker without opening native storage."""
     from .console_durable_commit_plan import capture_durable_plan_source
@@ -402,7 +405,7 @@ async def reserve_durable_commit_plan_owned(
     preparation = store.preparation_for_session(source.record.session_id)
     source.require_current(preparation)
     persistence, database = store.persistence, getattr(store.persistence, "db", None)
-    result = []
+    result = [] if _retained_result is None else _retained_result
 
     def reserve():
         plan = store.reserve_durable_commit_plan(
@@ -422,7 +425,7 @@ async def reserve_durable_commit_plan_owned(
             source=source,
         )
     except BaseException:
-        if result:
+        if result and _retained_result is None:
             store.abandon_reserved_durable_commit(result[0], "reservation_cancelled")
         raise
 
@@ -698,8 +701,49 @@ def _controller_release_ordinary_native_commit(self, owner):
             return
         owner.store._release_native_commit_owner(preparation_id, owner)
         self._ordinary_native_commits.pop(preparation_id)
-        if not owner.retired.done():
-            owner.retired.set_result(None)
+        try:
+            if owner.control_reservation is not None:
+                from .console_control_dispatch import (
+                    ConsoleLocalControls,
+                    _RESERVATION_METHODS,
+                )
+                from .console_domain_services import _definition_current
+
+                reservation = owner.control_reservation
+                controls = reservation.controls
+                current = (
+                    self.domain_services.runtime._execution_service._local_controls
+                )
+                qualified = (
+                    type(controls) is ConsoleLocalControls
+                    and controls is current
+                    and controls._controller is self
+                    and reservation.owner is owner
+                    and all(
+                        getattr(getattr(controls, name, None), "__self__", None)
+                        is controls
+                        and getattr(getattr(controls, name, None), "__func__", None)
+                        is definition[0]
+                        and _definition_current(definition)
+                        for name, definition in _RESERVATION_METHODS
+                    )
+                )
+                if qualified:
+                    controls._settle_released_reservation(owner)
+                else:
+                    # Source drift cannot invoke a replacement cleanup callback.
+                    finish = dict(_RESERVATION_METHODS)["_finish_effect"]
+                    if not _definition_current(finish):
+                        raise RuntimeError("Console reservation finisher changed")
+                    if (
+                        reservation.owner is not owner
+                        or reservation.effect.owner is not reservation
+                    ):
+                        raise RuntimeError("Console reservation effect owner changed")
+                    finish[0](controls, reservation.effect, retired=False)
+        finally:
+            if not owner.retired.done():
+                owner.retired.set_result(None)
 
 
 def _controller_ordinary_native_commit_current(self, owner):

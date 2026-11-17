@@ -2892,6 +2892,7 @@ class _OrdinaryNativeCommitOwner:
     caller_cancelled: bool = False
     explicit_stop: bool = False
     commit_error: BaseException | None = field(default=None, repr=False)
+    control_reservation: Any = field(default=None, repr=False)
     _issuer: object | None = field(default=None, repr=False)
 
 
@@ -28783,3 +28784,13 @@ _NATIVE_REMOTE_INSTRUCTION_IO_DESCRIPTORS = {
     for name, descriptor in vars(_NativeRemoteInstructionIO).items()
     if name not in {"__module__", "__doc__", "__slots__"}
 }
+
+
+_CONSOLE_PRECOMMIT_CANCEL_METHODS = tuple(
+    (is_store, name, capture_callable_source(getattr(owner, name)))
+    for is_store, owner, names in (
+        (False, ConsoleChatController, ("cancel_library_preparation", "_preparation_by_id", "_drop_preparation", "_set_run_state")),
+        (True, ConsoleChatStore, ("cancel_preparation",)),
+    )
+    for name in names
+)

@@ -105,10 +105,40 @@
       "path": "C:/Users/GDesktop-1/Working/Github/tldw_tui/.venv/Lib/site-packages/textual/message_pump.py",
       "sha256": "b580554a43fdfd14e67cd2367f64d4c11e38f51c254894b1c5ef9aa0b95231a4",
       "saved": "source-dependencies/message_pump.py"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_backend_presentation.py",
+      "sha256": "eead85ac83346a0b48a21590cb2724a304546e29f4f1eac9c0f6ec5026a4eced",
+      "saved": "source-dependencies/console_backend_presentation.py"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_control_dispatch.py",
+      "sha256": "afd9eaa3c123c8e369cd8554ebc933ec54c2d02a6b0d4726fae578d2119e3ca8",
+      "saved": "source-dependencies/console_control_dispatch.py"
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/wiring.py",
+      "sha256": "3ab58656738e30fa681b8fd8552907078ed97c0f27c9bdf0a70ac7780eb8c5b9",
+      "saved": "source-dependencies/wiring.py"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_chat_controller.py",
+      "sha256": "d3e6b807018361b423081469fcf767d5a797f19d49e5a1e632ad9c55a2106e93",
+      "saved": "source-dependencies/console_chat_controller.py"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_fleet_attention.py",
+      "sha256": "a57c22e154907feed1b7c3d59483ac51a1e6d17c55627008ddef8d82d317f37f",
+      "saved": "source-dependencies/console_fleet_attention.py"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_fleet_wake.py",
+      "sha256": "891a8a6893bef5fb34db21dce49c435f82f6107878b56e75eb65db1645fb42e5",
+      "saved": "source-dependencies/console_fleet_wake.py"
     }
   ],
   "report": "report.md",
-  "report_sha256": "5611c126fedfc72c5753370b47028dff196552a21c23f7c18a758025f46ae731",
+  "report_sha256": "bbdd8620313d712802040bf7918887e1937874cf7eb8aba613003c5af411d301",
   "executable_validation": "not run; central owns actual attached-surface validation after freeze",
   "live_product_changes": false
 }

@@ -313,6 +313,20 @@ class _PendingPlan:
 
 
 @dataclass(slots=True, eq=False)
+class _ControlReservation:
+    """Exact reservation outcome retained until its original owner releases."""
+
+    controls: Any
+    owner: Any
+    result: list
+    effect: Any = None
+    pending: Any = None
+    writer_started: bool = False
+    native_retired: bool = False
+    cancel_requested: bool = False
+
+
+@dataclass(slots=True, eq=False)
 class _FiniteEffect:
     kind: str
     source_revision: int
@@ -1009,64 +1023,164 @@ class ConsoleLocalControls:
         ):
             raise RuntimeError("Commit does not belong to the received control request")
         identity = entry[0]
-        plan = await reserve_durable_commit_plan_owned(self._store, acceptance)
+        reservation = _ControlReservation(self, owner, [])
+        reservation.effect = self._begin_effect(
+            "commit_reservation", reservation, _command_source.get()
+        )
+        owner.control_reservation = reservation
+        plan = await reserve_durable_commit_plan_owned(
+            self._store, acceptance, _retained_result=reservation.result
+        )
         if type(plan) is ConsoleDurableTurnCommit:
             return ConsoleNativeCommitCompletion(plan, None, False, True)
         pending = None
-        try:
-            with self._lock:
-                if (
-                    not self._effects_open
-                    or identity.source_revision != self._source_revision
-                    or turn_id in self._fenced_turns
-                    or plan.recovery is None
-                ):
-                    raise RuntimeError("Console commit source is fenced")
-                ordinal = 1 + sum(key[0] == turn_id for key in self._plans)
-                projection = CommitPlanned(
-                    identity.request_id,
-                    turn_id,
-                    ordinal,
-                    plan.fingerprint,
-                    plan.recovery,
-                )
-                pending = _PendingPlan(
-                    projection,
-                    plan,
-                    source.task,
-                    self._loop.create_future(),
-                    identity.source_revision,
-                )
-                self._plans[turn_id, ordinal] = pending
-            from .console_backend_presentation import ConsoleBackendPresentation
-
-            presentation = self._domain.presentation
-            if type(presentation) is ConsoleBackendPresentation:
-                presentation.publish_commit_plan(self, pending)
-            await pending.acknowledged
-            plan.source.require_current(plan.preparation)
-            with self._lock:
-                if pending.state != "acknowledged" or turn_id in self._fenced_turns:
-                    raise RuntimeError("Console commit plan is no longer pending")
-                pending.state = "started"
-            completion = await commit_reserved_durable_turn_owned(
-                plan, _native_owner=owner
+        with self._lock:
+            if (
+                not self._effects_open
+                or identity.source_revision != self._source_revision
+                or turn_id in self._fenced_turns
+                or plan.recovery is None
+            ):
+                raise RuntimeError("Console commit source is fenced")
+            ordinal = 1 + sum(key[0] == turn_id for key in self._plans)
+            projection = CommitPlanned(
+                identity.request_id,
+                turn_id,
+                ordinal,
+                plan.fingerprint,
+                plan.recovery,
             )
-            with self._lock:
-                pending.state = "finished" if completion.native_retired else "uncertain"
-            return completion
-        except BaseException:
-            if pending is None or pending.state in {
-                "waiting",
-                "acknowledged",
-                "conflict",
-            }:
-                self._store.abandon_reserved_durable_commit(
-                    plan, "control_wait_abandoned"
+            pending = _PendingPlan(
+                projection,
+                plan,
+                source.task,
+                self._loop.create_future(),
+                identity.source_revision,
+            )
+            self._plans[turn_id, ordinal] = pending
+            reservation.pending = pending
+        from .console_backend_presentation import ConsoleBackendPresentation
+
+        presentation = self._domain.presentation
+        if type(presentation) is ConsoleBackendPresentation:
+            presentation.publish_commit_plan(self, pending)
+        await pending.acknowledged
+        plan.source.require_current(plan.preparation)
+        with self._lock:
+            if pending.state != "acknowledged" or turn_id in self._fenced_turns:
+                raise RuntimeError("Console commit plan is no longer pending")
+            pending.state = "started"
+            reservation.writer_started = True
+        completion = await commit_reserved_durable_turn_owned(plan, _native_owner=owner)
+        with self._lock:
+            pending.state = "finished" if completion.native_retired else "uncertain"
+            reservation.native_retired = completion.native_retired
+        return completion
+
+    def _settle_released_reservation(self, owner) -> None:
+        """Finish only the retained plan after original owner exclusion ends."""
+        from .console_chat_store import ConsoleDurableTurnCommit
+        from .console_durable_commit_plan import (
+            _ConsoleDurableCommitPlan,
+            require_plan_methods,
+        )
+
+        reservation = owner.control_reservation
+        retired = False
+        try:
+            if (
+                type(reservation) is not _ControlReservation
+                or reservation.controls is not self
+                or reservation.owner is not owner
+                or owner._issuer is not self._controller
+                or owner.store is not self._store
+                or owner.task is not asyncio.current_task()
+                or self._controller._ordinary_native_commits.get(
+                    owner.acceptance.preparation_id
                 )
-                if pending is not None:
-                    pending.state = "abandoned"
-            raise
+                is owner
+                or self._store._native_commit_owners_by_preparation.get(
+                    owner.acceptance.preparation_id
+                )
+                is owner
+            ):
+                raise RuntimeError("Console reservation release owner changed")
+            if reservation.writer_started:
+                retired = reservation.native_retired
+                return
+            if not reservation.result:
+                retired = True  # Original reservation read joined without a plan.
+                return
+            if len(reservation.result) != 1:
+                raise RuntimeError("Console reservation outcome changed")
+            plan = reservation.result[0]
+            if type(plan) is ConsoleDurableTurnCommit:
+                retired = True
+                return
+            if (
+                type(plan) is not _ConsoleDurableCommitPlan
+                or plan.store is not owner.store
+                or plan.session is not owner.session
+                or plan.persistence is not owner.persistence
+                or plan.database is not owner.database
+                or plan.received_acceptance is not owner.acceptance
+                or plan.source.task is not owner.task
+                or (
+                    reservation.pending is not None
+                    and (
+                        type(reservation.pending) is not _PendingPlan
+                        or self._plans.get(
+                            (
+                                reservation.pending.projection.turn_id,
+                                reservation.pending.projection.ordinal,
+                            )
+                        )
+                        is not reservation.pending
+                        or reservation.pending.plan is not plan
+                        or reservation.pending.task is not owner.task
+                        or reservation.pending.state
+                        not in {"waiting", "acknowledged", "conflict"}
+                    )
+                )
+            ):
+                raise RuntimeError("Console reservation outcome owner changed")
+            require_plan_methods(self._store, owner.persistence)
+            if not self._store.abandon_reserved_durable_commit(
+                plan, "control_wait_abandoned"
+            ):
+                raise RuntimeError("Console reservation abandonment is unconfirmed")
+            if reservation.cancel_requested:
+                from tldw_chatbook.Agents.activation import callable_source_current
+                from .console_chat_controller import _CONSOLE_PRECOMMIT_CANCEL_METHODS
+
+                for is_store, name, definition in _CONSOLE_PRECOMMIT_CANCEL_METHODS:
+                    receiver = self._store if is_store else self._controller
+                    method = getattr(receiver, name, None)
+                    if (
+                        getattr(method, "__self__", None) is not receiver
+                        or getattr(method, "__func__", None) is not definition[0]
+                        or not callable_source_current(definition)
+                    ):
+                        raise RuntimeError("Console cancellation source changed")
+                self._controller.cancel_library_preparation(
+                    plan.acceptance.preparation_id
+                )
+                if (
+                    self._controller._preparation_by_id(plan.acceptance.preparation_id)
+                    is not None
+                ):
+                    raise RuntimeError("Console explicit cancellation is unconfirmed")
+            if reservation.pending is not None:
+                reservation.pending.state = "abandoned"
+            retired = True
+        except Exception as error:
+            # Keep the original caller cancellation/error; negative effect
+            # settlement prevents any positive retirement receipt.
+            owner.commit_error = error
+        finally:
+            self._finish_effect(reservation.effect, retired=retired)
+            if retired:
+                owner.control_reservation = None
 
     @contextmanager
     def native_commit_effect(self, plan, retirement):
@@ -1362,6 +1476,16 @@ class ConsoleLocalControls:
                 raise RuntimeError("Console cancellation owner changed")
             if record.received_claim is not None:
                 self._store.seal_received_turn(record.received_claim)
+            for owner in self._controller._ordinary_native_commits.values():
+                reservation = owner.control_reservation
+                if (
+                    type(reservation) is _ControlReservation
+                    and reservation.controls is self
+                    and reservation.owner is owner
+                    and owner.task is entry[2]
+                    and owner.session.id == identity.session_id
+                ):
+                    reservation.cancel_requested = True
             self._controller._signal_stop(session_id=identity.session_id)
             entry[2].cancel()
             receipt.work = entry[2]
@@ -1857,3 +1981,12 @@ def finish_admitted_display(full):
         raise ConsoleDisplayPhaseRefused("Original display effect registration changed")
     record[3](controls, effect, retired=False)
     raise ConsoleDisplayPhaseRefused("Admitted display control definition changed")
+
+
+# Fixed original release-tail methods; the retained result is not a callback.
+from .console_domain_services import _definition as _reservation_definition
+
+_RESERVATION_METHODS = tuple(
+    (name, _reservation_definition(vars(ConsoleLocalControls)[name]))
+    for name in ("_settle_released_reservation", "_finish_effect")
+)
