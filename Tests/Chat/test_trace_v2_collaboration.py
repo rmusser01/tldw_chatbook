@@ -1236,9 +1236,9 @@ def test_code_next_to_a_secret_is_masked_whole(text: str, expected: str) -> None
 
 
 def test_masking_never_caches_value_text() -> None:
-    """Review r15tr-rev7: a secret must not linger in an ``lru_cache`` after
-    masking. Only label text is cached; new values leave every cache the size
-    it was once the labels are warm."""
+    """Reviews r15tr-rev7, rev10, rev11: a secret must not linger in an
+    ``lru_cache`` after masking, whether it sits in a value or in a label
+    position; new text leaves every cache the size it was once warm."""
     from tldw_chatbook.Utils import log_sanitizer
 
     caches = [
@@ -1261,14 +1261,28 @@ def test_masking_never_caches_value_text() -> None:
             # rev10: a secret in a quoted-key position after a value
             "client" + f'_secret = cfg.x "GOCSPX-{_P8}{index}": 1',
             "client" + f'_secret = CLIENT_SECRET "GOCSPX-{_P8}{index}": 1',
+            # rev11: a secret in a label position (quoted key, bare "x: y",
+            # "=" label, a secret label ending in _secret)
+            f'{{"GOCSPX-{_P8}{index}": "user"}}',
+            f"GOCSPX-{_P8}{index}: active",
+            f"x GOCSPX-{_P8}{index}=1",
+            f"hunter{index}x_pw: abc",
+            f'"GOCSPX-{_P8}{index}_secret": "x"',
         ):
             trajectory_export._credential_text(text)
 
+    def sizes() -> list[int]:
+        # every lru_cache in both modules, and the plain-label cache
+        return [cache.cache_info().currsize for cache in caches] + [len(log_sanitizer._LABEL_FACTS)]
+
     mask(0)  # the labels are cached here
-    before = [cache.cache_info().currsize for cache in caches]
+    before = sizes()
     for index in range(1, 6):
         mask(index)
-    assert [cache.cache_info().currsize for cache in caches] == before
+    assert sizes() == before
+    # The label cache holds plain label words only: no digit, no secret text.
+    assert not [key for key in log_sanitizer._LABEL_FACTS if any(ch.isdigit() for ch in key)]
+    assert not [key for key in log_sanitizer._LABEL_FACTS if "GOCSPX" in key or "hunter" in key]
 
 
 #: Review r15tr-rev2: adversarial texts of about 200 KB. The export's URL

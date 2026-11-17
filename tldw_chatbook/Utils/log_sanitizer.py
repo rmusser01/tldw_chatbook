@@ -261,13 +261,10 @@ _DIAGNOSTIC_METADATA_SUFFIXES = (
 )
 
 
-@lru_cache(maxsize=1024)
 def _credential_label_text(label: str) -> bool:
-    """``_is_credential_label`` for label text, cached: the same labels recur
-    on every line. Only a label the label pattern matched is passed here; a
-    quoted key after a value can be any text, a secret included, so it goes
-    through the uncached check (reviews r15tr-rev7, rev10)."""
-    return _is_credential_label(label)
+    """``_is_credential_label`` for a label the label pattern matched, through
+    the plain-label cache (``_label_facts``)."""
+    return (_LABEL_FACTS.get(label) or _label_facts(label))[2]
 
 
 def _is_credential_label(key: object) -> bool:
@@ -728,11 +725,40 @@ def _words(name: str) -> tuple[str, ...]:
     )
 
 
-@lru_cache(maxsize=1024)
+#: Facts about label text the masker asks for on every line: its words,
+#: whether it is strict, whether it names a credential. Only a plain label
+#: is kept here: no digit, no random-looking letters, at most 64 characters.
+#: A secret can sit in a label position (``"GOCSPX-...": "x"``), and no cache
+#: may hold text that could be a secret (review r15tr-rev11), so anything
+#: else is worked out each time. Bounded: it stops admitting at 1024 labels.
+_LABEL_FACTS: dict[str, tuple[tuple[str, ...], bool, bool]] = {}
+_PLAIN_LABEL = re.compile(r"[A-Za-z_.-]{1,64}")
+
+
+def _label_facts(label: str) -> tuple[tuple[str, ...], bool, bool]:
+    """``(words, strict, credential)`` for a label, cached only when plain."""
+    facts = _LABEL_FACTS.get(label)
+    if facts is None:
+        words = _words(label)
+        normalized = label.casefold().replace("-", "_").strip("_")
+        strict = bool(set(words) & _PASSWORD_LABEL_WORDS) or (
+            normalized.endswith(("secret", "secret_key"))
+            and not normalized.endswith(_ISSUED_SECRET_LABELS)
+        )
+        facts = (words, strict, _is_credential_label(label))
+        if (
+            len(_LABEL_FACTS) < 1024
+            and _PLAIN_LABEL.fullmatch(label)
+            and not _MIXED_CASE.search(label)
+            and not _random_letters(label)
+        ):
+            _LABEL_FACTS[label] = facts
+    return facts
+
+
 def _label_words(label: str) -> tuple[str, ...]:
-    """``_words`` of a label, cached: the same labels recur on every line.
-    Only label text is passed here, never a value (review r15tr-rev7)."""
-    return _words(label)
+    """``_words`` of a label, through the plain-label cache."""
+    return (_LABEL_FACTS.get(label) or _label_facts(label))[0]
 
 
 def _label_name(name: str, label: str) -> bool:
@@ -821,15 +847,11 @@ def _known_path(value: str) -> bool:
     )
 
 
-@lru_cache(maxsize=1024)
 def _strict_label(label: str) -> bool:
     """A password label, or one whose value a person chooses: a label ending
-    in ``secret`` or ``secret_key`` bar issued ones (review r15tr-rev5)."""
-    normalized = label.casefold().replace("-", "_").strip("_")
-    return bool(set(_label_words(label)) & _PASSWORD_LABEL_WORDS) or (
-        normalized.endswith(("secret", "secret_key"))
-        and not normalized.endswith(_ISSUED_SECRET_LABELS)
-    )
+    in ``secret`` or ``secret_key`` bar issued ones (review r15tr-rev5).
+    Worked out in ``_label_facts``."""
+    return (_LABEL_FACTS.get(label) or _label_facts(label))[1]
 
 
 def _kept_look_alike(

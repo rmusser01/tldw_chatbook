@@ -458,3 +458,28 @@ AC #3 was added for it.
   - Serial with lane flags: the recovered-suites slice (20 targets) gives 645 passed in 216 s at load 46-54; `Tests/Utils/test_log_sanitizer.py` gives 209 passed.
   - `Tests/CI` gives 1640 passed, 1 skipped. The module ratchet gives 207 passed, and the ruff gate is OK.
   - `./scripts/preflight.sh` passes (rc 0, load 37-47).
+
+**Review r15tr-rev11.** No Critical or Important findings remained.
+- **Secret text in a label position entered the label caches.**
+  - `_credential_label_text`, `_label_words` and `_strict_label` were `lru_cache`s keyed by any label-shaped name. Since round 9, `{"GOCSPX-...": "user"}`, `GOCSPX-...: active`, `x GOCSPX-...=1`, `hunter2x_pw: abc` and `"GOCSPX-..._secret": "x"` each added an entry.
+  - The extended `test_masking_never_caches_value_text` was red at the rev10 head: cache sizes [21, 10, 9, 0] against [6, 5, 4, 0].
+  - **Dropping the caches failed the cost gates.** Against rev10, interleaved in one process, best of four, the uncached code was +28% to +69% slower:
+    - mixed-unclosed +28%, escaped +69%, quoted-prose +35%;
+    - probe13's three chains +40%, +49% and +50%;
+    - nested kept spans +31%.
+  - **So I took the ruling's fallback.**
+    - One dict, `_LABEL_FACTS`, holds `(words, strict, credential)` per label. It admits only a plain label: no digit, no two-hump mixed case, no 12+ letter run with five consonants in a row, at most 64 characters. It stops admitting at 1024 entries.
+    - Any other label is worked out each time. The three helpers read the dict directly, so a hit costs one lookup.
+    - The only `lru_cache` left in the module is `_home_literal_pattern`, keyed by home directories.
+    - Against rev10, same shapes and method: all within ±2% (fw chain -0.2%, db chain +0.1%, x_auth +1.0%, nested kept -1.1%).
+    - probe11 MB shapes, interleaved: escaped +0.6%, quoted-prose -0.9%, mixed-unclosed +1.6%.
+  - The test now checks every `lru_cache` in both modules and `_LABEL_FACTS`. It also asserts no cached key holds a digit, `GOCSPX` or `hunter`.
+  - Its new label-position shapes are a quoted key, a bare `x: y`, an `=` label, `hunter{n}x_pw:` and a `_secret`-suffixed secret label. Green after the change.
+- **The adapted probe9 crashed against head.** In rev10 I changed `_lone_value` (adding `key == label`) after the last probe9 run, so its "fast path: any quoted key ends a value" fragment no longer matched. My rev10 report was wrong about that script.
+  - `$FU/r15tr-probe9-r11.py` has that fragment updated, and the strict-label fragment moved with the refactor into `_label_facts`.
+  - It now checks every fragment matches the source exactly once before running, prints any that do not and exits non-zero. It also exits non-zero if a loosening turns no row red.
+  - Real count: all 65 fragments match, baseline 0 red, and 65 of 65 loosenings turn rows red.
+- **Unchanged:**
+  - `probe_equiv` (corpus 4891): 0 diffs.
+  - probe16 and probe17: 0 kept, and probe17 keeps 14 of 15 look-alikes. probe12: no swallowed fields. probe10: only the three declined rows. probe8: 0 kept.
+  - probe11: ratio 4.1. probe13 (rev5/head): 0.32/0.33 s, 0.26/0.30 s, 0.35/0.34 s. probe15: 1.1 and 1.0. Nested kept spans: 0.04 s at 0.21 MB.
