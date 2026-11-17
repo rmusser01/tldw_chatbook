@@ -3,7 +3,7 @@ id: TASK-41133
 title: "Trace credential masking leftovers: a credentials-v3 projection for whsec_ and gsk_, and compound labels such as client_secret= in shared bundle text"
 status: Done
 created_date: 2026-11-15 02:20
-updated_date: 2026-11-17 05:27
+updated_date: 2026-11-17 08:05
 assignee:
 - '@claude'
 labels:
@@ -188,4 +188,12 @@ Simple labels (`api_key=`, `token:`) stay with the export's older rule. A traili
   - An adapted probe9 (same method) runs the reviewer's 5 loosenings whose code is unchanged (verbatim), its 3 others by intent on the rev4 code, and one loosening for each of the 16 rules rev4 added: 24 in all. Each turns at least one must-mask row red, after rows were added for them (including `long-signed-url` for "no overflow masking").
 - **Red first.** Against the rev3 source, 54 of the round's nodes were red: 50 must-mask, 3 must-keep (the `?key=` look-alikes) and the linear-scan ratio.
 - **Logs.** `probe_equiv.py` gives corpus 4457, 0 diffs.
+- **Rev4 evidence** (after the coordinator restart):
+  - Every rev4 item is in the source. 21643a41bd also narrows `{...}` to snake or dotted names, as specified.
+  - probe8: 0 kept secrets (47 masked). `?key=YOUR_API_KEY`, `API_KEY` and `{api_key}` are kept; `?key=python` and `?key=photos/2024/cat.jpg` are masked.
+  - The reviewer's probe9 still stops at its first loosening, because its prose-length fragment is gone. The adapted probe9 (`$FU/r15tr-probe9-r4.py`, 24 loosenings) gives baseline 0 red, and every loosening turns at least one must-mask row red.
+  - Earlier probes: no secret kept in probe2, probe_labels, probe3 or probe6. The only look-alikes that change are the rev3 reclassifications plus `tokens[0]`, `code-b64` and the strict-label date (rev4). probe4 and probe5 mask every nested case, probe7 agrees with rev2 on every case, and `probe_equiv` gives corpus 4457, 0 diffs.
+  - Covering run (`-n 4`, 39 files with UI, load 50-104): 9 failed, 1712 passed in 63 min. The 8 known base failures, plus `Tests/UI/test_console_context_modal.py::test_context_modal_none_preview_replaces_stale_loaded_state`, which passes 3 of 3 on its own and only imports `content_fingerprint`.
+  - Serial with lane flags: the recovered-suites slice (15 targets) gives 480 passed in 207 s at load 64-172; `Tests/Utils/test_log_sanitizer.py` gives 209 passed. The CPU-time and ratio tests passed at that load.
+  - `Tests/CI` gives 1640 passed, 1 skipped (load 57); the module ratchet 207 passed; the ruff gate is OK.
 
