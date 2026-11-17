@@ -3148,7 +3148,7 @@ Tests/UI/test_library_collection_reader_journeys.py::test_unsubmitted_filter_and
 # times are in the task's notes. Media Reader: the Escape chip set, the
 # no-analysis-provider reasons, Find/More/Info/filter presses on the live
 # Reader chrome, and the select-mode settlement.
-Tests/UI/test_library_media_render_fixes.py::test_escape_labels_are_one_of_four
+Tests/UI/test_library_media_render_fixes.py::test_escape_labels_are_one_of_five
 Tests/UI/test_library_media_render_fixes.py::test_generate_is_disabled_with_its_reason_when_no_provider_is_configured
 Tests/UI/test_library_media_render_fixes.py::test_reader_generate_reason_is_painted_inline_not_hover_only
 Tests/UI/test_library_media_render_fixes.py::test_select_mode_analyze_reason_is_painted_inline_not_hover_only
@@ -3189,3 +3189,19 @@ Tests/UI/test_screen_navigation.py::test_on_descendant_focus_disarms_when_focus_
 Tests/UI/test_screen_navigation.py::test_screen_navigation_always_constructs_fresh_instances
 Tests/UI/test_screen_navigation.py::test_screen_navigation_routes_reach_real_app_handler
 Tests/UI/test_screen_navigation.py::test_nav_bar_uses_overflow_instead_of_truncating_at_160_cols
+# TASK-41127 review r15lt-rev1 (2026-11-17): screen-navigation route and boot
+# nodes on wall-clock waits (each passed 3 of 3 alone at load 56-81), the
+# bindings audit, and TASK-41303's Shift+F6-on-the-landing pin. Times are in
+# the task notes.
+Tests/UI/test_screen_navigation.py::test_library_screen_bindings_are_all_gated_or_universal
+Tests/UI/test_screen_navigation.py::test_shift_f6_walks_the_landing_panes_back_the_way_f6_came
+Tests/UI/test_screen_navigation.py::test_console_staged_live_work_launch_survives_navigate_away_and_back
+Tests/UI/test_screen_navigation.py::test_deep_link_library_route_lands_its_canvas_over_restored_state
+Tests/UI/test_screen_navigation.py::test_generic_library_entry_lands_hub_on_first_visit
+Tests/UI/test_screen_navigation.py::test_media_route_round_trips_to_the_library_media_row
+Tests/UI/test_screen_navigation.py::test_prompt_receipt_owner_vetoes_real_app_navigation_until_settlement
+Tests/UI/test_screen_navigation.py::test_research_workspace_runs_round_trip_restores_independent_context
+Tests/UI/test_screen_navigation.py::test_search_all_palette_command_lands_on_library_with_honest_toast
+Tests/UI/test_screen_navigation.py::test_search_route_round_trips_to_the_library_rag_row
+Tests/UI/test_screen_navigation.py::test_skills_route_lands_on_library_with_skills_row_selected
+Tests/UI/test_screen_navigation.py::test_study_screen_escape_returns_to_library_study_staging_canvas

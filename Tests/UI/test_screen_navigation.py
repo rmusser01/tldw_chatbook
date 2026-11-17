@@ -1303,10 +1303,7 @@ async def test_rapid_tab_switch_storm_leaves_no_zombie_widgets():
         # Wait for the app's own initial navigation screen before storming --
         # in production the nav bar only exists once that screen is mounted,
         # so a pre-boot NavigateToScreen is unreachable by real input.
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ != "Screen":
-                break
+        await _settle(pilot, lambda: type(app.screen).__name__ != "Screen")
         assert type(app.screen).__name__ != "Screen", (
             "app never mounted its initial screen"
         )
@@ -1350,10 +1347,7 @@ async def test_rapid_tab_switch_storm_leaves_no_zombie_widgets():
         assert not zombies, f"zombie widgets on active screen: {zombies[:5]}"
         # One more hop for responsiveness.
         app.post_message(NavigateToScreen("home"))
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "HomeScreen":
-                break
+        await _settle(pilot, lambda: type(app.screen).__name__ == "HomeScreen")
         assert type(app.screen).__name__ == "HomeScreen"
         assert app.screen.is_running
 
@@ -1442,10 +1436,7 @@ async def test_overlapping_navigate_requests_complete_in_fifo_order() -> None:
         patch.object(type(app), "_complete_screen_navigation", _delayed_complete),
     ):
         async with app.run_test(size=(160, 40)) as pilot:
-            for _ in range(150):
-                await pilot.pause(0.02)
-                if type(app.screen).__name__ != "Screen":
-                    break
+            await _settle(pilot, lambda: type(app.screen).__name__ != "Screen")
             assert type(app.screen).__name__ != "Screen", (
                 "app never mounted its initial screen"
             )
@@ -1477,11 +1468,13 @@ async def test_overlapping_navigate_requests_complete_in_fifo_order() -> None:
             # differs run to run and isn't itself the property under
             # test. The FIFO check below, on `mounted_order`, is.
             this_tests_targets = {"home", "library", "workflows"}
-            for _ in range(150):
-                await pilot.pause(0.02)
-                seen = {name for name in mounted_order if name in this_tests_targets}
-                if len(seen) >= 3:
-                    break
+            await _settle(
+                pilot,
+                lambda: len(
+                    {name for name in mounted_order if name in this_tests_targets}
+                )
+                >= 3,
+            )
 
     # `mounted_order` can also carry the app's own cold-start noise (its
     # delayed initial-tab switch to "chat"; see above) and
@@ -1922,9 +1915,10 @@ class _FilesLeaveSeamsIdle:
 
     7cf89de6c0 (2026-08-29) made the Files exits cancel a visible path task
     first (``cancel_path_task``) and evacuate focus from the workspace only
-    while it is attached (``is_attached``); 203f4dc633 (2026-09-10,
-    task-32102) made ``_flush_active_file_notes`` abandon an in-flight
-    structural wait (``cancel_structural_wait(leaving=True)``). An unmounted
+    while it is attached (``is_attached``); 579135667a (2026-09-08,
+    task-32055) made ``_flush_active_file_notes`` abandon an in-flight
+    structural wait (``cancel_structural_wait``) and 203f4dc633 (2026-09-10,
+    task-32102) passed ``leaving=True``. An unmounted
     ``LibraryFileNotesWorkspace`` with neither open is unattached and returns
     False from both cancels, so the exit goes on.
     """
@@ -2426,7 +2420,7 @@ def test_files_back_navigation_workspace_contract_matches_real_workspace():
         "flush_pending_work",
         "acquire_transition",
         "cancel_reload_confirmation",
-        # 7cf89de6c0 / 203f4dc633: see ``_FilesLeaveSeamsIdle``.
+        # 7cf89de6c0 / 579135667a / 203f4dc633: see ``_FilesLeaveSeamsIdle``.
         "cancel_path_task",
         "cancel_structural_wait",
     }
@@ -2988,6 +2982,7 @@ def test_library_screen_bindings_are_all_gated_or_universal():
     assert not mismatches, "\n".join(mismatches)
 
 
+
 @pytest.mark.asyncio
 async def test_shift_f6_walks_the_landing_panes_back_the_way_f6_came():
     """TASK-41303: Shift+F6 on the bare landing undoes F6.
@@ -3031,7 +3026,6 @@ async def test_shift_f6_walks_the_landing_panes_back_the_way_f6_came():
                 f"Shift+F6 left focus on {screen.focused!r}, not {first!r}"
             ),
         )
-
 
 def test_action_show_workbench_help_lists_reader_action_keys(monkeypatch):
     """task-28027: F1 in the media Reader advertises the l/c/t accelerators."""
@@ -3136,14 +3130,16 @@ def test_action_show_workbench_help_includes_landing_footer_keys(monkeypatch):
     never a ``Binding``) must not render an EMPTY panel.
 
     Before this fix ``action_show_workbench_help`` only listed check_action-
-    filtered ``BINDINGS`` entries -- and ``test_library_screen_bindings_are_
-    all_gated_or_universal`` above pins that EVERY ``BINDINGS`` action gates
-    ``False`` on the bare landing, so the panel rendered a title and a Close
-    button and nothing else. Yet the landing footer teaches four real keys
-    (``/``, ``i``, ``ctrl+n``, F6 -- ``LIBRARY_LANDING_SHORTCUTS``,
-    ``_register_footer_shortcuts``) that never reach a ``Binding`` (``/``
-    and the hub accelerators are ``on_key`` wiring; F6 is the app-global
-    pane-cycle key). F1 must now include that same per-mode footer set, so
+    filtered ``BINDINGS`` entries, and on the bare landing every one of them
+    then gated ``False``, so the panel rendered a title and a Close button
+    and nothing else. Yet the landing footer teaches four real keys (``/``,
+    ``i``, ``ctrl+n``, F6 -- ``LIBRARY_LANDING_SHORTCUTS``,
+    ``_register_footer_shortcuts``), most of which never reach a
+    ``Binding`` (``/`` and the hub accelerators are ``on_key`` wiring; F6 is
+    the app-global pane-cycle key). Since d00812ac44 (task-32138) ctrl+n is a
+    landing-active ``Binding`` as well, and since TASK-41303 Shift+F6 is too
+    (``test_library_screen_bindings_are_all_gated_or_universal`` pins both).
+    F1 must include that same per-mode footer set, so
     the landing's F1 is never empty and matches what the footer already
     teaches -- including F6, which task-2860's reserved-global filtering
     drops from the FOOTER's compact rendering but must still reach F1 (F1
@@ -3504,8 +3500,9 @@ def test_action_library_list_focus_rail_focuses_search_input(monkeypatch):
             queried.append(selector)
             return fake_input
 
-    # 1d5297dbbc (2026-09-08, task-32051): the hop resolves its target inside
-    # the active rail (``_focus_library_rail_action``), not by a screen query.
+    # 7cf89de6c0 (2026-08-29): the hop resolves its target inside the active
+    # rail (``_focus_library_rail_action`` -> ``_active_library_rail``), not
+    # by a screen query.
     monkeypatch.setattr(screen, "_active_library_rail", lambda: _FakeRail())
     monkeypatch.setattr(
         screen,
@@ -4485,10 +4482,12 @@ def test_primary_routed_screens_use_base_app_screen():
 
 # --- Cross-visit state persistence (real save_state/restore_state) --------
 #
-# Screens are never cached/reused (see
+# Most screens are rebuilt on every visit (see
 # ``test_screen_navigation_always_constructs_fresh_instances`` above), so
-# continuity across a visit depends entirely on ``_screen_states``
-# (``save_state``/``restore_state``). These are round-trip pilots through the
+# their continuity across a visit depends on ``_screen_states``
+# (``save_state``/``restore_state``); the routes flagged ``ScreenRoute.
+# reusable`` (Library 7992124e8d, Console fed0b7257a) resume their installed
+# instance instead. These are round-trip pilots through the
 # REAL navigation path -- ``NavigateToScreen`` posted, drained via bounded
 # polling (the storm pilot's idiom above), real widgets mutated the way a
 # user would -- not direct calls into ``save_state``/``restore_state``.
@@ -4621,18 +4620,16 @@ async def test_library_screen_round_trip_returns_to_landing_with_rag_draft():
     app = _build_test_app()
 
     async with app.run_test(size=(170, 48)) as pilot:
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ != "Screen":
-                break
+        await _settle(pilot, lambda: type(app.screen).__name__ != "Screen")
 
         app.post_message(NavigateToScreen("search"))
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
-                "#library-rag-query-input"
-            ):
-                break
+        await _settle(
+            pilot,
+            lambda: (
+                type(app.screen).__name__ == "LibraryScreen"
+                and app.screen.query("#library-rag-query-input")
+            ),
+        )
         assert type(app.screen).__name__ == "LibraryScreen"
 
         app.screen.query_one("#library-rag-query-input", Input).value = "roadmap notes"
@@ -4643,21 +4640,21 @@ async def test_library_screen_round_trip_returns_to_landing_with_rag_draft():
         assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
 
         app.post_message(NavigateToScreen("home"))
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "HomeScreen":
-                break
+        await _settle(pilot, lambda: type(app.screen).__name__ == "HomeScreen")
         assert type(app.screen).__name__ == "HomeScreen"
 
         app.post_message(NavigateToScreen("library"))
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "LibraryScreen" and (
-                app.screen.query("#library-hub-explore-all")
-                or app.screen.query("#library-rail-explore-all")
-                or app.screen.query("#library-row-browse-search")
-            ):
-                break
+        await _settle(
+            pilot,
+            lambda: (
+                type(app.screen).__name__ == "LibraryScreen"
+                and (
+                    app.screen.query("#library-hub-explore-all")
+                    or app.screen.query("#library-rail-explore-all")
+                    or app.screen.query("#library-row-browse-search")
+                )
+            ),
+        )
 
         restored_screen = app.screen
         assert type(restored_screen).__name__ == "LibraryScreen"
@@ -4665,10 +4662,7 @@ async def test_library_screen_round_trip_returns_to_landing_with_rag_draft():
         assert restored_screen._library_selected_row_id == ""
 
         await app.handle_screen_navigation(NavigateToScreen("search"))
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if app.screen.query("#library-rag-query-input"):
-                break
+        await _settle(pilot, lambda: app.screen.query("#library-rag-query-input"))
 
         restored_screen = app.screen
         assert restored_screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
@@ -4714,12 +4708,13 @@ async def test_console_staged_live_work_launch_survives_navigate_away_and_back()
     )
 
     async with app.run_test(size=(170, 48)) as pilot:
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "ChatScreen" and app.screen.query(
-                "#console-pending-launch-card"
-            ):
-                break
+        await _settle(
+            pilot,
+            lambda: (
+                type(app.screen).__name__ == "ChatScreen"
+                and app.screen.query("#console-pending-launch-card")
+            ),
+        )
         assert type(app.screen).__name__ == "ChatScreen"
         first_screen = app.screen
         assert first_screen._pending_console_launch_context is not None
@@ -4727,20 +4722,18 @@ async def test_console_staged_live_work_launch_survives_navigate_away_and_back()
         assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
 
         app.post_message(NavigateToScreen("home"))
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "HomeScreen":
-                break
+        await _settle(pilot, lambda: type(app.screen).__name__ == "HomeScreen")
         assert type(app.screen).__name__ == "HomeScreen"
         assert app.screen is not first_screen
 
         app.post_message(NavigateToScreen("chat"))
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "ChatScreen" and app.screen.query(
-                "#console-pending-launch-card"
-            ):
-                break
+        await _settle(
+            pilot,
+            lambda: (
+                type(app.screen).__name__ == "ChatScreen"
+                and app.screen.query("#console-pending-launch-card")
+            ),
+        )
 
         restored_screen = app.screen
         assert type(restored_screen).__name__ == "ChatScreen"
@@ -4774,18 +4767,16 @@ async def test_prompts_route_lands_on_library_with_prompts_row_selected():
     app = _build_test_app()
 
     async with app.run_test(size=(170, 48)) as pilot:
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ != "Screen":
-                break
+        await _settle(pilot, lambda: type(app.screen).__name__ != "Screen")
 
         app.post_message(NavigateToScreen("prompts"))
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
-                "#library-row-browse-prompts"
-            ):
-                break
+        await _settle(
+            pilot,
+            lambda: (
+                type(app.screen).__name__ == "LibraryScreen"
+                and app.screen.query("#library-row-browse-prompts")
+            ),
+        )
 
         assert type(app.screen).__name__ == "LibraryScreen"
         assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
@@ -4806,18 +4797,16 @@ async def test_skills_route_lands_on_library_with_skills_row_selected():
     app = _build_test_app()
 
     async with app.run_test(size=(170, 48)) as pilot:
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ != "Screen":
-                break
+        await _settle(pilot, lambda: type(app.screen).__name__ != "Screen")
 
         app.post_message(NavigateToScreen("skills"))
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
-                "#library-row-browse-skills"
-            ):
-                break
+        await _settle(
+            pilot,
+            lambda: (
+                type(app.screen).__name__ == "LibraryScreen"
+                and app.screen.query("#library-row-browse-skills")
+            ),
+        )
 
         assert type(app.screen).__name__ == "LibraryScreen"
         assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
@@ -4839,18 +4828,16 @@ async def test_search_route_lands_on_library_rag_canvas():
     app = _build_test_app()
 
     async with app.run_test(size=(170, 48)) as pilot:
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ != "Screen":
-                break
+        await _settle(pilot, lambda: type(app.screen).__name__ != "Screen")
 
         app.post_message(NavigateToScreen("search"))
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
-                "#library-row-browse-search"
-            ):
-                break
+        await _settle(
+            pilot,
+            lambda: (
+                type(app.screen).__name__ == "LibraryScreen"
+                and app.screen.query("#library-row-browse-search")
+            ),
+        )
 
         assert type(app.screen).__name__ == "LibraryScreen"
         assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
@@ -4870,25 +4857,20 @@ async def test_study_screen_escape_returns_to_library_study_staging_canvas():
     app = _build_test_app()
 
     async with app.run_test(size=(170, 48)) as pilot:
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ != "Screen":
-                break
+        await _settle(pilot, lambda: type(app.screen).__name__ != "Screen")
 
         app.post_message(NavigateToScreen("study"))
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "StudyScreen":
-                break
+        await _settle(pilot, lambda: type(app.screen).__name__ == "StudyScreen")
         assert type(app.screen).__name__ == "StudyScreen"
 
         await pilot.press("escape")
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
-                "#library-row-create-study"
-            ):
-                break
+        await _settle(
+            pilot,
+            lambda: (
+                type(app.screen).__name__ == "LibraryScreen"
+                and app.screen.query("#library-row-create-study")
+            ),
+        )
 
         assert type(app.screen).__name__ == "LibraryScreen"
         assert app.screen._library_selected_row_id == "create-study"
@@ -4911,12 +4893,13 @@ async def test_boot_with_search_default_tab_lands_on_library_rag_canvas():
     app = _build_test_app(configured_default="search")
 
     async with app.run_test(size=(170, 48)) as pilot:
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
-                "#library-row-browse-search"
-            ):
-                break
+        await _settle(
+            pilot,
+            lambda: (
+                type(app.screen).__name__ == "LibraryScreen"
+                and app.screen.query("#library-row-browse-search")
+            ),
+        )
 
         assert type(app.screen).__name__ == "LibraryScreen"
         assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
@@ -4936,12 +4919,13 @@ async def test_boot_with_prompts_default_tab_lands_on_library_with_prompts_row_s
     app = _build_test_app(configured_default="prompts")
 
     async with app.run_test(size=(170, 48)) as pilot:
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
-                "#library-row-browse-prompts"
-            ):
-                break
+        await _settle(
+            pilot,
+            lambda: (
+                type(app.screen).__name__ == "LibraryScreen"
+                and app.screen.query("#library-row-browse-prompts")
+            ),
+        )
 
         assert type(app.screen).__name__ == "LibraryScreen"
         assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
@@ -5131,10 +5115,7 @@ async def test_search_all_palette_command_lands_on_library_with_honest_toast():
     notices: list[tuple[str, str]] = []
 
     async with app.run_test(size=(170, 48)) as pilot:
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ != "Screen":
-                break
+        await _settle(pilot, lambda: type(app.screen).__name__ != "Screen")
 
         app.notify = lambda message_text, **kwargs: notices.append(
             (str(message_text), kwargs.get("severity", ""))
@@ -5143,12 +5124,13 @@ async def test_search_all_palette_command_lands_on_library_with_honest_toast():
         provider = QuickActionsProvider(screen=app.screen)
         provider.execute_quick_action("search_all")
 
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
-                "#library-row-browse-search"
-            ):
-                break
+        await _settle(
+            pilot,
+            lambda: (
+                type(app.screen).__name__ == "LibraryScreen"
+                and app.screen.query("#library-row-browse-search")
+            ),
+        )
 
         assert type(app.screen).__name__ == "LibraryScreen"
         assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
@@ -5177,35 +5159,31 @@ async def test_media_route_round_trips_to_the_library_media_row():
     app = _build_test_app()
 
     async with app.run_test(size=(170, 48)) as pilot:
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ != "Screen":
-                break
+        await _settle(pilot, lambda: type(app.screen).__name__ != "Screen")
 
         app.post_message(NavigateToScreen("media"))
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
-                "#library-row-browse-media"
-            ):
-                break
+        await _settle(
+            pilot,
+            lambda: (
+                type(app.screen).__name__ == "LibraryScreen"
+                and app.screen.query("#library-row-browse-media")
+            ),
+        )
         assert type(app.screen).__name__ == "LibraryScreen"
         assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
 
         app.post_message(NavigateToScreen("home"))
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "HomeScreen":
-                break
+        await _settle(pilot, lambda: type(app.screen).__name__ == "HomeScreen")
         assert type(app.screen).__name__ == "HomeScreen"
 
         app.post_message(NavigateToScreen("media"))
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
-                "#library-row-browse-media"
-            ):
-                break
+        await _settle(
+            pilot,
+            lambda: (
+                type(app.screen).__name__ == "LibraryScreen"
+                and app.screen.query("#library-row-browse-media")
+            ),
+        )
 
         restored_screen = app.screen
         assert type(restored_screen).__name__ == "LibraryScreen"
@@ -5227,35 +5205,31 @@ async def test_search_route_round_trips_to_the_library_rag_row():
     app = _build_test_app()
 
     async with app.run_test(size=(170, 48)) as pilot:
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ != "Screen":
-                break
+        await _settle(pilot, lambda: type(app.screen).__name__ != "Screen")
 
         app.post_message(NavigateToScreen("search"))
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
-                "#library-row-browse-search"
-            ):
-                break
+        await _settle(
+            pilot,
+            lambda: (
+                type(app.screen).__name__ == "LibraryScreen"
+                and app.screen.query("#library-row-browse-search")
+            ),
+        )
         assert type(app.screen).__name__ == "LibraryScreen"
         assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
 
         app.post_message(NavigateToScreen("home"))
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "HomeScreen":
-                break
+        await _settle(pilot, lambda: type(app.screen).__name__ == "HomeScreen")
         assert type(app.screen).__name__ == "HomeScreen"
 
         app.post_message(NavigateToScreen("search"))
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
-                "#library-row-browse-search"
-            ):
-                break
+        await _settle(
+            pilot,
+            lambda: (
+                type(app.screen).__name__ == "LibraryScreen"
+                and app.screen.query("#library-row-browse-search")
+            ),
+        )
 
         restored_screen = app.screen
         assert type(restored_screen).__name__ == "LibraryScreen"
@@ -5808,6 +5782,26 @@ async def test_broken_screen_content_degrades_instead_of_killing_a_running_app()
 # ``apply_navigation_context``) rather than re-deriving it, matching
 # ``test_rapid_tab_switch_storm_leaves_no_zombie_widgets``'s real-screen
 # harness pattern immediately above.
+async def _settle(pilot, predicate, *, timeout: float = 15.0) -> bool:
+    """Pause until ``predicate()`` holds or ``timeout`` wall-clock seconds pass.
+
+    TASK-41127 review r15lt-rev1: the route and boot waits here were fixed
+    pause loops (150 x ``pilot.pause(0.02)``, nominally 3 s). A pause count
+    is not a time budget: under load each pause runs long and the loop ran out
+    first (search-route passed 0 of 3 at load 46 with it, and passed with 30 s).
+    Same shape as ``Tests/UI/test_library_shell.py``'s ``_wait_for_condition``,
+    but it returns the predicate's last value instead of raising, so each
+    caller keeps the assertion (and failure message) it already makes.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        await pilot.pause(0.02)
+        if predicate():
+            return True
+        if time.monotonic() >= deadline:
+            return False
+
+
 async def _wait_for_initial_screen(pilot) -> None:
     """Poll until the app's own startup navigation has pushed a real screen.
 
@@ -5820,10 +5814,8 @@ async def _wait_for_initial_screen(pilot) -> None:
     dropped with no error and no way to retry.
     """
     app = pilot.app
-    for _ in range(150):
-        await pilot.pause(0.02)
-        if getattr(app, "_initial_screen_pushed", False):
-            return
+    if await _settle(pilot, lambda: getattr(app, "_initial_screen_pushed", False)):
+        return
     raise AssertionError("app never finished pushing its initial screen")
 
 

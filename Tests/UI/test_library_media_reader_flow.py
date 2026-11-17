@@ -826,7 +826,10 @@ async def test_filter_uses_authoritative_search_and_restores_page_three_anchor()
             lambda: bool(screen.query("#library-media-next")),
             message="Page 1 pager did not settle.",
         )
-        screen.query_one("#library-media-next", Button).press()
+        # TASK-41127 review r15lt-rev1: each page re-mounts the pager and the
+        # rows, so every press takes the live node (`_wait_for_selector`
+        # re-queries after a settle pause); a detached one posts nothing.
+        (await _wait_for_selector(screen, pilot, "#library-media-next")).press()
         await _wait_for_condition(
             pilot,
             lambda: (
@@ -835,7 +838,7 @@ async def test_filter_uses_authoritative_search_and_restores_page_three_anchor()
             ),
             message="Page 2 did not apply and settle its pager.",
         )
-        screen.query_one("#library-media-next", Button).press()
+        (await _wait_for_selector(screen, pilot, "#library-media-next")).press()
         await _wait_for_condition(
             pilot,
             lambda: (
@@ -844,7 +847,7 @@ async def test_filter_uses_authoritative_search_and_restores_page_three_anchor()
             ),
             message="Page 3 did not apply and settle its rows.",
         )
-        anchor = screen.query_one("#library-media-row-10", Button)
+        anchor = await _wait_for_selector(screen, pilot, "#library-media-row-10")
         anchor_id, anchor_backing_id, _ = _row_identity(anchor)
         anchor.press()
         await _wait_for_detail_call(service, anchor_backing_id)
@@ -3169,8 +3172,10 @@ async def test_any_non_markdown_item_with_content_says_why_rendered_is_absent(
         ).press()
 
         def painted_note() -> str:
-            note = screen.query_one("#library-media-content-mode-note", Static)
-            return _painted_text(host, note.region)
+            # "" while the note is not mounted: the failure message reads
+            # this too, after the wait gave up, and must not raise NoMatches.
+            notes = screen.query("#library-media-content-mode-note")
+            return _painted_text(host, notes.first().region) if notes else ""
 
         # Type-neutral copy (batch-3 review ruling 1): it says why THIS item
         # has no rendered view, not which types one is for -- the old

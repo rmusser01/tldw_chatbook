@@ -162,7 +162,10 @@ async def _open_first_reader_row(screen, pilot):
         ),
         message="Reader detail never settled.",
     )
-    await pilot.pause()
+    # TASK-41127 review r15lt-rev1: as in `_load_row_0`, the loaded detail
+    # re-mounts the Reader chrome after the session settles; return once it
+    # is back, since callers press Find/More/the mode tabs next.
+    await _wait_for_selector(screen, pilot, "#library-media-reader-find")
 
 
 @pytest.mark.asyncio
@@ -1278,7 +1281,7 @@ async def test_back_button_is_not_composed_in_the_side_by_side_layout():
 
 
 @pytest.mark.asyncio
-async def test_escape_labels_are_one_of_four():
+async def test_escape_labels_are_one_of_five():
     """Every Reader state's ``esc`` chip comes from ``_ESCAPE_LABELS``."""
     host = _host()
     async with host.run_test(size=(235, 52)) as pilot:

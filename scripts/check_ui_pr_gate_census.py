@@ -1114,6 +1114,10 @@ MINIMUM_FILES = 2159
 # TASK-41127 (2026-11-16): append 36 re-pinned or de-raced off-lane Library
 # nodes at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 2195
+MINIMUM_FILES = 2181
+# TASK-41127 review r15lt-rev1 / TASK-41303 (2026-11-17): append 12
+# screen-navigation nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2207
 
 
 def read_census(path: Path) -> list[str]:
