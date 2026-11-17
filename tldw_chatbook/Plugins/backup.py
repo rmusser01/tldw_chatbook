@@ -124,9 +124,9 @@ def record_change(root: Path, change: dict) -> None:
     After a restore, ``<plugins>/authority-changes.json`` still names the
     changes made since the backup, so adopting the restored authority can list
     what it undoes. Each entry names its parent operation; ``changes_since``
-    keeps only an unbroken chain, so stale entries of an undone timeline or of
-    another namespace can stay (the newest of a generation wins), bounded to
-    the last ``MAX_CHANGES``. Advisory only: nothing grants authority from it.
+    follows only the chain back from the protected marker, so stale entries of
+    an undone timeline or of another namespace can stay, bounded to the last
+    ``MAX_CHANGES``. Advisory only: nothing grants authority from it.
     """
     import json
     import os
@@ -165,37 +165,48 @@ def record_change(root: Path, change: dict) -> None:
 def changes_since(root: Path, namespace_id: str, marker, current):
     """The recorded changes after ``marker`` up to ``current``, oldest first.
 
-    ``None`` unless each generation in between has an entry of this namespace
-    whose parent is the entry before it (the first one's is ``marker``), and the
-    last is the protected marker's own operation. A gap, an unrecorded commit
-    after a rewind, or a list from another timeline breaks the chain, and the
-    review falls back to its count (review r15pa-rev1).
+    Walks back from the protected marker's own operation through each entry's
+    parent, one generation a step, and must land on ``marker``'s operation.
+    So an entry of an abandoned branch never hides the true one, and a gap, an
+    unrecorded commit after a rewind, another namespace or a malformed entry
+    returns ``None``: the review falls back to its count (reviews r15pa-rev1,
+    r15pa-rev2).
     """
     from .authority_store import _read
 
     try:
         rows = {
-            row["generation"]: row
+            row["operation_id"]: row
             for row in _read(root / CHANGES)["changes"]
             if row["namespace_id"] == namespace_id
         }
     except (OSError, ValueError, KeyError, TypeError):
         return None
-    named, parent = [], marker.operation_id
-    for generation in range(marker.generation + 1, current.generation + 1):
-        row = rows.get(generation, {})
-        if row.get("parent") != parent:
+    named, operation = [], current.operation_id
+    for generation in range(current.generation, marker.generation, -1):
+        row = rows.get(operation)
+        if row is None:
             return None
-        parent = row.get("operation_id")
+        if row.get("generation") != generation:
+            return None
         named.append(
             tuple(
                 row.get(key)
                 for key in ("generation", "kind", "installation_id", "alias", "detail")
             )
         )
-    if parent != current.operation_id:
+        operation = row.get("parent")
+    if operation != marker.operation_id:
         return None
-    return tuple(named)
+    if not all(
+        isinstance(kind, str)
+        and isinstance(installation, str)
+        and isinstance(alias, (str, type(None)))
+        and isinstance(detail, (str, type(None)))
+        for _, kind, installation, alias, detail in named
+    ):
+        return None
+    return tuple(reversed(named))
 
 
 def kept_whole(items) -> set[Path]:

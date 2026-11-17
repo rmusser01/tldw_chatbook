@@ -116,19 +116,22 @@ made with:
 
 In both, the same passphrase opens the restored plugin authority, and Plugins
 shows **Recover plugins from this backup** before anything changes. It names
-the generation of the restored authority the passphrase opened. It lists the
-plugin changes made after the backup that recovery undoes, each with its
-generation, kind (install, update, enable or disable, configuration, removal
-and so on) and plugin. Chatbook records each change as it commits in
-`authority-changes.json` in the plugin folder; backups leave that file out and
-a restore keeps it, so it still names the changes afterwards. When that list
-does not cover every undone change (the plugin folder was deleted before the
-restore, or the changes predate the list), the review counts them instead, when
-the keyring marker shows them; with the marker missing, or set by a different
-plugin authority, the count is unknown. It lists the backup's plugins with their revisions and gives the
-number of its saved-data folders. **Confirm recovery** makes that authority
-current on this computer. Saved data stays attached, and plugins run again
-once recovery completes.
+the generation of the restored authority the passphrase opened, lists the
+backup's plugins with their revisions, gives the number of its saved-data
+folders, and says that **Confirm recovery** makes that authority current on
+this computer. Then it names the plugin changes made after the backup that
+recovery undoes, each with its generation, kind (install, update, enable or
+disable, configuration change, removal and so on) and plugin: the first 20,
+then how many more and their generation range. Chatbook records each change as
+it commits in `authority-changes.json` in the plugin folder; backups leave that
+file out and a restore keeps it, so it still names the changes afterwards. It
+names them only along the unbroken chain of changes back from this computer's
+protected marker to the backup's. When the list does not give that chain (the
+plugin folder was deleted before the restore, a change went unrecorded, or the
+changes predate the list), the review counts them instead, when the keyring
+marker shows them; with the marker missing, or set by a different plugin
+authority, the count is unknown. Saved data stays attached, and plugins run
+again once recovery completes.
 
 A restore over recreated folders gives them new identities. If the plugin
 folder, `staging/` or a saved-data folder was deleted before the restore, each

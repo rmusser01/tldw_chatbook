@@ -185,10 +185,11 @@ paths or the OS keyring was reset:
 1. Press **Authority…** and unlock with the plugin passphrase **the backup was
    made with**.
 2. "Recover plugins from this backup" opens. It names the restored authority's
-   generation and lists each plugin change made after the backup that it undoes
-   (generation, kind and plugin). If Chatbook has no complete list of them, it
-   says how many there are when it can tell. It also lists the backup's plugins
-   and revisions, and gives the number of saved-data folders.
+   generation, lists the backup's plugins and revisions, gives the number of
+   saved-data folders, and says what confirming does. Then it names the plugin
+   changes made after the backup that it undoes (generation, kind and plugin):
+   the first 20, then how many more and their generations. If Chatbook has no
+   complete list of them, it says how many there are when it can tell.
 3. Press **Confirm recovery**. Saved data stays attached.
 
 If the plugin folder or a saved-data folder was deleted before the restore, the

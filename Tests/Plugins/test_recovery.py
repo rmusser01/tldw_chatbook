@@ -1386,8 +1386,10 @@ def test_restored_registry_matches_its_root_through_a_symlinked_data_dir(tmp_pat
     [
         "staging/op/host-git-config",
         "staging/op/later-member/state",
-        # TASK-41105: the change list a restore must not replace.
+        # TASK-41105: the change list a restore must not replace, and its
+        # write's temporary file.
         "authority-changes.json",
+        "authority-changes.json.tmp",
     ],
 )
 def test_capture_refuses_an_included_item_at_an_excluded_staging_path(
@@ -2399,12 +2401,14 @@ async def test_restored_authority_review_names_the_changes_it_undoes(
 
 @platform_support.package_capture
 def test_change_list_names_only_an_unbroken_chain_from_the_backup(tmp_path):
-    """TASK-41105 review r15pa-rev1: the review names changes only when each
-    undone generation has an entry of this namespace whose parent is the entry
-    before it (the first one's is the backup's marker) and the last is the
-    protected marker's operation. A gap, a mismatched newest entry, another
-    namespace, or a commit left unrecorded after a rewind falls back to the
-    count, and the list keeps its last ``MAX_CHANGES`` entries."""
+    """TASK-41105 reviews r15pa-rev1 and rev2: the review names changes only
+    along the parent chain back from the protected marker's operation, one
+    generation a step, landing on the backup's marker. A gap, a mismatched
+    newest entry, another namespace, a commit left unrecorded after a rewind,
+    a wrong generation, a chain that lands elsewhere or a malformed entry falls
+    back to the count; a newer entry of an abandoned branch never hides the
+    true one. The list keeps its last ``MAX_CHANGES`` entries, and a stale
+    temporary file from an interrupted write never blocks the next one."""
     import json
     from types import SimpleNamespace as Marker
 
@@ -2430,6 +2434,10 @@ def test_change_list_names_only_an_unbroken_chain_from_the_backup(tmp_path):
             "alias": "helper",
             "detail": detail,
         }
+
+    def write(*rows):
+        (root / CHANGES).write_text(json.dumps({"changes": list(rows)}))
+        (root / CHANGES).chmod(0o600)
 
     def since(marker, current, *, of=namespace):
         return changes_since(
@@ -2463,13 +2471,31 @@ def test_change_list_names_only_an_unbroken_chain_from_the_backup(tmp_path):
         (7, "b7", "b6", "uninstall", None),
     )
     assert since((5, "a5"), (7, "b7")) is None
-    # The cap: a full list drops its oldest entry for the next one.
-    (root / CHANGES).write_text(
-        json.dumps(
-            {"changes": [entry(g, f"c{g}", f"c{g - 1}") for g in range(1, MAX_CHANGES + 1)]}
-        )
+    # rev2 (the reviewer's probe2 A5): a backup at a7 adopted after a branch
+    # b6 off a5, then a8. The lineage is a6, a7, a8, whatever came later at 6.
+    timeline(
+        *((g, f"a{g}", f"a{g - 1}") for g in range(1, 8)),
+        (6, "b6", "a5"),
+        (8, "a8", "a7"),
     )
-    (root / CHANGES).chmod(0o600)
+    assert [row[0:2] for row in since((5, "a5"), (8, "a8"))] == [
+        (6, "activate"),
+        (7, "activate"),
+        (8, "activate"),
+    ]
+    # The chain lands on another operation than the backup's marker.
+    assert since((5, "z5"), (8, "a8")) is None
+    # A corrupt entry's generation is not the step it stands at.
+    write(entry(6, "a6", "a5"), entry(9, "a7", "a6"))
+    assert since((5, "a5"), (7, "a7")) is None
+    # rev2: a well-chained entry with a non-string kind or detail is malformed.
+    for kind, detail in ((["install"], None), ("activate", 7)):
+        write(entry(6, "x6", "a5", kind=kind, detail=detail))
+        assert since((5, "a5"), (6, "x6")) is None
+    # The cap: a full list drops its oldest entry for the next one, and a
+    # stale temporary file (a write interrupted before its replace) is cleared.
+    write(*(entry(g, f"c{g}", f"c{g - 1}") for g in range(1, MAX_CHANGES + 1)))
+    (root / (CHANGES + ".tmp")).write_bytes(b"partial")
     record_change(root, entry(MAX_CHANGES + 1, "next", f"c{MAX_CHANGES}"))
     kept = json.loads((root / CHANGES).read_text())["changes"]
     assert len(kept) == MAX_CHANGES

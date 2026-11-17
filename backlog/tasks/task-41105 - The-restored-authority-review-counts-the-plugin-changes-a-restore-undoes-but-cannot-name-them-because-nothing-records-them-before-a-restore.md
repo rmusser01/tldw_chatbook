@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-15 02:20
-updated_date: 2026-11-17 00:25
+updated_date: 2026-11-17 01:54
 labels:
 - follow-up
 - plugins
@@ -86,4 +86,21 @@ Filed in round 14 of the 2026-10-23 burn-down (closeout, 2026-11-15). Checked ag
 - **M7, stale text.** The `Plugins/backup.py` module docstring ("Left out:" now lists the change list and every `reset-<id>/`), the `_reset_aside` docstring, `Docs/Architecture/backup-recovery.md` and `Docs/Backup-and-Recovery.md` now say setup outside a restore also creates `reset-<id>/`, and that package bytes move there after a restore.
 - **R8, the durable write.** `record_change` now writes `authority-changes.json.tmp` (0600, `O_EXCL`, `O_NOFOLLOW`) and `os.replace`s it, with no fsync. The `.tmp` name is excluded from backups too. The reviewer's `timing.py`, load about 80: at 1000 entries, median 91.2 ms and max 250 ms before; median 12.5 ms and max 18.5 ms after. The first call (609 ms after, 741 ms before) is mostly the lazy imports, which the running plugin service already holds. The census gained the matching `open`/`write`/`os.replace`/`os.unlink` rows.
 - Checks after the fixes (load 62-80): `Tests/Plugins/{test_recovery,test_coordinator,test_source_service,test_authority_store}.py`, `Tests/UI/{test_plugin_review,test_plugins_browse,test_backup_data_groups}.py`, `Tests/Backup_Recovery/{test_group_cli,test_launcher,test_restore_plan_excluded_directories}.py` at `-n 4`, end to end deselected: 433 passed, 1 failed. The failure, `test_installed_manager_collects_all_51_exact_root_refs`, also fails with the base sources (see above). Owner-inventory census, serial, `--timeout=1500`: 47 passed. Ruff gate OK; `./scripts/preflight.sh` passes.
+**Review r15pa-rev2 (2026-11-16), every item fixed.**
+- **R4 (taken), walk back the chain.** `changes_since` now indexes entries by operation id and walks from the keyring marker's operation through each entry's parent, one generation a step, and must land on the backup marker's operation. A newer entry of an abandoned branch no longer hides the true one: probe2 case A5 (a1..a7, then b6 off a5, then a8; review from a5 to a8) now names a6, a7, a8 where round 1 fell back to the count. Guards: namespace filter, missing entry, generation of the step, landing on the marker, value types.
+- **M1, a malformed entry crashed the dialog.** Names are returned only when kind and plugin id are strings and alias and detail are strings or `None`; probe2 case C returns `None` and the dialog text builds.
+- **M2, stale `.tmp`.** The chain test plants a stale `authority-changes.json.tmp` before the capped write and asserts the write succeeds and the file is gone; the capture-refusal parametrization gains `authority-changes.json.tmp`.
+- **M3, docs.** The User Guide's step 2 and Docs/Plugins/operations.md describe the dialog as it is: plugins, saved-data count and the confirmation first, then at most 20 named changes and a count of the rest. The owner inventory row describes the walk.
+- **Red evidence**, each guard removed then restored, `test_change_list_names_only_an_unbroken_chain_from_the_backup` unless named:
+  - round-1 `backup.py` (HEAD): the A5 assertion, `TypeError: 'NoneType' object is not iterable` (it fell back);
+  - namespace filter: `assert ((6, …), (7, …)) is None` (other namespace);
+  - missing-entry guard: `AttributeError: 'NoneType' object has no attribute 'get'`;
+  - generation guard: `assert ((6, …), (9, …)) is None` (corrupt generation);
+  - landing guard: `assert ((6, …), (7, …), (8, …)) is None` (chain lands on another operation);
+  - type guard: `assert ((6, ['install'], …),) is None`;
+  - cap: `assert 1001 == 1000`;
+  - stale `.tmp` unlink: `FileExistsError` on the planted file;
+  - `.tmp` exclusion: `test_capture_refuses_an_included_item_at_an_excluded_staging_path[authority-changes.json.tmp]` `DID NOT RAISE`.
+- probe2 also shows the stale `.tmp` cleared (B2), a symlinked `.tmp` removed with its target intact (B3), and 200 changes untruncated. B4 (a directory at the `.tmp` name) still makes `record_change` raise `PermissionError`, which the coordinator swallows, so the list stops growing until it is removed: left as is, the review falls back to the count.
+- Checks (load 46-57): `Tests/Plugins/{test_recovery,test_coordinator,test_source_service,test_authority_store}.py`, `Tests/UI/{test_plugin_review,test_plugins_browse,test_backup_data_groups}.py` and `Tests/Backup_Recovery/test_restore_plan_excluded_directories.py` at `-n 4`, end to end deselected: 388 passed, 1 failed (`test_installed_manager_collects_all_51_exact_root_refs`, red at base). Ruff gate OK; `./scripts/preflight.sh` passes. No producer call changed, so the census was not re-run.
 <!-- SECTION:NOTES:END -->
