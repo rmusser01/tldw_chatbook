@@ -1,7 +1,7 @@
 ---
 id: TASK-41317
 title: "The served relay publisher's wait_idle spins on asyncio.sleep(0), which can starve worker threads on Linux"
-status: To Do
+status: In Progress
 created_date: 2026-11-16 19:55
 labels:
 - follow-up
@@ -33,3 +33,11 @@ Filed from the 2026-11-13..16 burn-down, which applied TASK-40334's finding to o
 - [ ] #1 `wait_idle` lets an idle loop sleep: a test running it against an empty-but-busy queue for 0.2 s sees a bounded number of loop turns (the TASK-40334 idle-loop check), and fails with the current spin
 - [ ] #2 `wait_idle` still returns as soon as every queued event is sent, and at its deadline otherwise (existing relay tests still pass)
 <!-- AC:END -->
+
+## Implementation Plan
+
+ADR required: no. A test-surface wait changes how it blocks; no product behaviour, contract or architecture changes.
+
+1. Add a test in `Tests/Web_Server/test_served_relay_publisher.py` that holds one send in flight (empty queue, drainer busy), counts real loop turns (`_run_once`, as `test_the_busy_sampler_lets_an_idle_loop_sleep` does) while `wait_idle(timeout=0.2)` runs, and asserts a bounded count plus a return at the deadline; then that a long-timeout `wait_idle` returns as soon as the send completes. Show it fails on the unmodified tree.
+2. Have the drainer mark each item `task_done()` and make `wait_idle` yield once, then `asyncio.wait_for(queue.join(), timeout)`, suppressing the timeout (same return-never-raise contract). Drop the now-unused `_busy` flag.
+3. Mutation check (revert the fix, test fails), run `Tests/Web_Server/test_served_relay_publisher.py` and `Tests/Chat/test_console_relay_approval_integration.py` on base and head, preflight, `Tests/Architecture`.
