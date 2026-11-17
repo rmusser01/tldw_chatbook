@@ -2982,7 +2982,6 @@ def test_library_screen_bindings_are_all_gated_or_universal():
     assert not mismatches, "\n".join(mismatches)
 
 
-
 @pytest.mark.asyncio
 async def test_shift_f6_walks_the_landing_panes_back_the_way_f6_came():
     """TASK-41303: Shift+F6 on the bare landing undoes F6.
@@ -3021,11 +3020,11 @@ async def test_shift_f6_walks_the_landing_panes_back_the_way_f6_came():
         await _wait_for_condition(
             pilot,
             lambda: screen.focused is first,
-            timeout=5.0,
             message=lambda: (
                 f"Shift+F6 left focus on {screen.focused!r}, not {first!r}"
             ),
         )
+
 
 def test_action_show_workbench_help_lists_reader_action_keys(monkeypatch):
     """task-28027: F1 in the media Reader advertises the l/c/t accelerators."""
@@ -5766,6 +5765,26 @@ async def test_broken_screen_content_degrades_instead_of_killing_a_running_app()
         assert app.is_running, "app must stay responsive after the failed compose"
 
 
+async def _settle(pilot, predicate, *, timeout: float = 15.0) -> bool:
+    """Pause until ``predicate()`` holds or ``timeout`` wall-clock seconds pass.
+
+    TASK-41127 review r15lt-rev1: the route and boot waits here were fixed
+    pause loops (150 x ``pilot.pause(0.02)``, nominally 3 s). A pause count
+    is not a time budget: under load each pause runs long and the loop ran out
+    first (search-route passed 0 of 3 at load 46 with it, and passed with 30 s).
+    Same shape as ``Tests/UI/test_library_shell.py``'s ``_wait_for_condition``,
+    but it returns whether the predicate held instead of raising, so each
+    caller keeps the assertion (and failure message) it already makes.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        await pilot.pause(0.02)
+        if predicate():
+            return True
+        if time.monotonic() >= deadline:
+            return False
+
+
 # --- task-2858 (LIB-03 -> AC#1): entry routing + canvas restoration -------
 #
 # Direction (recorded in the task's Implementation Notes): EXPLICIT deep
@@ -5781,27 +5800,7 @@ async def test_broken_screen_content_degrades_instead_of_killing_a_running_app()
 # ``ScreenStateStore`` / ``LibraryScreen.save_state``/``restore_state``/
 # ``apply_navigation_context``) rather than re-deriving it, matching
 # ``test_rapid_tab_switch_storm_leaves_no_zombie_widgets``'s real-screen
-# harness pattern immediately above.
-async def _settle(pilot, predicate, *, timeout: float = 15.0) -> bool:
-    """Pause until ``predicate()`` holds or ``timeout`` wall-clock seconds pass.
-
-    TASK-41127 review r15lt-rev1: the route and boot waits here were fixed
-    pause loops (150 x ``pilot.pause(0.02)``, nominally 3 s). A pause count
-    is not a time budget: under load each pause runs long and the loop ran out
-    first (search-route passed 0 of 3 at load 46 with it, and passed with 30 s).
-    Same shape as ``Tests/UI/test_library_shell.py``'s ``_wait_for_condition``,
-    but it returns the predicate's last value instead of raising, so each
-    caller keeps the assertion (and failure message) it already makes.
-    """
-    deadline = time.monotonic() + timeout
-    while True:
-        await pilot.pause(0.02)
-        if predicate():
-            return True
-        if time.monotonic() >= deadline:
-            return False
-
-
+# harness pattern above.
 async def _wait_for_initial_screen(pilot) -> None:
     """Poll until the app's own startup navigation has pushed a real screen.
 

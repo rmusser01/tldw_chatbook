@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-15 02:20
-updated_date: 2026-11-17 01:27
+updated_date: 2026-11-17 02:27
 labels:
 - follow-up
 - library
@@ -161,7 +161,7 @@ The review findings and how each was handled:
   - It now collects every mismatch before failing; the first assertion used to hide a second cause.
   - ctrl+n is pinned as landing-active, citing d00812ac44.
   - With that re-pin, the audit failed on Shift+F6 alone, which is TASK-41303's red. TASK-41303 removed the gate and added the mounted test `test_shift_f6_walks_the_landing_panes_back_the_way_f6_came`.
-- **Fixed waits in `test_screen_navigation.py`.** All 34 fixed `range(150)` x `pause(0.02)` loops and `_wait_for_initial_screen` now use `_settle`. It waits against a 15 s wall-clock deadline and returns the predicate's value, so every caller keeps its own assert. Each new condition is AST-identical to the loop it replaces (checked mechanically).
+- **Fixed waits in `test_screen_navigation.py`.** All 34 fixed `range(150)` x `pause(0.02)` loops and `_wait_for_initial_screen` now use `_settle`. It waits against a 15 s wall-clock deadline and returns whether the predicate held, so every caller keeps its own assert. Each new condition is AST-identical to the loop it replaces (checked mechanically).
 - **Citations and comments.**
   - The rail hop cites 7cf89de6c0.
   - The structural wait cites 579135667a and 203f4dc633.
@@ -208,4 +208,11 @@ Charge per-process times from the 3-run sweep: 34-58 s of pytest time each.
 |---|---|---|
 | `test_screen_navigation.py` whole, `-n 4`, load 65-76 | 7 failed, 138 passed | All seven are named above: TASK-23149's two, the rapid storm, and the four product races. |
 | `test_library_media_render_fixes.py` plus `test_library_crit9_media_reader.py` and `test_library_crit10_viewer.py` (the other `_open_first_reader_row` callers), throwaway stamp plugin | 2 failed, 146 passed | The two are `test_select_mode_bulk_reason_is_painted_with_nothing_selected[wide|narrow]`: a press followed by one pause, under load. They passed 2 of 2 alone. |
+
+**Review round 2 (r15lt-rev2).** Four minor fixes and one recommendation:
+- `_settle`'s docstring now says it returns whether the predicate held.
+- `_settle` now sits above the task-2858 section comment, so that comment heads `_wait_for_initial_screen` again.
+- Blank lines around the Shift+F6 test now follow `ruff format` spacing.
+- The User Guide's Library link points to `library.md`.
+- The Shift+F6 test uses the default 15 s wait.
 
