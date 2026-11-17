@@ -1,0 +1,24 @@
+{
+  "powershell": "pwsh.exe",
+  "output_directory": "./pair-results",
+  "private_parent": "./private",
+  "observer": "./tools/original-journey-child-observer/task40608_lab_observer.py",
+  "baseline": {
+    "directory": "./baseline",
+    "commit": "ORIGINAL_BASE_COMMIT",
+    "manifest_sha256": "REPLACE_WITH_BASELINE_MANIFEST_SHA256",
+    "runner": "./tools/qa-intact-screen-tools/run_replay.ps1",
+    "exhaustive_switch": false
+  },
+  "candidate": {
+    "directory": "./candidate",
+    "commit": "COMMITTED_CANDIDATE_IDENTITY",
+    "manifest_sha256": "REPLACE_WITH_CANDIDATE_MANIFEST_SHA256",
+    "runner": "./tools/incremental-replay-tools/run_replay.ps1",
+    "exhaustive_switch": true
+  },
+  "files": {
+    "./baseline/replay-manifest.json": "REPLACE_WITH_BASELINE_MANIFEST_SHA256",
+    "./candidate/replay-manifest.json": "REPLACE_WITH_CANDIDATE_MANIFEST_SHA256"
+  }
+}
