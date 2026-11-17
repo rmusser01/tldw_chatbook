@@ -488,3 +488,31 @@ AC #3 was added for it.
   - Serial with lane flags: the recovered-suites slice (20 targets) gives 645 passed in 247 s at load 44-84; `Tests/Utils/test_log_sanitizer.py` gives 209 passed.
   - `Tests/CI` gives 1640 passed, 1 skipped. The module ratchet gives 207 passed, and the ruff gate is OK.
   - `./scripts/preflight.sh` passes (rc 0, load 51-77).
+
+**Review r15tr-rev12.**
+- **Finding:** plain-word secrets in a label position were still admitted to `_LABEL_FACTS`. Examples: `"letmein_now": "x"`, `correct_horse_battery_staple: abc`, `hunter_two`, `supersecret_value`.
+  - The extended `test_masking_never_caches_value_text` was red at the rev11 head, failing on `letmein_now` and `correct_horse_battery_staple`.
+  - It now has those two shapes and asserts that every `_LABEL_FACTS` key names a credential.
+- **Fix: the reviewer's variant (probe22).**
+  - `_label_facts` admits only a plain label that names a credential (`facts[2]`).
+  - `_credential_label_text` answers any other label with `_is_credential_label` directly, never touching the cache.
+  - `letmein_secret` is still admitted, because it names a credential, as the ruling allows.
+- **Cost.**
+  - The variant alone measured +13.9% on the log-fields shape (3 MB, rev11 0.281 s, rev12 0.320 s). The other shapes ranged -2% to +4%.
+  - To get the same cache contents for less, `mask_credential_labels` keeps a per-call memo, `seen`, of each label's credential answer. It is local to the call and freed on return, so it holds no text beyond the call that passed it in.
+  - With the memo, against rev11, interleaved in one process, best of four, every shape was within ±3%:
+    - log fields -1.1%;
+    - probe11 escaped -2.9%, quoted-prose -2.1%, mixed-unclosed -1.7%;
+    - probe13 chains +2.6%, -3.1%, -3.1%;
+    - probe15 passphrase +2.9%;
+    - nested kept -0.7%.
+  - If a per-call memo counts as a cache under the ruling, drop it; the variant alone stays within the +15% allowance.
+- **Adapted probe9** (`$FU/r15tr-probe9-r12.py`):
+  - A loosening may now be a list of edits.
+  - The baseline also fails if any non-credential label reaches the cache. A loosening counts as red if it lets one in.
+  - New loosening "label cache admits every label" reverts both rev12 edits; it turns 3 red: `letmein_now`, `correct_horse_battery_staple` and `request_id` cached. Either edit alone already keeps non-credential labels out, so a single-edit loosening turns nothing red.
+  - Real count: all 66 fragments match, baseline clean, and 66 of 66 loosenings turn rows red.
+- **Unchanged:**
+  - `probe_equiv` (corpus 4897): 0 diffs.
+  - probe16 and probe17: 0 kept, with probe17 keeping 14 of 15 look-alikes. probe12: no swallowed fields. probe10: only the three declined rows. probe8: 0 kept.
+  - probe11: ratio 4.0; escaped 1.26 s, quoted-prose 1.49 s, mixed-unclosed 2.29 s. probe13 (rev5/head): 0.29/0.31 s, 0.24/0.28 s, 0.32/0.32 s. probe15: 1.1 and 1.0. Nested kept spans: 0.04 s at 0.21 MB.

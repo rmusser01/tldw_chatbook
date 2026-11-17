@@ -262,9 +262,11 @@ _DIAGNOSTIC_METADATA_SUFFIXES = (
 
 
 def _credential_label_text(label: str) -> bool:
-    """``_is_credential_label`` for a label the label pattern matched, through
-    the plain-label cache (``_label_facts``)."""
-    return (_LABEL_FACTS.get(label) or _label_facts(label))[2]
+    """``_is_credential_label`` for a label the label pattern matched: a
+    cached credential label answers from ``_LABEL_FACTS``, any other label is
+    checked directly and never cached (review r15tr-rev12)."""
+    facts = _LABEL_FACTS.get(label)
+    return facts[2] if facts else _is_credential_label(label)
 
 
 def _is_credential_label(key: object) -> bool:
@@ -727,16 +729,18 @@ def _words(name: str) -> tuple[str, ...]:
 
 #: Facts about label text the masker asks for on every line: its words,
 #: whether it is strict, whether it names a credential. Only a plain label
-#: is kept here: no digit, no random-looking letters, at most 64 characters.
-#: A secret can sit in a label position (``"GOCSPX-...": "x"``), and no cache
-#: may hold text that could be a secret (review r15tr-rev11), so anything
-#: else is worked out each time. Bounded: it stops admitting at 1024 labels.
+#: that names a credential is kept here: no digit, no random-looking letters,
+#: at most 64 characters. A secret can sit in a label position
+#: (``"GOCSPX-...": "x"``, ``"letmein_now": "x"``), and no cache may hold
+#: text that could be a secret (reviews r15tr-rev11, rev12), so anything else
+#: is worked out each time. Bounded: it stops admitting at 1024 labels.
 _LABEL_FACTS: dict[str, tuple[tuple[str, ...], bool, bool]] = {}
 _PLAIN_LABEL = re.compile(r"[A-Za-z_.-]{1,64}")
 
 
 def _label_facts(label: str) -> tuple[tuple[str, ...], bool, bool]:
-    """``(words, strict, credential)`` for a label, cached only when plain."""
+    """``(words, strict, credential)`` for a label, cached only when it is a
+    plain label that names a credential."""
     facts = _LABEL_FACTS.get(label)
     if facts is None:
         words = _words(label)
@@ -747,7 +751,8 @@ def _label_facts(label: str) -> tuple[tuple[str, ...], bool, bool]:
         )
         facts = (words, strict, _is_credential_label(label))
         if (
-            len(_LABEL_FACTS) < 1024
+            facts[2]
+            and len(_LABEL_FACTS) < 1024
             and _PLAIN_LABEL.fullmatch(label)
             and not _MIXED_CASE.search(label)
             and not _random_letters(label)
@@ -1134,9 +1139,15 @@ def mask_credential_labels(text: str, marker: str = REDACTION_MARKER) -> str:
     parts: list[str] = []
     position = 0
     line_end = -1
+    # Labels seen in this text, for this call only: freed on return, so it
+    # holds no text beyond the call that passed it in (review r15tr-rev12).
+    seen: dict[str, bool] = {}
     while (label := _COMPOUND_LABEL.search(text, position)) is not None:
         name = label.group("label")
-        if _credential_label_text(name):
+        credential = seen.get(name)
+        if credential is None:
+            credential = seen[name] = _credential_label_text(name)
+        if credential:
             if label.end() > line_end:  # one scan per line, not per label
                 line_end = _line_end(text, label.end())
             value_start = label.end()

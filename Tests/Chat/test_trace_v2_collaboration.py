@@ -1268,6 +1268,9 @@ def test_masking_never_caches_value_text() -> None:
             f"x GOCSPX-{_P8}{index}=1",
             f"hunter{index}x_pw: abc",
             f'"GOCSPX-{_P8}{index}_secret": "x"',
+            # rev12: a plain-word secret in a label position
+            '"letmein' + _L + 'now": "x"',
+            "correct" + _L + "horse" + _L + "battery" + _L + "staple: abc",
         ):
             trajectory_export._credential_text(text)
 
@@ -1283,6 +1286,9 @@ def test_masking_never_caches_value_text() -> None:
     # The label cache holds plain label words only: no digit, no secret text.
     assert not [key for key in log_sanitizer._LABEL_FACTS if any(ch.isdigit() for ch in key)]
     assert not [key for key in log_sanitizer._LABEL_FACTS if "GOCSPX" in key or "hunter" in key]
+    # ...and only labels that name a credential (review r15tr-rev12): a plain
+    # word such as letmein_now is masked as a value, so it is never cached.
+    assert not [key for key in log_sanitizer._LABEL_FACTS if not log_sanitizer._is_credential_label(key)]
 
 
 #: Review r15tr-rev2: adversarial texts of about 200 KB. The export's URL
