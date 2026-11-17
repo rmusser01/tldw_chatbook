@@ -101,7 +101,7 @@ letters **c / p / d / l**).
 | Ctrl+1 … Ctrl+9, Ctrl+0 | Switch to the screen with that hotkey digit (see the nav map above; Ctrl+9 opens Settings ▸ Tools & MCP) — works from every screen, [Roleplay](roleplay-chat-dictionaries.md) included |
 | F2 / F3 / F4 / F5 / F7 / F8 / F9 | Switch to Lab / Logs / Settings / Research / Meetings / Plugins / Kanban — the seven destinations past the digit row; they work while a text field has focus, like the Ctrl+digit chords (F6 is skipped: Next Pane) |
 | F6 | Cycle through the current screen's panes; on screens without a pane cycle it only shows a notice |
-| Shift+F6 | Cycle panes backward — bound only on [Console](console.md) and [Roleplay](roleplay-chat-dictionaries.md); elsewhere it does nothing |
+| Shift+F6 | Cycle panes backward — bound on [Console](console.md), [Roleplay](roleplay-chat-dictionaries.md), [Library](library/notes.md) (the landing included) and [Settings](settings.md); elsewhere it does nothing |
 
 Everything else (Enter/Ctrl+K/Ctrl+T in Console, and the single-letter
 mnemonics like `s`/`r`/`t` on Settings) is screen-specific — see that

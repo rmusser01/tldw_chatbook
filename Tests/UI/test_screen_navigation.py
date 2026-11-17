@@ -2922,16 +2922,19 @@ def test_library_screen_bindings_are_all_gated_or_universal():
     actions legitimately apply -- each one must either be gated (``check_
     action`` returns ``False``) or be explicitly declared universal below
     (works identically on every surface, so ``True`` would be correct
-    even on the landing). Nothing is declared universal today; the
-    allowlist exists so a genuinely screen-wide binding could be added
-    later without failing this test for the right reason.
+    even on the landing) or declared landing-active below (deliberately
+    widened to the landing, as ctrl+n was). Every mismatch is reported at
+    once, so one stale gate cannot hide another behind it (TASK-41127
+    review r15lt-rev1).
     """
     from textual.binding import Binding
 
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
     # Shift+F6 is the one screen-wide Binding: the shared pane-focus helper
-    # resolves only visible targets and safely no-ops when none exist.  "/"
+    # resolves only visible targets and safely no-ops when none exist.
+    # TASK-41303 removed the landing gate that merge resolution a62d92f590
+    # had put on it (owner ruling: Shift+F6 works wherever F6 does).  "/"
     # (focus search) is also screen-wide but is not a Binding (see
     # ``LibraryScreen.on_key``), so it never appears in this audit. Neither
     # does F6 (next pane): it stays the app-global binding (ADR-299; pinned
@@ -2949,6 +2952,11 @@ def test_library_screen_bindings_are_all_gated_or_universal():
     universal_actions = frozenset(
         {"focus_previous_workbench_pane", "focus_next", "focus_previous"}
     )
+    # d00812ac44 (2026-09-09, task-32138): ctrl+n (New note) works on the
+    # landing too -- ``check_action("library_notes_new")`` passes with no row
+    # selected, on purpose -- so it reaches F1 there; it is not universal (it
+    # stays gated on the other non-Notes canvases).
+    landing_actions = frozenset({"library_notes_new"})
 
     app = _build_test_app()
     screen = LibraryScreen(app)
@@ -2962,19 +2970,67 @@ def test_library_screen_bindings_are_all_gated_or_universal():
 
     assert actions, "BINDINGS must not be empty for this audit to mean anything"
 
+    mismatches = []
     for action in sorted(actions):
         result = screen.check_action(action, ())
-        if action in universal_actions:
-            assert result is True, (
-                f"{action!r} is declared universal but check_action "
-                f"returned {result!r} on the landing."
-            )
-        else:
-            assert result is False, (
+        if action in universal_actions | landing_actions:
+            if result is not True:
+                mismatches.append(
+                    f"{action!r} is declared active on the landing but "
+                    f"check_action returned {result!r} there."
+                )
+        elif result is not False:
+            mismatches.append(
                 f"{action!r} has no check_action gate (or its gate passes "
                 "on the bare landing) -- it will leak into F1's help "
                 "panel on every Library surface (LIB-09 contamination)."
             )
+    assert not mismatches, "\n".join(mismatches)
+
+
+@pytest.mark.asyncio
+async def test_shift_f6_walks_the_landing_panes_back_the_way_f6_came():
+    """TASK-41303: Shift+F6 on the bare landing undoes F6.
+
+    ``check_action`` used to keep Shift+F6 off whenever no rail row was
+    selected (merge resolution a62d92f590), so on the landing the key did
+    nothing while F6 cycled the panes. Pressed for real: the gate lives in
+    ``check_action``, which a direct action call would skip. F6 is the
+    app-global binding, which the harness lacks, so it is driven through
+    the screen action it delegates to.
+    """
+    from Tests.UI.test_library_shell import (
+        LIBRARY_TEST_SIZE,
+        LibraryHarness,
+        _active_library_screen,
+        _wait_for_condition,
+        _wait_for_library_shell,
+    )
+
+    host = LibraryHarness(_build_test_app())
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        assert screen._library_selected_row_id == ""
+
+        screen.action_focus_next_workbench_pane()
+        await pilot.pause()
+        first = screen.focused
+        screen.action_focus_next_workbench_pane()
+        await pilot.pause()
+        second = screen.focused
+        assert first is not None and second is not None
+        assert second is not first, "the landing offers fewer than two panes"
+
+        await pilot.press("shift+f6")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.focused is first,
+            timeout=5.0,
+            message=lambda: (
+                f"Shift+F6 left focus on {screen.focused!r}, not {first!r}"
+            ),
+        )
 
 
 def test_action_show_workbench_help_lists_reader_action_keys(monkeypatch):
