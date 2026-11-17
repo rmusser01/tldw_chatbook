@@ -36,6 +36,7 @@ async def exercise():
     from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
     from tldw_chatbook.Chat.console_received_intent import ConsoleReceivedTurnIntent
     from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
+    from tldw_chatbook.Chat.console_ordinary_tree import current_ordinary_tree
     from Tests.Chat.test_console_skill_substitution import _RecordingGateway
     from Tests.Performance._stock_private_app_creators import OriginalPrivateAppCreators
 
@@ -64,7 +65,17 @@ async def exercise():
     store = runtime.ensure_chat_store()
     session = store.create_session(workspace_id='global')
     store.set_session_draft(session.id, 'wrapped collaborator send')
-    gateway = _RecordingGateway()
+    skill_contexts = []
+
+    class Gateway(_RecordingGateway):
+        async def stream_chat(self, resolution, messages, **kwargs):
+            # The skill context the admitted turn was captured with.
+            tree = current_ordinary_tree()
+            skill_contexts.append(tree.original_configuration.skill_context_maximum)
+            async for chunk in super().stream_chat(resolution, messages, **kwargs):
+                yield chunk
+
+    gateway = Gateway()
     controller = runtime.ensure_chat_controller(
         store=store, provider_gateway=gateway, agent_runtime_enabled=True,
     )
@@ -82,6 +93,8 @@ async def exercise():
         'foreign_loader': (local, '_builtin_disabled_loader'),
         # Per-instance overrides of skill methods still decline.
         'instance_catalog_override': (local, '_visible_records'),
+        # Refused only by the catalog check (_skill_catalog_sources_current).
+        'instance_trust_fields_override': (local, '_trust_fields_for_record'),
         'instance_trust_override': (app, 'ensure_local_skill_trust_service'),
     }
     if case in refusals:
@@ -162,6 +175,19 @@ async def exercise():
         await runtime.dispose()
         creators.retire()
     assert result.accepted, result
+    # The same skill configuration as the stock path: the built-ins are
+    # available and the untrusted managed skill is blocked by the new trust.
+    from tldw_chatbook.Skills_Interop.builtin_skills import builtin_skill_records
+
+    assert len(skill_contexts) == 1, skill_contexts
+    captured = {
+        key: sorted(row.get('name') for row in skill_contexts[0].get(key, ()))
+        for key in ('available_skills', 'blocked_skills')
+    }
+    assert captured == {
+        'available_skills': sorted(builtin_skill_records(frozenset())),
+        'blocked_skills': ['wrapped-managed'],
+    }, captured
     assert gateway.payloads, 'the model was never called'
     # The same skill trust is built and recorded as on the stock path.
     assert winner is not None
@@ -197,6 +223,7 @@ def test_wrapped_skill_collaborator_send_records_the_same_trust(tmp_path, case):
         "foreign_plugin_factory",
         "foreign_loader",
         "instance_catalog_override",
+        "instance_trust_fields_override",
         "instance_trust_override",
     ],
 )

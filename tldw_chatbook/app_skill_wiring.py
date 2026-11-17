@@ -933,22 +933,27 @@ class SkillServiceWiringMixin:
             return
         policy_enforcer, server_skills_service = self._local_skills_stack_inputs
         if self._local_skills_service is None:
-            # Recorded on the app: Console Send preparation trusts these slots
-            # only while they still hold what the app registered (ADR-356 rule 4).
-            trust_factory, plugin_factory, disabled_loader = self._local_skills_callbacks = (
+            callbacks = (
                 lambda: self.local_skill_trust_service,
                 self._build_plugin_service,
                 # In-memory config read: this runs on every skills read,
                 # including the Console's per-send capture.
                 _source_wiring.partial(_source_wiring._read_app_disabled_builtin_skills, self),
             )
-            self._local_skills_service = _source_wiring.LocalSkillsService(
+            service = _source_wiring.LocalSkillsService(
                 store_dir=_source_wiring.default_local_skills_store_dir(_source_wiring.get_user_data_dir()),
                 policy_enforcer=policy_enforcer,
-                trust_service_factory=trust_factory,
-                plugin_service_factory=plugin_factory,
-                builtin_disabled_loader=disabled_loader,
+                trust_service_factory=callbacks[0],
+                plugin_service_factory=callbacks[1],
+                builtin_disabled_loader=callbacks[2],
             )
+            # Console Send preparation trusts these slots only while they hold
+            # what the app registered (ADR-356 rule 4). Publish the record and
+            # the service together, with no call between them, so a racing
+            # first build cannot leave a record that names a discarded service.
+            if self._local_skills_service is None:
+                self._local_skills_callbacks = callbacks
+                self._local_skills_service = service
         if self._skills_scope_service is None:
             self._skills_scope_service = _source_wiring.SkillsScopeService(
                 local_service=self._local_skills_service,
