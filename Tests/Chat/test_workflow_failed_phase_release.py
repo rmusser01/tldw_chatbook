@@ -58,7 +58,10 @@ def test_open_unlaunched_preparation_is_reconciled_without_effects(tmp_path):
     refused with `workflow_resources_still_live` and the chat stayed held until
     restart (TASK-41320). Reconcile now closes that never-launched preparation
     without launching or dispatching anything, records the review, and returns
-    the chat's claim."""
+    the chat's claim. A stale revision is refused before anything closes.
+
+    The wave-bound and launching checks here set that state by hand. Real
+    launched, wave-bound coverage is TASK-40718's `live_worker_failure`."""
     _run(tmp_path, "unlaunched_preparation", "native", script=_SCRIPT, timeout=180)
 
 
@@ -74,6 +77,16 @@ def test_unproven_final_metadata_read_is_released_only_by_restart(tmp_path):
     return keeps the chat until restart. Reconcile refuses it with
     `workflow_return_unproven` and the Console names a restart (TASK-41320)."""
     _run(tmp_path, "unproven_final_read", "native", script=_SCRIPT, timeout=180)
+
+
+def test_an_earlier_unproven_metadata_read_keeps_the_chat_until_restart(tmp_path):
+    """A status read of the retained run whose storage handle did not provably
+    return leaves an unproven marker even though it was not the run's final
+    read. Reconcile refused only the final read's marker, so it closed the
+    preparation, stored the run closed and released the chat, then failed
+    at its own trailing publication (TASK-41320 review). It now refuses first,
+    with `workflow_return_unproven`, and changes nothing."""
+    _run(tmp_path, "unproven_earlier_read", "native", script=_SCRIPT, timeout=180)
 
 
 async def _started(rig):
@@ -432,7 +445,7 @@ async def _retained_unlaunched(rig):
     return run, item
 
 
-async def _refused(rig, reason, command_id):
+async def _refused(rig, reason, command_id, *, offset=0):
     """Reconcile refuses with `reason`, recording nothing."""
     from tldw_chatbook.Agents.workflow_models import WorkflowExecutionRecovery
 
@@ -440,7 +453,7 @@ async def _refused(rig, reason, command_id):
     with pytest.raises(ValueError, match=reason) as refused:
         await rig.coordinator.reconcile(
             rig.workflow.id,
-            expected_control_revision=stored.control_revision,
+            expected_control_revision=stored.control_revision + offset,
             decision=WorkflowExecutionRecovery(reason="reviewed_prior_effects"),
             command_id=command_id,
         )
@@ -461,6 +474,9 @@ async def unlaunched_preparation(tmp_path):
         run, item = await _retained_unlaunched(rig)
         snapshot = await rig.coordinator.get(rig.workflow.id)
         assert snapshot.status == "recovery_required"
+        # A stale revision is refused before any preparation closes.
+        await _refused(rig, "revision_conflict", "reconcile-stale", offset=1)
+        assert not item._closed and item in rig.runtime._workflow_preparations
         # AC #3: a wave-bound or launching preparation is never closed here;
         # the live check refuses it.
         item._wave = object()  # Bound to a wave.
@@ -560,6 +576,9 @@ async def unproven_final_read(tmp_path):
     from types import MethodType
 
     from Tests.Chat.workflow_rig import WorkflowProvider, build_workflow_rig
+    from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import (
+        preparation_read_for,
+    )
     from tldw_chatbook.Chat import console_workflow_runs
 
     rig = await build_workflow_rig(tmp_path, None, WorkflowProvider())
@@ -587,10 +606,14 @@ async def unproven_final_read(tmp_path):
 
         @contextlib.contextmanager
         def handle_lost_after_settle(databases):
-            # The terminal publication's read is the first after settlement.
+            # Only the driver's read after settlement: its terminal publication
+            # (approve's own trailing read may run then too).
+            read = preparation_read_for(rig.controller)
+            run = rig.coordinator._runs.get(rig.workflow.id)
+            final = settled and run and read and read.task is run.driver
             with storage_return(databases):
                 yield
-            if settled and not lost:
+            if final and not lost:
                 lost.append(databases)
                 raise RuntimeError("original source database handle did not return")
 
@@ -614,6 +637,91 @@ async def unproven_final_read(tmp_path):
         assert rig.coordinator._metadata_cells[cell] is cell.disposed
         assert rig.coordinator._runs.get(rig.workflow.id) is run
         _restart_only(await _refused(rig, "workflow_return_unproven", "reconcile-read"))
+        assert rig.coordinator._runs.get(rig.workflow.id) is run
+        assert not (
+            await rig.controller.submit_draft(
+                "Still held", session_id="workflow-test-chat"
+            )
+        ).accepted
+        # The detail view reads through coordinator.get, which the marker
+        # refuses: it names a restart and does not offer a refresh.
+        notice = await _detail_notice(rig)
+        assert "Restart Chatbook to release this chat" in notice, notice
+        assert "Refresh" not in notice, notice
+    finally:
+        await _close_unresolved(rig, "workflow_original_metadata_shutdown_unresolved")
+
+
+async def _detail_notice(rig):
+    """Show the real workflow detail view over the real coordinator; return
+    its notice. A bare host: the full Console's workspace tree cannot compose
+    while this chat holds a run (a KeyError on its running-attention style)."""
+    import asyncio
+
+    from textual.app import App
+
+    from tldw_chatbook.Widgets.Console.console_workflow_status import (
+        ConsoleWorkflowStatus,
+    )
+
+    status = ConsoleWorkflowStatus(
+        rig.coordinator,
+        rig.workflow.request.conversation_id,
+        rig.workflow.id,
+        open_changes=lambda *args: None,
+        open_fleet=lambda *args: None,
+        pending_approvals=lambda *args: False,
+        open_approval=lambda *args: None,
+    )
+
+    class Host(App):
+        def on_mount(self):
+            self.push_screen(status)
+
+    def notice():
+        found = status.query("#workflow-notice") if status.is_mounted else ()
+        text = str(found.first().content) if found else ""
+        return text if "unavailable" in text else ""
+
+    async with Host().run_test(size=(140, 42)) as pilot:
+        async with asyncio.timeout(30):
+            while not notice():
+                await pilot.pause(0.05)
+        return notice()
+
+
+async def unproven_earlier_read(tmp_path):
+    import asyncio
+    import contextlib
+
+    from Tests.Chat.workflow_rig import WorkflowProvider, build_workflow_rig
+    from tldw_chatbook.Chat import console_workflow_runs
+
+    rig = await build_workflow_rig(tmp_path, None, WorkflowProvider())
+    try:
+        run, item = await _retained_unlaunched(rig)
+        assert run.final_metadata is None
+        storage_return = console_workflow_runs._remaining_storage_return
+
+        @contextlib.contextmanager
+        def handle_lost(databases):
+            with storage_return(databases):
+                yield
+            raise RuntimeError("original source database handle did not return")
+
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(
+                console_workflow_runs, "_remaining_storage_return", handle_lost
+            )
+            with pytest.raises(RuntimeError):
+                # Its own task, as a view's read is: shutdown cannot drain a
+                # read issued by the task that disposes the runtime.
+                await asyncio.create_task(rig.coordinator.get(rig.workflow.id))
+        # An ordinary status read, not the run's final one, is now unproven.
+        assert run.final_metadata is None
+        assert [f.result() for f in rig.coordinator._metadata_cells.values()] == [False]
+        _restart_only(await _refused(rig, "workflow_return_unproven", "reconcile-read"))
+        assert not item._closed and item in rig.runtime._workflow_preparations
         assert rig.coordinator._runs.get(rig.workflow.id) is run
         assert not (
             await rig.controller.submit_draft(

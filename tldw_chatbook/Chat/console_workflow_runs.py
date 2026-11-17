@@ -869,6 +869,13 @@ class ConsoleWorkflowCoordinator:
 
         return unsubscribe
 
+    def _metadata_unproven(self):
+        """A read returned without proof; only a restart clears it (ADR-285)."""
+        return any(
+            future.done() and future.result() is False
+            for future in self._metadata_cells.values()
+        )
+
     def _metadata_lower_bound(self, snapshot):
         current = self._metadata_floor.get(snapshot.id, (0, 0))
         self._metadata_floor[snapshot.id] = (
@@ -899,11 +906,8 @@ class ConsoleWorkflowCoordinator:
             run is not terminal_run or issuing is not run.driver
         ):
             raise PermissionError("original workflow publication driver required")
-        if any(
-            future.done() and future.result() is False
-            for future in self._metadata_cells.values()
-        ):
-            raise RuntimeError("workflow original metadata return unproven")
+        if self._metadata_unproven():
+            raise RuntimeError("workflow_return_unproven")
         controller, runtime, service = self.controller, self.runtime, self.service
         bridge, store = controller._agent_bridge, controller.store
         database, persistence = service.db, service.persistence
@@ -997,7 +1001,7 @@ class ConsoleWorkflowCoordinator:
                         cell.caller_error = error
                 if prior.cancelled() or prior.result() is not True:
                     proven = True  # This invocation never entered a read.
-                    raise RuntimeError("workflow preceding metadata return unproven")
+                    raise RuntimeError("workflow_return_unproven")
             original_sources()
             if cell.caller_error is not None:
                 proven = True
@@ -2434,6 +2438,8 @@ class ConsoleWorkflowCoordinator:
         """Record explicit review of interrupted history after native work retires."""
 
         async def reconcile():
+            if self._metadata_unproven():
+                raise ValueError("workflow_return_unproven")  # TASK-41320
             revision = expected_control_revision
             run = self._runs.get(workflow_id)
             if run is not None:
@@ -2463,11 +2469,19 @@ class ConsoleWorkflowCoordinator:
                         # TASK-41320 (ADR-285): the control or final read
                         # returned unproven. Only a restart releases the chat.
                         raise ValueError("workflow_return_unproven")
-                    for item in tuple(run.preparations.values()):
-                        # TASK-41320: never enrolled in a wave means never
-                        # launched; close() rechecks that under the task lock.
-                        if item._wave is None and not item.authorization._native_launch:
-                            await item.close()
+                    # TASK-41320: never enrolled in a wave means never launched;
+                    # close() rechecks that under the task lock.
+                    unlaunched = [
+                        item
+                        for item in run.preparations.values()
+                        if item._wave is None and not item.authorization._native_launch
+                    ]
+                    if unlaunched:
+                        current = await self.service.call(self.service.get, workflow_id)
+                        if current.control_revision != revision:
+                            raise ValueError("revision_conflict")  # Before any close.
+                    for item in unlaunched:
+                        await item.close()
                     recorded = await self.service.call(
                         self.service.record_returned_execution,
                         run.phase,
