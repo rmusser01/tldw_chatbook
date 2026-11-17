@@ -299,7 +299,45 @@ def keep_legacy_custom_2_endpoint(
     slot = api_settings.get("custom_2") if isinstance(api_settings, dict) else None
     shipped = ((template.get("api_settings") or {}).get("custom_2") or {}).get("api_url")
     if isinstance(slot, dict) and str(slot.get("api_url") or "").strip() in {"", shipped}:
+        # What the slot read before, so a save that leaves the Endpoint alone
+        # writes that, not the legacy value (review r15ep-rev2 I-1).
+        merged[LEGACY_CUSTOM_2_BRIDGE] = {
+            "legacy": legacy.strip(),
+            "before": slot.get("api_url") or "",
+        }
         slot["api_url"] = legacy.strip()
+
+
+#: Where ``keep_legacy_custom_2_endpoint`` records a bridge in the merged
+#: view (a provenance key, like ``legacy_api_key_providers``; never written).
+LEGACY_CUSTOM_2_BRIDGE = "legacy_custom_2_endpoint_bridge"
+
+
+def endpoint_to_save_unedited(
+    provider_key: str, shown: str, app_config: Mapping[str, object]
+) -> str:
+    """The endpoint a save writes when the Endpoint field was not edited.
+
+    The field shows Custom 2's bridged legacy endpoint (``keep_legacy_custom_2
+    _endpoint``); a save that did not touch it writes back what the slot held
+    before the bridge, so the legacy key keeps being read (TASK-41145 ruling,
+    review r15ep-rev2 I-1). Any other value is written as shown.
+
+    Args:
+        provider_key: The provider the save is for.
+        shown: The Endpoint field's value.
+        app_config: The settings view (``load_settings`` or merged shape).
+
+    Returns:
+        The endpoint to write.
+    """
+    raw = app_config.get("COMPREHENSIVE_CONFIG_RAW")
+    bridge = app_config.get(LEGACY_CUSTOM_2_BRIDGE) or (
+        raw.get(LEGACY_CUSTOM_2_BRIDGE) if isinstance(raw, Mapping) else None
+    )
+    if provider_key != "custom_2" or not isinstance(bridge, Mapping):
+        return shown
+    return str(bridge.get("before") or "") if shown == bridge.get("legacy") else shown
 
 
 #: Adapters that always build their endpoint themselves (MLX-LM's host and

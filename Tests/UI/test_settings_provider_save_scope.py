@@ -388,3 +388,76 @@ async def test_mlx_settings_edits_the_host_and_port_its_send_uses(
     )
     assert reply["choices"][0]["message"]["content"] == "synthetic-mlx-reply"
     assert requests == ["http://gpu-box.lan:9000/v1/chat/completions"]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_model_only_custom_2_save_keeps_the_legacy_endpoint_unsaved(
+    request, monkeypatch
+) -> None:
+    """TASK-41145 ruling (review r15ep-rev2 I-1): the Custom 2 card shows the
+    legacy ``[API] custom_openai2_api_ip`` that the merged view carries while
+    the slot's ``api_url`` is the template placeholder, and a model-only save
+    wrote it into ``api_url``, so the legacy key stopped being read. The save
+    now writes the placeholder back; the next send still goes to the legacy
+    address."""
+    import tomllib
+
+    from tldw_chatbook import config as config_module
+    from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+    from tldw_chatbook.config import (
+        load_cli_config_and_ensure_existence,
+        save_settings_to_cli_config,
+    )
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local as local
+    from tldw_chatbook.LLM_Calls import provider_sessions
+
+    requests = []
+
+    class _Session:
+        def post(self, url, **kwargs):
+            requests.append(url)
+            return httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": "synthetic-custom-2-reply"}}]},
+                request=httpx.Request("POST", url),
+            )
+
+    monkeypatch.setattr(local, "create_pooled_default_session", lambda **kw: _Session())
+    monkeypatch.setattr(provider_sessions, "get_session", lambda _key, factory: factory())
+    legacy = "http://legacy-box.lan:5000/v1/chat/completions"
+    placeholder = "http://localhost:5678/v1/chat/completions"
+    assert save_settings_to_cli_config(
+        {
+            "API": {"custom_openai2_api_ip": legacy},
+            "api_settings.custom_2": {"api_url": placeholder, "model": "old-model"},
+        }
+    )
+    host = DestinationHarness(_build_test_app(), "settings")
+
+    async with host.run_test(size=(211, 44)) as pilot:
+        screen = _active_destination_screen(host)
+        screen._select_category(SettingsCategoryId.PROVIDERS_MODELS.value)
+        await _wait_for_selector(screen, pilot, "#settings-model-value", timeout=30.0)
+        provider = screen.query_one("#settings-provider-value", Select)
+        provider.value = "custom_2"
+        screen.handle_provider_value_changed(Select.Changed(provider, "custom_2"))
+        await pilot.pause()
+        assert screen.query_one("#settings-provider-endpoint-value", Input).value == legacy
+
+        screen.query_one("#settings-model-value", Input).value = "new-model"
+        result = await _save_provider_card(screen, pilot)
+        assert result.startswith("Provider settings saved"), result
+
+    path = config_module._get_effective_config_path()
+    saved = tomllib.loads(path.read_text(encoding="utf-8"))["api_settings"]["custom_2"]
+    assert (saved["api_url"], saved["model"]) == (placeholder, "new-model")
+    load_cli_config_and_ensure_existence(force_reload=True)
+    chat_api_call(
+        "custom-openai-api-2",
+        [{"role": "user", "content": "synthetic prompt"}],
+        api_key="not-a-real-key-0000",
+        model="new-model",
+        streaming=False,
+    )
+    assert requests == [legacy]

@@ -889,9 +889,17 @@ class ProvidersModelsPanel(SettingsCategoryPanel):
         delete_keys: dict[str, list[str]] = {}
         if connection_dirty:
             # Only a save that writes the endpoint refuses (review r8e-rev1).
+            from tldw_chatbook.Chat.console_provider_endpoints import (
+                endpoint_to_save_unedited,
+            )
             from tldw_chatbook.Chat.provider_setup_persistence import (
                 typed_endpoint_refusal,
             )
+
+            if not endpoint_dirty:
+                endpoint = endpoint_to_save_unedited(
+                    provider_key, endpoint, screen._app_config_mapping()
+                )
 
             if refusal := typed_endpoint_refusal(provider_key, endpoint):
                 screen._provider_save_result = refusal

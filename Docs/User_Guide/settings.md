@@ -399,7 +399,9 @@ Custom 2 (Custom OpenAI API 2) sends to the Endpoint saved for it,
 `[API] custom_openai2_api_ip`. A config that sets that older key to its own
 address keeps sending there, and the Endpoint field shows it, while the saved
 Endpoint is empty or still the shipped `http://localhost:5678/v1/chat/completions`;
-once you save an Endpoint for Custom 2, that one is used. Nothing rewrites the
+once you enter and save a different Endpoint for Custom 2, that one is used. A
+save that leaves the Endpoint as shown (a new model, key or env var) keeps the
+saved Endpoint as it was, so the older key is still read. Nothing rewrites the
 file for this.
 
 The vLLM, TabbyAPI, Aphrodite, Custom and Custom 2 saved lists start empty and
