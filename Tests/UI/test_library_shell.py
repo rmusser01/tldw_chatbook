@@ -34397,17 +34397,89 @@ async def test_media_to_notes_switch_never_leaves_focus_on_a_hidden_media_row(
         )
         await pilot.pause(0.5)
         assert screen.focused in screen.focus_chain
-        if notes_first:
-            # Rows are resident, so the entry lands on the first one.
-            assert screen.focused is screen.query(".library-notes-row").first()
+        # A first visit's rows may arrive late; the entry waits for them
+        # rather than taking the filter.
+        assert screen.focused is screen.query(".library-notes-row").first()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("load", ["late", "past-window"])
+async def test_notes_entry_waits_for_rows_that_are_still_loading(
+    load, monkeypatch
+) -> None:
+    """TASK-41129 follow-up: a slow Notes list must not send entry to the filter.
+
+    ``late``: a real rail click opens Notes while its placements are held.
+    The entry used to give up before any row existed (an empty list's filter
+    fallback), and focus ended on the Library grip. It now waits, and lands
+    on the first row when the rows arrive.
+
+    ``past-window``: the rows are still held when the entry window closes,
+    after a code-driven switch that left nothing focused. The window's
+    expiry hands focus to the filter, so it is never left unset.
+    """
+    monkeypatch.setattr(
+        library_screen_module,
+        "LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS",
+        10.0 if load == "late" else 1.0,
+    )
+    app = _build_test_app()
+    _seed_conversations(
+        app, _two_conversations(), notes=_two_notes(), media=_two_media_items()
+    )
+    service = app.notes_scope_service
+    release = asyncio.Event()
+    page_placements = service.page_note_placements
+
+    async def held_placements(**kwargs):
+        await release.wait()
+        return await page_placements(**kwargs)
+
+    service.page_note_placements = held_placements
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        notes_row = f"#library-row-{LIBRARY_ROW_BROWSE_NOTES}"
+        if load == "late":
+            await pilot.click(notes_row)
         else:
-            # A first visit lands on the first row, or in the filter when the
-            # rows had not arrived yet (the entry channel's own empty-list
-            # rule, task-31946) -- either way a visible Notes control.
-            assert screen.focused in (
-                screen.query(".library-notes-row").first(),
-                screen.query_one("#library-notes-filter"),
-            ), screen.focused
+            screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_MEDIA}").press()
+            media_row = await _wait_for_selector(screen, pilot, "#library-media-row-1")
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    not screen._library_pending_list_entry_focus
+                    and media_row in screen.focus_chain
+                ),
+                message="Media entry did not settle with its rows reachable.",
+            )
+            screen.set_focus(media_row)
+            screen.query_one(notes_row).press()
+        notes_filter = await _wait_for_selector(screen, pilot, "#library-notes-filter")
+        await _wait_for_condition(
+            pilot,
+            lambda: notes_filter.focusable,
+            message="The Notes filter never became focusable.",
+        )
+        if load == "late":
+            await pilot.pause(0.5)  # entry attempts run with no row yet
+            # Still waiting for the rows, not settled in the filter.
+            assert (
+                screen._library_pending_list_entry_focus
+                and screen.focused is not notes_filter
+            ), f"entry gave up waiting: focus={screen.focused!r}"
+            release.set()
+            await _wait_for_notes_entry_focus_landing(screen, pilot)
+        else:
+            await _wait_for_condition(
+                pilot,
+                lambda: screen.focused is notes_filter,
+                message=lambda: f"Window closed with focus on {screen.focused!r}.",
+            )
+            assert not screen.query(".library-notes-row")
+            release.set()
 
 
 def test_library_note_ctrl_s_is_unavailable_while_save_remains_explicit() -> None:

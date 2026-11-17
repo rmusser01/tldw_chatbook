@@ -4,7 +4,7 @@ title: "Owner decision needed: Escape from Library Notes Create or Add from file
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-17 02:04'
+updated_date: '2026-11-17 03:30'
 created_date: 2026-11-15 02:20
 labels:
 - follow-up
@@ -83,3 +83,5 @@ Read as: Escape from Create or from Add from files returns to the Library Notes 
   - Re-running the other ten: 7 failed on head, 6 with the guard off (the previous head), and 7 on the reviewer's base emulation (guard off, base swap, base Notes exits), with the same failures. The three crit8 typing nodes ('' == 'hello'), the two Notes reader nodes and the deselected title-and-age node fail in all three. `test_the_picker_alone_never_writes_focus_onto_a_removed_widget` fails on head and on base and passed once with the guard off, so it flakes.
   - The three that passed on the re-run (two blank-note GC nodes and the breakpoint round trip) were load flakes.
 - **Stability (fix round 1).** The four changed nodes (ten cases) passed 3 of 3 runs at `-n 4` (load 48-57). Ratchets and Notes wiring: 90 passed (serial). Ruff gate: OK.
+
+**Fix round 2 (2026-11-17).** `_land_on_library_notes_page` now only arms the list entry channel with `empty_target="#library-notes-new"`. The channel lands on the first row, or on New once the list has loaded with no note row, and it waits while rows are still loading (TASK-41129 fix round 2). The zero-notes wide case and the lasting-setup node still pass, so New is still the landing for a settled empty list. Controller ratchet 7463 -> 7459.

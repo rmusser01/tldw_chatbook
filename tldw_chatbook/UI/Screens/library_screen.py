@@ -4170,6 +4170,8 @@ class LibraryScreen(BaseAppScreen):
             _LibraryMediaReturnReceipt | None
         ) = None
         self._library_pending_list_entry_focus_anchor: Widget | None = None
+        #: TASK-41128: where an armed entry lands when the list is truly empty.
+        self._library_pending_list_entry_empty_target = "#library-notes-filter"
         # task-2856 review (PR #1410, Qodo): the settle-window timer
         # ``_arm_library_list_entry_focus`` schedules used to be fire-and-
         # forget -- the ``Timer`` ``set_timer`` returns was never kept, so
@@ -10995,6 +10997,7 @@ class LibraryScreen(BaseAppScreen):
         self,
         *,
         media_return: _LibraryMediaReturnReceipt | None = None,
+        empty_target: str = "#library-notes-filter",
     ) -> None:
         """Request the primary list's first row be focused (task-2856 AC1).
 
@@ -11048,6 +11051,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_list_entry_focus_generation += 1
         self._library_pending_list_entry_focus = True
         self._library_pending_list_entry_media_return = media_return
+        self._library_pending_list_entry_empty_target = empty_target
         self._library_pending_list_entry_focus_anchor = self.focused
         settlement_media_return = self._library_media_return_candidate(media_return)
         if settlement_media_return:
@@ -11074,7 +11078,7 @@ class LibraryScreen(BaseAppScreen):
         if self._library_list_entry_focus_timer is None:
             self._library_list_entry_focus_timer = self.set_timer(
                 LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS,
-                self._disarm_library_list_entry_focus,
+                self._expire_library_list_entry_focus,
             )
 
     def _retry_library_list_entry_focus_while_armed(self) -> None:
@@ -11130,6 +11134,29 @@ class LibraryScreen(BaseAppScreen):
             LIBRARY_LIST_ENTRY_FOCUS_RETRY_SECONDS, _tick
         )
 
+    def _expire_library_list_entry_focus(self) -> None:
+        """Close the settle window; a Notes entry still waiting lands first.
+
+        TASK-41129: a Notes list that is still loading keeps the entry
+        waiting for its first row. If the window closes before the rows
+        arrive and nothing holds focus, the empty-list target takes it, so
+        focus is never left unset.
+        """
+        if (
+            self._library_pending_list_entry_focus
+            and self.focused is None
+            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+        ):
+            for selector in (
+                self._library_pending_list_entry_empty_target,
+                "#library-notes-filter",
+            ):
+                found = self.query(selector)
+                if found and found.first().focusable:
+                    self.set_focus(found.first())
+                    break
+        self._disarm_library_list_entry_focus()
+
     def _disarm_library_list_entry_focus(self) -> None:
         """End an entry-focus request's settle window (task-2856 AC1).
 
@@ -11152,6 +11179,7 @@ class LibraryScreen(BaseAppScreen):
             self._library_list_entry_focus_retry_timer = None
         self._library_pending_list_entry_focus = False
         self._library_pending_list_entry_media_return = None
+        self._library_pending_list_entry_empty_target = "#library-notes-filter"
         self._library_pending_list_entry_focus_anchor = None
         self._media_state.return_settlement = None
         self._media_state.last_exact_settlement = None
@@ -11419,10 +11447,18 @@ class LibraryScreen(BaseAppScreen):
                 return control
         return None
 
+    def _library_notes_entry_list_settled(self) -> bool:
+        """Whether the Notes list has loaded with no note row (TASK-41129)."""
+        projection = self._build_library_notes_tree_projection()
+        return projection is not None and not any(
+            row.loading or row.kind == "note" for row in projection.rows
+        )
+
     def _focus_library_list_entry(self) -> None:
         """Focus the first available row, retrying while a list is loading.
 
-        Empty settled lists use their filter. Media select mode prefers a
+        Empty settled lists use their filter (Notes: the arm's empty target,
+        and only once its rows have finished loading). Media select mode prefers a
         still-checked row; a retained Media return prefers its exact item.
         The shared arm owns retry timing and revokes it on user navigation.
         """
@@ -11465,6 +11501,14 @@ class LibraryScreen(BaseAppScreen):
                 self._retry_library_list_entry_focus_while_armed()
                 return
             if (
+                row_class == "library-notes-row"
+                and not self._library_notes_entry_list_settled()
+            ):
+                # TASK-41129: rows still loading -- wait for them, not the
+                # filter; the window's expiry bounds the wait.
+                self._retry_library_list_entry_focus_while_armed()
+                return
+            if (
                 row_class == "library-skill-row"
                 and self._library_skills_browse_controller.visible_result.items
             ):
@@ -11479,7 +11523,7 @@ class LibraryScreen(BaseAppScreen):
                 # down, precisely because this channel owns the window --
                 # ended with nothing focused at all. Same filter-input
                 # answer the two rows above already give.
-                "library-notes-row": "#library-notes-filter",
+                "library-notes-row": self._library_pending_list_entry_empty_target,
                 # task-32228: same answer for an empty conversation list.
                 "library-conversation-row": "#library-conversations-filter",
             }.get(row_class)

@@ -665,7 +665,9 @@ _BUDGETS: dict[str, int] = {
     # every exit, New with no notes, Manage sync folders too: 7454 -> 7457.
     # 2026-11-17, TASK-41129 review r15lf-rev1: the targeted-sync focus
     # restore stands down while the list entry channel is armed: -> 7463.
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7463,
+    # 2026-11-17, TASK-41129 follow-up: the landing helper only arms the
+    # entry with New as its empty target: 7463 -> 7459.
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7459,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

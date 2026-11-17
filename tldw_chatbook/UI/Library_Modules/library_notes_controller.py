@@ -5859,14 +5859,10 @@ class LibraryNotesController:
         TASK-41128 (owner, 2026-11-15: "Library notes page/blank center"):
         the exits from Create, Add from files, Import once and Manage sync
         folders land on the first note row through the list entry channel.
-        With no note row ("No notes yet." or a filter with no match) the
-        page's New button takes it instead of the filter.
+        Once the list has loaded with no note row ("No notes yet." or a
+        filter with no match) the page's New button takes it, not the filter.
         """
-        new = self.query("#library-notes-new")
-        if self.query("#library-notes-empty") and new and new.first().focusable:
-            new.first().focus()
-            return
-        self._arm_library_list_entry_focus()
+        self._arm_library_list_entry_focus(empty_target="#library-notes-new")
     def _focus_library_notes_filter_input(self) -> None:
         """Restore focus to the notes filter box after a filter recompose."""
         try:

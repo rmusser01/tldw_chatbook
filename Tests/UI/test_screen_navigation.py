@@ -3289,7 +3289,9 @@ def test_action_library_media_viewer_back_returns_to_list_and_refocuses_it():
     assert timer_calls == [
         (
             LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS,
-            screen._disarm_library_list_entry_focus,
+            # TASK-41129: the window closes through the bound that lands a
+            # Notes entry still waiting for rows, then disarms.
+            screen._expire_library_list_entry_focus,
         )
     ]
     # 02b0866c1a (2026-09-10, Qodo #3 on PR #2585): the entry focus is the
@@ -3643,7 +3645,9 @@ def test_arm_library_list_entry_focus_schedules_immediate_attempt_and_settle_tim
     assert timer_calls == [
         (
             LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS,
-            screen._disarm_library_list_entry_focus,
+            # TASK-41129: the window closes through the bound that lands a
+            # Notes entry still waiting for rows, then disarms.
+            screen._expire_library_list_entry_focus,
         )
     ]
 

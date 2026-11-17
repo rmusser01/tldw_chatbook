@@ -4,7 +4,7 @@ title: "A Library Media-to-Notes switch is reported to leave focus on a hidden M
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-17 02:04'
+updated_date: '2026-11-17 03:30'
 created_date: 2026-11-15 02:20
 labels:
 - follow-up
@@ -67,3 +67,23 @@ Reproduced on base cc6006fcf5, and fixed.
   - Re-running the other ten: 7 failed on head, 6 with the guard off (the previous head), and 7 on the reviewer's base emulation (guard off, base swap, base Notes exits), with the same failures. The three crit8 typing nodes ('' == 'hello'), the two Notes reader nodes and the deselected title-and-age node fail in all three. `test_the_picker_alone_never_writes_focus_onto_a_removed_widget` fails on head and on base and passed once with the guard off, so it flakes.
   - The three that passed on the re-run (two blank-note GC nodes and the breakpoint round trip) were load flakes.
 - **Stability (fix round 1).** The four changed nodes (ten cases) passed 3 of 3 runs at `-n 4` (load 48-57). Ratchets and Notes wiring: 90 passed (serial). Ruff gate: OK.
+
+**Fix round 2 (coordinator follow-up, 2026-11-17): a slow Notes list no longer sends entry focus to the filter.**
+- **Defect.** With no `.library-notes-row` mounted yet, `_focus_library_list_entry` took the Notes empty-list fallback (the filter, task-31946) even while the rows were still loading. That defeated this task's outcome and TASK-41128's landing on a real path. On the pre-round head, a rail click into Notes with its placements held ended with focus on the Library grip and the entry disarmed.
+- **Fix** (`UI/Screens/library_screen.py`).
+  - `_library_notes_entry_list_settled()` reads the tree projection: settled means it exists and has no loading row and no note row.
+  - While the list is not settled, the Notes entry keeps retrying within its window and lands on the first row once the rows mount. The canvas sync's armed re-request also covers this.
+  - **The bound.** The settle timer now calls `_expire_library_list_entry_focus`. If the window closes with the Notes entry still pending and nothing focused, it focuses the arm's empty-list target (the filter, or the first focusable of target then filter), and then disarms. Focus is never left unset.
+  - The arm takes `empty_target` (default `#library-notes-filter`). TASK-41128's exits pass `#library-notes-new`, so `_land_on_library_notes_page` is now a single arm. "Loaded and truly empty" decides New there too, rather than a DOM check made too early.
+- **Tests.**
+  - `test_notes_entry_waits_for_rows_that_are_still_loading[late|past-window]` holds `page_note_placements`.
+  - `late` (real rail click, window raised to 10 s so load cannot race it): after the filter can take focus, the entry must still be armed and not in the filter. It must land on the first row once released. Red on the pre-round source (focus on `library-browse-library-grip`, entry disarmed), 3 of 3 runs. Green with the fix.
+  - `past-window` (code-driven switch from a focused Media row, so nothing is focused; window 1 s; rows never released in time): focus must end in the filter. Red with the expiry fallback disabled ("Window closed with focus on None"). Green with it.
+  - The first-visit Media -> Notes cases require the first note row again.
+  - The two `test_screen_navigation.py` pins of the settle timer's callback now name `_expire_library_list_entry_focus`. Both nodes fail locally on base and on head for an older reason (a one-argument `call_after_refresh` stub; the arm passes two), so they could not be run green here.
+- **Runs.**
+  - The changed `test_library_shell.py` nodes (12 cases) passed 3 of 3 at `-n 4` (load 33-36).
+  - `test_screen_navigation.py` Library selection, through the reviewer's `bootstrap_ui` plugin: 23 failed on head and 23 on base, the same deterministic set (fake stubs, bindings). Five boot-routing nodes ("ChatScreen" == "LibraryScreen", "never finished pushing") moved between runs on both.
+  - Ratchets and Library wiring: 103 passed (serial).
+- **Size.** `library_screen.py` 38188 -> 38232 lines, 1377 -> 1379 methods. `library_notes_controller.py` 7463 -> 7459.
+- **Still a follow-up.** At 170x48, rail entry into an empty Notes list sometimes lands on the Library grip. It is pre-existing and was not touched.
