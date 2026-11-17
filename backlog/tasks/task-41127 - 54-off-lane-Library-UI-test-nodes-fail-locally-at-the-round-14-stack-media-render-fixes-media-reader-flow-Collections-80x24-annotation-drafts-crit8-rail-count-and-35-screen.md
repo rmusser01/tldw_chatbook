@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-15 02:20
-updated_date: 2026-11-16 21:38
+updated_date: 2026-11-17 01:27
 labels:
 - follow-up
 - library
@@ -82,8 +82,8 @@ The fix waits for the mounted widget (`_wait_for_selector`), or for the page or 
   - `test_generic_reentry_returns_to_library_landing` and `test_library_screen_round_trip_returns_to_landing_with_rag_draft`. Library reuse (7992124e8d) skips `restore_state`, so re-entry no longer returns to the landing. Turning reuse off made the test pass.
   - `test_boot_with_search_default_tab_lands_on_library_rag_canvas`. `_mirror_library_rag_scope_recovery` mounts into an unmounted `#library-rag-source-scope` and the worker raises `MountError`.
   - `test_overlapping_navigate_requests_complete_in_fifo_order` and `test_rapid_tab_switch_storm_leaves_no_zombie_widgets`. `WorkflowsScreen._show_status` queries controls that are not mounted (NoMatches).
-- Product decision: `test_library_screen_bindings_are_all_gated_or_universal`. Shift+F6 is gated off on the landing. The gate came from merge resolution a62d92f590; the test says Shift+F6 is universal.
-- Load artifacts: the route and boot nodes with a fixed 3 s wait (`range(150)` x 0.02 s). These are study-escape, boot-prompts, search-route, prompts, skills, media, search round-trip, search-all palette, generic entry, research workspace and prompt-receipt owner. `test_console_staged_live_work_launch_survives_navigate_away_and_back` is re-pinned but failed 1 of 7 runs alone. With a 30 s wait, search-route passed at load 46; with the 3 s wait it passed 0 of 3. Not laned.
+- Product decision, since resolved: `test_library_screen_bindings_are_all_gated_or_universal`. Shift+F6 was gated off on the landing by merge resolution a62d92f590. The owner ruled for symmetry and TASK-41303 removed the gate (see review round 1).
+- Load artifacts: the route and boot nodes with a fixed 3 s wait (`range(150)` x 0.02 s). These are study-escape, boot-prompts, search-route, prompts, skills, media, search round-trip, search-all palette, generic entry, research workspace and prompt-receipt owner. `test_console_staged_live_work_launch_survives_navigate_away_and_back` is re-pinned but failed 1 of 7 runs alone. With a 30 s wait, search-route passed at load 46; with the 3 s wait it passed 0 of 3. Not laned in this pass; review round 1 below converted the waits and laned ten of them.
 - TASK-23149's two `_FakeMediaRowButton` nodes are untouched.
 
 **Lane.** 36 tail entries. `MINIMUM_FILES` is 2181. Profile markers:
@@ -96,7 +96,7 @@ One plain serial process with the lane flags (`-p no:xdist --timeout=180 --durat
 
   | Entry | s |
   |---|---|
-  | escape labels | 9.3 |
+  | escape labels (now `one_of_five`) | 9.3 |
   | generate disabled | 8.1 |
   | reader generate reason | 13.3 |
   | select-mode analyze reason | 8.7 |
@@ -150,3 +150,62 @@ Charge per-process times on a loaded host:
 - Tests: `Tests/UI/test_library_media_render_fixes.py`, `test_library_media_reader_flow.py`, `test_library_crit8_collections_row.py`, `test_library_prompt_mixins.py`, `test_screen_navigation.py`.
 - Census: `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`.
 - Lessons: one entry in `backlog/docs/lessons-testing-evidence.md`.
+
+**Review round 1 (r15lt-rev1, 2026-11-17).**
+
+The review findings and how each was handled:
+- **Page-three test.** It still pressed a detached pager and had failed in the reviewer's serial lane run. Both pager presses and the row-10 anchor now take the live node via `_wait_for_selector`.
+- **`_open_first_reader_row`.** It now waits for `#library-media-reader-find`, as `_load_row_0` does.
+- **Non-markdown note reader.** It returns `""` while the note is not mounted, so the failure message cannot raise `NoMatches`.
+- **Bindings audit.**
+  - It now collects every mismatch before failing; the first assertion used to hide a second cause.
+  - ctrl+n is pinned as landing-active, citing d00812ac44.
+  - With that re-pin, the audit failed on Shift+F6 alone, which is TASK-41303's red. TASK-41303 removed the gate and added the mounted test `test_shift_f6_walks_the_landing_panes_back_the_way_f6_came`.
+- **Fixed waits in `test_screen_navigation.py`.** All 34 fixed `range(150)` x `pause(0.02)` loops and `_wait_for_initial_screen` now use `_settle`. It waits against a 15 s wall-clock deadline and returns the predicate's value, so every caller keeps its own assert. Each new condition is AST-identical to the loop it replaces (checked mechanically).
+- **Citations and comments.**
+  - The rail hop cites 7cf89de6c0.
+  - The structural wait cites 579135667a and 203f4dc633.
+  - The help-keys docstring and the cached-screens section comment are true again.
+  - The escape-label test is renamed `test_escape_labels_are_one_of_five`, and its census line is updated.
+
+**Route and boot nodes.** I reran 18 of them, 3 times each, each in its own process with the lane flags, at load 56-81:
+
+| Nodes | Result |
+|---|---|
+| study escape, skills, media round trip, search round trip, search-all palette, generic entry, research workspace, prompt-receipt owner, staged Console launch, deep link | 3 of 3 each; laned |
+| rapid tab storm | 3 of 3, but not laned: it has failed before on the Workflows status race, and in the whole-file run on a Schedules worker `NoMatches '#scheduling-task-table'` |
+
+Still red, all product races:
+- **RAG scope recovery mounts into an unmounted `#library-rag-source-scope`.** Fails boot-with-search 3 of 3, generic re-entry 3 of 3, and search-route 2 of 3.
+- **Library reuse skips `restore_state`.** Fails round trip to the landing 3 of 3: twice on `'browse-search' == ''`, once on the RAG `MountError`.
+- **The Prompts type filter's `Select` mounts while being replaced** (`NoMatches 'SelectOverlay'` / `'#label'`). Fails boot-with-prompts 3 of 3 and prompts-route 2 of 3.
+- **The Workflows `_show_status` loop.** Fails the FIFO-navigation node 2 of 3.
+
+**Lane.** 12 more tail entries: the ten laned route nodes above, the bindings audit and TASK-41303's pin. `MINIMUM_FILES` is now 2193.
+
+All 48 of my entries (54 nodes) ran in one plain serial lane-flag process: 54 passed in 733.6 s (wall 781 s) at load 71 falling to 55. Times for the new entries in that process, in seconds:
+
+| Entry | s |
+|---|---|
+| bindings audit | 4.3 |
+| Shift+F6 pin | 7.7 |
+| staged Console launch | 22.2 |
+| deep link | 21.9 |
+| generic entry | 17.4 |
+| media round trip | 21.4 |
+| prompt-receipt owner | 17.8 |
+| research workspace | 21.8 |
+| search-all palette | 18.6 |
+| search round trip | 20.4 |
+| skills | 17.3 |
+| study escape | 24.0 |
+
+Charge per-process times from the 3-run sweep: 34-58 s of pytest time each.
+
+**Covering runs.**
+
+| Run | Result | Notes |
+|---|---|---|
+| `test_screen_navigation.py` whole, `-n 4`, load 65-76 | 7 failed, 138 passed | All seven are named above: TASK-23149's two, the rapid storm, and the four product races. |
+| `test_library_media_render_fixes.py` plus `test_library_crit9_media_reader.py` and `test_library_crit10_viewer.py` (the other `_open_first_reader_row` callers), throwaway stamp plugin | 2 failed, 146 passed | The two are `test_select_mode_bulk_reason_is_painted_with_nothing_selected[wide|narrow]`: a press followed by one pause, under load. They passed 2 of 2 alone. |
+
