@@ -1628,3 +1628,49 @@ async def test_custody_refusal_recovery_respects_durable_acceptance_and_undo(
             # Explicit recovery is a new draft; consumed edits never leak back
             # through the old send revision's undo/redo history.
             assert not composer.redo()
+
+
+@pytest.mark.asyncio
+async def test_console_queued_send_made_before_attach_finishes_is_not_refused(
+    monkeypatch,
+):
+    """TASK-41309: a REAL streaming run, a queued Send, attach still pending."""
+    from Tests.UI.test_console_native_chat_flow import WaitingGateway
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    gateway = WaitingGateway()
+    app = _build_console_send_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "test-model"
+    app.console_provider_gateway_factory = lambda: gateway
+    release_attach = asyncio.Event()
+    real_attach = ChatScreen._reconcile_console_after_attach
+
+    async def slow_attach(self):
+        await release_attach.wait()
+        return await real_attach(self)
+
+    monkeypatch.setattr(ChatScreen, "_reconcile_console_after_attach", slow_attach)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await _select_llamacpp_console(console)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("first")
+        console.query_one("#console-send-message", Button).press()
+        await asyncio.wait_for(gateway.started.wait(), timeout=10)
+        assert not console._console_attach_reconciled  # attach still pending
+        controller = console._ensure_console_chat_controller()
+        session_id = controller.store.active_session_id
+        result = await asyncio.wait_for(
+            console._dispatch_console_draft_send("second"), timeout=20
+        )
+        assert result is True
+        await pilot.pause(0.3)
+        snapshot = controller.prompt_queue_registry.snapshot(session_id)
+        assert [e.preview for e in snapshot.entries] == ["second"]
+        release_attach.set()
+        gateway.release.set()
+        await until(lambda: console._console_attach_reconciled)

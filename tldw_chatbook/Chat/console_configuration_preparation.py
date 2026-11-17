@@ -9,7 +9,7 @@ import sys
 from collections.abc import Callable, Mapping
 from contextlib import ExitStack, contextmanager, nullcontext
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MethodType, ModuleType
 from typing import Any, NamedTuple
 
@@ -2301,8 +2301,15 @@ def seal_pending_queue_capture(controller, session, configuration):
         or dict(prepared.maximum) != dict(configuration.skill_context_maximum)
     ):
         raise RuntimeError("Original queued skill capture changed; send again.")
+    # The queue dispatcher stamps ``recovery_user_origin`` onto a copy of the
+    # captured snapshot, so identity alone would refuse every cold-skill queue.
     if deferred is not None and (
-        witness[-4] is not configuration or not configuration.skill_capture_pending
+        not configuration.skill_capture_pending
+        or witness[-4] is not configuration
+        and replace(
+            witness[-4], recovery_user_origin=configuration.recovery_user_origin
+        )
+        != configuration
     ):
         raise RuntimeError("Original queued skill preparation changed; send again.")
     unused_trust = (
@@ -2326,7 +2333,12 @@ def seal_pending_queue_capture(controller, session, configuration):
             vars(source.local).get("_trust_service") if source is not None else None
         )
     sealed = _QueuedCaptureTransfer(
-        (*witness[:-3], None, *witness[-2:]),
+        (
+            *witness[:-4],
+            configuration if deferred is not None else witness[-4],
+            None,
+            *witness[-2:],
+        ),
         configuration,
         preparation,
         app_trust,
