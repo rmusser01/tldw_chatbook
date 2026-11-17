@@ -4,6 +4,8 @@ This directory preserves source patches and continuation state for the owner's c
 
 ## Windows checkpoint on November 17
 
+The original Windows 10 replay `g2` at `e0e97c6ced` reached workspace creation. The Inspector tried to read project-instruction controls through the local session, and the left rail's mounted progress timer tried to construct a local runtime. Neither Send ran. The five targeted recovery and composition checks on that revision passed in `task62-rc1`. The next replay must exercise both fixes on the actual screen.
+
 Windows 10 run `task62-bt1` passed all seven selected checks on `cae8ce5789`. The two pre-mount checks performed an actual permission mutation with and without an ambient event loop. Each confirmed the applied mutation and retirement before return, reused the same PID on mount, and joined the original process on shutdown. The other five checks covered held readers, active-character facts, approval identity and refusal after source replacement. These are functional checks, and their durations are outside the journey timings.
 
 The original Windows 10 run `g1` at `999b90d61c` completed the real pre-mount permission write, entered Chat and reached workspace creation. The workspace rail failed to compose because its character ID reader expected a local session. Both test processes used the original loopback restriction. The final Send timings are still open. The [guarded Windows runner](original-journey/guarded-windows-runner.zip) contains the timestamp and admission observers and the replay commands, with SHA-256 `4862941e3623053a5b39370315f40ffd3d1a9221ae9d1b36f8b25e3b6997e901`. A short private run label such as `g1` keeps the disposable Git repository within the host's path-length limit.

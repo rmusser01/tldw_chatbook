@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from .console_chat_controller import ProjectInstructionDispatchNotice
-from .console_runtime import ConsoleProjectBindingChoice
+from .console_display_state import ConsoleProjectInstructionSourceRow, ConsoleProjectInstructionState
 from .console_execution_projection_values import (
     _boolean, _count, _enum, _optional, _record, _text, _tuple,
 )
+
+if TYPE_CHECKING:
+    from .console_chat_controller import ProjectInstructionDispatchNotice
+    from .console_runtime import ConsoleProjectBindingChoice
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,11 +39,32 @@ _CHOICE = {
 
 
 def _notice(value, decode):
+    from .console_chat_controller import ProjectInstructionDispatchNotice
+
     return _record(value, ProjectInstructionDispatchNotice, _NOTICE, decode)
 
 
 def _choice(value, decode):
+    from .console_runtime import ConsoleProjectBindingChoice
+
     return _record(value, ConsoleProjectBindingChoice, _CHOICE, decode)
+
+
+def _source_row(value, decode):
+    return _record(value, ConsoleProjectInstructionSourceRow, {
+        "relative_source": _text, "scope": _text, "byte_count": _optional(_count),
+        "outcome": _text, "warning_code": _text,
+    }, decode)
+
+
+def project_instruction_status(value, decode):
+    """Transfer only the content-free fields shown by the Inspector."""
+    return _record(value, ConsoleProjectInstructionState, {
+        "status": _text, "enabled": _boolean, "binding_label": _text,
+        "locator_match": _enum("match", "mismatch", "not checked"),
+        "sources": _tuple(_source_row), "warning_codes": _tuple(_text),
+        "recovery_actions": _tuple(_enum("enable", "choose", "disable")),
+    }, decode)
 
 
 _HEAD = {

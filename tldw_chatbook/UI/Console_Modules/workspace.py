@@ -5604,13 +5604,15 @@ class ConsoleWorkspaceController:
             client = self.app_instance.console_execution_client
 
             def current() -> bool:
-                return (
+                if not (
                     screen.is_mounted and screen.is_current
                     and self.app_instance.screen is screen
                     and self.app_instance.console_execution_client is client
                     and self.app_instance.workspace_registry_service is registry_service
-                    and registry_service.get_active_workspace().id == result.workspace_id
-                )
+                ):
+                    return False
+                active = registry_service.get_active_workspace()
+                return active is not None and active.workspace_id == result.workspace_id
 
             async def activate() -> None:
                 if not current():

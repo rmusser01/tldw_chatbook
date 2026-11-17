@@ -255,6 +255,11 @@ def project_instruction_ui_state_for_screen(
         Content-free state enriched with active-session activation metadata.
     """
     if state is None:
+        from ...UI.Console_Modules.execution_state import selected_client
+
+        selected = selected_client(screen)
+        if selected is not None:
+            return selected.session_composition.project_instruction_status
         state = screen._session._build_console_project_instruction_display_state()
     return project_instruction_ui_state(
         state,

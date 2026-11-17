@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
 from tldw_chatbook.Widgets.workspace_create_modal import WorkspaceCreateResult
@@ -132,3 +134,47 @@ def test_result_with_project_skills_offers_import(tmp_path, monkeypatch):
     )
     ConsoleWorkspaceController._handle_workspace_create_result(stub, result)
     assert offered == [("sentinel-discovery",)]
+
+
+@pytest.mark.parametrize("current_workspace", ["workspace-local-1", "other", None])
+def test_selected_create_checks_actual_workspace_record_before_scheduling(
+    tmp_path, current_workspace,
+):
+    """Test the UI admission guard, not the child command or its authority."""
+    registry = _registry(tmp_path)
+    try:
+        registry.create_workspace(workspace_id="other", name="Other")
+        stub = _Stub(registry)
+        deferred = []
+        scheduled = []
+        screen = SimpleNamespace(
+            is_mounted=True, is_current=True,
+            call_after_refresh=deferred.append,
+            _start_console_attach_reconciliation=lambda: stub.calls.append("attach"),
+            run_worker=lambda work, **kwargs: scheduled.append((work, kwargs)),
+        )
+        stub._screen = screen
+        stub.app_instance.screen = screen
+        stub.app_instance.console_execution_client = object()
+        result = WorkspaceCreateResult(
+            workspace_id="workspace-local-1", name="Workspace 1", make_active=True,
+        )
+        ConsoleWorkspaceController._continue_workspace_create_result(stub, result)
+        assert registry.get_active_workspace().workspace_id == result.workspace_id
+        assert len(deferred) == 1
+        if current_workspace is None:
+            registry.clear_active_workspace()
+        else:
+            registry.set_active_workspace(current_workspace)
+        deferred[0]()
+        if current_workspace == result.workspace_id:
+            assert stub.calls == ["attach"]
+            assert len(scheduled) == 1
+            assert scheduled[0][1] == {
+                "group": "console-workspace-create", "exclusive": False,
+            }
+        else:
+            assert stub.calls == []
+            assert scheduled == []
+    finally:
+        registry.db.close()

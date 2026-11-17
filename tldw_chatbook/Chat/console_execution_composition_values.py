@@ -20,7 +20,8 @@ from .console_library_policy import (
     ConsoleLibraryPolicyHolder,
     ConsoleLibraryPolicySnapshot,
 )
-from .console_display_state import ConsoleRetrievalScopeState
+from .console_display_state import ConsoleProjectInstructionState, ConsoleRetrievalScopeState
+from .console_execution_project_values import project_instruction_status
 from .rag_scope import SessionScopeHolder
 from .console_execution_recovery_values import ConsoleRecoveryDisplay, recovery_display
 
@@ -76,6 +77,9 @@ class ConsoleSessionComposition:
     agent_handoff_revision: int | None
     pending_approval_count: int
     pending_interrupt_copy: str
+    response_rule_phase: str | None
+    response_rule_copy: str
+    run_feedback_copy: str
     blocked_turn_reason: str
     is_stop_allowed: bool
     acknowledgement_idle: bool
@@ -90,6 +94,7 @@ class ConsoleSessionComposition:
     staged_evidence_revision: int
     evidence_sent_notice: int | None
     runtime_backend: str
+    project_instruction_status: ConsoleProjectInstructionState
     recovery: ConsoleRecoveryDisplay
 
 
@@ -107,6 +112,9 @@ _COMPOSITION = {
     "agent_handoff_revision": _optional(_count),
     "pending_approval_count": _count,
     "pending_interrupt_copy": _text,
+    "response_rule_phase": _optional(_text),
+    "response_rule_copy": _text,
+    "run_feedback_copy": _text,
     "blocked_turn_reason": _text,
     "is_stop_allowed": _boolean,
     "acknowledgement_idle": _boolean,
@@ -120,6 +128,7 @@ _COMPOSITION = {
     "staged_evidence_present": _boolean,
     "staged_evidence_revision": _count,
     "evidence_sent_notice": _optional(_count),
+    "project_instruction_status": project_instruction_status,
     "runtime_backend": _text,
     "recovery": recovery_display,
 }
@@ -130,6 +139,9 @@ def encode_session_composition(
     *,
     pending_approval_count: int,
     pending_interrupt_copy: str,
+    response_rule_phase: str | None,
+    response_rule_copy: str,
+    run_feedback_copy: str,
     blocked_turn_reason: str,
     is_stop_allowed: bool,
     acknowledgement_idle: bool,
@@ -140,6 +152,7 @@ def encode_session_composition(
     selected_tool_count: int | None,
     staged_evidence_present: bool, staged_evidence_revision: int,
     evidence_sent_notice: int | None,
+    project_status: ConsoleProjectInstructionState,
     recovery: ConsoleRecoveryDisplay,
 ) -> dict:
     """Capture only named fields of the original session and its policy snapshot."""
@@ -166,6 +179,7 @@ def encode_session_composition(
         session.agent_handoff_revision,
         pending_approval_count,
         pending_interrupt_copy,
+        response_rule_phase, response_rule_copy, run_feedback_copy,
         blocked_turn_reason,
         is_stop_allowed,
         acknowledgement_idle,
@@ -174,7 +188,7 @@ def encode_session_composition(
         tools_published, builtin_tool_count, mcp_tool_count,
         mcp_not_connected_count, selected_tool_count,
         staged_evidence_present, staged_evidence_revision, evidence_sent_notice,
-        session.runtime_backend, recovery,
+        session.runtime_backend, project_status, recovery,
     )
     return _record(value, ConsoleSessionComposition, _COMPOSITION, False)
 

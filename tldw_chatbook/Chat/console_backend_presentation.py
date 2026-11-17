@@ -453,12 +453,52 @@ class ConsoleBackendPresentation:
         ):
             raise RuntimeError("Console recovery capture changed")
         recovery = _RECOVERY_CAPTURE[0](controller, session)
+        rules = controller.response_rules
+        rule_state = None
+        if rules is not None:
+            read_state = getattr(rules, "state", None)
+            if (
+                type(rules) is not _ResponseRuleRuntime
+                or rules is not self._runtime._response_rules
+                or type(read_state) is not MethodType
+                or read_state.__self__ is not rules
+                or read_state.__func__ is not _RULE_STATE[0]
+                or not _definition_current(_RULE_STATE)
+            ):
+                raise RuntimeError("Console response-rule display owner changed")
+            rule_state = read_state(session.id)
+        for module, name, record in _RUN_DISPLAY_HELPERS:
+            if getattr(module, name) is not record[0] or not _definition_current(record):
+                raise RuntimeError("Console run display source changed")
+        run_state = controller.run_state_for(session.id)
+        feedback = _run_display.console_send_activity_copy(run_state)
+        if run_state.status.value == "streaming":
+            bridge_read = controller._agent_bridge.live_snapshot
+            if (type(bridge_read) is not MethodType
+                or bridge_read.__self__ is not controller._agent_bridge
+                or bridge_read.__func__ is not _RUN_SNAPSHOT[0]
+                or not _definition_current(_RUN_SNAPSHOT)):
+                raise RuntimeError("Console run snapshot source changed")
+            feedback = _run_display.console_send_activity_copy(
+                run_state,
+                snapshot=bridge_read(str(session.persisted_conversation_id or "")),
+                reply_started=controller.store.has_live_reply_output(session.id),
+            )
+        control = session.project_instruction_state
+        project_status = _composition_display.build_console_project_instruction_state(
+            control,
+            binding_label=control.working_folder_binding_id or "",
+            activation_events=controller.project_instruction_activation_events(session.id),
+        )
         return encode_session_composition(
             session,
             pending_approval_count=controller.pending_round_count(session.id),
             pending_interrupt_copy=(
                 _COMPOSITION_COPY[0][2][0](controller, session.id) if pending else ""
             ),
+            response_rule_phase=rule_state.phase if rule_state is not None else None,
+            response_rule_copy=_rule_display.rule_status(rule_state) if rule_state is not None else "",
+            run_feedback_copy=feedback,
             blocked_turn_reason=blocked,
             is_stop_allowed=controller.is_stop_allowed,
             acknowledgement_idle=not (
@@ -475,6 +515,7 @@ class ConsoleBackendPresentation:
             staged_evidence_present=launch is not None,
             staged_evidence_revision=staged_revision,
             evidence_sent_notice=sent_notice,
+            project_status=project_status,
             recovery=recovery,
         )
 
@@ -688,6 +729,7 @@ from .console_chat_controller import ConsoleChatController as _CompositionContro
 from .console_chat_start import ConsoleChatStartCoordinator as _CompositionStart
 from .console_agent_bridge import ConsoleAgentBridge as _CompositionBridge
 from tldw_chatbook.UI.Console_Modules import provider_continuation_recovery as _composition_recovery
+from . import console_display_state as _composition_display
 
 _COMPOSITION_CONTROLLER_METHODS = tuple(
     (name, _definition(getattr(_CompositionController, name)))
@@ -698,6 +740,7 @@ _COMPOSITION_CONTROLLER_METHODS = tuple(
         "conversation_attention_for",
         "provider_continuation_recovery_message", "provider_continuation_replay_available",
         "provider_continuation_owner_is_live", "trace_call_provider_contact",
+        "project_instruction_activation_events",
     )
 )
 _COMPOSITION_START_METHODS = (("is_prepared", _definition(_CompositionStart.is_prepared)),)
@@ -714,6 +757,7 @@ _COMPOSITION_COPY = tuple(
     for owner, name in (
         (_composition_models, "console_pending_round_copy_for"),
         (_composition_recovery, "blocked_turn_reason"),
+        (_composition_display, "build_console_project_instruction_state"),
     )
 )
 
@@ -774,5 +818,19 @@ _RECOVERY_CAPTURE = _definition(_recovery_values.capture_recovery_display)
 _COMPOSITION_STORE_METHODS = tuple(
     (name, _definition(getattr(_CompositionStore, name)))
     for name in ("dispatch_recovery_for_presentation", "dispatch_recovery_for_session",
-                 "provider_continuation_recovery_message")
+                 "provider_continuation_recovery_message", "has_live_reply_output")
+)
+
+from .response_rules.runtime import ResponseRuleRuntime as _ResponseRuleRuntime
+from ..UI.Console_Modules import response_rules as _rule_display
+from ..UI.Console_Modules import agent as _run_display
+
+_RULE_STATE = _definition(_ResponseRuleRuntime.state)
+_RUN_SNAPSHOT = _definition(_CompositionBridge.live_snapshot)
+_RUN_DISPLAY_HELPERS = tuple(
+    (module, name, _definition(getattr(module, name)))
+    for module, name in (
+        (_rule_display, "rule_status"), (_rule_display, "reason_copy"),
+        (_run_display, "console_send_activity_copy"),
+    )
 )

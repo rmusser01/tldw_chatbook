@@ -17914,19 +17914,33 @@ class ChatScreen(BaseAppScreen):
         controller = self._console_chat_controller
         run_state = controller.run_state if controller is not None else None
         from tldw_chatbook.UI.Console_Modules.response_rules import rule_status
+        from ..Console_Modules.execution_state import selected_client
 
-        if controller is not None and controller.has_pending_approval_round(
-            session_id or ""
-        ):
-            return f"{console_pending_round_copy_for(controller, session_id or '')}."
-        rules = controller.response_rules if controller is not None else None
-        rule_state = (
-            rules.state(session_id) if rules is not None and session_id else None
-        )
-        if rule_state is not None and rule_state.phase != "idle":
-            return rule_status(rule_state)
+        selected = selected_client(self)
+        if selected is not None:
+            facts = selected.session_composition
+            pending_copy = facts.pending_interrupt_copy
+            rule_phase, rule_copy = facts.response_rule_phase, facts.response_rule_copy
+        else:
+            pending_copy = (
+                console_pending_round_copy_for(controller, session_id or "")
+                if controller is not None and controller.has_pending_approval_round(session_id or "")
+                else ""
+            )
+            if pending_copy:
+                return f"{pending_copy}."
+            rules = controller.response_rules if controller is not None else None
+            rule_state = rules.state(session_id) if rules is not None and session_id else None
+            rule_phase = rule_state.phase if rule_state is not None else None
+            rule_copy = rule_status(rule_state) if rule_state is not None else ""
+        if pending_copy:
+            return f"{pending_copy}."
+        if rule_phase is not None and rule_phase != "idle":
+            return rule_copy
         if run_state is None or run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES:
-            if reason := blocked_turn_reason(controller):  # TASK-33621.2: stuck
+            reason = (facts.blocked_turn_reason if selected is not None
+                      else blocked_turn_reason(controller))
+            if reason:  # TASK-33621.2: stuck
                 return f"Blocked — {reason}"
             if self._context_spend.compaction_pause_expected():  # TASK-33621.4
                 return COMPACTION_PAUSE_RUN_COPY  # about the next send: first
@@ -17940,11 +17954,11 @@ class ChatScreen(BaseAppScreen):
                 run_state is None or run_state.status is ConsoleRunStatus.IDLE
             ):
                 return "Forecast unavailable"
-            return acknowledgement or (
-                rule_status(rule_state) if rule_state is not None else ""
-            )
+            return acknowledgement or rule_copy
         # Every interrupt kind owns its waiting copy; approval takes priority.
         # The Inspector counts approval rounds from the same session registry.
+        if selected is not None:
+            return facts.run_feedback_copy
         if controller.has_pending_approval_round(session_id or ""):
             return f"{console_pending_round_copy_for(controller, session_id or '')}."
         return self._agent.console_run_feedback_copy(run_state)
