@@ -135,6 +135,19 @@ import is already in progress." Activating a reviewed Actor Pack while a
 backup or restore is running adds nothing and says "Backup or restore is
 using this profile. Import again when it finishes."
 
+If a persona Actor Pack import was interrupted and the app could not safely
+finish or undo it (for example, a persona was edited before the next
+start), that import stays recorded and blocks new persona Actor Pack
+imports. Personas then shows a
+notice under its title line with one button, **Keep my current personas and
+clear the interrupted import** (reach it with Tab, press Enter). It removes
+only the stuck import record; every persona stays exactly as it is, and
+importing works again. An import refused for this reason says "An earlier
+persona Actor Pack import was interrupted. Choose "Keep my current personas
+and clear the interrupted import" above, then import again." During a backup
+or restore the button changes nothing and says to try again when it
+finishes.
+
 Import never asks about unsaved edits. When nothing is unsaved, Roleplay
 still shows, and you have not done anything newer since you picked the
 file, the new item opens in its own kind (the list switches to it).

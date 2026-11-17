@@ -227,11 +227,11 @@ class ActorPackActivationService:
                 exc.category, cleanup_pending=_cleanup_published(published)
             ) from None
         except PersonaActorPackCoordinatorError as exc:
-            category = (
-                "actor_pack_import_cancelled"
-                if exc.category == "actor_pack_creation_cancelled"
-                else "actor_pack_import_activation_failed"
-            )
+            category = {
+                "actor_pack_creation_cancelled": "actor_pack_import_cancelled",
+                # TASK-41114: an interrupted import's intent blocks creation.
+                "actor_pack_creation_blocked": "actor_pack_import_creation_blocked",
+            }.get(exc.category, "actor_pack_import_activation_failed")
             raise ActorPackActivationError(
                 category, cleanup_pending=_cleanup_published(published)
             ) from None

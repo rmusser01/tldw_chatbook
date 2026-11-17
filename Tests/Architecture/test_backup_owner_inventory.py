@@ -1554,6 +1554,236 @@ def test_actor_pack_pause_between_persona_apply_and_commit_leaves_no_half_person
     assert (identity, intents, live) == (None, [], []), "a half-created persona"
 
 
+def _stuck_persona_import(activation):
+    """TASK-41114: a prepared persona intent whose store the user then changed.
+
+    Startup recovery quarantines it (``authority_mismatch``), which blocks
+    every later persona Actor Pack creation.
+    """
+    local, repository = activation.local_service, activation.repository
+    stuck = {"id": "local-persona-stuck", "name": "Stuck", "version": 1}
+    plan = local._actor_pack_plan_persona_profile(stuck, operation="create")
+    repository.prepare_persona_intent(
+        persona_id="local-persona-stuck",
+        operation="create",
+        old_profile=None,
+        new_profile=stuck,
+        old_store_sha256=plan.old_store_sha256,
+        new_store_sha256=plan.new_store_sha256,
+        old_registry_uuid=None,
+        new_registry_uuid="223e4567-e89b-42d3-a456-426614174000",
+        intent_id="d" * 32,
+    )
+    local.create_persona_profile({"name": "Existing persona"})
+    activation.persona_coordinator.ensure_recovered()
+    assert activation.persona_coordinator.blocked_intent_ids == ("d" * 32,)
+
+
+def test_interrupted_persona_import_blocks_until_cleared_and_keeps_personas(
+    tmp_path, monkeypatch
+):
+    """TASK-41114 AC1, owner decision 2026-11-16 ("Clear the interrupted
+    import"): a stuck intent refuses a new persona import with copy that names
+    it and the way out; clearing deletes only the intent rows, every persona
+    stays as it was, and the same import then succeeds."""
+    from tldw_chatbook.Actor_Packs.activation import ActorPackActivationError
+    from tldw_chatbook.UI.Screens.personas_screen import (
+        _actor_pack_import_error_copy,
+    )
+
+    db, activation, review, trees = _actor_pack_activation_on_profile(
+        tmp_path, monkeypatch, bound=True
+    )
+    local, repository = activation.local_service, activation.repository
+    try:
+        _stuck_persona_import(activation)
+        store = local.persona_store_path.read_bytes()
+        personas = sorted(row["id"] for row in local.list_persona_profiles())
+        with pytest.raises(ActorPackActivationError) as raised:
+            activation.activate(review, "create_new")
+        assert raised.value.category == "actor_pack_import_creation_blocked"
+        copy = _actor_pack_import_error_copy(raised.value.category)
+        assert "interrupted" in copy and "clear the interrupted import" in copy
+        assert _published_files(trees) == []
+
+        assert activation.persona_coordinator.clear_blocked_intents() == 1
+        assert repository.list_persona_intents() == ()
+        assert activation.persona_coordinator.blocked_intent_ids == ()
+        assert local.persona_store_path.read_bytes() == store
+        assert sorted(row["id"] for row in local.list_persona_profiles()) == personas
+
+        result = activation.activate(review, "create_new")
+        assert result.actor_kind == "persona"
+        assert sorted(row["id"] for row in local.list_persona_profiles()) == sorted(
+            [*personas, result.local_actor_id]
+        )
+    finally:
+        db.close_idle_connections()
+        db.close_connection()
+
+
+def test_clearing_the_interrupted_import_refuses_during_a_storage_pause(
+    tmp_path, monkeypatch
+):
+    """TASK-41114 AC1: the clear action takes ChaChaNotes admission, so a
+    capture's or restore's pause refuses it cleanly and changes nothing."""
+    from tldw_chatbook.Actor_Packs.persona_coordinator import (
+        PersonaActorPackCoordinatorError,
+    )
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+    db, activation, review, trees = _actor_pack_activation_on_profile(
+        tmp_path, monkeypatch, bound=True
+    )
+    coordinator, repository = activation.persona_coordinator, activation.repository
+    try:
+        _stuck_persona_import(activation)
+        pause = storage._begin_local_pause()
+        try:
+            with pytest.raises(PersonaActorPackCoordinatorError) as raised:
+                coordinator.clear_blocked_intents()
+        finally:
+            pause.resume()
+        assert raised.value.category == "actor_pack_storage_unavailable"
+        assert coordinator.blocked_intent_ids == ("d" * 32,)
+        assert [row.state for row in repository.list_persona_intents()] == [
+            "quarantined"
+        ]
+        assert coordinator.clear_blocked_intents() == 1
+    finally:
+        db.close_idle_connections()
+        db.close_connection()
+
+
+@pytest.mark.parametrize("refusal", [None, "actor_pack_storage_unavailable"])
+def test_interrupted_import_notice_clears_from_the_keyboard_off_the_ui_thread(
+    refusal,
+):
+    """TASK-41114 AC1: the Personas notice and its action are reachable by
+    Tab and Enter, the clear runs off the UI thread, and a refused clear keeps
+    the notice with a usable button."""
+    import asyncio
+    import threading
+
+    from textual.app import App
+    from textual.containers import Vertical
+    from textual.widgets import Button, Static
+
+    from tldw_chatbook.Actor_Packs.persona_coordinator import (
+        PersonaActorPackCoordinatorError,
+    )
+    from tldw_chatbook.Widgets.Persona_Widgets.actor_pack_recovery_notice import (
+        CLEAR_BUTTON_ID,
+        NOTICE_ID,
+        NOTICE_TEXT,
+        show_actor_pack_recovery_notice,
+    )
+
+    class Coordinator:
+        def __init__(self) -> None:
+            self.blocked_intent_ids = ("d" * 32,)
+            self.threads: list = []
+
+        def clear_blocked_intents(self):
+            self.threads.append(threading.current_thread())
+            if refusal is not None:
+                raise PersonaActorPackCoordinatorError(refusal)
+            self.blocked_intent_ids = ()
+            return 1
+
+    class Personas(App):
+        def __init__(self) -> None:
+            super().__init__()
+            self.persona_actor_pack_coordinator = Coordinator()
+            self.actor_pack_recovery_error = "actor_pack_recovery_blocked"
+            self.notices: list = []
+
+        def compose(self):
+            with Vertical(id="personas-shell"):
+                yield Static("Characters", id="personas-purpose")
+                yield Button("Library", id="personas-first")
+
+        def notify(self, message, **kwargs):
+            self.notices.append((message, kwargs.get("markup")))
+
+    async def run():
+        app = Personas()
+        async with app.run_test(size=(140, 30)) as pilot:
+            await show_actor_pack_recovery_notice(app.screen)
+            await show_actor_pack_recovery_notice(app.screen)  # Once only.
+            await pilot.pause()
+            shell = app.screen.query_one("#personas-shell")
+            assert [child.id for child in shell.children] == [
+                "personas-purpose",
+                NOTICE_ID,
+                "personas-first",
+            ]
+            text = app.screen.query_one(f"#{NOTICE_ID}").query_one(Static)
+            assert str(text.render()) == NOTICE_TEXT
+            for _ in range(4):
+                if getattr(app.focused, "id", None) == CLEAR_BUTTON_ID:
+                    break
+                await pilot.press("tab")
+            assert app.focused.id == CLEAR_BUTTON_ID
+            await pilot.press("enter")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            coordinator = app.persona_actor_pack_coordinator
+            assert coordinator.threads
+            assert threading.main_thread() not in coordinator.threads
+            assert all(markup is False for _, markup in app.notices), app.notices
+            if refusal is None:
+                assert not app.screen.query(f"#{NOTICE_ID}")
+                assert app.actor_pack_recovery_error is None
+                assert "cleared" in app.notices[-1][0]
+            else:
+                assert "Backup or restore" in app.notices[-1][0]
+                assert not app.screen.query_one(f"#{CLEAR_BUTTON_ID}").disabled
+                assert app.actor_pack_recovery_error == "actor_pack_recovery_blocked"
+
+    asyncio.run(run())
+
+
+@pytest.mark.bootstrap_profile  # A real-app mount (TASK-32873 per-node opt-in).
+def test_personas_shows_the_interrupted_import_notice_after_recovery():
+    """TASK-41114 AC1: opening Personas with a stuck persona Actor Pack
+    import shows the notice under the purpose line, after recovery ran."""
+    import asyncio
+
+    from Tests.UI.app_factory import _build_test_app
+    from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
+    from tldw_chatbook.Widgets.Persona_Widgets.actor_pack_recovery_notice import (
+        NOTICE_ID,
+    )
+
+    class Coordinator:
+        blocked_intent_ids = ("d" * 32,)
+        recovery_attempted = True
+        recovery_error = None
+
+        def ensure_recovered(self):
+            return None
+
+    async def run():
+        app = _build_test_app()
+        app.persona_actor_pack_coordinator = Coordinator()
+        app.actor_pack_recovery_error = "actor_pack_recovery_blocked"
+        async with app.run_test(size=(235, 52)) as pilot:
+            await pilot.pause()
+            screen = PersonasScreen(app)
+            await app.push_screen(screen)
+            for _ in range(40):
+                await pilot.pause()
+                if screen.query(f"#{NOTICE_ID}"):
+                    break
+            shell = screen.query_one("#personas-shell")
+            ids = [child.id for child in shell.children]
+            assert NOTICE_ID in ids, ids
+            assert ids[ids.index(NOTICE_ID) - 1] == "personas-purpose"
+
+    asyncio.run(run())
+
+
 def test_actor_pack_import_leaves_no_worker_connection_for_a_later_drain(
     tmp_path, monkeypatch
 ):

@@ -263,6 +263,42 @@ class PersonaActorPackCoordinator:
                 raise
             return self._recovery_result
 
+    def clear_blocked_intents(self) -> int:
+        """Delete only the quarantined intents that block creation.
+
+        TASK-41114, owner decision 2026-11-16: "Clear the interrupted import
+        (Recommended)". Persona records stay exactly as they are. Each row is
+        deleted in its own ChaChaNotes transaction, which a storage pause
+        refuses (``actor_pack_storage_unavailable``); any row it left stays
+        blocked.
+
+        Returns:
+            How many intents were cleared.
+        """
+
+        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+        cleared = 0
+        with self._recovery_lock:
+            try:
+                for intent_id in self._blocked_intent_ids:
+                    self.repository.cleanup_persona_intent(
+                        intent_id, expected_state="quarantined"
+                    )
+                    self._blocked_intent_ids = tuple(
+                        key for key in self._blocked_intent_ids if key != intent_id
+                    )
+                    cleared += 1
+            except RecoveryRequired:
+                raise PersonaActorPackCoordinatorError(
+                    "actor_pack_storage_unavailable"
+                ) from None
+            except ActorPackRepositoryError:
+                raise PersonaActorPackCoordinatorError(
+                    "actor_pack_recovery_clear_failed"
+                ) from None
+        return cleared
+
     def recover(self) -> PersonaActorPackRecoveryResult:
         """Reconcile all intents before affected application surfaces mount."""
 
