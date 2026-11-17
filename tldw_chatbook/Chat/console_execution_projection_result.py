@@ -98,7 +98,7 @@ def _session_view(payload: dict) -> tuple:
         decode_session_projection,
         _settings,
     )
-    from .console_execution_protocol import _PROJECTED_INPUTS
+    from .console_execution_protocol import _PROJECTED_INPUTS, _detach
 
     value = payload["session_view"]
     if (
@@ -145,7 +145,8 @@ def _session_view(payload: dict) -> tuple:
     ):
         raise ConsoleProtocolError("projection_view_session_changed")
     pressed = value["pressed_inputs"]
-    _PROJECTED_INPUTS(pressed, "payload.session_view.pressed_inputs")
+    path = "payload.session_view.pressed_inputs"
+    _PROJECTED_INPUTS(_detach(pressed, path, 4, set()), path)
     if (
         pressed["session_id"] != payload["session_id"]
         or pressed["incarnation_id"] != payload["incarnation_id"]
@@ -177,7 +178,7 @@ def encode_pressed_inputs(
     from .console_received_intent import ConsoleSessionInputSnapshot
     from .console_chat_store import ConsoleChatSession
     from .console_execution_projection_values import _settings
-    from .console_execution_protocol import _PROJECTED_INPUTS
+    from .console_execution_protocol import _PROJECTED_INPUTS, _detach
 
     if (
         type(snapshot) is not ConsoleSessionInputSnapshot
@@ -228,7 +229,8 @@ def encode_pressed_inputs(
         "session_id": snapshot.session_id,
         "incarnation_id": snapshot.incarnation_id,
     }
-    _PROJECTED_INPUTS(body, "payload.session_view.pressed_inputs")
+    path = "payload.session_view.pressed_inputs"
+    _PROJECTED_INPUTS(_detach(body, path, 4, set()), path)
     return body
 
 

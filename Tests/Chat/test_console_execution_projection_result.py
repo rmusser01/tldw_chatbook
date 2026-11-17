@@ -158,10 +158,15 @@ def test_session_view_keeps_current_inputs_and_declines_missing_or_mixed_frames(
     assert view.session_fingerprint(session.id) == (1, 5)
     assert view.messages_for_session(session.id)[0].content == "saved"
     assert decoded["session_view"]["pressed_inputs"]["authored_token"] is None
-    from tldw_chatbook.Chat.console_execution_protocol import _PRESSED_INPUTS
+    from tldw_chatbook.Chat.console_execution_protocol import _PRESSED_INPUTS, _detach
 
-    with pytest.raises(ConsoleProtocolError):
-        _PRESSED_INPUTS(decoded["session_view"]["pressed_inputs"], "pressed_inputs")
+    with pytest.raises(ConsoleProtocolError, match="pressed_inputs.authored_token"):
+        _PRESSED_INPUTS(
+            _detach(
+                decoded["session_view"]["pressed_inputs"], "pressed_inputs", 4, set()
+            ),
+            "pressed_inputs",
+        )
     with pytest.raises(ConsoleProjectionUnavailable):
         view.messages_for_session(other.id)
     for key, value in (
