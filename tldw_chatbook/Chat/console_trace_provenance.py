@@ -1198,6 +1198,22 @@ class ConsoleRequestProvenance:
             raise TraceProvenanceAlignmentError(
                 "trace provenance category mismatch: metadata"
             )
+        def has_saved(descriptor: TraceProvenance) -> bool:
+            return type(descriptor) is SavedRevisionTraceProvenance or (
+                type(descriptor) is DerivedTraceProvenance
+                and any(has_saved(item) for item in descriptor.inputs)
+            )
+
+        if any(
+            type(item) is RequestRouteTraceProvenance
+            and item.parent_revision_id is not None
+            for item in self.metadata
+        ) and any(has_saved(item) for item in self.flattened_messages()):
+            # TASK-41310: a child's rows are its own; it names the spawning
+            # turn only through its route, never by borrowing saved rows.
+            raise TraceProvenanceAlignmentError(
+                "a child call route cannot carry saved message rows"
+            )
         policies: set[FrozenTracePolicy] = set()
 
         def collect(descriptor: TraceProvenance) -> None:

@@ -207,8 +207,10 @@ from tldw_chatbook.Chat.console_trace_provenance import (
     DerivedTraceProvenance,
     OmittedTraceProvenance,
     ProviderArtifactTraceProvenance,
+    RequestRouteTraceProvenance,
     SavedRevisionTraceProvenance,
     TraceProvenance,
+    TraceProvenanceAlignmentError,
     TraceProvenanceSource,
     request_route_provenance,
 )
@@ -3105,12 +3107,45 @@ class ConsoleAgentTraceRequestFactory:
             capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
         )
 
+    def verify_child_route(self, prepared: Any) -> None:
+        """Fail closed unless a prepared child request names the spawning turn.
+
+        Args:
+            prepared: The ``PreparedProviderRequest`` about to be dispatched.
+
+        Raises:
+            TraceProvenanceAlignmentError: If its route does not carry exactly
+                the revision this factory derives for the spawning turn.
+        """
+
+        provenance = prepared.semantic.provenance
+        routes = (
+            ()
+            if provenance is None
+            else tuple(
+                item
+                for item in provenance.metadata
+                if type(item) is RequestRouteTraceProvenance
+            )
+        )
+        if len(routes) != 1 or routes[0].parent_revision_id != self._turn_revision_id():
+            raise TraceProvenanceAlignmentError(
+                "child call route does not name the spawning turn"
+            )
+
     def _turn_revision_id(self) -> str:
-        """Return the spawning turn: the last user row's saved revision."""
+        """Return the spawning turn's saved user revision.
+
+        The factory is built per turn from the request the parent run was
+        admitted with, so that request's last user row IS the spawning turn;
+        no separate turn id is available here. Fails closed when that row
+        has no single saved revision.
+        """
 
         provenance = self.admitted_request.provenance
         assert provenance is not None
         rows = self.admitted_request.flattened_messages()
+
         def saved(descriptor: TraceProvenance) -> Iterator[str]:
             if type(descriptor) is SavedRevisionTraceProvenance:
                 yield descriptor.revision_id

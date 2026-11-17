@@ -384,6 +384,8 @@ def chat_call_impl(
                 capture_mode=self._capture_mode,
                 **review_prepare_kwargs,
             )
+            if is_subagent:
+                self._trace_request_factory.verify_child_route(dispatch_messages)
             if not is_subagent and call_groups:
                 dispatch_messages = bridge.dataclass_replace(
                     dispatch_messages, live_native_custody=self._live_native_custody
