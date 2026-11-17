@@ -563,8 +563,8 @@ async def test_find_toggle_keeps_body_parse_and_focus(monkeypatch):
             ]
             return screen._media_state.find_open and len(bars) == 1
 
-        screen._toggle_library_media_find()
-        screen._toggle_library_media_find()
+        screen._media_controller._toggle_library_media_find()
+        screen._media_controller._toggle_library_media_find()
         await _wait_for_condition(
             pilot, bar_matches_state, message="Reopened Find has no live bar"
         )
