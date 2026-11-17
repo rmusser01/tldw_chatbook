@@ -131,7 +131,11 @@ whole-ChaChaNotes backup cohort. They need no sidecar owner, new source authorit
 separate data group or reference-counting service. Maintenance capture retains
 preferences and exact used bodies even when diagnostic trace capture is off.
 
-The installed v86 schema catalog includes the operational tables, immutable-row
+The installed v87 catalog adds the child trace segment link table, its three
+guards and the five owner guards recreated with the child link
+(`CHACHANOTES_V87_SCHEMAS`); disposable candidate migration runs the installed
+v86-to-v87 file through the same restricted authorizer, allowing exactly those
+objects. The v86 schema catalog includes the operational tables, immutable-row
 and marker-preservation triggers, dispatch marker, and corrected conversation FTS
 purge trigger. Retained v81–v85 catalogs stay historical. Disposable candidate
 migration executes only the installed `chachanotes_prompt_mixins.sql` through the

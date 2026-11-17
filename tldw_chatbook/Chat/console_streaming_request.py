@@ -372,6 +372,7 @@ def chat_call_impl(
                     chain_id=route_chain_id,
                     continuation_groups=call_groups,
                     thinking_owner_key=call_thinking_owner_key,
+                    child=is_subagent,
                 ),
                 route=route,
                 route_actor_id=route_actor_id,

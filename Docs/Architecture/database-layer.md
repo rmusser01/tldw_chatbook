@@ -143,6 +143,17 @@ reservation, while accepted/completed/uncertain attempts retain links and charge
 The existing restart audit requires review and cannot recover ephemeral bundles.
 Source, report and grant bodies are never stored in this link.
 
+## Spawned child trace segments (ADR-337 amendment, TASK-41310)
+
+ChaChaNotes v87 installs `chachanotes_v86_to_v87_console_trace_child_segments.sql`.
+`console_trace_child_segments` links one root-less trace segment per spawned
+child run, keyed by the child's provider-call chain, to the parent's owner and
+turn. The five owner guards (calls, events, surface nodes, surface replacements,
+response links) and `ConsoleTraceRepository.get_effective_owner` resolve a linked
+segment to its owner's root lineage. GC roots include the child segments of
+attached or retained owners, so they are collected with their owner after
+detachment. Fork lineage is unchanged: a child segment is never a fork parent.
+
 ## Operational Console prompt mix-ins (ADR-286)
 
 ChaChaNotes v86 installs `chachanotes_prompt_mixins.sql`. The caller-cursor

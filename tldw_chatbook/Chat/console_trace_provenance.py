@@ -468,6 +468,9 @@ class RequestRouteTraceProvenance:
     predicate: str = ""
     actor_id: str | None = field(default=None, repr=False)
     chain_id: str | None = field(default=None, repr=False)
+    # A spawned child's call: the saved user revision of the spawning turn.
+    # The child's own rows carry no saved revision (TASK-41310).
+    parent_revision_id: str | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if type(self.route) is not ConsoleRequestRoute:
@@ -494,6 +497,12 @@ class RequestRouteTraceProvenance:
             raise TraceProvenanceAlignmentError(
                 "actor and chain identity are not valid for this route"
             )
+        if self.parent_revision_id is not None:
+            if not record.actor_chain_required:
+                raise TraceProvenanceAlignmentError(
+                    "a child call needs an actor and chain route"
+                )
+            SemanticRevisionRef(self.parent_revision_id)
 
 
 def request_route_provenance(
@@ -501,6 +510,7 @@ def request_route_provenance(
     *,
     actor_id: str | None = None,
     chain_id: str | None = None,
+    parent_revision_id: str | None = None,
 ) -> RequestRouteTraceProvenance:
     """Build the structural route descriptor from the closed route census."""
 
@@ -512,6 +522,7 @@ def request_route_provenance(
         record.predicate,
         actor_id=actor_id,
         chain_id=chain_id,
+        parent_revision_id=parent_revision_id,
     )
 
 
@@ -539,6 +550,7 @@ def stream_fallback_route_provenance(
             ConsoleRequestRoute.TOOL_LOOP,
             actor_id=original.actor_id,
             chain_id=original.chain_id,
+            parent_revision_id=original.parent_revision_id,
         )
     return request_route_provenance(ConsoleRequestRoute.LLAMA_FALLBACK)
 

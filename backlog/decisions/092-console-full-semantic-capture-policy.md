@@ -171,6 +171,15 @@ data-loss consequences and requires a separate decision.
   delivery, transcript, metadata, summary, tool-result, and logging boundaries except
   for the explicit Full exchange-capture allowance recorded here.
 
+## Amendment 2026-11-17 (owner decision, TASK-41310): surviving fleet calls are traced in their own segment
+
+Decision 3 includes a spawned child's calls. Until this amendment the semantic
+trace ledger could not own them, so Capture On refused every child request and
+the child failed. They are now captured under the parent's owner and turn, each
+child run in its own segment, with the run's frozen detail and policy. Where the
+segment lives and how it is retained is
+[ADR-337's 2026-11-17 amendment](337-console-reference-backed-semantic-trace-ledger.md).
+
 ## Links
 
 - [Approved design](../../Docs/superpowers/specs/2026-08-26-console-full-semantic-capture-design.md)

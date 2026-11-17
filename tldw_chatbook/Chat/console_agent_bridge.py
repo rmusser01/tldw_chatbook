@@ -21,7 +21,7 @@ import time
 from collections import deque
 from collections.abc import Awaitable
 from concurrent.futures import TimeoutError as FuturesTimeoutError  # noqa: F401 - lazy request helper compatibility seam
-from collections.abc import Collection, Mapping, Set as AbstractSet
+from collections.abc import Collection, Iterator, Mapping, Set as AbstractSet
 from dataclasses import dataclass, field, replace as dataclass_replace
 from pathlib import Path
 from types import MappingProxyType
@@ -3024,12 +3024,18 @@ class ConsoleAgentTraceRequestFactory:
         chain_id: str,
         continuation_groups: Sequence[ContinuationOwnerGroup] = (),
         thinking_owner_key: str | None = None,
+        child: bool = False,
     ) -> PreparedConsoleRequest:
-        """Bind current agent rows to admitted references or new artifacts."""
+        """Bind current agent rows to admitted references or new artifacts.
+
+        A spawned child's rows are its own: none may borrow the parent's
+        saved references, even a byte-equal task. Its route instead names
+        the spawning turn, whose owner traces the child in its own segment.
+        """
 
         provenance = self.admitted_request.provenance
         assert provenance is not None
-        base_rows = self.admitted_request.flattened_messages()
+        base_rows = () if child else self.admitted_request.flattened_messages()
         base_descriptors = provenance.flattened_messages()
         thinking_owners = {
             group.owner_message_id
@@ -3092,11 +3098,35 @@ class ConsoleAgentTraceRequestFactory:
                     route,
                     actor_id=actor_id,
                     chain_id=chain_id,
+                    parent_revision_id=self._turn_revision_id() if child else None,
                 ),
             ),
             capture_policy=provenance.capture_policy,
             capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
         )
+
+    def _turn_revision_id(self) -> str:
+        """Return the spawning turn: the last user row's saved revision."""
+
+        provenance = self.admitted_request.provenance
+        assert provenance is not None
+        rows = self.admitted_request.flattened_messages()
+        def saved(descriptor: TraceProvenance) -> Iterator[str]:
+            if type(descriptor) is SavedRevisionTraceProvenance:
+                yield descriptor.revision_id
+            elif type(descriptor) is DerivedTraceProvenance:
+                for nested in descriptor.inputs:
+                    yield from saved(nested)
+
+        for row, descriptor in zip(
+            reversed(rows), reversed(provenance.flattened_messages()), strict=True
+        ):
+            ids = tuple(dict.fromkeys(saved(descriptor)))
+            if row.get("role") == "user" and ids:
+                if len(ids) != 1:
+                    break
+                return ids[0]
+        raise ValueError("trace_turn_unavailable")
 
 
 def _stall_timeout_seconds() -> float:

@@ -1146,7 +1146,9 @@ _BUDGETS: dict[str, int] = {
     # raises the row): crosses 4000 at 4017, exact measurement. The owner-
     # approved child trace segments (ADR-337 amendment 2026-11-17): create and
     # read a child run's segment, and its owner resolution.
-    "tldw_chatbook/Chat/console_trace_repository.py": 4017,
+    # 2026-11-17, TASK-41310 B: 4017 -> 4021 (+4), exact measurement. A
+    # child's open calls never block the parent's turn.
+    "tldw_chatbook/Chat/console_trace_repository.py": 4021,
     "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,
     "tldw_chatbook/MCP/unified_control_plane_service.py": 6049,
