@@ -305,9 +305,9 @@ def console_mcp_unavailable_reason(service: Any) -> str:
     """
     if service is None or not unbound_console_sources(service):
         return ""
-    # ponytail: one reason; a platform without pinned I/O (none supported)
-    # would need its own copy.
-    return "store isn't in this profile's data folder"
+    # One reason true for every skip in ``mcp_source_participants.bind``
+    # (no pinned I/O, no config cache, another config source or path).
+    return "this profile's MCP settings file can't be used here"
 
 
 def standard_console_catalog_sources(service: Any, *, _include_log: bool = True) -> bool:

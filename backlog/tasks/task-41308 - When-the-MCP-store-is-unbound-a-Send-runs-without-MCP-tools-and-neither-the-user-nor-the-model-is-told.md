@@ -119,3 +119,11 @@ ADR required: no. The change is display copy plus, at most, one model-facing lin
 - Tests: `Tests/UI/test_console_send_without_mcp_store.py`, `Tests/Chat/test_console_display_state.py`, `Tests/UI/test_console_internals_decomposition.py`, `Tests/Chat/test_console_configuration_preparation.py` (docstring).
 - Docs: `Docs/User_Guide/console/agent-runs-and-tools.md` (MCP tools section).
 
+
+**Review round.**
+- *Ready-inspector test.* `test_console_ready_inspector_shows_run_recipe_and_operational_groups` now builds a bound store (`_build_bound_mcp_test_app`) and opens the rail first. Its earlier red (`'Run recipe' in ''`) was the closed rail, not the bootstrap trap; it passes on head. An "off" row deliberately makes the Tools group actionable (it is not in `inspector_group_is_actionable`'s non-actionable set), so Tools leaves "More" and the user sees why MCP is off without opening anything.
+- *Row visibility.* `_mcp_row_text` asserts the row is outside `#console-inspector-more-body` and has a painted region.
+- *Copy.* One reason, true for every `bind()` skip (no pinned I/O, no config cache, another config source or path): "this profile's MCP settings file can't be used here". Tests and User Guide updated.
+- *Kill switch (not implemented, by design).* Showing the user's kill-switch choice instead of the reason needs the switch value. At mount that is a UI-thread disk read (`get_kill_switch` -> `load()`), which the owner ruling forbids, and a Send never publishes it for an unbound store: `console_configuration_preparation` sets `mcp = None` for unbound sources before any kill-switch read, so `composed_switch` is None. Tried plumbing a published flag; the post-Send row still said off. Reverted. `test_inspector_keeps_the_unbound_reason_when_the_kill_switch_is_on` pins that the reason shows, which is true: MCP is off either way.
+- *First derive imports* `MCP.console_snapshot` on the UI thread (about 8 ms once); accepted.
+- *User Guide.* States the path rule (`<[paths] data_dir>/<[general] users_name>/local_mcp_store.json`, default data folder when unset), checked against `profile_paths.user_data_dir`/`data_base` and `mcp_source_participants.bind`.

@@ -195,8 +195,16 @@ async def test_draft_snapshot_sends_without_a_bound_mcp_store(
 
 
 def _mcp_row_text(console) -> str | None:
+    """The MCP row's text when it is on screen: mounted, outside the closed
+    "More" disclosure, with a painted region. ``None`` when it is absent."""
     rows = list(console.query("#console-inspector-mcp").results(Static))
-    return str(rows[0].renderable) if rows else None
+    if not rows:
+        return None
+    row = rows[0]
+    more = list(console.query("#console-inspector-more-body"))
+    assert not any(body in row.ancestors for body in more), "MCP row under More"
+    assert row.region.width > 0 and row.region.height > 0, "MCP row not painted"
+    return str(row.renderable)
 
 
 @pytest.mark.asyncio
@@ -204,7 +212,11 @@ def _mcp_row_text(console) -> str | None:
 async def test_inspector_mcp_row_says_off_and_why_when_the_store_is_unbound(
     monkeypatch, tmp_path, profile
 ):
-    """TASK-41308: before and after a Send, an unbound store shows the row."""
+    """TASK-41308: before and after a Send, an unbound store shows the row.
+
+    The off row makes the Tools group actionable, so it sits above "More"
+    where the user sees it without opening anything.
+    """
     kwargs = {}
     if profile == "no-pinned-io":
         _bind_without_pinned_io(monkeypatch)
@@ -219,7 +231,7 @@ async def test_inspector_mcp_row_says_off_and_why_when_the_store_is_unbound(
     off = (
         None
         if profile == "bound"
-        else "MCP: off · store isn't in this profile's data folder"
+        else "MCP: off · this profile's MCP settings file can't be used here"
     )
 
     async with host.run_test(size=(196, 48)) as pilot:
@@ -241,3 +253,27 @@ async def test_inspector_mcp_row_says_off_and_why_when_the_store_is_unbound(
     assert after == off
     assert gateway.offered_tools == [None]
 
+
+@pytest.mark.asyncio
+async def test_inspector_keeps_the_unbound_reason_when_the_kill_switch_is_on(tmp_path):
+    """The store reason wins over the user's MCP kill switch (TASK-41308).
+
+    Turning the switch off would not bring MCP back while the store cannot be
+    used, so the row names the cause that stays. Nothing may show the switch
+    instead: a mount-time read is a UI-thread disk read, and a Send never
+    reads it for an unbound store (the preparation drops MCP first), so no
+    published state carries it.
+    """
+    app = _build_console_send_test_app(user_data_dir=tmp_path)
+    app.unified_mcp_service.set_kill_switch(True)
+    assert app.unified_mcp_service.get_kill_switch() is True
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await _open_console_inspector(console, pilot)
+        await _wait_for_selector(console, pilot, "#console-inspector-mcp")
+        text = _mcp_row_text(console)
+
+    assert text == "MCP: off · this profile's MCP settings file can't be used here"
