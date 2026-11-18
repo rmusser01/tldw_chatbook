@@ -108,6 +108,7 @@ VALID_TABLES = {
         "console_hook_continuation_receipts",
         "console_trace_artifacts",
         "console_trace_calls",
+        "console_trace_child_segments",
         "console_trace_compaction_state",
         "console_trace_events",
         "console_trace_graph_epoch",

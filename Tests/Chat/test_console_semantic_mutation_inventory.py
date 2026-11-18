@@ -638,7 +638,7 @@ _DYNAMIC_TARGET_EVIDENCE_FINGERPRINTS = {
     ),
     "tldw_chatbook/Chat/console_trace_maintenance.py::"
     "TraceGarbageCollector._sweep_unmarked": (
-        "45c1c48440ae2fbe9927a8e42048df436e47f36effe4c4dc734e983893da5544"
+        "c5b7f107be958505025397d4ec4e090ad60a0061b8a20b52c353c92054bcaa58"
     ),
     "tldw_chatbook/Scheduling/db/scheduled_tasks_db.py::"
     "ScheduledTasksDB.set_transfer_state": (
@@ -876,6 +876,7 @@ _PROVEN_NON_SEMANTIC_DYNAMIC_SQL = dict(
                 {
                     "console_trace_artifacts",
                     "console_trace_calls",
+                    "console_trace_child_segments",
                     "console_trace_events",
                     "console_trace_header_components",
                     "console_trace_owners",

@@ -80,7 +80,7 @@ def test_historical_candidate_migrates_without_touching_source(tmp_path, version
             connection.execute(
                 "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
             ).fetchone()[0]
-            == 86
+            == 87
         )
         assert (
             read_attempt(connection.cursor(), cid, attempt_id="legacy").status
