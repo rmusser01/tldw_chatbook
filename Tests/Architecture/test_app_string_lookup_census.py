@@ -21,27 +21,31 @@ enclosing function or lambda, or the module), an enclosing loop's item (nested
 loops and comprehensions included), a dict lookup (``D[key]``,
 ``D.get(key, default)``) or a same-module function's return value, composed in
 any order. Every ``=`` to the name in that scope counts, whatever its order or
-branch, unless an enclosing loop binds the same name (the loop wins). Those
-literals count as lookups in the pins and the private-name rule, so moving a
-literal lookup into one is not a reduction (TASK-40141). A literal counts once
-per lookup that can read it, so a dict read at eight sites counts its values
-eight times.
+branch. Since TASK-41641 the follower also takes both branches of a conditional
+expression (``"a" if x else "b"``); counts an enclosing ``for`` statement's
+items and its function's ``=`` to the same name (a ``for`` variable is the
+function's; a comprehension's is its own); and follows ``global`` and
+``nonlocal``: a function that declares the name ``global`` reads the module's,
+one that declares it ``nonlocal`` reads the enclosing function's, and every
+``=`` from a function that rebinds the name that way counts. Those literals
+count as lookups in the pins and the private-name rule, so moving a literal
+lookup into one is not a reduction (TASK-40141). A literal counts once per
+lookup that can read it, so a dict read at eight sites counts its values eight
+times.
 
-Not followed, because TASK-41318 did not name them (follow one if a literal
-moves there): conditional and boolean expressions (``"a" if x else "b"``,
-``x or "y"``), parameter defaults, a parameter reassigned in its function, a
-function's returned parameter (the caller's argument), iterating a dict or its
-``.items()``, tuple subscripts, ``*``/``**`` unpacking inside a literal, a
-comprehension used as a loop's iterable, a loop variable read after its loop,
-names imported from another module, class attributes, functions defined in
-another module, a ``global``/``nonlocal`` rebinding from another function, a
-function's ``=`` to a name an enclosing loop also binds, and bindings other
-than a plain ``=`` (tuple unpacking, ``with``/``except``/``import`` targets,
-``match`` captures, walrus, augmented). A name bound only those ways still
-shadows a module-level one. A lookup whose own argument is an UPPER_CASE
-constant is not followed either: its row in the record names the attribute it
-reaches. A constant reached any other way (``x = CONST``, a dict holding one)
-is followed.
+Not followed, because TASK-41318 and TASK-41641 did not name them (follow one
+if a literal moves there): boolean expressions (``x or "y"``), parameter
+defaults, a parameter reassigned in its function, a function's returned
+parameter (the caller's argument), iterating a dict or its ``.items()``, tuple
+subscripts, ``*``/``**`` unpacking inside a literal, a comprehension used as a
+loop's iterable, a loop variable read after its loop, names imported from
+another module, class attributes, functions defined in another module, and
+bindings other than a plain ``=`` (tuple unpacking, ``with``/``except``/
+``import`` targets, ``match`` captures, walrus, augmented). A name bound only
+those ways still shadows a module-level one. A lookup whose own argument is an
+UPPER_CASE constant is not followed either: its row in the record names the
+attribute it reaches. A constant reached any other way (``x = CONST``, a dict
+holding one) is followed.
 
 Every lookup whose name is not a literal, and every ``setattr``/``delattr`` on
 the app whose name is not a literal (TASK-41318), is also recorded in
@@ -183,6 +187,13 @@ def _unpacked(target: ast.expr, name: str) -> int | None:
     return -2
 
 
+def _locals(scope: ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda) -> set[str]:
+    """The names a function or lambda binds: its parameters and :func:`_bound_names`."""
+    args = scope.args
+    params = [*args.posonlyargs, *args.args, *args.kwonlyargs, args.vararg, args.kwarg]
+    return {a.arg for a in params if a} | _bound_names(scope)
+
+
 class _Follower:
     """Follows a name in one module to the expressions it can hold (TASK-41318)."""
 
@@ -191,12 +202,44 @@ class _Follower:
         tree: ast.Module,
         scopes: list[ast.AST],
         params: defaultdict[str, set[tuple[int | None, str]]],
+        declarations: list[ast.Global | ast.Nonlocal],
     ) -> None:
         self.tree, self.scopes, self.params = tree, scopes, params
         self.defs: defaultdict[str, list[ast.AST]] = defaultdict(list)
         for scope in scopes:
             if isinstance(scope, _FUNCTIONS):
                 self.defs[scope.name].append(scope)
+        # TASK-41641: the function each ``global``/``nonlocal`` name is declared in.
+        self.declared: dict[tuple[int, str], type] = {}
+        self.rebinders: defaultdict[str, list[ast.AST]] = defaultdict(list)
+        for statement in declarations:
+            function = next((s for s in self._chain(statement) if isinstance(s, _FUNCTIONS)), None)
+            for name in statement.names if function else ():
+                self.declared[id(function), name] = type(statement)
+                self.rebinders[name].append(function)
+
+    def _owner(self, chain: list[ast.AST], name: str) -> ast.AST:
+        """The function (or the module) whose variable ``name`` is, from its enclosing scopes."""
+        for scope in chain:
+            if isinstance(scope, (*_FUNCTIONS, ast.Lambda)):
+                declared = self.declared.get((id(scope), name))
+                if declared is ast.Global:
+                    break
+                if declared is None and name in _locals(scope):
+                    return scope
+        return self.tree
+
+    def _assigned(self, owner: ast.AST, name: str) -> list[ast.expr]:
+        """The ``=`` values of ``owner``'s variable ``name``.
+
+        They include a nested function's ``=`` through ``nonlocal`` and, for
+        the module, any function's ``=`` through ``global`` (TASK-41641).
+        """
+        values = _assigned(owner, name)
+        for function in self.rebinders.get(name, ()):
+            if self._owner(self._chain(function), name) is owner:
+                values += _assigned(function, name)
+        return values
 
     def _chain(self, node: ast.expr) -> list[ast.AST]:
         """The scopes that can bind a name at ``node``, innermost first.
@@ -233,8 +276,14 @@ class _Follower:
         (its call sites' literals count); a returned parameter does not.
         """
         name = node.id
-        for scope in self._chain(node):
+        chain = self._chain(node)
+        for position, scope in enumerate(chain):
             if isinstance(scope, (*_FUNCTIONS, ast.Lambda)):
+                declared = self.declared.get((id(scope), name))
+                if declared is ast.Global:
+                    break
+                if declared is ast.Nonlocal:
+                    continue
                 args = scope.args
                 if spec := _parameter(scope, name):
                     if helper and not isinstance(scope, ast.Lambda):
@@ -243,26 +292,32 @@ class _Follower:
                 if name in (a.arg for a in (args.vararg, args.kwarg) if a):
                     return []
                 if name in _bound_names(scope):
-                    return _assigned(scope, name)
+                    return self._assigned(scope, name)
             elif (index := _unpacked(scope.target, name)) is not None:
+                # A ``for`` statement's variable is its function's (or the
+                # module's), so that variable's ``=`` reach it too (TASK-41641).
+                # A comprehension's variable is its own.
+                found = []
+                if isinstance(scope, (ast.For, ast.AsyncFor)):
+                    found = self._assigned(self._owner(chain[position + 1 :], name), name)
                 if index == -2:
-                    return []
+                    return found
                 iterated = self.values(scope.iter, seen, helper)
                 items = [e for i in iterated for e in getattr(i, "elts", ())]
                 if index == -1:
-                    return items
-                return [
+                    return items + found
+                return found + [
                     v.elts[index]
                     for item in items
                     for v in self.values(item, seen, helper)
                     if len(getattr(v, "elts", ())) > index
                 ]
-        return _assigned(self.tree, name)
+        return self._assigned(self.tree, name)
 
     def values(
         self, expr: ast.expr, seen: frozenset[int] = frozenset(), helper: bool = True
     ) -> list[ast.expr]:
-        """What ``expr`` can evaluate to, through names, dicts and returns."""
+        """What ``expr`` can evaluate to, through names, dicts, returns and conditionals."""
         if id(expr) in seen:
             return []
         seen |= {id(expr)}
@@ -276,6 +331,8 @@ class _Follower:
 
         if type(expr) is ast.Name:
             return follow(self._bindings(expr, seen, helper))
+        if type(expr) is ast.IfExp:
+            return follow([expr.body, expr.orelse])
         if type(expr) is ast.Subscript:
             return follow(dict_values(expr.value))
         if type(expr) is ast.Call:
@@ -320,6 +377,7 @@ def _scan(
         package = ("tldw_chatbook", *rel.parts[:-1])
         module = ".".join(package if rel.stem == "__init__" else (*package, rel.stem))
         scopes: list[ast.AST] = []
+        declarations: list[ast.Global | ast.Nonlocal] = []
         followed: list[ast.expr] = []
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
@@ -335,6 +393,8 @@ def _scan(
                     for name in [target] if simple else ast.walk(target):
                         if key := _receiver(name):
                             bound[module][key].add(value)
+            elif kind in (ast.Global, ast.Nonlocal):
+                declarations.append(node)
             elif kind is ast.ImportFrom:
                 source = node.module.split(".") if node.module else []
                 if node.level:
@@ -365,8 +425,9 @@ def _scan(
                         followed.append(arg)
         # The literals a lookup's name can hold, each once: through a helper's
         # parameter (counted at its call sites below), a loop, an assignment, a
-        # dict lookup or a same-module function's return value.
-        follower = _Follower(tree, scopes, params)
+        # dict lookup, a same-module function's return value or a conditional
+        # expression.
+        follower = _Follower(tree, scopes, params, declarations)
         for arg in followed:
             for value in {id(v): v for v in follower.values(arg)}.values():
                 count(pkg, value)
@@ -561,7 +622,38 @@ _HELPERS = (
     "    pick = lambda: getattr(app, closed, None)\n"
     '    enclosed = "media_db"\n\n'
     "    def inner():\n"
-    "        return getattr(app, enclosed, None)\n"
+    "        return getattr(app, enclosed, None)\n\n"
+    # The name sources TASK-41641 follows, each feeding one lookup.
+    "def chooses(app, kind):\n"
+    '    chose = "media_db" if kind else "notes_db"\n'
+    "    getattr(app, chose, None)\n\n"
+    "def loops(app, kind):\n"
+    '    for looped in ("notes_db",):\n'
+    "        if kind:\n"
+    '            looped = "media_db"\n'
+    "        getattr(app, looped, None)\n\n"
+    'chosen = "media_db"\n\n'
+    "def configure(kind):\n"
+    "    global chosen\n"
+    '    chosen = "notes_db"\n\n'
+    "def read_chosen(app):\n"
+    "    return getattr(app, chosen, None)\n\n"
+    'counter = "media_db"\n\n'
+    "def bump(app):\n"
+    "    global counter\n"
+    '    counter = "notes_db"\n'
+    "    return getattr(app, counter, None)\n\n"
+    "def outer(app):\n"
+    '    picked = "media_db"\n\n'
+    "    def choose():\n"
+    "        nonlocal picked\n"
+    '        picked = "notes_db"\n\n'
+    "    getattr(app, picked, None)\n"
+    '    held = "media_db"\n\n'
+    "    def use():\n"
+    "        nonlocal held\n"
+    '        held = "notes_db"\n'
+    "        return getattr(app, held, None)\n"
 )
 
 
@@ -597,6 +689,23 @@ _HELPERS = (
         _HELPERS.replace(
             '    enclosed = "media_db"\n', '    enclosed = "media_db"\n    enclosed = "_planted_private"\n'
         ),
+        _HELPERS.replace(
+            '"media_db" if kind else "notes_db"',
+            '"media_db" if kind else "notes_db" if kind is None else "_planted_private"',
+        ),
+        _HELPERS.replace(
+            '            looped = "media_db"\n',
+            '            looped = "media_db"\n            looped = "_planted_private"\n',
+        ),
+        _HELPERS.replace(
+            '    chosen = "notes_db"\n', '    chosen = "notes_db"\n    chosen = "_planted_private"\n'
+        ),
+        _HELPERS.replace('counter = "media_db"\n', 'counter = "media_db"\ncounter = "_planted_private"\n'),
+        _HELPERS.replace(
+            '        picked = "notes_db"\n',
+            '        picked = "notes_db"\n        picked = "_planted_private"\n',
+        ),
+        _HELPERS.replace('    held = "media_db"\n', '    held = "media_db"\n    held = "_planted_private"\n'),
     ],
     ids=[
         "helper",
@@ -613,12 +722,19 @@ _HELPERS = (
         "call-cycle",
         "lambda-closure",
         "nested-def-closure",
+        "conditional-expression",
+        "enclosing-loop-assignment",
+        "global-rebinding",
+        "global-read",
+        "nonlocal-rebinding",
+        "nonlocal-read",
     ],
 )
 def test_a_literal_moved_into_a_helper_or_loop_is_still_counted(
     tmp_path: Path, moved: str
 ) -> None:
-    """A literal moved into a helper, loop, dict, tuple or return is not a reduction (I1)."""
+    """A literal moved into a helper, loop, dict, tuple, return, conditional or
+    ``global``/``nonlocal`` binding is not a reduction (I1, TASK-41641)."""
     before = _plant(tmp_path, {"UI/helpers.py": _HELPERS, "UI/planted.py": _LITERAL})
     planted = {"UI/planted.py": moved}
     if moved.startswith("def _optional"):
@@ -653,6 +769,14 @@ _SHADOWED = 'attr = "_planted_private"\n\n'
         "    def inner():\n        getattr(app, attr, None)\n",
         "def ident(name):\n    return name\n\ndef f(app, n):\n    getattr(app, ident(n), None)\n\n"
         'def g():\n    ident("_planted_private")\n',
+        'def other():\n    attr = "x"\n\n    def inner():\n        nonlocal attr\n'
+        '        attr = "_planted_private"\n\ndef f(app):\n    attr = "media_db"\n'
+        "    getattr(app, attr, None)\n",
+        'def setter():\n    global attr\n    attr = "_planted_private"\n\n'
+        'def f(app):\n    attr = "media_db"\n    getattr(app, attr, None)\n',
+        'attr = "media_db"\n\ndef f(app):\n    for attr in ("_planted_private",):\n\n'
+        "        def inner():\n            global attr\n            getattr(app, attr, None)\n",
+        'def f(app):\n    x = "_planted_private"\n    [getattr(app, x, None) for x in ("media_db",)]\n',
     ],
     ids=[
         "other-function",
@@ -666,6 +790,10 @@ _SHADOWED = 'attr = "_planted_private"\n\n'
         "match-mapping-rest",
         "enclosing-function",
         "returned-parameter",
+        "another-functions-nonlocal",
+        "another-functions-global",
+        "global-skips-enclosing-loop",
+        "comprehension-variable-not-the-functions",
     ],
 )
 def test_a_literal_the_name_cannot_hold_is_not_counted(tmp_path: Path, source: str) -> None:
@@ -673,7 +801,8 @@ def test_a_literal_the_name_cannot_hold_is_not_counted(tmp_path: Path, source: s
 
     A function that binds the name in any way shadows the module's binding, a
     comprehension's loop variable is its own, and a returned parameter does
-    not make its function a lookup helper.
+    not make its function a lookup helper. A ``global``/``nonlocal`` rebinding
+    reaches only the variable it names (TASK-41641).
     """
     assert "_planted_private" not in _plant(tmp_path, {"UI/scoped.py": source})[1]
 
