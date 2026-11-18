@@ -37,11 +37,14 @@ def capture_definitions(entries):
 
 def definitions_current(records):
     for owner, name, outer, functions in records:
-        current = (
-            owner.get(name)
-            if type(owner) is dict
-            else inspect.getattr_static(owner, name)
-        )
+        if type(owner) is dict:
+            current = owner.get(name)
+        elif type(owner) is type and outer is not None and vars(owner).get(name) is outer:
+            # Only the live, identical direct entry bypasses the static MRO walk.
+            # Changed, inherited and custom-metaclass entries keep its semantics.
+            current = outer
+        else:
+            current = inspect.getattr_static(owner, name)
         if current is not outer:
             return False
         for function, code, defaults, keywords, items, closure, values in functions:
@@ -50,12 +53,12 @@ def definitions_current(records):
                 or function.__defaults__ is not defaults
                 or function.__kwdefaults__ is not keywords
                 or len(keywords or ()) != len(items)
-                or any(
+                or (type(items) is not tuple or items) and any(
                     name not in keywords or keywords[name] is not value
                     for name, value in items
                 )
                 or function.__closure__ is not closure
-                or any(
+                or (closure is not None or type(values) is not tuple or values) and any(
                     cell.cell_contents is not value
                     for cell, value in zip(closure or (), values, strict=True)
                 )
