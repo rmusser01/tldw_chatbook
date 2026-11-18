@@ -599,6 +599,10 @@ def test_native_persona_retirement_keeps_ancestor_exclusion(
 #   nested-target   restore that backup into a profile holding another pack,
 #                   so the restore creates a pack folder inside each existing
 #                   root, then roll the restore back (TASK-41113)
+# The created-source profile also holds every single-file owner of
+# later_rollback._CREATED_FILE_OWNERS besides the persona store: created-target
+# has none, so the restore creates each, and nested-target holds its own copy
+# of each, which the rollback must bring back (TASK-41521).
 _ACTOR_TREES_ROLLBACK = r"""
 import hashlib,json,os,subprocess,sys
 from pathlib import Path
@@ -724,7 +728,37 @@ def roll_back(service,operation,root,expected):
     assert final.complete,final.issues
 
 # The populated workspace and agent-run stores link to the ChaChaNotes core.
-groups=('conversations','workspaces')
+# The single files' owners add Audio, Saved chatbooks and Prompts (TASK-41521).
+groups=('conversations','workspaces') if route=='changed' else ('audio','chatbooks','conversations','prompts','workspaces')
+SINGLE_FILES={
+    'audio.history':'tldw_chatbook_audio_history.json',
+    'chat.dictionary_history':'tldw_chatbook_chat_dictionary_history.json',
+    'chat.grammars':'tldw_chatbook_chat_grammars.json',
+    'chat.prompt_history':'prompt_history.jsonl',
+    'chat.rag_context':'tldw_chatbook_chat_rag_context.json',
+    'chatbooks.registry':'tldw_chatbook_chatbooks.json',
+    'feedback':'tldw_chatbook_feedback.json',
+    'notes.templates':'note_templates.json',
+}
+
+def single_files(root):
+    # Note templates live beside the config file, the rest in the data folder.
+    return {owner:(source.parent if owner=='notes.templates' else root)/leaf for owner,leaf in SINGLE_FILES.items()}
+
+def read_single_files(root):
+    return {owner:path.read_text() if path.exists() else None for owner,path in single_files(root).items()}
+
+def write_single_files(root,tag):
+    for owner,path in single_files(root).items():
+        if owner=='chatbooks.registry':
+            # One metadata-only entry, in the layout capture and restore
+            # rewrite the registry to, so a restored copy reads back equal.
+            text=json.dumps({'records':[{'title':tag}]},ensure_ascii=False,indent=2)
+        else:
+            text=json.dumps({'owner':owner,'from':tag})
+        path.write_text(text);path.chmod(0o600)
+    return read_single_files(root)
+
 shared=Path.home().parent.parent/'created-source'/'home'
 service=RecoveryService(Path.home()/'recovery-control')
 try:
@@ -750,21 +784,28 @@ try:
     elif route=='created-source':
         first=produce('prepare','123e4567-e89b-42d3-a456-426614174000')
         root=Path(first['root'])
+        files=write_single_files(root,'source')
         backup(service,root,Path.home()/'created.tldw-backup.zip')
         (Path.home()/'created-trees.json').write_text(json.dumps(trees(root)))
+        (Path.home()/'created-files.json').write_text(json.dumps(files))
     elif route=='created-target':
         root=Path(produce('populate')['root'])
         store=root/'tldw_chatbook_personas.json'
         assert not (root/'actor_packs').exists() and not (root/'visual_identities').exists()
         assert not store.exists()
+        assert set(read_single_files(root).values())=={None},read_single_files(root)
         operation=restore(service,shared/'created.tldw-backup.zip')
         incoming=json.loads((shared/'created-trees.json').read_text())
         assert incoming and trees(root)==incoming,'restore did not create both trees'
         assert store.is_file(),'restore did not create the persona store'
-        # The prior state had neither tree nor a persona store: the rollback
-        # retires what the restore created.
+        files=json.loads((shared/'created-files.json').read_text())
+        assert read_single_files(root)==files,'restore did not create the single files'
+        # The prior state had neither tree, nor a persona store, nor any of the
+        # single files: the rollback retires what the restore created.
         roll_back(service,operation,root,{})
         assert not store.exists(),'rollback kept the created persona store'
+        kept={owner for owner,text in read_single_files(root).items() if text is not None}
+        assert not kept,'rollback kept created single files: '+repr(sorted(kept))
     else:
         assert route=='nested-target',route
         root=Path(produce('prepare','223e4567-e89b-42d3-a456-426614174000')['root'])
@@ -774,15 +815,20 @@ try:
         # retiring it as restore-created (TASK-41113 review).
         store=root/'tldw_chatbook_personas.json'
         own=store.read_bytes()
+        own_files=write_single_files(root,'target')
         incoming=json.loads((shared/'created-trees.json').read_text())
         assert before and not set(before)&set(incoming),(before,incoming)
         operation=restore(service,shared/'created.tldw-backup.zip')
         assert trees(root)==incoming,'restore did not replace the target pack'
         assert store.read_bytes()!=own,'restore did not replace the own persona store'
+        assert read_single_files(root)==json.loads((shared/'created-files.json').read_text()),'restore did not replace the own single files'
         # The restore created the source's pack folder inside each existing
         # root and retired the target's own; the rollback reverses both.
         roll_back(service,operation,root,before)
         assert store.is_file() and store.read_bytes()==own,'rollback lost the own persona store'
+        # Only a file the restore created is retired: each one it replaced
+        # comes back (TASK-41521).
+        assert read_single_files(root)==own_files,'rollback lost an own single file'
 finally:
     service.close()
 assert not network_guard.blocked_attempts()
@@ -813,7 +859,9 @@ def test_later_rollback_of_a_restore_that_changed_actor_pack_trees(tmp_path):
 def test_later_rollback_of_a_restore_that_created_actor_pack_trees(tmp_path):
     """TASK-40305 AC2: restore a backup holding both trees into a profile that
     never had either, then roll that restore back later. The rollback leaves
-    neither tree holding a file, as before the restore."""
+    neither tree holding a file, as before the restore, and retires the
+    persona store and the single files the restore created (TASK-41113,
+    TASK-41521)."""
     from Tests.Backup_Recovery.test_home_citation_retirement import _run
 
     for name in ("created-source", "created-target"):
@@ -840,7 +888,8 @@ def test_later_rollback_of_a_restore_that_created_nested_actor_pack_folders(tmp_
     """TASK-41113 AC2: restore a backup holding one pack into a profile that
     holds another, so the restore creates the incoming pack's folder inside
     both existing roots, then roll that restore back later. Both trees come
-    back byte for byte."""
+    back byte for byte, as do the persona store and the single files the
+    restore replaced (TASK-41521)."""
     from Tests.Backup_Recovery.test_home_citation_retirement import _run
 
     for name in ("created-source", "nested-target"):

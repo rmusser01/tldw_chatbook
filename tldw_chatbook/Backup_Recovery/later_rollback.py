@@ -640,9 +640,22 @@ _CREATED_TREE_ROOT_OWNERS = frozenset(
     }
 )
 # Single-file owners whose file a restore may create, and a later rollback may
-# retire after the same proof as a created root (TASK-41113). Other one-file
-# data owners (dictionary history, RAG context, ...) can join with a test.
-_CREATED_FILE_OWNERS = frozenset({"personas"})
+# retire after the same proof as a created root (TASK-41113 for the persona
+# store, TASK-41521 for the rest). Each is a `_Definition` but the chatbook
+# registry, which is its own `_Definition` subclass.
+_CREATED_FILE_OWNERS = frozenset(
+    {
+        "personas",
+        "audio.history",
+        "chat.dictionary_history",
+        "chat.grammars",
+        "chat.prompt_history",
+        "chat.rag_context",
+        "chatbooks.registry",
+        "feedback",
+        "notes.templates",
+    }
+)
 # Artwork tree owners whose existing root a restore may add a nested pack
 # folder to, which a later rollback may retire again (TASK-41113 for the
 # Actor Pack and reaction trees).
@@ -1411,14 +1424,15 @@ def _created_destination_target(
     journal, original, prepared, rows, target, *, session=None, config_files=()
 ):
     """Reobserve only committed builtin, Actor Pack, reaction or eval roots
-    (and nested Persona packs, and the persona store file) created by this copy."""
+    (and nested Persona packs, and single files such as the persona store)
+    created by this copy."""
     from pydantic import TypeAdapter
 
     from tldw_chatbook.Evals.recovery import _DefinitionsAdapter
     from tldw_chatbook.Persona_Visual.recovery import _Assets
 
     from .activation import ActivationStore, _private
-    from .config_adapter import _Definition
+    from .config_adapter import _ChatbookRegistry, _Definition
     from .generation_witnesses import _witnesses
     from .models import DISCOVERY_CONTEXT_KEY, DiscoveryContext
     from .owner_registry import install_adapters
@@ -1490,7 +1504,9 @@ def _created_destination_target(
             or active_persona
             and type(owner) is _Assets
             or created_file
-            and type(owner) is _Definition
+            and type(owner) is (
+                _ChatbookRegistry if item.owner == "chatbooks.registry" else _Definition
+            )
         ):
             raise ValueError("local_snapshot_absence_unclassified")
         members = [item] if created_file else [

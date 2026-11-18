@@ -298,14 +298,17 @@ class PersonaActorPackCoordinator:
                     "actor_pack_recovery_clear_failed"
                 ) from None
             finally:
-                # The app's next recovery read returns this cached summary, so
-                # it must not keep naming a cleared intent (review r15ac-rev2).
-                if self._recovery_result is not None:
-                    self._recovery_result = replace(
-                        self._recovery_result,
-                        blocked_intent_ids=self._blocked_intent_ids,
-                    )
+                self._sync_recovery_summary()
         return cleared
+
+    def _sync_recovery_summary(self) -> None:
+        # The app's next recovery read returns this cached summary, so it must
+        # name exactly the blocked intents: none once cleared (review
+        # r15ac-rev2), and one quarantined mid-session (TASK-41521).
+        if self._recovery_result is not None:
+            self._recovery_result = replace(
+                self._recovery_result, blocked_intent_ids=self._blocked_intent_ids
+            )
 
     def recover(self) -> PersonaActorPackRecoveryResult:
         """Reconcile all intents before affected application surfaces mount."""
@@ -430,6 +433,7 @@ class PersonaActorPackCoordinator:
                 self._blocked_intent_ids = (retained.intent_id,)
             except ActorPackRepositoryError:
                 self._blocked_intent_ids = (intent.intent_id,)
+            self._sync_recovery_summary()
             raise PersonaActorPackCoordinatorError(
                 "actor_pack_creation_blocked"
             ) from None
