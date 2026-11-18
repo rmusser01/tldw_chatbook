@@ -890,7 +890,7 @@ jobs:
     # pr-fast-lane-admission-3, and its own pytest process and bootstrap
     # profile, as there. One more runner per PR (ADR-103 note, 2026-11-18).
     name: PR Fast Lane (admission-sensitive 4)
-    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
+    if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 35
 
@@ -1705,6 +1705,7 @@ jobs:
             Tests/Chat/test_console_variant_stream.py \
             "Tests/Performance/test_app_wiring_held_pointer_currentness.py::test_actual_stock_held_pointer_refuses_before_foreign_access[collections]" \
             "Tests/Performance/test_app_wiring_held_pointer_currentness.py::test_actual_stock_held_pointer_refuses_before_foreign_access[skill]" \
+            "Tests/Performance/test_app_wiring_held_pointer_currentness.py::test_actual_stock_held_pointer_refuses_before_foreign_access[skill-factory]" \
             "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[cancel]" \
             "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[recancel]" \
             "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[shutdown]" \
@@ -1807,7 +1808,7 @@ jobs:
 
       # Follow-ups burn-down lanes (owner decision 2026-11-18): same shape, for the fourth.
       - name: Require successful PR fast lane (admission-sensitive 4)
-        if: ${{ !cancelled() && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))) && needs.pr-fast-lane-admission-4.result != 'success' }}
+        if: ${{ !cancelled() && (needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))) && needs.pr-fast-lane-admission-4.result != 'success' }}
         run: |
           echo "PR Fast Lane (admission-sensitive 4) result: ${{ needs.pr-fast-lane-admission-4.result }}"
           echo "::error::The required PR fast lane (admission-sensitive 4) did not succeed."

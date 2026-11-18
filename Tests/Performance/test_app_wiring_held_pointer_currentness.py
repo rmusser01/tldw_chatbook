@@ -5,9 +5,9 @@ from Tests.Backup_Recovery.test_home_citation_retirement import _run
 
 pytestmark = pytest.mark.bootstrap_profile
 
-@pytest.mark.parametrize('route', ['skill', 'collections'])
+@pytest.mark.parametrize("route", ["skill", "collections", "skill-factory"])
 def test_actual_stock_held_pointer_refuses_before_foreign_access(tmp_path, route):
-    script = r'''
+    script = r"""
 import asyncio, inspect, json, os, sys, threading, time
 from concurrent.futures import Future
 from concurrent.futures.thread import _WorkItem
@@ -18,6 +18,9 @@ real_profile_guard.install()
 from loguru import logger
 logger.remove()
 route, _ = sys.argv[1:]
+factory_case = route == 'skill-factory'
+if factory_case:
+    route = 'skill'
 root = Path(os.environ['XDG_DATA_HOME']).parent
 selected = Path(os.environ['TLDW_CONFIG_PATH'])
 selected.write_text('[general]\nusers_name="held-pointer-control"\n[paths]\ndata_dir="' + (root/'data').as_posix() + '"\n', encoding='utf-8')
@@ -49,6 +52,9 @@ async def run():
     tool = None
     facts = {'route': route, 'builder_entries': 0, 'foreign_accesses': foreign, 'observations': observations}
     class Foreign:
+        def __call__(self, *args, **kwargs):
+            foreign.append('_trust_service_factory')
+            raise AssertionError('foreign trust factory called')
         def __getattr__(self, name):
             foreign.append(name)
             raise AssertionError('foreign wiring read: ' + name)
@@ -144,10 +150,15 @@ async def run():
         if route == 'skill':
             # TASK-41319 (ADR-356 rule 4): the skill source is decided by the
             # app's slots, not the wiring module's pointer, so this case now
-            # swaps the app's local-skills slot for a foreign object that must
-            # refuse the held read without being read (TASK-41730).
-            replaced = vars(app)['_local_skills_service']
-            vars(app)['_local_skills_service'] = Foreign()
+            # swaps the app's local-skills slot or the captured local service's
+            # registered trust factory without reading or invoking the foreign
+            # object (TASK-41730).
+            replacement_owner, replacement_slot = (
+                (source.local, '_trust_service_factory')
+                if factory_case else (app, '_local_skills_service')
+            )
+            replaced = vars(replacement_owner)[replacement_slot]
+            vars(replacement_owner)[replacement_slot] = Foreign()
         else:
             helper._source_wiring = Foreign()
         if route == 'skill':
@@ -177,7 +188,7 @@ async def run():
             assert held['future'].done() and held['read'].retired.done()
         helper._source_wiring = original_pointer
         if replaced is not missing:
-            vars(app)['_local_skills_service'] = replaced
+            vars(replacement_owner)[replacement_slot] = replaced
         if tool is not None:
             for code in (invoke_code, builder.__code__):
                 sys.monitoring.set_local_events(tool, code, 0)
@@ -207,5 +218,5 @@ async def run():
     print('retired and reopened; actual held stock pointer refusal passed')
 with user_fixture_default_owner():
     asyncio.run(run())
-'''
+"""
     _run(tmp_path, route, 'held-pointer', script=script, timeout=45)
