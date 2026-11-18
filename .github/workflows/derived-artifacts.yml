@@ -1493,6 +1493,10 @@ jobs:
     # TASK-41136: the Console provider gateway file (bootstrap_profile, so
     # last), on no PR lane before: 494 tests, 4.1 min serially at load ~56.
     # Its three deselected nodes are red on dev, owned by TASK-41053.
+    #
+    # The media body-move series (TASK-36952.3): its Architecture wiring pins
+    # (sandboxed, so before the TASK-39114 files), in no PR lane before; 16
+    # tests, 9 s serially in this job's install set at load ~22.
     name: PR Fast Lane (architecture-review tests)
     if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
@@ -1547,6 +1551,7 @@ jobs:
             Tests/App/test_chachanotes_fts_backfill_worker.py \
             Tests/Backup_Recovery/test_unsaved_editors.py::test_console_unknown_draft_shape_refuses_instead_of_clean \
             Tests/Backup_Recovery/test_unsaved_editors.py::test_console_transition_and_send_stashes_are_not_reconciled \
+            Tests/Architecture/test_library_media_wiring.py \
             Tests/DB/test_private_sqlite.py \
             Tests/DB/test_private_sqlite_inventory.py \
             Tests/Architecture/test_application_services_bundle.py \

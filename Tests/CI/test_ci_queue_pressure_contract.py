@@ -546,6 +546,8 @@ ARCH_REVIEW_TARGETS = (
     # TASK-36948.3
     "Tests/Backup_Recovery/test_unsaved_editors.py::test_console_unknown_draft_shape_refuses_instead_of_clean",
     "Tests/Backup_Recovery/test_unsaved_editors.py::test_console_transition_and_send_stashes_are_not_reconciled",
+    # TASK-36952.3 (the media body-move series), sandboxed: the wiring pins.
+    "Tests/Architecture/test_library_media_wiring.py",
     # TASK-39114: the private-SQLite registry and inventory files, red on no
     # required lane before; after every sandboxed target, because Tests/DB
     # keeps the bootstrap profile.
