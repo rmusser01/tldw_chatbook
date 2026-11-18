@@ -60,7 +60,9 @@ async def _cancel_the_hold(console, pilot, controller, session):
             break
         await console._sync_native_console_chat_ui()
         await pilot.pause(0.1)
-    assert card.display and not cancel.disabled, "the hold card never took a press"
+    assert card.display and cancel.display and not cancel.disabled, (
+        "the hold card never took a press"
+    )
     cancel.press()
     for _ in range(100):
         await console._sync_native_console_chat_ui()
