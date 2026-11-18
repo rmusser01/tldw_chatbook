@@ -4229,6 +4229,19 @@ class ConsoleWorkspaceController:
                 getattr(self.app_instance, "_shutting_down", False)
                 or runtime is not None and runtime._disposed
             ):
+                selected_visit = None
+                if getattr(self.app_instance, "console_execution_client", None) is not None:
+                    from .execution_state import defer_selected_passive_render, selected_client
+
+                    if not defer_selected_passive_render(self._screen):
+                        client = selected_client(self._screen)
+                        selected_visit = (client, client._visit)
+                    else:
+                        # Preserve the original same-query cache rule while
+                        # declining work for a covered view.
+                        if self._console_persisted_rows_cache_key == (query, current_conversation_id):
+                            return self._console_persisted_rows_cache or ([], None, "")
+                        return [], None, ""
                 self._console_persisted_rows_refresh_key = refresh_key
                 self.run_worker(
                     partial(
@@ -4236,6 +4249,7 @@ class ConsoleWorkspaceController:
                         query,
                         current_conversation_id=current_conversation_id,
                         refresh_key=refresh_key,
+                        **({"_selected_visit": selected_visit} if selected_visit is not None else {}),
                     ),
                     # task-24460: `run_worker` derives the worker name from
                     # `getattr(work, "__name__", "")`, and a `functools.partial`
@@ -4267,8 +4281,37 @@ class ConsoleWorkspaceController:
         current_conversation_id: str | None = None,
         *,
         refresh_key: tuple[str, str | None, int] | None = None,
-    ) -> tuple[list[ConsoleConversationBrowserInputRow], int | None, str]:
+        _selected_visit: tuple[object, int] | None = None,
+    ) -> tuple[list[ConsoleConversationBrowserInputRow], int | None, str] | None:
         """Refresh persisted rows asynchronously when the TTL cache is stale."""
+        from .execution_state import defer_selected_passive_render, selected_client
+
+        if (_selected_visit is not None and refresh_key is not None
+            and self._console_persisted_rows_refresh_key != refresh_key):
+            return None
+        if _selected_visit is None:
+            # Direct callers retain their original entry semantics. Queued work
+            # supplies the owner captured before run_worker, not at invocation.
+            client = getattr(self.app_instance, "console_execution_client", None)
+            visit = client._visit if client is not None else None
+        else:
+            client, visit = _selected_visit
+
+        def obsolete_view() -> bool:
+            if client is None:
+                return False
+            deferred = defer_selected_passive_render(self._screen)
+            if not deferred:
+                # A current view still exercises its original source/channel
+                # checks. A newer visit cannot adopt this older worker's rows.
+                current = selected_client(self._screen)
+                deferred = current is not client or current._visit != visit
+            if deferred and self._console_persisted_rows_refresh_key == refresh_key:
+                self._console_persisted_rows_refresh_key = None
+            return deferred
+
+        if obsolete_view():
+            return None
         cached = self._compute_persisted_console_browser_rows(
             query,
             current_conversation_id,
@@ -4298,6 +4341,8 @@ class ConsoleWorkspaceController:
             if self._console_persisted_rows_refresh_key == refresh_key:
                 self._console_persisted_rows_refresh_key = None
             raise
+        if obsolete_view():
+            return result
         if (
             refresh_key is not None
             and self._console_persisted_rows_refresh_key != refresh_key
@@ -4336,6 +4381,8 @@ class ConsoleWorkspaceController:
             except Exception:  # noqa: BLE001 - keep current rows when recovery reads fail
                 logger.debug("Archive state refresh unavailable")
                 states = {}
+        if obsolete_view():
+            return result
         # Both database reads await: retain ownership through the last one,
         # including any archive receipt that settled while its snapshot loaded.
         if (
