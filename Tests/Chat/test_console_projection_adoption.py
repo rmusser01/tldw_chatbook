@@ -124,6 +124,7 @@ def test_each_display_section_decodes_once_per_adoption(monkeypatch):
     from tldw_chatbook.Chat import console_execution_workspace_values as workspace
     from tldw_chatbook.Chat import console_execution_session_surface as surface
     from tldw_chatbook.Chat import console_execution_projection_values as values
+    from tldw_chatbook.Chat.console_execution_projection_view import ConsoleProjectionView
 
     payload = projection_payload(3)
     counts = {}
@@ -131,6 +132,7 @@ def test_each_display_section_decodes_once_per_adoption(monkeypatch):
         (codec, "_readiness"), (composition, "decode_session_composition"),
         (workspace, "decode_workspace_surface"), (surface, "decode_session_surface_projection"),
         (values, "decode_session_projection"),
+        (ConsoleProjectionView, "__post_init__"),
     ):
         original = getattr(owner, name)
 
@@ -143,7 +145,7 @@ def test_each_display_section_decodes_once_per_adoption(monkeypatch):
     assert counts == {
         "_readiness": 1, "decode_session_composition": 1,
         "decode_workspace_surface": 1, "decode_session_surface_projection": 1,
-        "decode_session_projection": 3,
+        "decode_session_projection": 3, "__post_init__": 1,
     }
 
 

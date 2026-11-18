@@ -2356,3 +2356,24 @@ the idle writer yields before adopting this optimization.
 External file or policy changes continue to require the original
 live checks. Enabling this path requires exercising independent instances and
 real recovery as well as the ordinary mounted Console.
+
+The elected writer may own an idle SQLite connection on its service thread.
+The connection belongs to the service across commands. Each domain command
+still acquires its own authorization, completes its original transaction and
+retires the resources it acquired. No transaction or command lease may span a
+provider or user wait. Rows must be visible to an independent reader as soon
+as the original commit completes. Before reuse the writer must establish the
+current selection, file and schema identity, directory posture and maintenance
+epoch. A failed identity check invalidates the connection. Recovery and the last
+host drain close intake, drain active work and positively close the service
+connection on its owning thread before releasing the profile. An uncertain
+close blocks further admission. A replacement store, a new owner or a new
+epoch requires the original opening and recovery checks.
+
+This lifetime addresses a measured cost in the Windows trace writer. After
+sharing the profile enrollment, a warm empty command still opened native
+handles 42 times in the client and 460 times in the service. The direct
+operation opened 123. Much of the remaining service work reopened and
+retired the same SQLite resource. The same original warm step, two app
+instances, backup and restore, file replacement and shutdown qualify this
+change before the end-to-end comparison.

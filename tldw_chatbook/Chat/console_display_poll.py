@@ -64,6 +64,15 @@ def validate_delta(payload: Mapping) -> None:
         raise ConsoleProtocolError("invalid_display_delta_readiness")
 
 
+def retained_sections(delta: ConsoleWireMessage) -> frozenset[str]:
+    """Identify previously published UI values carried forward by a checked poll."""
+    changed = delta.payload["sections"]
+    retained = {"workspace", "composition"} - changed.keys()
+    if "readiness" not in changed:
+        retained.update({"context_summary", "agent_rail", "prompt_history"} - delta.payload.get("readiness", {}).keys())
+    return frozenset(retained)
+
+
 def _same_value(left, right) -> bool:
     # Wire equality preserves bool/int, int/float and negative zero.
     if left is right:

@@ -22,9 +22,22 @@ provide no automatic local Console evidence. App-wide logs remain a separate,
 explicitly labelled source. Report content receives diagnostic redaction again,
 including when source capture had PII redaction off.
 
+On Windows, the stock `TldwCli` starts a separate Console process. Its
+`ConsoleRuntime` owns provider calls, tool execution, pending decisions and
+durable turn settlement. Textual sends user intents through
+`ConsoleExecutionClient` and polls for display changes. The first poll for a
+visit returns a complete snapshot. Later polls identify the last publication
+the UI adopted. The client checks the complete result and waits for positive
+retirement before publishing changes to the mounted screen. Switching sessions
+or losing the publication starts a fresh snapshot. The designated local mode
+and custom app hosts continue to use the in-process runtime. The backend and
+other app instances submit supported shared-store mutations to the same Windows
+profile writer. [Runtime and storage ownership](../../backlog/decisions/126-complete-local-backup-and-recovery.md#task-40608-external-console-runtime-and-profile-writer)
+
 | Layer | File | Key symbols |
 | --- | --- | --- |
 | Screen (view) | `UI/Screens/chat_screen.py` | `ChatScreen`, `compose_content()`, `_build_console_center()`, the 0.2 s transcript sync timer |
+| Windows runtime attachment | `Chat/console_execution_process.py`, `Chat/console_execution_worker.py`, `Chat/console_display_poll.py` | `ConsoleExecutionClient`, checked display publications, submit/approve and physical retirement receipts |
 | Runtime holder | `Chat/console_runtime.py` | `ConsoleRuntime` — app-owned, idempotent `ensure_*` factories for store/controller/bridge/hooks; outlives every `ChatScreen`; per-session `_staged_evidence` map with shared revision/identity release fence |
 | Received input/admission | `Chat/console_received_intent.py`, `console_received_turn.py`, `console_received_dispatch.py` | Detached input revisions, atomic session claim/promotion, runtime-owned received Send task |
 | Checked configuration | `Chat/console_configuration_capture.py`, `console_configuration_preparation.py` | Current source-owned configuration capture and finite checked preparation before claim promotion |

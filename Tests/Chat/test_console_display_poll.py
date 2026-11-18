@@ -138,7 +138,8 @@ async def test_client_polls_after_last_adopted_result_and_waits_for_retirement(r
     body["source_revision"] = client._source_revision
     session, incarnation = body["session_id"], body["incarnation_id"]
     first = None
-    for index in range(2):
+    published_sections = None
+    for index in range(3 if retired else 2):
         task = asyncio.create_task(client._read_projection_locked(session, incarnation))
         await asyncio.sleep(0)
         request = client._channel.messages[-1]
@@ -148,6 +149,10 @@ async def test_client_polls_after_last_adopted_result_and_waits_for_retirement(r
         sequence = index * 3 + 1
         client._receive(_reply(client, receipt, sequence, "received", {"sequence": request.identity.sequence}))
         body["session_view"]["readiness"].update(captured_at_monotonic=time.monotonic(), remaining_seconds=1.0)
+        if index == 2:
+            history = body["session_view"]["readiness"]["prompt_history"]
+            history["revision"] += 1
+            history["entries"].append({"input": "new prompt", "timestamp": "1"})
         checked = _reply(client, receipt, sequence + 1, "applied", body)
         response = poll_response(checked, cursor, first)
         if index:
@@ -166,3 +171,16 @@ async def test_client_polls_after_last_adopted_result_and_waits_for_retirement(r
             await task
             assert client._display_publication.message == checked
             first = client._display_publication
+            sections = (
+                client.workspace_surface, client.session_composition, client.context_summary,
+                client.agent_rail, client.prompt_history._entries,
+            )
+            if index == 1:
+                # Only the readiness clock changed; local recall and mounted
+                # readers continue to share the previously published sections.
+                assert all(new is old for new, old in zip(sections, published_sections, strict=True))
+            elif index == 2:
+                assert all(new is old for new, old in zip(sections[:-1], published_sections[:-1], strict=True))
+                assert client.prompt_history.entry_texts()[-1] == "new prompt"
+                assert sections[-1] is not published_sections[-1]
+            published_sections = sections

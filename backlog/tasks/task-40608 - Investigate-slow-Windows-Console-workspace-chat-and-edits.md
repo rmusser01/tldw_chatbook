@@ -236,6 +236,15 @@ send supplies no timing. The earlier three pairs above still describe the
 previous candidate. AC5 and AC6 remain open.
 [Runtime and writer decision](../decisions/126-complete-local-backup-and-recovery.md#task-40608-external-console-runtime-and-profile-writer)
 
+The frozen refusal reproduced with the real bound workspace, prepared prompt
+and file-scoped database operation. Transport tried to admit the whole profile
+directory while its caller owned only the ChaChaNotes file. The existing scope
+check correctly refused it. At `89e727c54b` transport authenticates and uses the
+selected database file. The same regression now verifies the accepted checkpoint,
+stored message and workspace association. A clock-only poll also preserves the
+published workspace, composition, Inspector and prompt history objects through
+positive retirement.
+
 <!-- SECTION:NOTES:END -->
 
 Measured follow-up under the same [ADR-126 bounded configuration-read amendment](../decisions/126-complete-local-backup-and-recovery.md#task-40608--bounded-sensitive-database-path-configuration-reads): qualify the original sensitive container-reader cohort, then group its admissions without changing readers, overrides or refusal checks. The measured 0.218-second component is separate from the unresolved planning delay; final three-pair acceptance remains open.

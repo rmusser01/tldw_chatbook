@@ -67,6 +67,7 @@ class ConsoleProcessReceipt:
     projection_message: ConsoleWireMessage | None = field(default=None, repr=False)
     changed: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
     display_poll: Mapping | None = field(default=None, repr=False)
+    retained_sections: frozenset[str] = field(default=frozenset(), repr=False)
 
 
 @dataclass(eq=False, slots=True)
@@ -1225,15 +1226,21 @@ class ConsoleExecutionClient:
         self._projection = value
         self.projection_view = projection_view
         self.settings_readiness = effective, readiness
-        self.context_summary = context_summary
-        self.agent_rail = agent_rail
-        self.workspace_surface = workspace_surface
+        retained = receipt.retained_sections
+        if "context_summary" not in retained:
+            self.context_summary = context_summary
+        if "agent_rail" not in retained:
+            self.agent_rail = agent_rail
+        if "workspace" not in retained:
+            self.workspace_surface = workspace_surface
         self.session_surface = session_surface
-        self.prompt_history.publish(prompt_history)
+        if "prompt_history" not in retained:
+            self.prompt_history.publish(prompt_history)
         self.control_provider_label = provider_chip
         self.provider_model_display = provider, model, projection_view.session(session_id).settings
         self._readiness_deadline = deadline
-        self.session_composition = composition
+        if "composition" not in retained:
+            self.session_composition = composition
         self.send_selection = send_selection
         self.project_head = project_head
         self.pressed_inputs = payload["session_view"]["pressed_inputs"]
@@ -1666,9 +1673,11 @@ class ConsoleExecutionClient:
             ):
                 raise ConsoleProtocolError("operation_session_changed")
             if message.kind == "projection_delta":
-                from .console_display_poll import expand_projection_delta
+                from .console_display_poll import expand_projection_delta, retained_sections
 
-                message = expand_projection_delta(message, receipt.display_poll, self._display_publication)
+                delta = message
+                message = expand_projection_delta(delta, receipt.display_poll, self._display_publication)
+                receipt.retained_sections = retained_sections(delta)
             if message.kind == "received":
                 if (
                     receipt.received.done()
