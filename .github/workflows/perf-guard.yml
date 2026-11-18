@@ -1,240 +1,109 @@
 name: Perf Guard
-
-# TASK-18908: born of the 2026-08 Windows 3 s-lag incident. The lag shipped
-# through 100+ green PRs because nothing measured UI latency. This workflow
-# runs the latency guardrails (screen-switch budgets + Textual CSS parse-
-# cache cliff) and nothing else, so it stays a usable merge signal even
-# while the big Tests workflow is red on all branches (TASK-18608).
-#
-# Standalone by design: a PR that makes a destination slower than the
-# incident class, or that crosses the LRU-64 stylesheet cliff, fails HERE
-# first -- in minutes, not at the next user report.
-
+run-name: Managed received Linux diagnostic (not qualification)
 on:
-  pull_request:
-    branches: [dev]
-    types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-      # TASK-38684: the whole package, not only its .py and css. The job
-      # installs editable, so the app reads its migrations, Config_Files
-      # and assets straight from this checkout.
-      - 'tldw_chatbook/**'
-      - 'Tests/Performance/**'
-      - 'Tests/Packaging/test_console_rename_import_closure.py'
-      # The stall-persistence tests run in this workflow too, and the job
-      # installs from pyproject.toml -- a dependency bump (e.g. the pinned
-      # Textual version) or a change to those tests must not merge without
-      # this guard's verdict (Qodo finding on PR #1827).
-      - 'Tests/Utils/test_ui_responsiveness_stall_persist.py'
-      # The speculative-voice gates the voice step below imports.
-      - 'Packaging/speculative_voice_*.py'
-      # TASK-36529: the helpers, conftests and package inits the steps load.
-      # Tests/CI/test_ci_queue_pressure_contract.py derives them from the
-      # steps' imports and fails while one is missing here or below.
-      - 'Tests/__init__.py'
-      - 'Tests/conftest.py'
-      - 'Tests/network_guard.py'
-      - 'Tests/private_profile.py'
-      - 'Tests/real_profile_guard.py'
-      - 'Tests/Backup_Recovery/config_test_support.py'
-      - 'Tests/fixtures/__init__.py'
-      - 'Tests/fixtures/required_doubles.py'
-      - 'Tests/Packaging/test_app_import_diet_closure.py'
-      - 'Tests/Plugins/__init__.py'
-      - 'Tests/Plugins/platform_support.py'
-      - 'Tests/UI/__init__.py'
-      - 'Tests/UI/console_controller_stubs.py'
-      - 'Tests/UI/css_cache.py'
-      - 'Tests/Utils/__init__.py'
-      # TASK-36511.3: the compact-setup gates' child runner and its imports.
-      - 'Tests/windows_private_fixture_runner.py'
-      - 'Tests/Backup_Recovery/restart_observation.py'
-      - 'Tests/Backup_Recovery/test_home_citation_retirement.py'
-      - 'Tests/Chat/__init__.py'
-      - 'Tests/Chat/test_citation_artifact_ownership.py'
-      - 'Tests/Chat/test_citation_legacy_migration.py'
-      - 'Tests/Chat/test_citation_payload_lifecycle.py'
-      - 'Tests/Chat/test_citation_trace_repository.py'
-      # The plugin fixture test_app_import_weight.py copies, and the second
-      # in-tree package the app imports (TASK-36529 review).
-      - 'Tests/Plugins/fixtures/native/**'
-      - 'packages/tldw_profile_core/src/**'
-      - 'pyproject.toml'
-      - '.github/workflows/perf-guard.yml'
-  push:
-    branches: [dev, main]
-    paths:
-      - 'tldw_chatbook/**'
-      - 'Tests/Performance/**'
-      - 'Tests/Packaging/test_console_rename_import_closure.py'
-      # The stall-persistence tests run in this workflow too, and the job
-      # installs from pyproject.toml -- a dependency bump (e.g. the pinned
-      # Textual version) or a change to those tests must not merge without
-      # this guard's verdict (Qodo finding on PR #1827).
-      - 'Tests/Utils/test_ui_responsiveness_stall_persist.py'
-      # The speculative-voice gates the voice step below imports.
-      - 'Packaging/speculative_voice_*.py'
-      # TASK-36529: the helpers the steps load (see pull_request).
-      - 'Tests/__init__.py'
-      - 'Tests/conftest.py'
-      - 'Tests/network_guard.py'
-      - 'Tests/private_profile.py'
-      - 'Tests/real_profile_guard.py'
-      - 'Tests/Backup_Recovery/config_test_support.py'
-      - 'Tests/fixtures/__init__.py'
-      - 'Tests/fixtures/required_doubles.py'
-      - 'Tests/Packaging/test_app_import_diet_closure.py'
-      - 'Tests/Plugins/__init__.py'
-      - 'Tests/Plugins/platform_support.py'
-      - 'Tests/UI/__init__.py'
-      - 'Tests/UI/console_controller_stubs.py'
-      - 'Tests/UI/css_cache.py'
-      - 'Tests/Utils/__init__.py'
-      # TASK-36511.3: the compact-setup gates' child runner and its imports.
-      - 'Tests/windows_private_fixture_runner.py'
-      - 'Tests/Backup_Recovery/restart_observation.py'
-      - 'Tests/Backup_Recovery/test_home_citation_retirement.py'
-      - 'Tests/Chat/__init__.py'
-      - 'Tests/Chat/test_citation_artifact_ownership.py'
-      - 'Tests/Chat/test_citation_legacy_migration.py'
-      - 'Tests/Chat/test_citation_payload_lifecycle.py'
-      - 'Tests/Chat/test_citation_trace_repository.py'
-      # The plugin fixture test_app_import_weight.py copies, and the second
-      # in-tree package the app imports (TASK-36529 review).
-      - 'Tests/Plugins/fixtures/native/**'
-      - 'packages/tldw_profile_core/src/**'
-      - 'pyproject.toml'
-      - '.github/workflows/perf-guard.yml'
-  # For manual runs; the merge queue approves the held pull_request run instead (ADR-218 amendment 2026-10-06).
   workflow_dispatch:
-
-# One run per workflow per ref (obsolete runs must not queue up competing
-# for scarce runners).
+permissions:
+  contents: read
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'push' && github.ref != 'refs/heads/main' }}
-
+  group: light-ci-managed-received-diagnostic-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
-  ui-latency-guardrails:
-    name: UI latency guardrails
+  managed-received-diagnostic:
+    name: Linux original managed received diagnostic
     runs-on: ubuntu-latest
-    # TASK-36511.3: 20, not 15 (owner-approved). CI, measured: the 40 green
-    # runs before the gates had a median of 618 s and a max of 883 s, and
-    # TASK-38703's idle-loop fix took the latency step from a 179 s median to
-    # 85-117 s. Local, scaled: the compact-setup gates take 115-132 s
-    # locally, about 240-280 s on CI at its ~2.1x. Estimate: a median of
-    # about 800 s and a max of about 1060-1100 s, 100-140 s under this limit.
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install package (test deps only path)
+          cache: pip
+      # Exact install from failed recovered job135117257904; no optional groups.
+      - name: Install recovered-lane dependencies
+        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2
+      - name: Record source and dependency identity without application imports
         run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-      - name: Run latency guardrails
-        run: |
-          pytest Tests/Performance/test_ui_latency_guardrails.py \
-            Tests/Utils/test_ui_responsiveness_stall_persist.py \
-            -v --timeout=300
+          git diff --quiet 2f0065b770d5e2d97224c47c0fb75979fa7bca76 -- tldw_chatbook packages
+          python - <<'PY'
+          import hashlib
+          import importlib.metadata as metadata
+          import json
+          import os
+          from pathlib import Path
+          import platform
+          import subprocess
+          import sys
 
-      # TASK-33620.15.3 (2026-10-20): ADR-198's GC policy and its idle heap
-      # re-freeze. The leak-bound tests (the real collector and real Textual
-      # widgets, each with a negative control) ran only in the full-tree runs,
-      # so a PR that broke the compaction bound would merge with every PR
-      # check green. About 15 s together.
-      - name: Run GC policy and idle re-freeze tests
+          names = ('pytest', 'pytest-asyncio', 'pytest-timeout', 'platformdirs',
+                   'anyio', 'textual', 'pydantic', 'cryptography', 'keyring',
+                   'psutil', 'portalocker', 'packaging', 'aiohttp-jinja2')
+          versions = {}
+          for name in names:
+              try:
+                  versions[name] = metadata.version(name)
+              except metadata.PackageNotFoundError:
+                  versions[name] = None
+          source = 'Tests/Performance/test_console_managed_received_acceptance.py'
+          print('MANAGED_RECEIVED_IDENTITY', json.dumps({
+              'head': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
+              'product_tree': subprocess.check_output(['git', 'rev-parse', 'HEAD:tldw_chatbook'], text=True).strip(),
+              'packages_tree': subprocess.check_output(['git', 'rev-parse', 'HEAD:packages'], text=True).strip(),
+              'test_sha256': hashlib.sha256(Path(source).read_bytes()).hexdigest(),
+              'python': platform.python_version(), 'platform': sys.platform,
+              'image_os': os.environ.get('ImageOS'), 'image_version': os.environ.get('ImageVersion'),
+              'versions': versions,
+              'pytest_entry_points': sorted((entry.name, entry.value)
+                                            for entry in metadata.entry_points(group='pytest11')),
+          }, sort_keys=True))
+          PY
+      - name: Run only the original managed received node
         run: |
-          pytest Tests/Performance/test_gc_policy.py \
-            Tests/Performance/test_gc_idle_refreeze.py \
-            -v --timeout=300
-
-      # task-24461: the ADR-097 boot budgets ran ONLY in the slow full suite,
-      # so for three review cycles running they were re-breached within ~24h of
-      # every paydown and each breach was found by a periodic review rather
-      # than by the PR that caused it. They are cheap (~15s together) and they
-      # already print the culprit modules, so the breaching PR now gets that
-      # list here, in minutes.
-      #
-      # test_boot_css_byte_budget.py joined this list with task-24459
-      # (2026-09-04), once its ratchet was paid back to green (779,320 B
-      # against a tightened 804,000 B pin). Before that it was deliberately
-      # excluded -- it was red on dev, and a red guard here blocks every
-      # unrelated PR. If it ever reds on dev again, fix dev (defer the CSS
-      # or shed equivalent bytes -- ADR-097), do NOT remove it from this
-      # list: four review cycles of silent re-breaches are exactly what its
-      # absence cost.
-      #
-      # test_screen_preimport_payload_budget.py joined with TASK-33260
-      # (2026-09-28). It was the one ADR-097 ratchet NOT listed here, and it
-      # went red on dev unseen (554/500 modules) -- the same silent re-breach
-      # story. Re-pinned at the measured value with TASK-33276 (PERF-17)
-      # owning the paydown; same rule as above: never remove it from here.
-      - name: Run boot budget ratchets
-        run: |
-          pytest Tests/Performance/test_app_import_weight.py \
-            Tests/Packaging/test_console_rename_import_closure.py \
-            Tests/Performance/test_ui_ready_module_census.py \
-            Tests/Performance/test_boot_worker_census.py \
-            Tests/Performance/test_textual_css_fastpath.py \
-            Tests/Performance/test_boot_css_byte_budget.py \
-            Tests/Performance/test_screen_preimport_payload_budget.py \
-            -v --timeout=300
-
-      # TASK-36390: these ran in no PR lane and went red on dev unseen. The
-      # tab-publication controls compile ChatScreen's own method bodies; the
-      # voice latency gate runs on a synthetic clock; the locator inventory
-      # pins the voice-pair reconciler's schema census. About 4 s together.
-      # The completed-pair history node is a strict xfail until TASK-36510:
-      # eight message-locator columns have no leading index, so promotion
-      # scans them. Its XPASS fails this step, so the fix removes the marker.
-      # The compact-setup gates run in the last step (TASK-36511.3).
-      - name: Run Console tab-publication and voice gates
-        run: |
-          pytest Tests/Performance/test_console_tab_sync_source_ownership.py \
-            Tests/Performance/test_speculative_voice_latency.py \
-            -v --timeout=300
-
-      # TASK-36390: typing must not snapshot the transcript (TASK-24300) or
-      # cost more in a long chat. Both are call counts, not wall clock.
-      # TASK-36529 added the last two (45-55 s on CI): no full sync or history
-      # rows in long-chat typing, and no provider re-derivation per key.
-      - name: Run Console keystroke work census
-        run: |
-          pytest "Tests/Performance/test_console_keystroke_work_census.py::test_typing_never_snapshots_the_transcript" \
-            "Tests/Performance/test_console_keystroke_work_census.py::test_keystroke_work_does_not_scale_with_transcript_length" \
-            "Tests/Performance/test_console_keystroke_work_census.py::test_typing_census_excludes_elapsed_draft_pause_work" \
-            "Tests/Performance/test_console_keystroke_work_census.py::test_settled_400_message_typing_traverses_no_history" \
-            "Tests/Performance/test_console_keystroke_work_census.py::test_typing_does_not_rebuild_the_provider_derivation" \
-            -v --timeout=300
-
-      # The Console storage-unit ratchet joined with TASK-33260 after review
-      # on #2888: without it here, a per-call admission or a per-connection
-      # SQLite helper merges with every perf guard green -- the failure the
-      # ratchet exists to catch. Same rule as above: never remove it from
-      # here. TASK-33643: every run prints its measured census (pass or
-      # fail), the record Linux os.open ceilings are pinned from.
-      - name: Run Console storage-unit ratchet
+          mkdir -p "$RUNNER_TEMP/managed-received-diagnostic"
+          pytest \
+            Tests/Performance/test_console_managed_received_acceptance.py::test_received_managed_demand_uses_one_catalog_and_real_cold_initializer \
+            --storage-lease-guard --timeout=180 --tb=short \
+            --basetemp="$RUNNER_TEMP/managed-received-diagnostic/pytest" \
+            --junitxml="$RUNNER_TEMP/managed-received-diagnostic/pytest.xml" \
+            > "$RUNNER_TEMP/managed-received-diagnostic/pytest-output.log" 2>&1
+      - name: Report only filtered lifecycle and outcome facts
+        if: always()
         env:
-          TLDW_STORAGE_UNIT_CENSUS_LOG: ${{ runner.temp }}/storage-unit-census.jsonl
+          DIAGNOSTIC_ROOT: ${{ runner.temp }}/managed-received-diagnostic
         run: |
-          status=0
-          pytest "Tests/Performance/test_console_keystroke_work_census.py::test_console_storage_units_stay_within_their_ratchets" \
-            -v --timeout=300 || status=$?
-          echo "::group::Console storage-unit census"
-          cat "$TLDW_STORAGE_UNIT_CENSUS_LOG" 2>/dev/null || echo "(no census written)"
-          echo "::endgroup::"
-          exit "$status"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
 
-      # TASK-36511.3: the compact-setup gates hold a compact config read and
-      # require the UI loop to answer a probe within 100 ms meanwhile.
-      # Last on purpose: a wall-clock gate, so a flake here must not skip
-      # the census steps above (Tests/CI pins this). 17 nodes, about 115-132 s
-      # locally, about 240-280 s on CI.
-      - name: Run Console compact-setup gates
-        run: |
-          pytest Tests/Performance/test_compact_setup_ownership.py \
-            Tests/Performance/test_compact_model_original_checked_read.py \
-            -v --timeout=300
+          root = Path(os.environ['DIAGNOSTIC_ROOT']).resolve()
+          paths = sorted({path.resolve() for path in root.rglob('managed-received-facts.json')
+                          if path.resolve().is_relative_to(root)})
+          print('MANAGED_RECEIVED_FACT_COUNT', len(paths))
+          keys = ('order', 'visible', 'builder_count', 'denied', 'overflow',
+                  'primary_failure_type', 'failed_bound', 'failure_binding',
+                  'failure_binding_error', 'observer_errors', 'observer_failure_sites',
+                  'drain', 'provider_calls', 'network_attempts', 'profile_violations')
+          source_keys = ('complete', 'original_source_current',
+                         'hooks_retired_before_inactive', 'global_events',
+                         'replacements_installed', 'frames_arguments_results_tasks_retained')
+          for path in paths[:2]:
+              facts = json.loads(path.read_text())
+              selected = {key: facts[key] for key in keys if key in facts}
+              source = facts.get('source_receipt', {})
+              selected['source_receipt'] = {key: source.get(key) for key in source_keys}
+              selected['source_invalid_count'] = len(source.get('invalid', []))
+              selected['source_unresolved_count'] = len(source.get('unresolved_spans', []))
+              print('MANAGED_RECEIVED_FACTS', json.dumps(selected, sort_keys=True))
+          junit = root / 'pytest.xml'
+          summary = {'present': junit.is_file()}
+          if junit.is_file():
+              tree = ET.parse(junit)
+              summary.update({name: len(tree.findall('.//' + tag))
+                              for name, tag in (('tests', 'testcase'), ('failures', 'failure'),
+                                                ('errors', 'error'), ('skips', 'skipped'))})
+          print('MANAGED_RECEIVED_JUNIT', json.dumps(summary, sort_keys=True))
+          PY

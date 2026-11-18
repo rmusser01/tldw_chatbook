@@ -247,7 +247,7 @@ async def exercise():
             "overflow": False,
         }
         objects = {}
-        controller = store = session = screen = None
+        controller = store = session = screen = composer = None
         sent = False
 
         async def settle(predicate):
@@ -264,9 +264,39 @@ async def exercise():
                 raise AssertionError("managed_received_phase_overflow")
             observed["order"].append(name)
 
-        def failed(label):
+        def failure_site(error):
+            traceback = error.__traceback__
+            try:
+                while traceback is not None and traceback.tb_next is not None:
+                    traceback = traceback.tb_next
+                code = None if traceback is None else traceback.tb_frame.f_code
+                return {
+                    "type": type(error).__name__[:80],
+                    "file": None if code is None else Path(code.co_filename).name[:96],
+                    "function": None if code is None else code.co_qualname[:160],
+                    "line": None if traceback is None else traceback.tb_lineno,
+                }
+            finally:
+                traceback = None
+
+        def failure_state(future):
+            if future is None:
+                return None
+            state = {"done": future.done(), "cancelled": future.cancelled()}
+            if state["done"] and not state["cancelled"]:
+                error = future.exception()
+                state["error"] = None if error is None else failure_site(error)
+                if error is None:
+                    state["result_type"] = type(future.result()).__name__[:80]
+            return state
+
+        def failed(label, error=None):
             if len(errors) < 16:
                 errors.append(label)
+                if error is not None:
+                    observed.setdefault("observer_failure_sites", []).append(
+                        failure_site(error)
+                    )
             else:
                 observed["overflow"] = True
 
@@ -388,7 +418,7 @@ async def exercise():
                     ]
                     phase("submit")
             except BaseException as error:
-                failed(type(error).__name__ + ":start:" + code.co_qualname)
+                failed(type(error).__name__ + ":start:" + code.co_qualname, error)
             finally:
                 del frame
 
@@ -559,7 +589,7 @@ async def exercise():
                     assert objects["record"].inputs.durable_accepted is True
                     phase("accepted")
             except BaseException as error:
-                failed(type(error).__name__ + ":return:" + code.co_qualname)
+                failed(type(error).__name__ + ":return:" + code.co_qualname, error)
             finally:
                 del frame
 
@@ -771,7 +801,11 @@ async def exercise():
                 )
                 sent = True
                 _key(app, "enter", "\r")
-                await settle(entered.is_set)
+                try:
+                    await settle(entered.is_set)
+                except AssertionError:
+                    observed["failed_bound"] = "managed_builder_entry_10s"
+                    raise
                 assert (
                     not errors and observed["visible"] == observed["builder_count"] == 1
                 )
@@ -861,6 +895,29 @@ async def exercise():
             except BaseException as error:
                 primary = error
                 observed["primary_failure_type"] = type(error).__name__
+                try:
+                    observed["failure_binding"] = {
+                        "site": failure_site(error),
+                        "entered": entered.is_set(),
+                        "returned": returned.is_set(),
+                        "record_present": "record" in objects,
+                        "record_task": failure_state(objects.get("record_task")),
+                        "native_future": failure_state(
+                            objects.get("future")
+                            if "future" in objects
+                            else submitted[-1][2] if submitted else None
+                        ),
+                        "submitted_count": len(submitted),
+                        "factory_original": vars(local).get("_trust_service_factory")
+                        is factory,
+                        "cold_app": vars(app).get("_local_skill_trust_service") is None,
+                        "cold_local": vars(local).get("_trust_service") is None,
+                        "current_view": runtime.view is screen,
+                        "composer_focused": composer is not None
+                        and app.focused is composer,
+                    }
+                except Exception as metadata_error:
+                    observed["failure_binding_error"] = type(metadata_error).__name__
                 raise
             finally:
                 release.set()
