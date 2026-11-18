@@ -145,6 +145,8 @@ The next three-pair sequence (`q2`) started on Windows 10 with candidate `6410d0
 
 This candidate retains existing tab buttons during append-only session changes and queues New Chat behind the preceding workspace chat for the same source and visit. Its first focused Windows run passed 11 checks, including both display-overlap cases, stable tab input, archive protocol, and archive reservation settlement. The actual saved-chat archive test stopped before Send because the saved-session open did not publish its physical-retirement result. Commit `135616303b` exposes the result from the original effect owner. This later fix is outside the frozen `q2` input.
 
+The first baseline of `q2` passed both original journeys. README took 481.774592 s from Send to completed reply, including 11.256854 s of measured human wait, for 470.517738 s of application time. Edit took 594.215726 s including 19.136928 s of measured human wait, for 575.078798 s of application time. The first loopback requests arrived at 124.2454 s and 139.9863 s. The Windows receipt SHA-256 is `5c8fb8b3fa1f3288a1396b809a2e2172c38d51d59479f51b0d8ec2928546de61`.
+
 <!-- SECTION:NOTES:END -->
 
 Measured follow-up under the same [ADR-126 bounded configuration-read amendment](../decisions/126-complete-local-backup-and-recovery.md#task-40608--bounded-sensitive-database-path-configuration-reads): qualify the original sensitive container-reader cohort, then group its admissions without changing readers, overrides or refusal checks. The measured 0.218-second component is separate from the unresolved planning delay; final three-pair acceptance remains open.
