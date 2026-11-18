@@ -325,6 +325,17 @@ The pair 3 receipt SHA-256 values are
 (baseline) and `4eee5909be99626d916e7861eca0276521320eb38a2c1432e25143d6ee916b38`
 (candidate).
 
+The separate `g61w` run tested `495b3249e9`, which includes the subsequent
+SQLite batching, metadata and navigation changes. Both original journeys and
+shutdown passed. README took 24.9333 s adjusted (26.6694 s raw), with the
+first request at 12.4530 s. Edit took 22.1499 s adjusted (24.7043 s raw),
+with the first request at 6.2313 s. Its original receipt SHA-256 is
+`e63b819c49d30a419c7637f68cfea1c3bb9d30d764702e4f862e3f0d913386e8`.
+The separate paired batch `qc` pins this revision. The hosted Windows
+controls on the same product revision passed 531 tests with two skips,
+including the original bounded Enter test and the Settings navigation cases.
+[Hosted Windows control results](https://github.com/rmusser01/tldw_chatbook/actions/runs/44332076725/job/134898850941)
+
 Batch `q5` started its first clean baseline on Windows 10 at 07:59 UTC on November 18. The driver pinned candidate `a3bf91340319ad7ad60177a37a537ca46364c2e3` and configuration SHA-256 `6af37c73d99d05badc21dc5b570104a3b513414cd213af8cc9464df362f62f93`. Its order is B1/C1, C2/B2, B3/C3. The earlier q4 plan never launched. A separate native component test accepted the corrected rail Apply, then the mounted-writer test failed in its subsequent visible read. Those tests contribute no journey times.
 
 | Earlier local pair | README baseline → candidate | Edit baseline → candidate |
