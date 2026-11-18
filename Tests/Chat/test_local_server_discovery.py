@@ -4357,15 +4357,15 @@ def test_a_cloud_adapter_never_reaches_a_base_url_the_contract_refuses(
 
         assert sent == [], (shape, pinned)
         assert isinstance(caught, ChatConfigurationError), (shape, pinned, repr(caught))
+        name, provider = _CLOUD_REFUSAL_NAMES[dispatch]
+        assert caught.status_code is None, (shape, pinned, caught.status_code)
+        assert caught.provider == provider, (shape, caught.provider)
+        assert not [part for part in _ECHO_PARTS if part in str(caught)], shape
         if dispatch in _RESOLVER_REFUSALS and shape in _RESOLVER_REFUSED_SHAPES:
             assert str(caught).startswith(_RESOLVER_REFUSALS[dispatch]), (shape, pinned)
             continue
-        name, provider = _CLOUD_REFUSAL_NAMES[dispatch]
         reason = endpoint_refusal(dispatch, endpoint)
         assert reason and str(caught) == f"{name} API URL: {reason}", (shape, pinned, str(caught))
-        assert caught.status_code is None
-        assert caught.provider == provider, (shape, caught.provider)
-        assert not [part for part in _ECHO_PARTS if part in str(caught)], shape
 
 
 #: TASK-41522 keeps-working checks: where each cloud adapter posts, unpinned,

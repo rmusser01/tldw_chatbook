@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any, cast
 
 from tldw_chatbook.Provider_Contract import (
+    ChatConfigurationError,
     ChatProviderError,
 )
 from tldw_chatbook.Provider_Contract.provider_continuation import (
@@ -681,7 +682,12 @@ def _resolve_base_url(
     try:
         return normalize_hosted_chat_base_url(candidate, default=_DEFAULT_BASE_URL)
     except ValueError:
-        raise _configuration_error("Moonshot API base URL is invalid.") from None
+        # Status-less: nothing was sent (TASK-41522 review r16cu-rev1).
+        raise ChatConfigurationError(
+            provider="moonshot",
+            message="Moonshot API base URL is invalid.",
+            status_code=None,
+        ) from None
 
 
 

@@ -358,7 +358,10 @@ def normalize_qwencloud_base_url(api_base_url: str | None) -> str:
     try:
         return _normalize_qwencloud_base_url(api_base_url)
     except QwenCloudBaseURLValidationError as exc:
-        raise _configuration_error(str(exc)) from exc
+        # Status-less: nothing was sent (TASK-41522 review r16cu-rev1).
+        raise ChatConfigurationError(
+            provider="qwencloud", message=str(exc), status_code=None
+        ) from exc
 
 
 def resolve_qwencloud_api_key(
