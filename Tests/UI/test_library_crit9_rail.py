@@ -9,10 +9,15 @@ layout that is broken in the app.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from textual.widgets import Button, Input, Static
 
-from tldw_chatbook.Library.library_rail_state import LibraryRailPreferences
+from tldw_chatbook.Library.library_rail_state import (
+    LibraryLifecycle,
+    LibraryRailPreferences,
+)
 from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH
 from tldw_chatbook.Library.library_shell_state import LibraryShellState
 from tldw_chatbook.UI.Library_Modules.library_rag_search_controller import (
@@ -31,6 +36,7 @@ from Tests.UI.test_library_shell import (
     _seed_conversations,
     _two_conversations,
     _two_notes,
+    _wait_for_condition,
     _wait_for_library_shell,
     _wait_for_selector,
 )
@@ -41,6 +47,57 @@ def _library_host() -> LibraryProductionCSSHarness:
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
     return LibraryProductionCSSHarness(app)
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_saved_landing_counts_keep_the_focused_rail_input(monkeypatch) -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    app.app_config.setdefault("library", {}).setdefault("rail_state", {})[
+        "lifecycle"
+    ] = "graduated"
+    host = LibraryProductionCSSHarness(app)
+    release_snapshot = asyncio.Event()
+    read_snapshot = LibraryScreen._list_local_source_snapshot
+
+    async def wait_for_release(screen):
+        await release_snapshot.wait()
+        return await read_snapshot(screen)
+
+    monkeypatch.setattr(LibraryScreen, "_list_local_source_snapshot", wait_for_release)
+    async with host.run_test(size=(120, 50)) as pilot:
+        screen = _active_library_screen(host)
+        search = screen.query_one("#library-search-input", Input)
+        row = screen.query_one("#library-row-browse-conversations", Button)
+        assert screen._library_lifecycle is LibraryLifecycle.GRADUATED
+        assert "Conversations (2)" not in str(row.label)
+        search.focus()
+        await pilot.pause()
+        assert screen.focused is search
+
+        release_snapshot.set()
+        await _wait_for_library_shell(screen, pilot)
+        current_row = screen.query_one("#library-row-browse-conversations", Button)
+        assert "Conversations (2)" in str(current_row.label)
+        assert screen.focused is search
+        assert screen.query_one("#library-search-input", Input) is search
+        assert current_row is row
+
+        rail = screen.query_one("#library-rail", LibraryRail)
+        completed = []
+        rail.queue_after_recompose(
+            lambda: completed.append(rail.query_one("#library-search-input", Input))
+        )
+        rail.sync_state(rail.shell, rail.preferences, lifecycle=rail.lifecycle)
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(completed),
+            message="The queued rail callback did not run",
+        )
+        replacement = rail.query_one("#library-search-input", Input)
+        assert replacement is not search
+        assert completed == [replacement]
 
 
 def _painted(host, region) -> str:

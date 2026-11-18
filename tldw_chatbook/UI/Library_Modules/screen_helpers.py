@@ -32,9 +32,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 
+from ...Library.library_content_evidence import LibraryEvidenceStatus
+from ...Library.library_rail_state import LibraryLifecycle
 from ...runtime_policy.server_event_scope import event_principal_id_from_active_context
 from ...STT.transcribe_cpp_config import is_gguf_file
 from ...Third_Party.textual_fspicker import Filters
@@ -47,6 +49,11 @@ from .screen_constants import (
     LIBRARY_NOTE_BLANK_SEED_TITLE,
 )
 
+if TYPE_CHECKING:
+    from textual.worker import Worker
+
+    from ..Screens.library_screen import LibraryScreen
+
 
 def _library_screen_is_current(screen: Any) -> bool:
     """Reject delayed callbacks owned by a replaced, detached or exiting Library screen.
@@ -58,6 +65,41 @@ def _library_screen_is_current(screen: Any) -> bool:
         return bool(screen.is_attached) and screen.app.screen is screen
     except Exception:
         return False
+
+
+def refresh_library_onboarding_evidence(screen: LibraryScreen) -> Worker | None:
+    """Refresh the landing and check content until graduation is saved."""
+    screen._library_onboarding_generation += 1
+    generation = screen._library_onboarding_generation
+    saved_graduation = (
+        screen._library_lifecycle is LibraryLifecycle.GRADUATED
+        and screen._library_lifecycle_last_persisted is LibraryLifecycle.GRADUATED
+    )
+    back_was_admitted = (
+        screen._library_lifecycle is LibraryLifecycle.EXPANDED
+        and screen._library_onboarding_all_empty
+    )
+    screen._library_onboarding_all_empty = False
+    screen._library_onboarding_status = (
+        LibraryEvidenceStatus.SETTLED
+        if saved_graduation
+        else LibraryEvidenceStatus.LOADING
+    )
+    screen._sync_library_onboarding_status_copy()
+    if not screen.is_attached:
+        return None
+    if back_was_admitted:
+        screen._sync_library_rail_lifecycle_presentation()
+    elif screen.is_mounted:
+        screen._sync_library_landing_lifecycle_presentation()
+    if saved_graduation:
+        # Saved graduation is permanent. Unsaved transitions still retry.
+        return None
+    return screen.run_worker(
+        screen._gather_library_onboarding_evidence(generation),
+        group="library_onboarding_evidence",
+        exclusive=True,
+    )
 
 
 def library_note_persisted_title(raw_title: str) -> str:

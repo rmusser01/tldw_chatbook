@@ -1572,7 +1572,18 @@ async def test_library_full_lifecycle_landing_preserves_counts_search_and_empty_
     try:
         async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
             screen = host.screen_stack[-1]
-            await _wait_for_evidence_round(pilot, gates)
+            if lifecycle is LibraryLifecycle.GRADUATED:
+                await _wait_for_condition(
+                    pilot,
+                    lambda: (
+                        screen._library_onboarding_status
+                        is LibraryEvidenceStatus.SETTLED
+                    ),
+                    message="Saved graduation did not settle",
+                )
+                assert not any(gates.calls.values())
+            else:
+                await _wait_for_evidence_round(pilot, gates)
 
             assert screen.query_one("#library-hub-counts", Static)
             assert screen.query_one("#library-hub-action-search", Button)
@@ -1958,10 +1969,11 @@ async def test_library_onboarding_unmount_flushes_latest_lifecycle(
 async def test_library_onboarding_positive_retrieves_concurrent_loser_exceptions(
     monkeypatch,
 ) -> None:
+    # An unsaved graduation keeps evidence available for each losing owner.
     monkeypatch.setattr(
         library_screen_module,
         "save_setting_to_cli_config",
-        lambda *_args: True,
+        lambda _section, _key, lifecycle: lifecycle != LibraryLifecycle.GRADUATED.value,
     )
     owners = (*_LibraryEvidenceGates.ASYNC_OWNERS, "collections")
     gates = _LibraryEvidenceGates(
@@ -2193,9 +2205,10 @@ async def test_library_onboarding_restart_restores_each_settled_lifecycle(
 
     try:
         async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-            await _wait_for_evidence_round(pilot, gates)
+            if lifecycle is not LibraryLifecycle.GRADUATED:
+                await _wait_for_evidence_round(pilot, gates)
+                gates.release_round(0)
             assert screen._library_lifecycle is lifecycle
-            gates.release_round(0)
             await _wait_for_condition(
                 pilot,
                 lambda: (
@@ -2203,12 +2216,9 @@ async def test_library_onboarding_restart_restores_each_settled_lifecycle(
                 ),
                 message="restored lifecycle evidence did not settle",
             )
-            expected = (
-                LibraryLifecycle.GRADUATED
-                if lifecycle is LibraryLifecycle.GRADUATED
-                else lifecycle
-            )
-            assert screen._library_lifecycle is expected
+            assert screen._library_lifecycle is lifecycle
+            if lifecycle is LibraryLifecycle.GRADUATED:
+                assert not any(gates.calls.values())
     finally:
         gates.release_all()
 
@@ -2579,8 +2589,15 @@ async def test_library_persisted_graduated_restart_has_no_transition_announcemen
 
     try:
         async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-            await _wait_for_evidence_round(pilot, gates)
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen._library_onboarding_status is LibraryEvidenceStatus.SETTLED
+                ),
+                message="Saved graduation did not settle",
+            )
             await pilot.pause()
+            assert not any(gates.calls.values())
 
             lifecycle_status = screen.query_one("#library-lifecycle-status", Static)
             assert "Library tools are now available." not in str(
@@ -3212,7 +3229,7 @@ async def test_library_onboarding_back_requires_fresh_empty_evidence_and_focuses
 
 @pytest.mark.asyncio
 async def test_library_onboarding_graduated_never_offers_back_to_starter() -> None:
-    """Sticky graduation denies Back even when a later read is all empty."""
+    """A saved graduation keeps Back absent without an empty-evidence round."""
     gates = _LibraryEvidenceGates()
     app = _new_library_onboarding_app(gates)
     app.library_new_profile_admission = False
@@ -3222,13 +3239,14 @@ async def test_library_onboarding_graduated_never_offers_back_to_starter() -> No
 
     try:
         async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-            await _wait_for_evidence_round(pilot, gates)
-            gates.release_round(0)
             await _wait_for_condition(
                 pilot,
-                lambda: screen._library_onboarding_all_empty,
-                message="empty evidence did not settle",
+                lambda: (
+                    screen._library_onboarding_status is LibraryEvidenceStatus.SETTLED
+                ),
+                message="Saved graduation did not settle",
             )
+            assert not any(gates.calls.values())
             assert screen._library_lifecycle is LibraryLifecycle.GRADUATED
             assert not screen.query("#library-rail-back-to-starter")
     finally:

@@ -698,6 +698,63 @@ def test_library_workspace_depth_state_recognizes_media_id_and_ignores_idless_ro
     assert all(row.active_context_eligible for row in state.source_rows)
 
 
+def test_library_workspace_projection_reads_visible_memberships_in_one_query(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = _registry(tmp_path)
+    try:
+        service.create_workspace(workspace_id="active", name="Active")
+        service.create_workspace(workspace_id="foreign", name="Other")
+        service.set_active_workspace("active")
+        service.link_membership("foreign", item_type="note", item_id="shared")
+        service.link_membership("foreign", item_type="media", item_id="shared")
+        service.link_membership("active", item_type="media", item_id="shared")
+
+        def project():
+            return build_library_workspace_depth_state(
+                registry_service=service,
+                source_records={
+                    "notes": iter(
+                        (
+                            {"id": " shared ", "title": "First"},
+                            {"id": "shared", "title": "Duplicate source"},
+                            {"title": "No ID"},
+                        )
+                    ),
+                    "media": ({"media_id": "shared"},),
+                    "conversations": ({"conversation_id": "unassigned"},),
+                },
+            )
+
+        with monkeypatch.context() as patch:
+            patch.setattr(service, "get_memberships_for_items", None, raising=False)
+            expected = project()
+
+        statements = []
+        with service.db.connection() as conn:
+            conn.set_trace_callback(statements.append)
+            try:
+                actual = project()
+            finally:
+                conn.set_trace_callback(None)
+        assert actual == expected
+        assert [row.active_context_eligible for row in actual.source_rows] == [
+            False,
+            False,
+            True,
+            False,
+        ]
+        assert sum("FROM workspace_memberships" in sql for sql in statements) == 1
+
+        def fail_grouped_read(_items):
+            raise RuntimeError("Injected transient read failure")
+
+        monkeypatch.setattr(service, "get_memberships_for_items", fail_grouped_read)
+        assert project() == expected
+    finally:
+        service.db.close()
+
+
 def test_library_item_context_handoff_gates_on_the_selected_row_only(
     tmp_path: Path,
 ) -> None:

@@ -602,6 +602,31 @@ def test_registry_rejects_archived_active_workspace_without_clearing_current(
     assert active.workspace_id == "ws-a"
 
 
+def test_grouped_memberships_preserve_exact_pairs_and_order_across_batches(
+    build_test_registry, tmp_path: Path
+) -> None:
+    service = build_test_registry(tmp_path)
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    service.create_workspace(workspace_id="ws-b", name="Workspace B")
+    service.link_membership("ws-b", item_type="note", item_id="first")
+    service.link_membership("ws-a", item_type="note", item_id="first", role="reference")
+    service.link_membership("ws-a", item_type="media", item_id="first")
+    service.link_membership("ws-a", item_type="media", item_id="last")
+    expected = {
+        ("note", "first"): service.get_item_memberships("note", "first"),
+        ("media", "last"): service.get_item_memberships("media", "last"),
+    }
+    keys = [
+        (" note ", " first "),
+        ("note", "first"),
+        *(("note", f"absent-{index}") for index in range(205)),
+        ("media", "last"),
+    ]
+
+    assert service.get_memberships_for_items([]) == {}
+    assert service.get_memberships_for_items(keys) == expected
+
+
 def test_link_membership_uses_unique_membership_lookup() -> None:
     source = inspect.getsource(LocalWorkspaceRegistryService.link_membership)
 
