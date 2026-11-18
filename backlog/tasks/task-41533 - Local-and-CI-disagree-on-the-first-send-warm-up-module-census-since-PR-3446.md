@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-17 05:39
-updated_date: 2026-11-18 08:51
+updated_date: 2026-11-18 09:05
 labels:
 - follow-up
 - tests
@@ -61,16 +61,18 @@ Reported by the coordinator at the filing review (round 15). Since PR #3446 (mer
   - Real sheds (2): `served_relay_publisher` and its `Web_Server` package are unlisted. They are served mode only, and the app imports them when it is built (`app.py` line 1137, `app_served.py` line 71). A native send never imports them, and a native warm-up no longer loads them. #3533 makes the same one-line removal. The `textual_serve` step, which was listed only as their dependency step, is unlisted too. It is third-party, so the tldw census does not count it, but a native warm-up no longer imports it.
   - Census-only (3): `app_served` is unlisted, `Canvas.compilation` moves under `TYPE_CHECKING` in `Canvas/native_authority.py` (annotations only), and `Workspaces.worktree_activity` is imported in `_capture_maximum`. A live app holds all three at UI-ready, so these changes only shrink the app + chat census.
 
-**The live delta.** The census reads 94 again. Live, the native warm-up loads as many modules as at the last pin, but more lines.
-- Method: probe `scratchpad/fu/r16cs/live_warmup_probe.py`. It warm-boots the app headless to `_ui_ready` the way the UI-ready census does, waits 3 s for the post-ready timers, runs the screen-route walk (where the real warm-up starts), then imports the list in order. It counts new `tldw_chatbook` modules and new third-party top-level packages.
-- Counts: last pin 1fabd2a7ff gives 78 (2 runs), the base 80, this branch 78 (2 runs).
-  - The base minus the pin: the trio (+3) and `MCP.console_snapshot`, which TASK-41308 made resident at UI-ready (-1).
-  - This branch minus the base: `served_relay_publisher` and `Web_Server` (-2).
-  - `scope_evidence` is in all three, since the pin's list already had it.
-- Lines, against the pin: about +860. The trio adds 2,610; the two real sheds remove 382 and `console_snapshot` 1,372.
+**The live delta (review r16cs-rev2, fix round 2).** The census reads 94 again. Live, the native warm-up loads one module more than the last in-budget trees.
+- Method: probe `scratchpad/fu/r16cs/live_warmup_probe.py`. It warm-boots the app headless to `_ui_ready` the way the UI-ready census does, waits 3 s for the post-ready timers, runs the screen-route walk (where the real warm-up starts), then imports the list in order. It counts new `tldw_chatbook` modules and new third-party top-level packages. The reviewer reproduced 78 at this head.
+- Baseline: the last in-budget trees, a94c4aec67 (#3446 before its rebase, CI run 43331816906) and 5d1fc43130 (dev before #3446, CI run 43861223546), read 77 settled; this head reads 78 (3 runs). The +1 is the collision of the two last-slot claims. 5d1fc43130 lists `scope_evidence` but not `agent_lesson_promotion`, a94c4aec67 the reverse, and this head lists both. It ends when #3571 unlists `scope_evidence`. Otherwise the two trees differ from this head as follows:
+  - the trio adds 3;
+  - `served_relay_publisher` and `Web_Server` (this branch's real sheds) remove 2;
+  - `MCP.console_snapshot`, resident at UI-ready since TASK-41308, removes 1.
+- Lines, for information only: at today's file sizes, about +1,530 against 5d1fc43130 and +2,250 against a94c4aec67.
+- The round-1 note compared this head with 1fabd2a7ff, which was itself over budget (its census reads 95, the same collision). That made the delta look like 0. The round-1 review's +2 (91 against 89) mixed trees: it applied this head's UI-ready set to the pin's census.
+- Counted right at `_ui_ready` with no settle, the count moves with timing: this head read 93 and 80 in two runs. Only the settled count compares across trees.
 - Third-party: `textual_serve` is no longer imported.
-- Counted right at `_ui_ready` with no settle, the count moves with timing. This branch read 93 and 80 in two runs with the same tldw list, and the base read 95. A count without a settle is not comparable run to run. Review r16cs-rev1's 91 against 89 may have been taken that way; I did not confirm its method.
-- Boot and warm-up: the trio moved from before ready to after it, and `console_snapshot` moved the other way. The UI-ready set held 1,060 modules in all three trees.
+- Boot and warm-up: the trio moved from before ready to after it, and `console_snapshot` moved the other way.
+- Owner ruling: pending.
 
 **More real sheds were looked for and not found.** The search covered modules the live warm-up loads after a 3 s settle that are neither resident at UI-ready nor in the live first-send record (`LIVE_FIRST_SEND_IMPORTS` / `LIVE_LIBRARY_FIRST_SEND_IMPORTS`):
 - the trio and `console_agent_reply`: agent sends need them on the UI loop (above);
@@ -80,7 +82,7 @@ Reported by the coordinator at the filing review (round 15). Since PR #3446 (mer
 - the `hooks_v2` and `response_rules` package modules: parents of listed modules;
 - seven `Tools.*` modules (`local_tool_impls`, `patch_tool_impls`, `workspace_tool_executor` and its protocol, wire, root-pin and watchdog modules), pulled in by `Agents.local_tool_provider`. The provider builds a `WorkspaceToolExecutor` when it is constructed, and `Tests/Agents/test_local_tool_provider.py` patches `local_tool_provider.WorkspaceToolExecutor`.
 
-None of these can leave without a behaviour change. With the settled measurement there is no live module delta to put to the owner. The live line growth (about +860) and the at-ready reading are for the owner to weigh.
+None of these can leave without a behaviour change. That leaves one live module (the collision) until #3571; the owner's decision goes under "Owner ruling" above. The line growth is informational.
 
 **App-import census: 688 -> 687 (limit `< 688`).** No raise. The snapshot showed +4/-3:
 - `DB.chachanotes_sql_steps`: 3911d7df50 (TASK-41310 A, #3592) made `ChaChaNotes_DB` import it at module level. This is the +1 that took dev from 687 (CI 43917600520 at 5e3c8b2bd4: 687/688, drift +3/-3) to 688. It is deferred: the two upgrade steps that use it (v85->v86 and v86->v87) import it where they run. The module-size row for `ChaChaNotes_DB.py` rises by that fix's own line, 22544 -> 22545, with a dated comment, as the owner's size-ratchet rule for fixes asks.

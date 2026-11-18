@@ -219,7 +219,8 @@ MAX_SINGLE_ROUTE_ADDED_LOC = 135_111
 #: that uses it, so it adds one module, not two. The review service a first
 #: send also imported stays out: an ordinary turn no longer loads it.
 #: 2026-11-18 (TASK-41533): this census reads 94 again, with no raise, but
-#: the live warm-up's makeup changed since the last pin. Two changes went over it.
+#: the live warm-up is one module over the last in-budget trees (below).
+#: Two changes went over it.
 #: ``RAG_Search.scope_evidence`` (TASK-36947.3) stays listed, because a first
 #: Automatic send's evidence capture imports it on the UI loop. TASK-41319
 #: took ``Chat.console_ordinary_tree`` and the ``Agents.ordinary_tree`` and
@@ -237,14 +238,17 @@ MAX_SINGLE_ROUTE_ADDED_LOC = 135_111
 #:   console_ordinary_tree uses it). A live app holds all three at UI-ready
 #:   anyway, so moving them changes nothing at run time.
 #: Live, measured from a warm boot after a 3 s settle and the screen-route
-#: walk (where the real warm-up starts), the native warm-up loads 78 modules,
-#: as it did at the last pin (1fabd2a7ff, also 78). The trio adds 3. Two come
-#: off with the served-mode sheds, and one more with ``MCP.console_snapshot``,
-#: which TASK-41308 made resident at UI-ready. It loads about 860 more lines:
-#: the trio adds 2,610, the sheds remove 382 and console_snapshot 1,372.
-#: Counted right at ``_ui_ready`` with no settle, the same tree read 80 and 93
-#: in two runs, so that count is not comparable from one run to the next.
-#: Review r16cs-rev1's 91 against 89 may have been counted this way.
+#: walk (where the real warm-up starts), the native warm-up loads 78 modules.
+#: The last in-budget trees, a94c4aec67 and 5d1fc43130, load 77, so this is
+#: one live module more. That module is the collision: those trees listed
+#: only one of scope_evidence and agent_lesson_promotion, and this one lists
+#: both. It goes away when #3571 unlists scope_evidence. The owner's decision
+#: is recorded in TASK-41533. Otherwise, the trio's +3 is matched by the two
+#: served-mode sheds and by ``MCP.console_snapshot``, which TASK-41308 made
+#: resident at UI-ready. For information only: at today's file sizes that is
+#: about 1,500 to 2,300 more lines. Counted right at ``_ui_ready`` with no
+#: settle, the same tree read 80 and 93 in two runs, so that count is not
+#: comparable from one run to the next.
 MAX_FIRST_SEND_WARMUP_ADDED_MODULES = 94
 
 _CENSUS_SCRIPT = """
