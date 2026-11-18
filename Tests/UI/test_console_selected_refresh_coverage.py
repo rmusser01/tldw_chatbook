@@ -88,7 +88,7 @@ async def test_refresh_covered_during_read_keeps_values_and_defers_adoption(
         await release.wait()
         raise ConsoleChannelLost("Console attachment visit changed")
 
-    client.read_projection = read
+    client.read_view_display = read
     task = asyncio.create_task(execution_state.refresh_selected_view(screen))
     await entered.wait()
     _cover(screen, app)
@@ -119,7 +119,7 @@ async def test_refresh_does_not_hide_active_source_or_producer_failures(
             client._source_revision += 1
         raise error
 
-    client.read_projection = read
+    client.read_view_display = read
     with pytest.raises(type(error)) as caught:
         await execution_state.refresh_selected_view(screen)
     assert caught.value is error

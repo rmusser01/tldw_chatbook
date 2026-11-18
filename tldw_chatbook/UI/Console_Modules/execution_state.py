@@ -137,7 +137,7 @@ _PREPARE_METHODS = tuple(
     for name in (
         "prepare_view", "attach_view", "detach_view", "require_view",
         "_require_view_preparation", "_retain_open_session", "_open_initial_session",
-        "read_projection", "_join_hidden_checkpoint", "_view_checkpoint_finished",
+        "read_projection", "read_view_display", "_join_hidden_checkpoint", "_view_checkpoint_finished",
         "open_new_chat", "_read_projection_locked", "_projection_read_finished",
         "read_run_history",
     )
@@ -323,8 +323,8 @@ async def _refresh_current_selected_view(screen, client, visit, checkpoint) -> b
     from .execution_sessions import apply_console_process_sessions
 
     row = client.projection_view.session(client.projection_view.active_session_id)
-    projection = await client.read_projection(
-        row.id, row.incarnation_id, _checkpoint=checkpoint,
+    projection = await client.read_view_display(
+        screen, visit, row.id, row.incarnation_id, checkpoint=checkpoint,
     )
     if _defer_selected_refresh(screen, client, visit):
         return False

@@ -154,13 +154,50 @@ def test_detach_revokes_visit_before_missing_projection_row():
 def test_projection_freshness_uses_the_actual_capture_in_this_request():
     from tldw_chatbook.Chat.console_execution_process import (
         ConsoleChannelLost,
+        ConsoleReadinessExpired,
         _projection_readiness_deadline,
     )
 
     # A long queue precedes the checked capture. Transport ages it normally.
     assert _projection_readiness_deadline(10.0, 22.0, 0.75, 22.5) == 22.75
-    with pytest.raises(ConsoleChannelLost, match="expired"):
+    with pytest.raises(ConsoleReadinessExpired, match="expired"):
         _projection_readiness_deadline(10.0, 22.0, 0.75, 22.75)
     for capture in (9.0, 23.0):
         with pytest.raises(ConsoleChannelLost, match="outside"):
             _projection_readiness_deadline(10.0, capture, 0.75, 22.5)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["fresh", "superseded", "channel_lost"])
+async def test_expired_view_read_rechecks_the_visit_and_never_reissues_mount(outcome):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_execution_process import (
+        ConsoleChannelLost, ConsoleExecutionClient, ConsoleReadinessExpired,
+    )
+
+    client = ConsoleExecutionClient(None)
+    screen = object()
+    client.projection_view = SimpleNamespace(active_session_id="chat")
+    client.require_view = lambda view, visit: (view is screen and visit == 7) or pytest.fail()
+    checkpoints = []
+
+    async def read(session_id, incarnation_id, *, _preparation, _checkpoint):
+        assert (session_id, incarnation_id, _preparation) == ("chat", "inc", None)
+        checkpoints.append(_checkpoint)
+        if len(checkpoints) > 1:
+            return "fresh"
+        if outcome == "channel_lost":
+            raise ConsoleChannelLost("unknown retirement")
+        if outcome == "superseded":
+            client._source_revision += 1
+        raise ConsoleReadinessExpired("expired")
+
+    client.read_projection = read
+    if outcome == "fresh":
+        assert await client.read_view_display(screen, 7, "chat", "inc", checkpoint="mount") == "fresh"
+        assert checkpoints == ["mount", None]
+    else:
+        with pytest.raises(ConsoleChannelLost, match="superseded|unknown retirement"):
+            await client.read_view_display(screen, 7, "chat", "inc", checkpoint="mount")
+        assert checkpoints == ["mount"]

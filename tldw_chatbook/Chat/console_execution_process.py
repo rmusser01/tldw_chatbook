@@ -34,6 +34,10 @@ class ConsoleChannelLost(RuntimeError):
     """An outcome may remain unknown after the channel stops."""
 
 
+class ConsoleReadinessExpired(ConsoleChannelLost):
+    """The checked display aged out before the client could adopt it."""
+
+
 class ConsoleRemoteFailure(RuntimeError):
     """A fixed backend operation refused at its reported original stage."""
 
@@ -188,7 +192,7 @@ def _projection_readiness_deadline(requested_at, captured_at, remaining, now) ->
         raise ConsoleChannelLost("Console readiness clock is outside the request")
     deadline = captured_at + remaining
     if now >= deadline:
-        raise ConsoleChannelLost("Console readiness expired before adoption")
+        raise ConsoleReadinessExpired("Console readiness expired before adoption")
     return deadline
 
 
@@ -396,8 +400,8 @@ class ConsoleExecutionClient:
                 row = self.projection_view.session(self.projection_view.active_session_id)
                 session_id, incarnation = row.id, row.incarnation_id
             self._require_view_preparation(view, visit, request)
-            projection = await self.read_projection(
-                session_id, incarnation, _preparation=request
+            projection = await self.read_view_display(
+                view, visit, session_id, incarnation, preparation=request
             )
             self._require_view_preparation(view, visit, request)
             return visit, projection
@@ -751,6 +755,29 @@ class ConsoleExecutionClient:
         self._projection_reads.add(task)
         task.add_done_callback(self._projection_read_finished)
         return await asyncio.shield(task)
+
+    async def read_view_display(
+        self, view, visit: int, session_id: str, incarnation_id: str, *,
+        preparation=None, checkpoint: str | None = None,
+    ):
+        """Wait for fresh display data on this visit; issue its lifecycle checkpoint once."""
+        source = self._source_revision
+        active = self.projection_view.active_session_id if self.projection_view is not None else None
+        while True:
+            self.require_view(view, visit)
+            current = self.projection_view.active_session_id if self.projection_view is not None else None
+            if self._source_revision != source or self._view_preparation is not preparation or current != active:
+                raise ConsoleChannelLost("Console display request was superseded")
+            try:
+                return await self.read_projection(
+                    session_id, incarnation_id, _preparation=preparation, _checkpoint=checkpoint,
+                )
+            except ConsoleReadinessExpired:
+                # The original request already applied and physically retired.
+                # Only refresh its display. Replaying a mount/visible action
+                # or publishing its expired readiness would each be incorrect.
+                checkpoint = None
+                await asyncio.sleep(0.25)
 
     def _projection_read_finished(self, task: asyncio.Task) -> None:
         self._projection_reads.discard(task)
