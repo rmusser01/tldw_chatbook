@@ -61,6 +61,14 @@ After removing the measured waits, the interval **between the first and last pro
 
 ## Qualifying pairs
 
+The earlier local implementation completed three sequential pairs with the original checks. Its median README time fell 64.33% and its median edit time fell 42.56%. Every candidate exceeded five seconds. The replacement process has its own qualification record below.
+
+| Earlier local pair | README baseline → candidate | Edit baseline → candidate |
+|---|---:|---:|
+| 1 | 286.9434 → 112.0680 s | 340.5827 → 168.3232 s |
+| 2 | 236.8475 → 84.4768 s | 282.0649 → 162.0053 s |
+| 3 | 188.2872 → 80.3125 s | 270.9438 → 112.4925 s |
+
 | Batch | Pair | README baseline / candidate | Approved edit baseline / candidate | State |
 |---|---|---|---|---|
 | `q2` | 1 | 470.518 s / — | 575.079 s / — | Baseline passed. Candidate timed out at disclosure. Batch stopped. |
