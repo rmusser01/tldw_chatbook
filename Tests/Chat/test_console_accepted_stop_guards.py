@@ -89,6 +89,7 @@ def test_temporary_accepted_stop_requires_live_exact_recovery(tmp_path, state):
 async def test_early_temporary_stop_requires_exact_registered_submit(tmp_path, state):
     from Tests.Chat.test_console_turn_preparation import _preparation_values
     from tldw_chatbook.Chat.console_pre_provider_stop import (
+        accepted_pre_stream_stop_available,
         request_accepted_pre_stream_stop,
     )
     from tldw_chatbook.Chat.console_turn_preparation import (
@@ -149,6 +150,36 @@ async def test_early_temporary_stop_requires_exact_registered_submit(tmp_path, s
         controller._active_cancel_events[session_id] = threading.Event()
     controller._deferred_user_stop_markers.add("other-assistant")
     try:
+        if state == "current":
+
+            def hold_lock(lock, acquired, release):
+                with lock:
+                    acquired.set()
+                    release.wait(5)
+
+            for lock in (
+                controller._active_submit_tasks_lock,
+                store.durable_preparation_lock,
+            ):
+                acquired, release = threading.Event(), threading.Event()
+                holder = threading.Thread(
+                    target=hold_lock, args=(lock, acquired, release)
+                )
+                holder.start()
+                try:
+                    assert await asyncio.to_thread(acquired.wait, 5)
+                    assert not accepted_pre_stream_stop_available(
+                        controller, session_id
+                    )
+                finally:
+                    release.set()
+                    await asyncio.to_thread(holder.join, 5)
+                    assert not holder.is_alive()
+        assert accepted_pre_stream_stop_available(controller, session_id) is (
+            state == "current"
+        )
+        assert not task.cancelling()
+        assert controller._deferred_user_stop_markers == {"other-assistant"}
         assert request_accepted_pre_stream_stop(
             controller, session_id, record_user_stop=True
         ) is (state == "current")

@@ -505,7 +505,18 @@ command APIs. Full qualification receipts retain their source and platform scope
 
 ## Run states and gating
 
-`ConsoleRunStatus`: idle / validating / streaming / checking_citations / completed / blocked / stopped / failed / retrying. New sends are only allowed from idle/blocked/completed/failed/stopped; Stop is only allowed during streaming/citation-checking. `_set_run_state` is the single writer of run state.
+`ConsoleRunStatus`: idle / validating / streaming / checking_citations / completed / blocked / stopped / failed / retrying. `_set_run_state` is the single writer of run state. The prompt queue projects Send and Queue availability from the session's admission and run state.
+
+The viewed Console offers Stop and Ctrl+G during preparation when its runtime
+can prove an exact cancellation owner. Cancellation of a received send before
+durable acceptance preserves the authored draft, including edits made during
+preparation. For a live accepted submit preparing to dispatch, the control
+checks the same preparation, recovery and task identities as the Stop command,
+using nonblocking lock acquisition. The command rechecks ownership. A Stop
+received during a confirmed native save's postcommit work lets its required
+effects finish before the same owner settles the turn. Redirect still depends
+on active generation. The mobile cancel endpoint selects the requested chat
+and delegates to the same controller entry point.
 
 ## Approvals
 

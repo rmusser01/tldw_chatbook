@@ -10,7 +10,9 @@ import traceback
 from pathlib import Path
 
 import pytest
+from textual.widgets import Button
 
+from Tests.UI.test_console_hook_review_send_freeze import _key
 from Tests.UI.test_console_received_intent_feedback import (
     _received_console_case,
     _send,
@@ -19,11 +21,16 @@ from Tests.UI.test_console_received_intent_feedback import (
 from Tests.UI.test_console_send_admission_off_pump import _allow_second_turns
 from Tests.UI.test_console_temporary_capture_flow import _temporary_tab
 from tldw_chatbook import config as config_module
+from tldw_chatbook.Agents.hooks_v2.lifecycle import HookSessionLifecycle
+from tldw_chatbook.Agents.project_instruction_resolver import ProjectInstructionResolver
+from tldw_chatbook.Chat import console_agent_reply
+from tldw_chatbook.Chat.console_chat_controller import list_project_instruction_bindings
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleDispatchRecoveryKind,
     ConsoleMessageRole,
     ConsoleRunStatus,
 )
+from tldw_chatbook.Chat.console_project_instructions import ProjectInstructionControlState
 from tldw_chatbook.Chat.console_turn_preparation import ConsoleTurnPreparationState
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
@@ -33,8 +40,11 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
     "window",
     [
         "hook",
+        "hook-lifecycle",
         "memory",
+        "native-postcommit",
         "create-chain",
+        "project-instructions",
         "temporary-create-chain",
         "temporary-compose",
         "temporary-dispatch",
@@ -42,7 +52,7 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
         "prewrite",
     ],
 )
-async def test_accepted_setup_stop_retires_exact_owner(monkeypatch, window):
+async def test_accepted_setup_stop_retires_exact_owner(monkeypatch, tmp_path, window):
     assert config_module.save_setting_to_cli_config(
         "console", "exchange_capture", False
     )
@@ -106,6 +116,66 @@ async def test_accepted_setup_stop_retires_exact_owner(monkeypatch, window):
         async def hold():
             held.set()
             await release.wait()
+
+        if window == "native-postcommit":
+            original_effect = controller._run_durable_postcommit_effect
+
+            async def hold_after_input(preparation_id, name, callback, *, fingerprint):
+                result = await original_effect(
+                    preparation_id, name, callback, fingerprint=fingerprint
+                )
+                if name == "staged_input_clearing" and not held.is_set():
+                    await hold()
+                return result
+
+            monkeypatch.setattr(
+                controller, "_run_durable_postcommit_effect", hold_after_input
+            )
+
+        if window == "hook-lifecycle":
+            case.runtime.ensure_hooks_v2(session_id, (), lambda *_: False)
+            original_wait = HookSessionLifecycle.wait
+
+            async def hold_lifecycle(lifecycle, scope, **kwargs):
+                owner = controller._hooks_v2_submissions.get(asyncio.current_task())
+                if (
+                    not held.is_set()
+                    and owner == (lifecycle, scope, session_id)
+                    and store.dispatch_recovery_for_session(session_id) is not None
+                ):
+                    await hold()
+                return await original_wait(lifecycle, scope, **kwargs)
+
+            monkeypatch.setattr(HookSessionLifecycle, "wait", hold_lifecycle)
+
+        if window == "project-instructions":
+            project = tmp_path / "project"
+            project.mkdir()
+            registry = case.console.app_instance.workspace_registry_service
+            registry.add_folder_binding(case.session.workspace_id, project)
+            (selection,) = list_project_instruction_bindings(case.session, registry)
+            store.set_session_project_instruction_state(
+                session_id,
+                ProjectInstructionControlState(
+                    project_instructions_enabled=True,
+                    working_folder_binding_id=selection.binding.binding_id,
+                    working_folder_locator_fingerprint=selection.locator_fingerprint,
+                ),
+            )
+            original_prepare = console_agent_reply.prepare
+
+            async def hold_startup(owner, callback, **kwargs):
+                bound = getattr(callback, "func", None)
+                if (
+                    not held.is_set()
+                    and owner is controller
+                    and getattr(bound, "__func__", None)
+                    is ProjectInstructionResolver.resolve_startup
+                ):
+                    await hold()
+                return await original_prepare(owner, callback, **kwargs)
+
+            monkeypatch.setattr(console_agent_reply, "prepare", hold_startup)
 
         async def hook():
             if (
@@ -180,9 +250,18 @@ async def test_accepted_setup_stop_retires_exact_owner(monkeypatch, window):
             assistant_id = recovery.assistant_message_id
             preparation = store.preparation_for_session(session_id)
             assert preparation is not None
-            assert controller._ordinary_native_commit_tasks(session_id) == ()
+            native_tasks = controller._ordinary_native_commit_tasks(session_id)
+            if window == "native-postcommit":
+                (native_task,) = native_tasks
+                (record,) = case.runtime._turn_custody.values()
+                assert record.task is native_task and record.inputs.durable_accepted
+                assert recovery.kind is ConsoleDispatchRecoveryKind.ACCEPTED
+                assert session_id not in controller._active_stream_tasks
+                prompt_history_size = controller.prompt_history.size
+            else:
+                assert native_tasks == ()
             assert case.provider_calls == []
-            if window in {"hook", "memory"}:
+            if window in {"hook", "hook-lifecycle", "memory"}:
                 assert session_id not in controller._active_stream_tasks
             if not temporary:
                 with sqlite3.connect(config_module.get_chachanotes_db_path()) as db:
@@ -213,11 +292,53 @@ async def test_accepted_setup_stop_retires_exact_owner(monkeypatch, window):
                 chain_task = chain_tasks[0]
                 assert chain_task in controller._maintenance_background
                 assert not chain_task.done()
-            assert controller.stop_active_run()
+            if window in {
+                "hook",
+                "hook-lifecycle",
+                "memory",
+                "native-postcommit",
+                "create-chain",
+                "temporary-create-chain",
+                "project-instructions",
+            }:
+                if not native_tasks:
+                    assert preparation.state is ConsoleTurnPreparationState.ACCEPTED
+                case.console._sync_console_composer_action_state(can_save_chatbook=False)
+                stop = composer.query_one("#console-stop-generation", Button)
+                assert await _until(
+                    lambda: stop.display
+                    and not stop.disabled
+                    and case.console.check_action("stop_console_run", ()),
+                    5,
+                ), f"Stop is unavailable during accepted {window}"
+                if not composer.run_active:
+                    assert not composer.query_one("#console-redirect-generation").display
+                native_stop = controller.stop_active_run
+                stop_results = []
+
+                def observe_stop(*, record_user_stop=True):
+                    result = native_stop(record_user_stop=record_user_stop)
+                    stop_results.append(result)
+                    return result
+
+                with monkeypatch.context() as stop_patch:
+                    stop_patch.setattr(controller, "stop_active_run", observe_stop)
+                    if window in {"hook", "create-chain", "native-postcommit"}:
+                        _key(case.host, "ctrl+g", "\x07")
+                    else:
+                        stop.press()
+                    assert await _until(lambda: bool(stop_results), 5)
+                    assert stop_results == [True]
+            else:
+                assert controller.stop_active_run()
             chain_release.set()
             for _ in range(2):
                 controller.stop_active_run()
                 await asyncio.sleep(0)
+            if window == "native-postcommit":
+                assert not native_task.done() and not native_task.cancelling()
+                assert not case.provider_calls
+                release.set()
             assert await _until(ended, 20)
             assert outcomes == ["returned"]
             if window.endswith("create-chain"):
@@ -246,12 +367,14 @@ async def test_accepted_setup_stop_retires_exact_owner(monkeypatch, window):
             assert store.dispatch_recovery_for_session(session_id) is None
             assert store.preparation_for_session(session_id) is None
             assert session_id not in controller._active_cancel_events
+            if window == "native-postcommit":
+                assert controller.prompt_history.size == prompt_history_size + 1
             assert (
                 sum(
                     row.content == "Response stopped by user."
                     for row in store.all_messages_for_session(session_id)
                 )
-                == 1
+                == (0 if window == "native-postcommit" else 1)
             )
             if temporary:
                 assert store.session_is_ephemeral(session_id)
@@ -289,6 +412,11 @@ async def test_accepted_setup_stop_retires_exact_owner(monkeypatch, window):
                         ).fetchone()[0]
                         == 0
                     )
+            if window in {"hook-lifecycle", "project-instructions"}:
+                # The synthetic hook and project fixtures also fail a plain
+                # Send. The other arms verify follow-up Send on this tab.
+                return
+
             composer.load_draft("Next send after accepted Stop")
             composer.focus()
             assert await _until(
