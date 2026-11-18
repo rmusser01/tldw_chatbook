@@ -1054,7 +1054,9 @@ _BUDGETS: dict[str, int] = {
     # unreadable stream is retried without streaming; exact measurement after
     # rebasing onto dev 4b90eb860b (8337 -> 8345, inside dev's 8364 row).
     # 2026-11-16: re-measured after rebasing onto dev 1a1f00c052 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 8345 -> 8371.
-    "tldw_chatbook/Chat/console_provider_gateway.py": 8371,
+    # TASK-41636, 2026-11-18: +5, a generic reply that arrived whole keeps its
+    # usage when a stop interrupts the wait for its worker (8371 -> 8376).
+    "tldw_chatbook/Chat/console_provider_gateway.py": 8376,
     # 2026-10-27, TASK-33620.15.22 (owner decision: a fix over a size ratchet
     # raises the row with a dated comment; never squeeze code to fit):
     # 7024 -> 7043 (+19). Send's readiness gets one owner,

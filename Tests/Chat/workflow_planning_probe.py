@@ -706,18 +706,10 @@ async def exercise():
                         )
                     ]
                 print("F_SHUTDOWN_WAITED_FOR_PLANNING_WORKER", flush=True)
-                # Current behaviour, not a contract: shutdown ends the reply's wait
-                # (TASK-33666), the usage the provider already returned is kept as
-                # uncertain, and the planner takes the ADR-356 recovery path. The
-                # shutdown-keeps-received-usage follow-up recorded in TASK-41314's
-                # notes would make this a settled no-plan drain with the actual
-                # tokens, as on the pre-#3480 lineage; both paths are checked whole.
-                if driver.exception() is not None:
-                    assert_returned_failure_recovery("workflow_not_settled")
-                    error = prepared.planning_recovery_return().error
-                    assert driver.exception() is error
-                    assert tokens == [("uncertain", None)]
-                    return
+                # TASK-41636: shutdown ends the reply's wait (TASK-33666) after the
+                # reply had arrived, so its usage is settled and planning drains
+                # without a plan; no recovery receipt.
+                assert driver.exception() is None, repr(driver.exception())
                 assert tokens == [("settled", 10)]
                 assert prepared._planning_recovery_return is None
             result = driver.result()

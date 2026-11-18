@@ -1164,6 +1164,9 @@ class ConsoleProviderCallSignals:
     _retry_call: ConsoleProviderCallSignals | None = field(default=None, init=False, repr=False)
     _synthetic_pending: bool = field(default=False, init=False, repr=False)
     _synthetic_emitted: bool = field(default=False, init=False, repr=False)
+    # TASK-41636: the provider's whole reply arrived (the generic stream read
+    # its terminal item), so a later stop cannot make its usage unknown.
+    reply_received: bool = field(default=False, init=False, repr=False)
 
     @property
     def synthetic_fallback_emitted(self) -> bool:
@@ -1522,7 +1525,7 @@ def _automatic_generation(
         raise
     finally:
         actual = 0 if pre_effect else None
-        if completed and signals is not None:
+        if signals is not None and (completed or signals.reply_received):
             try:
                 actual = _automatic_budget_tokens(
                     signals.usage_snapshot(),
@@ -7347,6 +7350,8 @@ class ConsoleProviderGateway:
                 acknowledge_delivery()
                 item = await queue.get()
                 if item.kind == "done":
+                    if signals is not None:
+                        signals.reply_received = True
                     break
                 if item.kind == "stream_fallback":
                     raise _StreamFallbackRequired()

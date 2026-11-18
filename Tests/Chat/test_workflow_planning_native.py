@@ -135,10 +135,8 @@ def test_shutdown_waits_for_same_native_planning_worker_return(tmp_path):
     )
     output = (tmp_path / "restart-output.log").read_text(encoding="utf-8")
     assert "F_SHUTDOWN_WAITED_FOR_PLANNING_WORKER" in output
-    # Exactly one outcome: today's recovery path, or a settled no-plan drain.
-    recovered = "F_RETURNED_REQUIRED_FAILURE_RECOVERED_shutdown-worker-tail" in output
-    settled = "F_NATIVE_PRIMARY_REQUIRED_PLAN_RETURN" in output
-    assert recovered != settled
+    # TASK-41636: usage received before shutdown is kept; a settled no-plan drain.
+    assert "F_NATIVE_PRIMARY_REQUIRED_PLAN_RETURN" in output
 
 
 @pytest.mark.parametrize(
