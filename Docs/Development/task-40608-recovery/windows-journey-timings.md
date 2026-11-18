@@ -741,6 +741,15 @@ a rewrite of the HTTP client a poor fit. A replacement should demonstrate both
 fewer native display reads per completed row and fewer admissions per durable
 operation, then meet the original end-to-end gate.
 
+An independent terminal-row command could paint the row while an earlier
+full display read is busy. The terminal full read still owes settings,
+attachments, acknowledgements and reconciliation. Adding the command would
+leave that work in place. A smaller alternative is to share an already queued
+full read whose dispatch has yet to start. Compatible callers can observe
+one freshly checked result while the terminal caller still runs its complete
+presentation and the original native resource retires. A read dispatched
+before the turn finishes cannot stand in for that terminal read.
+
 Within the backend's timed receive operation, every one of the 546 observed
 storage admissions had a matching completion on its original thread. The
 following durations use the union of those intervals, so overlapping work

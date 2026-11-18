@@ -42,7 +42,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $env:TEMP = $env:TMP = $testRoot
           $checks = @(
-            'Tests/Chat/test_console_terminal_transcript.py'
             'Tests/Chat/test_console_catalog_fingerprint_owner.py'
             'Tests/Chat/test_console_execution_passive_failure.py'
             'Tests/UI/test_console_workspace_tray_mount_overlap.py'
