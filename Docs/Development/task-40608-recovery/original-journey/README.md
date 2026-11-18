@@ -9,6 +9,12 @@ private profiles, source inventories, run receipts, or machine paths.
 Its current qualification and recovery rules supersede historical orchestration
 notes in the archived helper bundle.
 
+For the completed nonqualifying foreground/approval-v2 diagnostic and portable
+source recovery, see [DIAGNOSTICS.md](DIAGNOSTICS.md),
+[the 84 KiB source archive](windows-foreground-approval-v2.zip) and its
+[SHA256](windows-foreground-approval-v2.sha256). The known v2 ancestry-probe defect
+is retained and documented; no qualified paint latency is claimed.
+
 ADR required: no new ADR. This is test-only reproduction of the existing
 [ADR-126](../../../../backlog/decisions/126-complete-local-backup-and-recovery.md)
 and [ADR-230](../../../../backlog/decisions/230-console-send-preparation-and-io-ownership.md)
