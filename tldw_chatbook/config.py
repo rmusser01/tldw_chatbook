@@ -7826,12 +7826,15 @@ def _user_data_dir_inputs() -> tuple[tuple, tuple[Path, ...]]:
 
 def _bind_user_data_dir_stamps():
     """Keep one finite optional Windows source capture; acquire no native state."""
+    from pathlib import WindowsPath
+
     close_errors = ()
+    # The definition guard records these cells on the scalar POSIX path too.
+    projection = ()
     batch = source_current = None
     if os.name == "nt":
         import inspect
         import stat
-        from pathlib import WindowsPath
         from types import FunctionType, MethodType, ModuleType
 
         from tldw_chatbook.Backup_Recovery import storage_admission as storage

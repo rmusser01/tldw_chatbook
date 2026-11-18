@@ -54,6 +54,25 @@ def _warm(monkeypatch: pytest.MonkeyPatch) -> tuple[Path, list[int]]:
 
 
 @private_profile_test
+def test_posix_stamp_reader_is_recorded_and_observes_a_new_file(request, tmp_path):
+    from tldw_chatbook import config
+    from tldw_chatbook.Backup_Recovery.storage_admission import _posture
+    from tldw_chatbook.Utils.definition_records import definitions_current
+
+    (record,) = (
+        row for row in config._SENSITIVE_DB_PATH_SOURCE[-1]
+        if row[1] == "_user_data_dir_stamps"
+    )
+    assert record[2] is config._user_data_dir_stamps
+    assert definitions_current((record,))
+    leaf = tmp_path / "new-file"
+    paths = (tmp_path, leaf)
+    assert config._user_data_dir_stamps(paths) == (_posture(tmp_path), None)
+    leaf.touch(mode=0o600)
+    assert config._user_data_dir_stamps(paths) == (_posture(tmp_path), _posture(leaf))
+
+
+@private_profile_test
 def test_a_warm_call_reuses_the_resolution(request, monkeypatch):
     from tldw_chatbook import config
     from tldw_chatbook.Utils import sensitive_paths

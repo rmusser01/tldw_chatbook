@@ -21,6 +21,7 @@ on:
       - 'Tests/Tools/test_workspace_tool_isolated_installation.py'
       - 'Tests/Utils/test_definition_records_current.py'
       - 'Tests/Utils/test_windows_files.py'
+      - 'Tests/test_user_data_dir_memo_perf07.py'
 
 permissions:
   contents: read
@@ -44,6 +45,7 @@ jobs:
           umask 077
           mkdir -p "$HOME/.task40608-tests"
           python -m pytest --basetemp="$HOME/.task40608-tests/pytest" -q \
+            Tests/test_user_data_dir_memo_perf07.py::test_posix_stamp_reader_is_recorded_and_observes_a_new_file \
             Tests/DB/test_agent_runs_newest_primary_index.py \
             Tests/DB/test_workflow_runs_migration.py \
             Tests/Backup_Recovery/test_workflow_recovery_schema.py
