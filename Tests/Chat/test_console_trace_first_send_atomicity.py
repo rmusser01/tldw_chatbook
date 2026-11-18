@@ -54,6 +54,11 @@ from tldw_chatbook.Chat.console_turn_preparation import (
 from tldw_chatbook.Chat.prompt_history import PromptHistory
 
 
+# Real controller sends retain the configuration admitted at collection time,
+# just like the shared fixture's defining first-send atomicity module.
+pytestmark = pytest.mark.bootstrap_profile
+
+
 def _force_capture_on(monkeypatch: pytest.MonkeyPatch) -> None:
     original_preparation = controller_module.ConsoleTurnPreparation
 

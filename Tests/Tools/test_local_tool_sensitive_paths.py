@@ -23,7 +23,7 @@ Each scenario deliberately puts the denied path under the workspace root
 with NO dotted component in the RELATIVE portion where that is possible, so
 ``validate_path``'s own hidden-component check cannot mask whether the
 denylist ran at all -- except the two tests that specifically exercise a
-dotfile component, which is the shape ``allow_hidden=True`` (ADR-032)
+dotfile component, which is the shape ``allow_hidden=True`` (ADR-300)
 deliberately lets past confinement and which therefore depends entirely on
 the denylist.
 """
@@ -32,12 +32,14 @@ from __future__ import annotations
 
 import asyncio
 import os
+import unicodedata
 from pathlib import Path
 
 import pytest
 
 from tldw_chatbook.Tools.local_tool_impls import (
     LocalToolError,
+    create_directory,
     edit_file,
     glob_files,
     grep_files,
@@ -47,6 +49,7 @@ from tldw_chatbook.Tools.local_tool_impls import (
     write_file,
 )
 from tldw_chatbook.Tools.patch_tool_impls import patch_files
+from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
 
 SSH_KEY_MARKER = "SYNTHETIC-NOT-A-REAL-PRIVATE-KEY-19551"
 AWS_MARKER = "aws_secret_access_key = SYNTHETIC-19551"
@@ -101,7 +104,8 @@ def test_fs_read_refuses_denylisted_credential_path():
     """
     key = _plant_ssh_key()
     message = _refused(
-        lambda: read_file(".ssh/id_rsa", workspace_root=_home()), "fs_read(~/.ssh/id_rsa)"
+        lambda: read_file(".ssh/id_rsa", workspace_root=_home()),
+        "fs_read(~/.ssh/id_rsa)",
     )
     assert "protected path" in message
     assert SSH_KEY_MARKER not in message
@@ -209,6 +213,59 @@ def test_fs_patch_refuses_rewriting_the_permission_store():
     assert store.read_text() == '{"version": 1}\n'  # untouched
 
 
+def test_fs_mkdir_refuses_shadowing_an_excluded_state_file(tmp_path):
+    """TASK-35081: ``fs_mkdir`` must not plant a directory where a binding
+    (or the denylist) expects a plain state file -- the TASK-849
+    shadow-directory hazard, now that the family can create directories.
+
+    ``_mkdir_relative_directory`` is the worker-side core; its exclusion
+    check classifies the target as a DIRECTORY, and a ``file``-kind
+    exclusion matches it exactly.
+    """
+    from tldw_chatbook.Tools.local_tool_impls import _mkdir_relative_directory
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+
+    with pytest.raises(LocalToolError, match="protected path"):
+        _mkdir_relative_directory(
+            Path("state.db"),
+            workspace=ws,
+            sensitive_exclusions=(SensitiveExclusion("file", "state.db"),),
+            display_path="state.db",
+        )
+    assert not (ws / "state.db").exists()
+
+
+def test_fs_mkdir_refuses_an_excluded_subtree(tmp_path):
+    """A directory creation inside an excluded subtree is refused whole."""
+    from tldw_chatbook.Tools.local_tool_impls import _mkdir_relative_directory
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+
+    with pytest.raises(LocalToolError, match="protected path"):
+        _mkdir_relative_directory(
+            Path("secret/new"),
+            workspace=ws,
+            sensitive_exclusions=(SensitiveExclusion("subtree", "secret"),),
+            display_path="secret/new",
+        )
+    assert not (ws / "secret").exists()
+
+
+def test_fs_mkdir_refuses_creating_a_directory_inside_ssh():
+    """A brand-new subdirectory inside a denylisted subtree is refused."""
+    _plant_ssh_key()
+
+    message = _refused(
+        lambda: create_directory(".ssh/newdir", workspace_root=_home()),
+        "fs_mkdir(.ssh/newdir)",
+    )
+    assert "protected path" in message
+    assert not (_home() / ".ssh" / "newdir").exists()
+
+
 def test_fs_patch_dry_run_also_refuses_the_permission_store():
     """``dry_run`` still reads the target, so it must refuse identically."""
     store = _plant_permission_store()
@@ -236,7 +293,7 @@ def test_fs_read_refuses_dotfile_component_credential_path():
     """``~/.aws/credentials``, reached through a DOTTED relative component.
 
     ``resolve_workspace_path`` passes ``allow_hidden=True`` to
-    ``validate_path`` (ADR-032: real workspaces need ``.git``/``.github``/
+    ``validate_path`` (ADR-300: real workspaces need ``.git``/``.github``/
     dotfile configs), so confinement alone lets ``.aws/credentials``
     through. Only the denylist stops it -- which is precisely why this
     shape is pinned separately.
@@ -273,12 +330,12 @@ def test_fs_write_refuses_dotfile_component_credential_path():
 def test_benign_workspace_dotfiles_stay_readable():
     """The allow_hidden=True decision, pinned.
 
-    ADR-032 keeps hidden components reachable under the workspace root on
+    ADR-300 keeps hidden components reachable under the workspace root on
     purpose -- a coding agent that cannot read ``.github/workflows/ci.yml``
     or ``.gitignore`` is useless. The denylist is what makes that safe: it
     matches by RESOLVED ANCESTRY against real credential/state locations,
     not by "the name starts with a dot". If this test ever has to change,
-    the allow_hidden decision is being reversed and ADR-032 needs amending.
+    the allow_hidden decision is being reversed and ADR-300 needs amending.
     """
     ws = _home() / "projects" / "repo"
     (ws / ".github" / "workflows").mkdir(parents=True, exist_ok=True)
@@ -356,7 +413,7 @@ def test_fs_glob_omits_denylisted_matches():
 # ---------------------------------------------------------------------------
 
 
-def _denylisted_candidates() -> list[tuple[str, Path]]:
+def _denylisted_candidates(owned_root: Path) -> list[tuple[str, Path]]:
     """Denylisted paths, each planted as a synthetic marker file.
 
     The third element says whether the file's own parent directory is
@@ -381,7 +438,7 @@ def _denylisted_candidates() -> list[tuple[str, Path]]:
     ``test_both_families_refuse_the_TASK_19633_credential_paths`` below
     pins it in configurations where confinement cannot be what does the
     work. What remains is only the mechanism difference described above:
-    a deliberate ADR-032 policy split about DOTTED NAMES, not a gap in
+    a deliberate ADR-300 policy split about DOTTED NAMES, not a gap in
     what the denylist knows.
     """
     from tldw_chatbook import config as app_config
@@ -399,13 +456,17 @@ def _denylisted_candidates() -> list[tuple[str, Path]]:
         ),
         ("chachanotes db", app_config.get_chachanotes_db_path(), False),
     ]
+    assert all(
+        path.resolve().is_relative_to(owned_root.resolve())
+        for _label, path, _dotted in candidates
+    )
     for _label, path, _dotted in candidates:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("synthetic-19551\n")
     return candidates
 
 
-def test_both_file_tool_families_refuse_the_same_denylisted_paths(monkeypatch):
+def test_both_file_tool_families_refuse_the_same_denylisted_paths(monkeypatch, tmp_path):
     """Neither family may drift from the other on the denylist.
 
     ``fs_*`` (``Tools/local_tool_impls.py``, workspace-root confined) and
@@ -420,16 +481,24 @@ def test_both_file_tool_families_refuse_the_same_denylisted_paths(monkeypatch):
     path"): it passes ``allow_hidden=True``, and each root here is the
     file's own directory, so nothing else could refuse it.
     """
+    from Tests.Backup_Recovery.config_test_support import select_config_source
     from tldw_chatbook.Tools import file_operation_tools as fot
     from tldw_chatbook.Tools import workspace_file_roots as wfr
     from tldw_chatbook.Utils.sensitive_paths import is_sensitive_path
+
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
+    assert config_path.resolve().is_relative_to(tmp_path.resolve())
+    assert _home().is_relative_to(tmp_path.resolve())
+    monkeypatch.setenv("USERPROFILE", os.environ["HOME"])
+    monkeypatch.setenv("RAG_PERSIST_DIR", str(tmp_path / "chroma"))
+    select_config_source(monkeypatch, config_path)
 
     def _raise():
         raise RuntimeError("no workspace registry in this test")
 
     monkeypatch.setattr(wfr, "_registry_factory", _raise)
 
-    for label, path, dotted_parent in _denylisted_candidates():
+    for label, path, dotted_parent in _denylisted_candidates(tmp_path):
         # The shared oracle both families are supposed to consult.
         assert is_sensitive_path(path), label
 
@@ -443,7 +512,9 @@ def test_both_file_tool_families_refuse_the_same_denylisted_paths(monkeypatch):
         assert "synthetic-19551" not in fs_message, label
 
         # Family B: read_file, sandbox root set to the same directory.
-        monkeypatch.setattr(fot, "_tool_sandbox_root", lambda p=path: p.parent.resolve())
+        monkeypatch.setattr(
+            fot, "_tool_sandbox_root", lambda p=path: p.parent.resolve()
+        )
         legacy = asyncio.run(fot.ReadFileTool().execute(file_path=path.name))
         assert "error" in legacy, label
         assert "synthetic-19551" not in str(legacy), label
@@ -480,6 +551,11 @@ _NON_ENTRY_WORKSPACE_HELPERS = frozenset(
     {
         "tldw_chatbook.Tools.git_tool_impls._denylist_pathspecs",
         "tldw_chatbook.Tools.git_tool_impls._repo_relative_exclusions",
+        # TASK-38463: `_denylist_pathspecs`'s rule lookup, extracted so
+        # git_diff/git_status hand the same rules to the folded matcher. It
+        # translates rules relative to an already-discovered (and
+        # denylist-checked) repo root; it never resolves a tool target.
+        "tldw_chatbook.Tools.git_tool_impls._repo_exclusions",
         "tldw_chatbook.Tools.git_tool_impls._git_cwd",
         # Filters inherited executable-search directories against an already
         # admitted canonical root; it never resolves a tool-supplied target.
@@ -543,7 +619,9 @@ def test_every_workspace_rooted_function_uses_the_choke_point():
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
         )
         if takes_root:
-            modules.append(importlib.import_module(f"tldw_chatbook.Tools.{source.stem}"))
+            modules.append(
+                importlib.import_module(f"tldw_chatbook.Tools.{source.stem}")
+            )
 
     # The three known members must be present; discovery may only ADD.
     discovered = {m.__name__.rsplit(".", 1)[-1] for m in modules}
@@ -556,6 +634,7 @@ def test_every_workspace_rooted_function_uses_the_choke_point():
         {
             "tldw_chatbook.Tools.git_tool_impls._denylist_pathspecs",
             "tldw_chatbook.Tools.git_tool_impls._repo_relative_exclusions",
+            "tldw_chatbook.Tools.git_tool_impls._repo_exclusions",
             "tldw_chatbook.Tools.git_tool_impls._git_cwd",
             "tldw_chatbook.Tools.workspace_tool_executor.workspace_worker_environment",
         }
@@ -681,36 +760,64 @@ def test_git_pure_helper_exemption_does_not_apply_to_same_name_in_other_module(
         test_every_workspace_rooted_function_uses_the_choke_point()
 
 
-def test_fs_family_never_creates_directories_on_the_agents_behalf():
-    """Companion to the tripwire above: no ``mkdir`` in the ``fs_*`` core.
+def test_fs_mkdir_is_the_only_directory_creator_and_consults_the_guard():
+    """TASK-35081 deliberately overturned the family's old "no mkdir" rule.
 
-    ``WriteFileTool`` in the sibling family creates parent directories on
-    request, which is why it must consult
-    ``Utils.sensitive_paths.refuses_new_directory_chain`` before calling
-    ``mkdir(parents=True)`` (TASK-849: otherwise an agent can plant a
-    directory where this app later expects its own state FILE -- a denial
-    of service). The ``fs_*`` family deliberately requires the parent
-    directory to already exist, so it has no such call site;
-    ``resolve_workspace_path`` still applies the guard for write intents.
-    If a ``mkdir`` ever appears here, that decision is being reversed and
-    the guard's placement has to be re-examined.
+    The fs_* family used to require an existing parent for every writer
+    (spec 2026-08-04 section 2's typo-catching divergence), so a model
+    asked to "create a folder" had no honest path to success and
+    confabulated (the incident behind TASK-35081). ``fs_mkdir`` is now the
+    ONE sanctioned directory creator in the family, and the TASK-849
+    shadow-directory guard the old tripwire protected must sit in front of
+    it: ``create_directory`` consults
+    ``Utils.sensitive_paths.refuses_new_directory_chain`` on the target
+    itself (the write-intent choke point already guards the ancestors of a
+    file target), no other function in this module may create
+    directories, and ``patch_tool_impls`` stays mkdir-free entirely.
     """
     import ast
 
     from tldw_chatbook.Tools import local_tool_impls, patch_tool_impls
 
+    def _function_defs(tree):
+        return {
+            node.name: node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef)
+        }
+
+    def _calls(function_node, attr_names):
+        return [
+            node
+            for node in ast.walk(function_node)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in attr_names
+        ]
+
     for module in (local_tool_impls, patch_tool_impls):
         tree = ast.parse(Path(module.__file__).read_text())
-        attr_calls = {
-            node.func.attr
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-        }
-        assert "mkdir" not in attr_calls, (
-            f"{module.__name__} now creates directories -- it must consult "
-            "Utils.sensitive_paths.refuses_new_directory_chain first"
+        creators = [
+            name
+            for name, node in _function_defs(tree).items()
+            if _calls(node, {"mkdir", "makedirs"})
+        ]
+        if module is patch_tool_impls:
+            assert not creators, f"{module.__name__} now creates directories"
+            continue
+        assert creators == ["_mkdir_relative_directory"], (
+            f"{module.__name__}: _mkdir_relative_directory must stay the only "
+            "directory creator in the fs_* family"
         )
-        assert "makedirs" not in attr_calls, f"{module.__name__} now creates directories"
+
+    tree = ast.parse(Path(local_tool_impls.__file__).read_text())
+    functions = _function_defs(tree)
+    assert any(
+        isinstance(node.func, ast.Name)
+        and node.func.id == "refuses_new_directory_chain"
+        for node in ast.walk(functions["create_directory"])
+        if isinstance(node, ast.Call)
+    ), "create_directory must consult refuses_new_directory_chain"
 
 
 def test_resolve_workspace_path_still_confines_and_still_allows_hidden(tmp_path):
@@ -734,7 +841,7 @@ def test_resolve_workspace_path_still_confines_and_still_allows_hidden(tmp_path)
 # inside the git engine; this is the upstream cause -- an agent that can
 # write `.git/` reconfigures git for EVERY feature that shells out to it.
 #
-# `.git` is a dotted component under the root, which ADR-032's
+# `.git` is a dotted component under the root, which ADR-300's
 # `allow_hidden=True` deliberately lets past confinement, so this depends
 # entirely on the write guard.
 # ---------------------------------------------------------------------------
@@ -755,7 +862,7 @@ def test_fs_write_refuses_rewriting_git_config(tmp_path):
     message = _refused(
         lambda: write_file(
             ".git/config",
-            "[remote \"--force\"]\n\turl = https://example.invalid/x.git\n",
+            '[remote "--force"]\n\turl = https://example.invalid/x.git\n',
             workspace_root=root,
         ),
         "fs_write(.git/config)",
@@ -890,7 +997,9 @@ def test_fs_write_refuses_a_case_variant_of_git(tmp_path):
     before = (root / ".git" / "config").read_text()
     for spelling in (".GIT/config", ".Git/config", ".gIt/HEAD"):
         _refused(
-            lambda s=spelling: write_file(s, "[remote \"--force\"]\n", workspace_root=root),
+            lambda s=spelling: write_file(
+                s, '[remote "--force"]\n', workspace_root=root
+            ),
             f"fs_write({spelling})",
         )
     assert (root / ".git" / "config").read_text() == before
@@ -944,7 +1053,7 @@ def test_is_sensitive_path_matches_a_case_variant_of_a_denied_file():
 
     real = app_config._get_effective_config_path()
     real.parent.mkdir(parents=True, exist_ok=True)
-    real.write_text("[API]\nopenai_api_key = \"SYNTHETIC-19800\"\n")
+    real.write_text('[API]\nopenai_api_key = "SYNTHETIC-19800"\n')
     variant = real.parent.parent / real.parent.name.upper() / real.name
     assert is_sensitive_path(real)
     assert is_sensitive_path(variant), (
@@ -959,7 +1068,7 @@ def test_fs_read_refuses_a_case_variant_of_this_apps_config():
 
     real = app_config._get_effective_config_path()
     real.parent.mkdir(parents=True, exist_ok=True)
-    real.write_text("[API]\nopenai_api_key = \"SYNTHETIC-19800\"\n")
+    real.write_text('[API]\nopenai_api_key = "SYNTHETIC-19800"\n')
     root = real.parent.parent
     message = _refused(
         lambda: read_file(
@@ -981,6 +1090,28 @@ def test_case_folding_does_not_deny_an_unrelated_lookalike():
     (home / ".sshfoo" / "notes.txt").write_text("ordinary\n")
     assert not is_sensitive_path(home / ".sshfoo" / "notes.txt")
     assert not is_sensitive_path(home / ".SSHFOO" / "notes.txt")
+
+
+@pytest.mark.parametrize(("rule_form", "path_form"), (("NFC", "NFD"), ("NFD", "NFC")))
+def test_denylist_folds_unicode_normalization_like_case(tmp_path, rule_form, path_form):
+    """TASK-37655: APFS opens an NFD spelling as the stored NFC path (and back),
+    so the absolute denylist and its root-relative translation fold both."""
+    from tldw_chatbook.Utils.sensitive_paths import (
+        SensitiveExclusion,
+        SensitivePathContext,
+        is_sensitive_path,
+        sensitive_exclusions_under,
+    )
+
+    base = tmp_path.resolve()
+    denied = base / unicodedata.normalize(rule_form, "Données") / "private"
+    context = SensitivePathContext((), (denied,), (), None, ())
+    spelled = base / unicodedata.normalize(path_form, "Données")
+
+    assert is_sensitive_path(spelled / "private" / "a.txt", context)
+    assert sensitive_exclusions_under(spelled, context)[0] == SensitiveExclusion(
+        "subtree", "private"
+    )
 
 
 def test_binding_gate_detects_a_case_variant_conflict():
@@ -1019,7 +1150,7 @@ def test_binding_gate_still_allows_an_unrelated_root():
 # ---------------------------------------------------------------------------
 # TASK-19633: credential files the denylist did not cover.
 #
-# TASK-19551 kept `allow_hidden=True` (ADR-032) on the argument that "starts
+# TASK-19551 kept `allow_hidden=True` (ADR-300) on the argument that "starts
 # with a dot" is a name heuristic while `is_sensitive_path` answers the
 # question properly, by resolved ancestry. That decision is right, but
 # resolved-ancestry matching is only as strong as what the denylist knows:
@@ -1180,7 +1311,9 @@ def test_both_families_refuse_the_TASK_19633_credential_paths(monkeypatch):
         assert CREDENTIAL_MARKER not in message, label
 
         # Family B: file_operation_tools, sandbox root = the same directory.
-        monkeypatch.setattr(fot, "_tool_sandbox_root", lambda p=path: p.parent.resolve())
+        monkeypatch.setattr(
+            fot, "_tool_sandbox_root", lambda p=path: p.parent.resolve()
+        )
         legacy = asyncio.run(fot.ReadFileTool().execute(file_path=path.name))
         assert "error" in legacy, label
         assert "protected path" in legacy["error"], label

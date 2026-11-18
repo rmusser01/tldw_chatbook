@@ -134,7 +134,9 @@ async def test_the_trust_dialog_never_breaks_the_path_it_asks_consent_for(
         await pilot.pause()
         await pilot.pause()
         label = pilot.app.screen.query_one(".dialog-message")
-        painted = [line.rstrip() for line in painted_lines(label)]
+        # TASK-38984: ``.dialog-message`` is centred, so each folded line
+        # paints with leading padding too; only the text is the path.
+        painted = [line.strip() for line in painted_lines(label)]
         path_lines = [line for line in painted if line.startswith("/") or "/" in line]
         assert "".join(path_lines) == path, painted
         for line in path_lines[:-1]:
@@ -166,6 +168,12 @@ def test_the_fold_keeps_every_character_and_leaves_short_paths_alone() -> None:
     assert single.replace("\n", "") == "/" + "x" * 80
 
 
+# TASK-39051: the one test here that mounts the production TldwCli
+# (``_production_workspace_context`` -> ``_build_test_app`` -> ``load_settings``);
+# under the per-test redirect it fails closed with
+# ``RecoveryRequired("raw_source_selection_changed")`` (TASK-32873's per-node
+# opt-in, as the sibling File Notes suites keep the bootstrap profile).
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", CRITIQUE_SIZES)
 async def test_an_action_receipt_never_paints_under_the_danger_heading(
     tmp_path: Path, size: tuple[int, int]

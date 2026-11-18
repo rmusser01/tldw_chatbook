@@ -288,7 +288,7 @@ async def test_personas_mount_does_not_block_on_the_character_library(monkeypatc
 
     import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as handler_module
 
-    def blocking_fetch_all_characters():
+    def blocking_fetch_all_characters(_db):
         # Stands in for a large character library or a server-backed scope.
         time.sleep(SERVICE_DELAY)
         return []
@@ -476,7 +476,8 @@ async def test_a_direct_reload_also_shows_the_loading_state():
 
     `is_loading` is the UI-facing "a reload is in flight" flag, and `reload()`
     always clears it in its `finally` -- but it was only ever SET by `on_mount`.
-    `MCPScreen.action_mcp_refresh()` calls `workbench.reload()` directly, so a
+    The Tools & MCP pane's refresh (`ToolsHubPanel.refresh_now()`, the retired
+    screen's `action_mcp_refresh`) calls `workbench.reload()` directly, so a
     manual refresh ran with no spinner at all and then cleared a flag it never
     raised.
     """

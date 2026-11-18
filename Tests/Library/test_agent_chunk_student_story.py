@@ -73,7 +73,8 @@ from tldw_chatbook.Notes.notes_scope_service import NotesScopeService, ScopeType
 #: The book the student ingested: nine short chapters, each three
 #: paragraphs, markdown headings the navigation tree recognizes.
 STUDENT_READER = "\n\n".join(
-    f"# Chapter {i}\n\n" + "\n\n".join(
+    f"# Chapter {i}\n\n"
+    + "\n\n".join(
         f"Paragraph {j} of chapter {i} carries sentences worth noting for the exam."
         for j in range(3)
     )
@@ -85,7 +86,8 @@ STUDENT_READER = "\n\n".join(
 #: hash, so an identically-worded "chunking off" ingest would silently
 #: UPDATE the first item instead of creating the unchunked one.
 UNREAD_READER = "\n\n".join(
-    f"# Chapter {i}\n\n" + "\n\n".join(
+    f"# Chapter {i}\n\n"
+    + "\n\n".join(
         f"Paragraph {j} of chapter {i} holds lines the student has not read yet."
         for j in range(3)
     )
@@ -128,9 +130,7 @@ def _stub_epub_extraction(monkeypatch: pytest.MonkeyPatch) -> None:
     The chunking seam below them stays fully real. Each stubbed book is
     registered by file name, so one fixture serves both books.
     """
-    monkeypatch.setattr(
-        Book_Ingestion_Lib, "EBOOK_PROCESSING_AVAILABLE", True
-    )
+    monkeypatch.setattr(Book_Ingestion_Lib, "EBOOK_PROCESSING_AVAILABLE", True)
 
     def _read_epub_filtered(path: str) -> tuple[str, Any]:
         name = Path(path).name
@@ -263,12 +263,16 @@ def test_student_story_chapter_notes_from_stored_chunks_only(
 
     # Ground truth first: the stored rows are exact, engine-stamped slices
     # of the ingested source (one chapter unit per chapter).
-    rows = media_db.get_connection().execute(
-        "SELECT chunk_index, chunk_text, start_char, end_char, "
-        "chunk_engine_version FROM UnvectorizedMediaChunks "
-        "WHERE media_id = ? AND deleted = 0 ORDER BY chunk_index",
-        (media_id,),
-    ).fetchall()
+    rows = (
+        media_db.get_connection()
+        .execute(
+            "SELECT chunk_index, chunk_text, start_char, end_char, "
+            "chunk_engine_version FROM UnvectorizedMediaChunks "
+            "WHERE media_id = ? AND deleted = 0 ORDER BY chunk_index",
+            (media_id,),
+        )
+        .fetchall()
+    )
     assert len(rows) == 9
     for row in rows:
         assert content[row["start_char"] : row["end_char"]] == row["chunk_text"]
@@ -460,11 +464,15 @@ def test_degradation_unchunked_item_hints_rechunk_then_fetches_work(
     public = _public(media_uuid)
 
     # Ingest with chunking OFF stored no chunk rows.
-    stored = media_db.get_connection().execute(
-        "SELECT COUNT(*) AS n FROM UnvectorizedMediaChunks "
-        "WHERE media_id = ? AND deleted = 0",
-        (media_id,),
-    ).fetchone()["n"]
+    stored = (
+        media_db.get_connection()
+        .execute(
+            "SELECT COUNT(*) AS n FROM UnvectorizedMediaChunks "
+            "WHERE media_id = ? AND deleted = 0",
+            (media_id,),
+        )
+        .fetchone()["n"]
+    )
     assert stored == 0
 
     # The structure tool keeps the story alive: heading tree, available
@@ -478,9 +486,9 @@ def test_degradation_unchunked_item_hints_rechunk_then_fetches_work(
     ]
     assert all("chunk_span" not in node for node in structure["nodes"])
     assert structure["chunk_summary"]["available"] is False
-    assert any(
-        "library_rechunk_media" in note for note in structure["notes"]
-    ), structure["notes"]
+    assert any("library_rechunk_media" in note for note in structure["notes"]), (
+        structure["notes"]
+    )
 
     # A unit fetch is the named degradation error naming the way out.
     refused = service.invoke(
@@ -503,9 +511,7 @@ def test_degradation_unchunked_item_hints_rechunk_then_fetches_work(
     assert any("reindex" in note for note in rechunked["notes"])
 
     # The fetch path works now, and the structure map says so.
-    structure_after = service.invoke(
-        "library_get_media_structure", {"id": public}
-    )
+    structure_after = service.invoke("library_get_media_structure", {"id": public})
     assert structure_after["chunk_summary"]["available"] is True
     fetched = service.invoke(
         "library_get_media_chunk", {"id": public, "chunk_index": 0}

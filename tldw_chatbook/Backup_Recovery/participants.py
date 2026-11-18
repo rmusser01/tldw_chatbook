@@ -3,11 +3,12 @@
 from contextlib import contextmanager
 from functools import wraps
 import sqlite3
-import sys
 import threading
 import time
 import weakref
 from typing import Protocol
+
+from tldw_chatbook import DB as store_registry
 
 from .models import Inventory
 
@@ -62,19 +63,12 @@ def run_finite_local_worker(function, /, *args, **kwargs):
     try:
         return function(*args, **kwargs)
     finally:
-        types = _repository_types()
-        closers = {
-            "db.chachanotes.primary": "close_connection",
-            "db.media.primary": "close_connection",
-            "db.prompts.primary": "close_connection",
-            "db.library_collections": "close",
-            "db.evals": "close",
-            "notifications.client": "close",
-        }
+        types = repository_types()
         with storage._lock:
             participants = tuple(_installed_repositories)
         for participant in participants:
             repository = participant.repository()
+            declaration = store_registry.store_declarations.get(participant.owner_id)
             with storage._lock:
                 connections = [
                     (connection, lease)
@@ -85,7 +79,9 @@ def run_finite_local_worker(function, /, *args, **kwargs):
                     repository is None
                     or type(repository) not in types
                     or types[type(repository)] != participant.owner_id
-                    or participant.owner_id not in closers
+                    or declaration is None
+                    or declaration.closer is None
+                    or not declaration.finite_worker
                     or repository.is_memory_db
                     or repository.db_path != participant.path
                     or repository._maintenance_participant is not participant
@@ -102,10 +98,10 @@ def run_finite_local_worker(function, /, *args, **kwargs):
             # outside maintenance, when the ordinary close API permits close.
             if any(connection.in_transaction for connection, _ in connections):
                 continue
-            getattr(type(repository), closers[participant.owner_id])(repository)
+            getattr(type(repository), declaration.closer)(repository)
 
 
-def _retire_current_thread_caches(pause) -> None:
+def retire_current_thread_caches(pause) -> None:
     """Retire installed local caches after producer settlement and local fencing.
 
     This never qualifies runtime coverage or retires startup admission. Unknown,
@@ -117,36 +113,20 @@ def _retire_current_thread_caches(pause) -> None:
         raise ValueError("local_pause_inactive")
     storage._LocalPause._check(pause)
     current = threading.current_thread()
-    closers = {
-        "db.chachanotes.primary": "close_connection",
-        "db.media.primary": "close_connection",
-        "db.prompts.primary": "close_connection",
-        "db.library_collections": "close",
-        "db.library_ingest_jobs": "close",
-        "db.workspaces": "close",
-        "db.agent_runs": "close",
-        "db.subscriptions": "close",
-        "db.evals": "close",
-        "db.rag_indexing": "close",
-        "notifications.client": "close",
-        "notes.file_notes": "close",
-        "writing.local": None,
-        "research.local": None,
-        "runtime.event_state": None,
-        "notes.sync_state": None,
-    }
-    types = _repository_types()
+    types = repository_types()
     with storage._lock:
         participants = tuple(_installed_repositories)
     for participant in participants:
         repository = participant.repository()
+        declaration = store_registry.store_declarations.get(participant.owner_id)
         with storage._lock:
             storage._LocalPause._check(pause)
             if (
                 repository is None
                 or type(repository) not in types
                 or types[type(repository)] != participant.owner_id
-                or participant.owner_id not in closers
+                or declaration is None
+                or not (declaration.closer or declaration.thread_cache)
                 or repository.is_memory_db
                 or repository.db_path != participant.path
                 or repository._maintenance_participant is not participant
@@ -161,35 +141,26 @@ def _retire_current_thread_caches(pause) -> None:
             ):
                 continue
         # Original owner API clears its own cache only after native close. Its
-        # _core_closing check retains transactions and uncertain retirement.
-        closer = closers[participant.owner_id]
-        if closer is None:
-            _retire_service_thread_cache(repository, participant.owner_id)
+        # core_closing check retains transactions and uncertain retirement.
+        if declaration.closer is None:
+            _retire_service_thread_cache(repository, declaration.thread_cache)
         else:
-            getattr(type(repository), closer)(repository)
+            getattr(type(repository), declaration.closer)(repository)
 
 
-def _retire_service_thread_cache(repository, owner_id):
+def _retire_service_thread_cache(repository, thread_cache):
     """Retire a new held service cache without revoking foreign-thread borrowers."""
-    if owner_id in {"writing.local", "research.local"}:
-        with repository._lifecycle:
-            connection = repository._connections.get(threading.get_ident())
-    elif owner_id == "runtime.event_state":
-        with repository._held_lock:
-            entry = repository._held.get(threading.get_ident())
-            connection = None if entry is None or entry.depth else entry.conn
-    else:
-        connection = getattr(repository._thread_local, "connection", None)
+    connection = thread_cache(repository)
     if connection is None:
         return
-    with _core_closing(repository, connection) as allowed:
+    with core_closing(repository, connection) as allowed:
         if allowed:
             connection.close()
     # Getters clear the source cache only after the native wrapper proves close.
     # A failed close retains the original reference and its outstanding lease.
 
 
-def _close_settled_core_cache(repository):
+def close_settled_core_cache(repository):
     """Use an owner's explicit close only after its native borrowers settle.
 
     Runtime producers call this on their existing worker after draining intake.
@@ -201,7 +172,7 @@ def _close_settled_core_cache(repository):
         return True
     from . import storage_admission as storage
 
-    participant = _repository_participant(repository)
+    participant = repository_participant(repository)
     with storage._lock:
         if (
             participant.closed
@@ -282,84 +253,21 @@ class _RepositoryParticipant:
             self.closed = False
 
 
-def _repository_types():
-    """Exact source-backed runtime declarations; subclasses confer no authority."""
-    from tldw_chatbook.Notifications.event_state_repository import EventStateRepository
-    from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
+def repository_types():
+    """Exact source-backed runtime declarations; subclasses confer no authority.
 
-    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
-    from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
-    from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
-    from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
-
-    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-    from tldw_chatbook.Notifications.client_notifications_db import (
-        ClientNotificationsDB,
-    )
-    from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
-    from tldw_chatbook.Research_Interop.local_research_service import (
-        LocalResearchService,
-    )
-    from tldw_chatbook.Writing_Interop.local_writing_service import LocalWritingService
-
-    # These source modules are discovered only after their own caller loads
-    # them. Native getter lookup must not import configuration/encryption or
-    # optional runtime stacks just to compare an unrelated source's exact type.
-    optional = {}
-    for module_name, class_name, owner_id in (
-        ("tldw_chatbook.Backup_Recovery.recovered_media", "RecoveredMedia", "recovered.media"),
-        ("tldw_chatbook.DB.Evals_DB", "EvalsDB", "db.evals"),
-        ("tldw_chatbook.DB.RAG_Indexing_DB", "RAGIndexingDB", "db.rag_indexing"),
-        ("tldw_chatbook.DB.Subscriptions_DB", "SubscriptionsDB", "db.subscriptions"),
-        (
-            "tldw_chatbook.Notes.file_notes_replica",
-            "FileNotesReplica",
-            "notes.file_notes",
-        ),
-        (
-            "tldw_chatbook.Notes.notes_device_state_store",
-            "NotesDeviceStateStore",
-            "notes.sync_state",
-        ),
-        (
-            "tldw_chatbook.Kanban_Interop.local_kanban_service",
-            "LocalKanbanService",
-            "kanban.local",
-        ),
-        (
-            "tldw_chatbook.Subscriptions.site_config_manager",
-            "SiteConfigManager",
-            "db.subscriptions.site_configs",
-        ),
-    ):
-        source_type = getattr(sys.modules.get(module_name), class_name, None)
-        if source_type is not None:
-            optional[source_type] = owner_id
-    return {
-        **optional,
-        WorkspaceDB: "db.workspaces",
-        AgentRunsDB: "db.agent_runs",
-        ClientNotificationsDB: "notifications.client",
-        ScheduledTasksDB: "db.scheduled_tasks",
-        LocalResearchService: "research.local",
-        LocalWritingService: "writing.local",
-        CharactersRAGDB: "db.chachanotes.primary",
-        MediaDatabase: "db.media.primary",
-        PromptsDatabase: "db.prompts.primary",
-        LibraryCollectionsDB: "db.library_collections",
-        LibraryIngestJobsDB: "db.library_ingest_jobs",
-        EventStateRepository: "runtime.event_state",
-        SyncStateRepository: "runtime.sync_state",
-    }
+    Each store declares itself with ``@declare_store`` (``tldw_chatbook/DB/__init__.py``)
+    when its module loads, so a type is here only once its source is loaded. The
+    table is replaced per declaration, never rebuilt per call.
+    """
+    return store_registry.store_types
 
 
-def _repository_participant(repository):
+def repository_participant(repository):
     """Bind exact installed repository types to their actual selected paths."""
     from . import storage_admission as storage
 
-    types = _repository_types()
+    types = repository_types()
     if (
         type(repository) not in types
         or repository.is_memory_db
@@ -389,7 +297,7 @@ def _repository_participant(repository):
         return participant
 
 
-def _core_access(repository):
+def core_access(repository):
     """Refuse a new cached-handle borrower while local admission is closed."""
     if repository.is_memory_db:
         return
@@ -397,8 +305,8 @@ def _core_access(repository):
     from .bootstrap import RecoveryRequired
 
     participant = (
-        _repository_participant(repository)
-        if type(repository) in _repository_types()
+        repository_participant(repository)
+        if type(repository) in repository_types()
         else None
     )
     with storage._lock:
@@ -418,21 +326,38 @@ def _core_access(repository):
 
 
 @contextmanager
-def _core_operation(repository):
+def core_operation(repository):
     """Count an installed core scope without revoking its native borrowers."""
-    if repository.is_memory_db or type(repository) not in _repository_types():
-        _core_access(repository)
+    if repository.is_memory_db or type(repository) not in repository_types():
+        core_access(repository)
         yield
     else:
-        with _repository_participant(repository).operation():
+        with repository_participant(repository).operation():
             yield
 
 
-def _core_transaction(function):
+def core_operation_active(repository):
+    """Whether a counted core operation is running on this repository's file.
+
+    Every same-file instance counts: the file's connection registry closes
+    their handles together (TASK-39047).
+    """
+    if repository.is_memory_db or type(repository) not in repository_types():
+        return False
+    from . import storage_admission as storage
+
+    with storage._lock:
+        return any(
+            operation.participant.path == repository.db_path
+            for operation in storage._operations
+        )
+
+
+def core_transaction(function):
     @wraps(function)
     @contextmanager
     def counted(repository, *args, **kwargs):
-        with _core_operation(repository):
+        with core_operation(repository):
             with function(repository, *args, **kwargs) as native:
                 yield native
 
@@ -443,26 +368,27 @@ def _check_core_retirement(participant):
     from .bootstrap import RecoveryRequired
 
     if threading.current_thread() in participant.retiring_threads or (
-        participant.owner_id in {"db.library_ingest_jobs", "notes.file_notes"}
-        and participant.retiring_threads
+        participant.retiring_threads
+        and store_registry.store_declarations[participant.owner_id].shared_connection
     ):
         raise RecoveryRequired("core_connection_retiring")
 
 
 @contextmanager
-def _core_closing(repository, connection):
+def core_closing(repository, connection):
     """Reserve a source cache before explicit native close, outside coordinator locks.
 
     This is not permission to revoke raw borrowers: the actual owner must call it
     only at its explicit close boundary. Live managed work or paused borrowed
     transactions cannot be discarded, and foreign-thread close is refused.
     """
-    if repository.is_memory_db or type(repository) not in _repository_types():
+    if repository.is_memory_db or type(repository) not in repository_types():
         yield True
         return
     from . import storage_admission as storage
 
-    participant = _repository_participant(repository)
+    participant = repository_participant(repository)
+    shared = store_registry.store_declarations[participant.owner_id].shared_connection
     current = threading.current_thread()
     with storage._lock:
         lease = participant.connections.get(connection)
@@ -472,8 +398,7 @@ def _core_closing(repository, connection):
             or any(
                 operation.participant is participant
                 and (
-                    participant.owner_id
-                    in {"db.library_ingest_jobs", "notes.file_notes"}
+                    shared
                     or lease is None
                     or operation.thread is lease.resource_thread
                 )
@@ -498,9 +423,9 @@ def _core_closing(repository, connection):
             storage._changed.notify_all()
 
 
-def _register_core_connection(repository, connection):
+def register_core_connection(repository, connection):
     """Retain actual core native handles; caller names never confer authority."""
-    if repository.is_memory_db or type(repository) not in _repository_types():
+    if repository.is_memory_db or type(repository) not in repository_types():
         return connection
     from . import storage_admission as storage
     from .bootstrap import RecoveryRequired
@@ -509,7 +434,7 @@ def _register_core_connection(repository, connection):
         _validated_owner_policy,
     )
 
-    participant = _repository_participant(repository)
+    participant = repository_participant(repository)
     with storage._lock:
         # Unwrapped native objects (including non-weakrefable Connection) are
         # never installed core provenance. Their ordinary leases still count.
@@ -517,27 +442,9 @@ def _register_core_connection(repository, connection):
             lease = _ordinary_connections.get(connection)
         except TypeError:
             lease = None
-        policy_id = (
-            "db.base"
-            if participant.owner_id
-            in {
-                "db.library_collections",
-                "db.workspaces",
-                "db.agent_runs",
-                "notifications.client",
-                "db.scheduled_tasks",
-                "runtime.sync_state",
-            }
-            else participant.owner_id
+        policy_id = store_registry.store_declarations[participant.owner_id].policy_id(
+            participant.read_only
         )
-        if participant.owner_id == "notes.file_notes":
-            policy_id = "notes.file_notes_replica"
-        if participant.owner_id == "runtime.event_state":
-            policy_id = "notifications.event_state"
-        if participant.owner_id == "db.subscriptions":
-            policy_id = (
-                "db.subscriptions.agent_read" if participant.read_only else "db.base"
-            )
         if (
             lease is None
             or lease not in storage._live_leases
@@ -552,22 +459,22 @@ def _register_core_connection(repository, connection):
     return connection
 
 
-_retired_core_connections = weakref.WeakSet()
+retired_core_connections = weakref.WeakSet()
 
 
-def _core_cached_connection(repository, connection):
+def core_cached_connection(repository, connection):
     """Invalidate a cache only after the wrapper observed successful native close."""
-    if repository.is_memory_db or type(repository) not in _repository_types():
+    if repository.is_memory_db or type(repository) not in repository_types():
         return connection
     from . import storage_admission as storage
 
     with storage._lock:
-        if connection in _retired_core_connections:
+        if connection in retired_core_connections:
             return None
     return connection
 
 
-def _core_getter(function):
+def core_getter(function):
     """A cross-instance raw getter cannot inherit another owner's operation."""
 
     @wraps(function)
@@ -578,7 +485,7 @@ def _core_getter(function):
         if previous is not None and not repository.is_memory_db:
             with storage._lock:
                 storage._check_operation(previous, previous.path)
-                participant = _repository_participant(repository)
+                participant = repository_participant(repository)
                 independent = previous.participant is not participant
             if independent:
                 with participant.operation():
@@ -586,3 +493,21 @@ def _core_getter(function):
         return function(repository, *args, **kwargs)
 
     return accessed
+
+
+# Private aliases for importers not yet migrated (TASK-36948.2). Remove once none remain.
+_retire_current_thread_caches = retire_current_thread_caches
+_close_settled_core_cache = close_settled_core_cache
+_repository_participant = repository_participant
+_core_access = core_access
+_core_operation = core_operation
+_core_transaction = core_transaction
+_core_closing = core_closing
+_register_core_connection = register_core_connection
+_retired_core_connections = retired_core_connections
+_core_cached_connection = core_cached_connection
+_core_getter = core_getter
+
+
+# Private aliases for importers not yet migrated (TASK-36948.2). Remove once none remain.
+_repository_types = repository_types

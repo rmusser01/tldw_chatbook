@@ -1,0 +1,81 @@
+[
+  {
+    "name": "format-snapshot",
+    "revision": "bc7c2dde9febfd93cbc3bc115c8cbc61c3ee752b",
+    "source_state": "two-owned-file uncommitted repair over baseline",
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "scripts/terminal_qualification/format_ratchet.py",
+      "snapshot",
+      "--base",
+      "bc7c2dde9febfd93cbc3bc115c8cbc61c3ee752b",
+      "--output",
+      ".superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-2-format-baseline.json",
+      "--path",
+      "tldw_chatbook/Chat/console_chat_controller.py"
+    ],
+    "exit": 0,
+    "log": "task-2-format-snapshot.log"
+  },
+  {
+    "name": "format-verify",
+    "revision": "bc7c2dde9febfd93cbc3bc115c8cbc61c3ee752b",
+    "source_state": "two-owned-file uncommitted repair over baseline",
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "scripts/terminal_qualification/format_ratchet.py",
+      "verify",
+      "--baseline",
+      ".superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-2-format-baseline.json"
+    ],
+    "exit": 0,
+    "log": "task-2-format-verify.log"
+  },
+  {
+    "name": "fatal-ruff",
+    "revision": "bc7c2dde9febfd93cbc3bc115c8cbc61c3ee752b",
+    "source_state": "two-owned-file uncommitted repair over baseline",
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "check",
+      "--select",
+      "E9,F63,F7,F82",
+      "tldw_chatbook/Chat/console_chat_controller.py"
+    ],
+    "exit": 0,
+    "log": "task-2-fatal-ruff.log"
+  },
+  {
+    "name": "diff-check",
+    "revision": "bc7c2dde9febfd93cbc3bc115c8cbc61c3ee752b",
+    "source_state": "two-owned-file uncommitted repair over baseline",
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "argv": [
+      "git",
+      "diff",
+      "--check"
+    ],
+    "exit": 0,
+    "log": "task-2-diff-check.log"
+  },
+  {
+    "name": "owned-diff",
+    "revision": "bc7c2dde9febfd93cbc3bc115c8cbc61c3ee752b",
+    "source_state": "two-owned-file uncommitted repair over baseline",
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "argv": [
+      "git",
+      "diff",
+      "--",
+      "tldw_chatbook/Chat/console_chat_controller.py",
+      "Docs/User_Guide/console/agent-runs-and-tools.md"
+    ],
+    "exit": 0,
+    "log": "task-2-owned-diff.log"
+  }
+]

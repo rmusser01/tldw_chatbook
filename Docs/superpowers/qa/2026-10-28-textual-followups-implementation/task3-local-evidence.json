@@ -1,0 +1,997 @@
+{
+  "task": "TASK-37268",
+  "base": "41e530c9f6a8936f85f5c09107907e22d27cd55d",
+  "head": "6a122e0e946cdff5bdb0e1974e009969d7ffb159",
+  "archive": "task3-local-receipts.tar.gz",
+  "archive_sha256": "05b573235bdaa6e1d348ad78a20c8ac1358619c48b650bd58962e91b0d52bf91",
+  "members": {
+    "review/review-41e530c9f6..6a122e0e94.diff": {
+      "bytes": 36655,
+      "sha256": "cc88d156c95dd20c6dff4d8a5a8200ad244254ef92577e78f8739c1151c3e24c"
+    },
+    "review/task-3-report.md": {
+      "bytes": 19979,
+      "sha256": "cf580abf06952345d41429b00e76bfd572f6310c8e007d3b036955b0d8f1a2dc"
+    },
+    "review/task-3-review.md": {
+      "bytes": 9845,
+      "sha256": "5900208c321d5d18ee3cbcb5fa277108b973f220cb0a39f4ca0e90a18b9556e9"
+    },
+    "task3-base-proof.json": {
+      "bytes": 1511,
+      "sha256": "737d1ae1adcf7882ab64f070884b57a8f537e3bf1f7472f33eed13a0b8b65fdf"
+    },
+    "task3-diagnostics.json": {
+      "bytes": 4058,
+      "sha256": "03a291f615be98cb7bc3067c0f4419c4a0fcbb2c7833b5191dc8f0b633e4b720"
+    },
+    "task3-existing-ruff-before.json": {
+      "bytes": 2,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "task3-focused-worker-dom-style.json": {
+      "bytes": 369,
+      "sha256": "10e57f2778d4eb20bcb1813a654f34ba9161fa9f6a6f2fe8122b97aa2ba2d0e3"
+    },
+    "task3-green-timings.json": {
+      "bytes": 6678,
+      "sha256": "5236d28f4eac8b54a34b6438221a1d3d8dda0b9c76e9f99d66c35ed90fd8e8be"
+    },
+    "task3-held-thread-evidence.json": {
+      "bytes": 817,
+      "sha256": "72c8d42a6e9d5b282e994fb073ee73ec4e5a37ca4302c2ed8d9061288309e513"
+    },
+    "task3-owned-before/library-shell.md": {
+      "bytes": 11670,
+      "sha256": "a8ad0ea8203f51ebf8b7508fc2d963a7ed5b1cc8e0b159747b8cbf0a57657c2d"
+    },
+    "task3-owned-before/library_file_export.py": {
+      "bytes": 29360,
+      "sha256": "dfe6f86946ff717678cd3009c60cd4cb3b8ba1f433e2dbded485295eb65e4608"
+    },
+    "task3-owned-before/red-dispatch-test.py": {
+      "bytes": 15778,
+      "sha256": "5b7d308d04fb520efd2494fad2130eb6ed0ecc840e9d4fea300be1f0468e7a2b"
+    },
+    "task3-owned-before/red-ready-test.py": {
+      "bytes": 15680,
+      "sha256": "075f6053190e2bedd3fcd34faa730b5a310325c0443425fe03ac8ad28d24c761"
+    },
+    "task3-owned-before/red-test.py": {
+      "bytes": 15174,
+      "sha256": "04a3d9ec34b778ae972a055336a4e6f2bbb2597a25c000234965f85e9870c278"
+    },
+    "task3-owned-before/sources.json": {
+      "bytes": 897,
+      "sha256": "6f5d70517735a83983505045d6c15ceae82c72dad32d2dee557437db5841ffd0"
+    },
+    "task3-owned-before/test_library_file_export.py": {
+      "bytes": 45543,
+      "sha256": "9edafd42d1f35aac41a3938d2f9fb764449ee079e62c573676ce6803c86df42d"
+    },
+    "task3-owned-before/test_library_shell.py": {
+      "bytes": 1543313,
+      "sha256": "24396eeb7956b84ce37c63944fc188d5919747fef64c208cc1fa2fc6256218a8"
+    },
+    "task3-owned-final/library-shell.md": {
+      "bytes": 12671,
+      "sha256": "681e8f93ac3ec2e0f7dc6284332eb022f8fc0aef11a885ceef7c7140795b72c9"
+    },
+    "task3-owned-final/library_file_export.py": {
+      "bytes": 30446,
+      "sha256": "08896a1c74359bfe25a1ef9908bfb73ce105cf615eaa1f23de5cb825969241f0"
+    },
+    "task3-owned-final/sources.json": {
+      "bytes": 1348,
+      "sha256": "3af1471bad401ad91464d6ab536e7df34ee1a30331df68a5955c2721db0cd135"
+    },
+    "task3-owned-final/test_library_file_export.py": {
+      "bytes": 45675,
+      "sha256": "41badb0a1a097dad590fdda193a9f91a0d2f3f8193d4cfeba4c5d76b4e3803b4"
+    },
+    "task3-owned-final/test_library_note_export_responsiveness.py": {
+      "bytes": 19326,
+      "sha256": "7f2e8024dcc07cfc5a59d4a7c7577129e0b995b7c5df7f664b3819ce904bde18"
+    },
+    "task3-owned-final/test_library_shell.py": {
+      "bytes": 1543662,
+      "sha256": "6f9555f36aa10ebd25165b18c6988b29330b306efe5a3d29552e67037987c40c"
+    },
+    "task3-owned-green/library-shell.md": {
+      "bytes": 12652,
+      "sha256": "5951d8249042a54b0a855c578740f05daa73aa97996dd6230a496a094a3fbd30"
+    },
+    "task3-owned-green/library_file_export.py": {
+      "bytes": 30446,
+      "sha256": "08896a1c74359bfe25a1ef9908bfb73ce105cf615eaa1f23de5cb825969241f0"
+    },
+    "task3-owned-green/sources.json": {
+      "bytes": 1147,
+      "sha256": "64e3312d080f19f52280c4ba07d011dfcbfdfdc68d41fd746f9d5c094a7e9bd5"
+    },
+    "task3-owned-green/test_library_file_export.py": {
+      "bytes": 45675,
+      "sha256": "41badb0a1a097dad590fdda193a9f91a0d2f3f8193d4cfeba4c5d76b4e3803b4"
+    },
+    "task3-owned-green/test_library_note_export_responsiveness.py": {
+      "bytes": 19326,
+      "sha256": "7f2e8024dcc07cfc5a59d4a7c7577129e0b995b7c5df7f664b3819ce904bde18"
+    },
+    "task3-owned-green/test_library_shell.py": {
+      "bytes": 1543662,
+      "sha256": "6f9555f36aa10ebd25165b18c6988b29330b306efe5a3d29552e67037987c40c"
+    },
+    "task3-shell-function-format.json": {
+      "bytes": 300,
+      "sha256": "00e426f275322fbc5c2ebcc59f133fb63f34473d00c413c314755e44e8acd368"
+    },
+    "task3-shell-ruff-after.json": {
+      "bytes": 1455,
+      "sha256": "95e87c90b5e4bd1fe1e6155009f70bfc62fa5f0002d10bc11c9056ac9e789a4b"
+    },
+    "task3-shell-ruff-before.json": {
+      "bytes": 1403,
+      "sha256": "068686790579df5329ea00caa2320d5d4466924393fec406de1bfe7b6886d22a"
+    },
+    "task3-static-comparison.json": {
+      "bytes": 704,
+      "sha256": "8fda318e41ac20930597f2cf2ad5014a0f5a97619b9319838ee6bd2d9fbd2697"
+    },
+    "textual-37266-37268/run-targeted.py": {
+      "bytes": 2165,
+      "sha256": "fed322c340015529db927e4639e57437144e5b722368659309cb2808c05c8773"
+    },
+    "textual-37266-37268/task3-existing-controls/cache/README.md": {
+      "bytes": 310,
+      "sha256": "420e808d79a6c25d3cda0af33bc4782314a14949866682c68ce8149e89b66b70"
+    },
+    "textual-37266-37268/task3-existing-controls/command.json": {
+      "bytes": 2980,
+      "sha256": "e93c265f6e26b01d3a679b5ee98c31e607bad3b4664cda5650233f9b5ab190cd"
+    },
+    "textual-37266-37268/task3-existing-controls/receipt-manifest.json": {
+      "bytes": 5645,
+      "sha256": "2e3cc630d8d2b698f095c991dabc35086cc9208f4eaa04f4c092ff66cb04c27d"
+    },
+    "textual-37266-37268/task3-existing-controls/result.xml": {
+      "bytes": 6147,
+      "sha256": "d6e18d44a2eef96f0c6533c2b1233088f2dcfc68c218c4c1fea6acb4569880e7"
+    },
+    "textual-37266-37268/task3-existing-controls/verification.json": {
+      "bytes": 509,
+      "sha256": "20662ab55f34e0a30f93d0b0f981e1e6d36f29c0fed098013b07c5da0cbc10e0"
+    },
+    "textual-37266-37268/task3-existing-escape-retry/cache/README.md": {
+      "bytes": 310,
+      "sha256": "420e808d79a6c25d3cda0af33bc4782314a14949866682c68ce8149e89b66b70"
+    },
+    "textual-37266-37268/task3-existing-escape-retry/command.json": {
+      "bytes": 1146,
+      "sha256": "21d9b9a94234bad052a5247ef2c7831c123cdbdf7e2334064a52f635401dda08"
+    },
+    "textual-37266-37268/task3-existing-escape-retry/receipt-manifest.json": {
+      "bytes": 955,
+      "sha256": "62d231c09af5433c868262bebf766d78f08a0d557c8451ee773405132198b27c"
+    },
+    "textual-37266-37268/task3-existing-escape-retry/result.xml": {
+      "bytes": 3465,
+      "sha256": "1e5a1da8ed800a4832359500bec75680f7c7175922f475de8e793ca3cf8bfa33"
+    },
+    "textual-37266-37268/task3-existing-escape-retry/verification.json": {
+      "bytes": 512,
+      "sha256": "d29d5323b186bcb99212bf0ab9a3d29f3df34db8cd0e2991ee111bbce7701412"
+    },
+    "textual-37266-37268/task3-green-notes/cache/README.md": {
+      "bytes": 310,
+      "sha256": "420e808d79a6c25d3cda0af33bc4782314a14949866682c68ce8149e89b66b70"
+    },
+    "textual-37266-37268/task3-green-notes/child-receipts/test_note_export_accepted_writ0/private-profile-process/pytest.xml": {
+      "bytes": 405,
+      "sha256": "1bc7156a7252659873da58df044897b0347df9563dd48b14e8b29451df2918a6"
+    },
+    "textual-37266-37268/task3-green-notes/child-receipts/test_note_export_accepted_writ1/private-profile-process/pytest.xml": {
+      "bytes": 405,
+      "sha256": "b98db2bd0ce555c848d8b6eaa7af17c2043a0c38bea5e1e1f19620975b2a5335"
+    },
+    "textual-37266-37268/task3-green-notes/child-receipts/test_note_export_dispatches_ap0/private-profile-process/pytest.xml": {
+      "bytes": 403,
+      "sha256": "d92895f3637b30ece90381e717b94a029190aca9d639121dd2912a1b40cf86d9"
+    },
+    "textual-37266-37268/task3-green-notes/child-receipts/test_note_export_dispatches_ap0/private-profile-process/pytest/test_note_export_dispatches_ap0/dispatch-timeline.json": {
+      "bytes": 358,
+      "sha256": "fc44d12239c6329d27d4753740bc41660e3c554c50456d37e360c37782b0b551"
+    },
+    "textual-37266-37268/task3-green-notes/child-receipts/test_note_export_dispatches_ap1/private-profile-process/pytest.xml": {
+      "bytes": 407,
+      "sha256": "017d2f6429d8ba369428463071a224833f739157796cf822f2e71f2f9f388224"
+    },
+    "textual-37266-37268/task3-green-notes/child-receipts/test_note_export_dispatches_ap1/private-profile-process/pytest/test_note_export_dispatches_ap0/dispatch-timeline.json": {
+      "bytes": 523,
+      "sha256": "1a9c9ef3a8d48d1b7772129187e4e088c70e13e2e7b4b2d3f30186453de0b212"
+    },
+    "textual-37266-37268/task3-green-notes/child-receipts/test_note_export_dispatches_ap2/private-profile-process/pytest.xml": {
+      "bytes": 407,
+      "sha256": "1da7e7e60bd159c0d439894ac5e619cfaef988de0cbd8ad5e565db6506032363"
+    },
+    "textual-37266-37268/task3-green-notes/child-receipts/test_note_export_dispatches_ap2/private-profile-process/pytest/test_note_export_dispatches_ap0/dispatch-timeline.json": {
+      "bytes": 357,
+      "sha256": "a9c44f8c248bea4027b0ee7f367691870536e4d04d327811aeadb0bffc983d63"
+    },
+    "textual-37266-37268/task3-green-notes/child-receipts/test_note_export_dispatches_ap3/private-profile-process/pytest.xml": {
+      "bytes": 410,
+      "sha256": "79ff89d619c78ce2cd1089fad62173f3824d792bf3f8fd93f2d94aa186424a69"
+    },
+    "textual-37266-37268/task3-green-notes/child-receipts/test_note_export_dispatches_ap3/private-profile-process/pytest/test_note_export_dispatches_ap0/dispatch-timeline.json": {
+      "bytes": 523,
+      "sha256": "55dd31cf0bcaa0235a902c234cfdf876d5e31e655206804e58798243c2cbf109"
+    },
+    "textual-37266-37268/task3-green-notes/child-receipts/test_note_export_failed_replac0/private-profile-process/pytest.xml": {
+      "bytes": 391,
+      "sha256": "97cafe7829e62aae755825dad56c78d5a97345f5cd09382d5af8e8024d2e51e7"
+    },
+    "textual-37266-37268/task3-green-notes/child-receipts/test_note_export_late_collisio0/private-profile-process/pytest.xml": {
+      "bytes": 399,
+      "sha256": "48feeeaf98342a561756cd3dab7e9f7fa02668ade8b88f5f3054866c6065a425"
+    },
+    "textual-37266-37268/task3-green-notes/child-receipts/test_note_export_late_collisio1/private-profile-process/pytest.xml": {
+      "bytes": 400,
+      "sha256": "a06f99d85da60993affb9cc57509b18b8b6784af41782050623503e11f9b29e0"
+    },
+    "textual-37266-37268/task3-green-notes/child-receipts/test_note_export_late_collisio2/private-profile-process/pytest.xml": {
+      "bytes": 406,
+      "sha256": "6e17bd4796b64a667720e4d43c3d1d6a1c23a95bbd548e142d81b4b7d909d6e4"
+    },
+    "textual-37266-37268/task3-green-notes/command.json": {
+      "bytes": 1054,
+      "sha256": "219307c0f768b0e9e447014a9d8baf142a4b84a9f78d9d7afd9595a14165cb7f"
+    },
+    "textual-37266-37268/task3-green-notes/receipt-manifest.json": {
+      "bytes": 20296,
+      "sha256": "935a7f0855632c87a2649e5437749a9b49a02667d44b6cc4fa653cada0a474fe"
+    },
+    "textual-37266-37268/task3-green-notes/result.xml": {
+      "bytes": 1952,
+      "sha256": "011551b4250ab2198444721bf161f95e3bc09582c47e6f98f2d519f9c4231ff8"
+    },
+    "textual-37266-37268/task3-green-notes/verification.json": {
+      "bytes": 4163,
+      "sha256": "d6b37fa12a05a65de6335232afe980554b1fa615d6bb354dd00957ba028947de"
+    },
+    "textual-37266-37268/task3-red-notes-dispatch/cache/README.md": {
+      "bytes": 310,
+      "sha256": "420e808d79a6c25d3cda0af33bc4782314a14949866682c68ce8149e89b66b70"
+    },
+    "textual-37266-37268/task3-red-notes-dispatch/child-receipts/test_note_export_dispatches_ap0/private-profile-process/pytest.xml": {
+      "bytes": 7163,
+      "sha256": "681aeb4760df83a64795cd6569ad40bdb09280e9fb2b27104b16bfd8ab1dcce3"
+    },
+    "textual-37266-37268/task3-red-notes-dispatch/child-receipts/test_note_export_dispatches_ap0/private-profile-process/pytest/test_note_export_dispatches_ap0/dispatch-timeline.json": {
+      "bytes": 600,
+      "sha256": "d074c8720034575ab7023aa79f0ddb5614c6b6e364e5b114b1b6c7d5fd495b70"
+    },
+    "textual-37266-37268/task3-red-notes-dispatch/command.json": {
+      "bytes": 1052,
+      "sha256": "7f4229e5fa44876c356605c2036b7f7d268ce9117c8d27a22e10073a716f5f6e"
+    },
+    "textual-37266-37268/task3-red-notes-dispatch/receipt-manifest.json": {
+      "bytes": 2984,
+      "sha256": "30c5f0e6e67e6c9bebed12f38c7eac600b8b24ba54d85b91a981aaab48d95e76"
+    },
+    "textual-37266-37268/task3-red-notes-dispatch/result.xml": {
+      "bytes": 49816,
+      "sha256": "b1c20ba5cd04d3accae8102dc597a35a9413cd0ae066580e6d7652c100af943c"
+    },
+    "textual-37266-37268/task3-red-notes-dispatch/verification.json": {
+      "bytes": 875,
+      "sha256": "db31f9680c30f77406efc46caf3b3d6aa1114c920d922fe3e14edc29f8e7b8dc"
+    },
+    "textual-37266-37268/task3-red-notes-native-newlines/cache/README.md": {
+      "bytes": 310,
+      "sha256": "420e808d79a6c25d3cda0af33bc4782314a14949866682c68ce8149e89b66b70"
+    },
+    "textual-37266-37268/task3-red-notes-native-newlines/child-receipts/test_note_export_dispatches_ap0/private-profile-process/pytest.xml": {
+      "bytes": 4752,
+      "sha256": "25266a03a6045d317984a61c1251c5dc98348367b45deb36c691f7b9286418ca"
+    },
+    "textual-37266-37268/task3-red-notes-native-newlines/child-receipts/test_note_export_dispatches_ap0/private-profile-process/pytest/test_note_export_dispatches_ap0/dispatch-timeline.json": {
+      "bytes": 2,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "textual-37266-37268/task3-red-notes-native-newlines/command.json": {
+      "bytes": 1066,
+      "sha256": "0c1d63c816105c476a63d3703b06cfcc51b28d87f0efc711ba2c9ed783f28042"
+    },
+    "textual-37266-37268/task3-red-notes-native-newlines/receipt-manifest.json": {
+      "bytes": 3022,
+      "sha256": "e383c3d7f697f5a1fb27829f95a9e637f5036ebd258b4cdd0eb24cffd2253853"
+    },
+    "textual-37266-37268/task3-red-notes-native-newlines/result.xml": {
+      "bytes": 44775,
+      "sha256": "110fb10b9f92f45c1a1e178600d267f34aca4c53d2a6fc3e0d0f70fba2f6085b"
+    },
+    "textual-37266-37268/task3-red-notes-native-newlines/verification.json": {
+      "bytes": 882,
+      "sha256": "dd5ac902c0754ed18774af0027433e1ca7957bd5b3cde53a5d11b64f25931457"
+    },
+    "textual-37266-37268/task3-red-notes-ready/cache/README.md": {
+      "bytes": 310,
+      "sha256": "420e808d79a6c25d3cda0af33bc4782314a14949866682c68ce8149e89b66b70"
+    },
+    "textual-37266-37268/task3-red-notes-ready/child-receipts/test_note_export_dispatches_ap0/private-profile-process/pytest.xml": {
+      "bytes": 5750,
+      "sha256": "e954e1d64a053103343bec5fa55a2ee8687a6764bc5090fa7162cda0b364f432"
+    },
+    "textual-37266-37268/task3-red-notes-ready/child-receipts/test_note_export_dispatches_ap0/private-profile-process/pytest/test_note_export_dispatches_ap0/dispatch-timeline.json": {
+      "bytes": 600,
+      "sha256": "611f78a5cc8426c77d7d6a01cd461ab45f4e5ee8be3878dd7636db0fa4b655bd"
+    },
+    "textual-37266-37268/task3-red-notes-ready/command.json": {
+      "bytes": 1046,
+      "sha256": "f9af82f440d9d134b13100fd09cc965908580cf936a17f82777383ab93822968"
+    },
+    "textual-37266-37268/task3-red-notes-ready/receipt-manifest.json": {
+      "bytes": 2971,
+      "sha256": "a8e6f221711a47d4e4319315b1d31ea7f4dde64dab4c3b25c6bac600d47fff7a"
+    },
+    "textual-37266-37268/task3-red-notes-ready/result.xml": {
+      "bytes": 46563,
+      "sha256": "b39f6beefb4408867d69a1f16a9c67a3610742bac43b8c5d0b53e07ea9ccfa0a"
+    },
+    "textual-37266-37268/task3-red-notes-ready/verification.json": {
+      "bytes": 872,
+      "sha256": "6a6850f2369e463841edd9e343042ac1ed82fdd5ad9776ddc0ba2ce41dfe5afe"
+    },
+    "textual-37266-37268/task3-red-notes-recovery-ready/cache/README.md": {
+      "bytes": 310,
+      "sha256": "420e808d79a6c25d3cda0af33bc4782314a14949866682c68ce8149e89b66b70"
+    },
+    "textual-37266-37268/task3-red-notes-recovery-ready/child-receipts/test_note_export_dispatches_ap0/private-profile-process/pytest.xml": {
+      "bytes": 6183,
+      "sha256": "36d00d4af8c61c55e24ee2581a3f8324b994cc9bdd781451c9b4630f12e07592"
+    },
+    "textual-37266-37268/task3-red-notes-recovery-ready/child-receipts/test_note_export_dispatches_ap0/private-profile-process/pytest/test_note_export_dispatches_ap0/dispatch-timeline.json": {
+      "bytes": 599,
+      "sha256": "adecf4de8dd10c5ae8ebb9861c83d92f010ee7132669081424033e7cf2f22c88"
+    },
+    "textual-37266-37268/task3-red-notes-recovery-ready/command.json": {
+      "bytes": 1064,
+      "sha256": "6e2d8ef85e7d1a4a2533ac7d55ba62e07287d4fc3181f51f2a1df8d19c218e4b"
+    },
+    "textual-37266-37268/task3-red-notes-recovery-ready/receipt-manifest.json": {
+      "bytes": 3016,
+      "sha256": "765e169e1e22c6434b144335d00e3782aa87ee3b76ad7bbd75ad6bf969bdb166"
+    },
+    "textual-37266-37268/task3-red-notes-recovery-ready/result.xml": {
+      "bytes": 47866,
+      "sha256": "0f9a067486034eb7dffb1fc4e8a5f2e21f20020ea6c32fddf00523ea55f3e679"
+    },
+    "textual-37266-37268/task3-red-notes-recovery-ready/verification.json": {
+      "bytes": 881,
+      "sha256": "680863d69a5b5d058ef15185b8607edca9f6d192cd47021b6ebc12220d327443"
+    },
+    "textual-37266-37268/task3-red-notes/cache/README.md": {
+      "bytes": 310,
+      "sha256": "420e808d79a6c25d3cda0af33bc4782314a14949866682c68ce8149e89b66b70"
+    },
+    "textual-37266-37268/task3-red-notes/child-receipts/test_note_export_dispatches_ap0/private-profile-process/pytest.xml": {
+      "bytes": 5047,
+      "sha256": "c25a887505fe99c0c4e013d8c7b6d3bca0ca5b1def3b0e6c87abdda05310e304"
+    },
+    "textual-37266-37268/task3-red-notes/child-receipts/test_note_export_dispatches_ap0/private-profile-process/pytest/test_note_export_dispatches_ap0/dispatch-timeline.json": {
+      "bytes": 2,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "textual-37266-37268/task3-red-notes/command.json": {
+      "bytes": 1034,
+      "sha256": "595764d334437ba63fce4946d8500ace16df266128341054a40fdfd97f788ad3"
+    },
+    "textual-37266-37268/task3-red-notes/receipt-manifest.json": {
+      "bytes": 2941,
+      "sha256": "081e841c375f7d89af7a254e2a7d4352bed64e9a8c5a3fafab7260a7a7e90ee5"
+    },
+    "textual-37266-37268/task3-red-notes/result.xml": {
+      "bytes": 43792,
+      "sha256": "dd234162a84805cd575766a9481624ee1fcd956e53ae319b5ebfd8d490c18f65"
+    },
+    "textual-37266-37268/task3-red-notes/verification.json": {
+      "bytes": 866,
+      "sha256": "f982c2cde65f1469f1f96d67d9fa74c4b8bdbe1eaf300114c331d44b9090ae91"
+    },
+    "textual-37266-37268/task3-root-static-proof.json": {
+      "bytes": 5004,
+      "sha256": "3b5603f850b6fb7c533b5652f20ef49efbbfdf04fca8a4fa5c5deec20bbf7236"
+    }
+  },
+  "runs": [
+    {
+      "run": "task3-existing-controls",
+      "exit_code": 1,
+      "reports": [
+        {
+          "entry": "textual-37266-37268/task3-existing-controls/result.xml",
+          "sha256": "d6e18d44a2eef96f0c6533c2b1233088f2dcfc68c218c4c1fea6acb4569880e7",
+          "parent_wrapper": true,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_library_export_replace_confirm",
+              "name": "test_note_export_onto_an_existing_file_asks_escape_keeps_it_replace_writes",
+              "seconds": 78.129,
+              "outcomes": [
+                {
+                  "kind": "failure",
+                  "message_excerpt": "AssertionError: .library-notes-row never mounted within 30.0s (499 polls). Visible text: \u2039 Library | Local   | Navigation Browse Artifacts Create Study Import / Export Details Status Source \u00b7 Local Library sources did not answer \u00b7 waited 5 s Workspace Active \u00b7 Local Default Handoff \u00b7 unavailable until sources exist Actions Everything here is stored on this machine \u00b7 syncing to a server isn't available yet. Chunking Lab \u2014 compare how text is split for search \u25be scroll for more Library sources did not answer \u00b7 waited 5 s Select a note to edit it here. / focus search | F6 next pane | esc focus rail | F1 help \u00b7 Ctrl+P palette \u00b7 Ctrl+Q quit     \u23031 Home \u23032 Console   \u23033 Library \u23034 Roleplay \u23035 Watchlists \u23037 Schedules \u23038 Workflows \u23030 ACP F2 Lab F3 Logs F4 Settings F5 Research F7 Meetings More \u25be Manage Stop \u2039 Library / Notes Library notes Folder files Collapse Import\u2026 x \u25be   Media \u2014 your files   Conversations \u25b8 Notes   Prompts \u2014 reuse   Skills \u2014 AI add-ons   Collections (0)   Search / RAG \u2014 find a",
+                  "full_message_sha256": "3ed427db45f2849d8ec88a531ea2bd5216e3a717f600a94958f25db1affc11b8"
+                }
+              ]
+            },
+            {
+              "classname": "Tests.UI.test_library_export_replace_confirm_extended",
+              "name": "test_note_export_cancel_button_keeps_the_existing_file_compact",
+              "seconds": 45.256,
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.UI.test_library_export_replace_confirm_extended",
+              "name": "test_the_next_export_picker_opens_in_the_last_export_folder",
+              "seconds": 32.868,
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.UI.test_library_shell",
+              "name": "test_library_shell_note_write_export_file_writes_expected_content",
+              "seconds": 25.233,
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.UI.test_library_shell",
+              "name": "test_library_shell_note_write_export_file_rejects_invalid_path",
+              "seconds": 28.255,
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.UI.test_library_prompt_export_journeys",
+              "name": "test_export_result_after_navigation_preserves_current_status[other-screen]",
+              "seconds": 34.875,
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Library.test_library_file_export",
+              "name": "test_note_export_to_a_new_file_succeeds_where_hard_links_are_unsupported[PermissionError]",
+              "seconds": 2.522,
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Library.test_library_file_export",
+              "name": "test_note_export_to_a_new_file_succeeds_where_hard_links_are_unsupported[ENOTSUP]",
+              "seconds": 2.523,
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Library.test_library_file_export",
+              "name": "test_prompt_export_to_a_new_file_succeeds_where_hard_links_are_unsupported[PermissionError]",
+              "seconds": 2.746,
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Library.test_library_file_export",
+              "name": "test_prompt_export_to_a_new_file_succeeds_where_hard_links_are_unsupported[ENOTSUP]",
+              "seconds": 2.707,
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Library.test_library_file_export",
+              "name": "test_a_failed_write_leaves_the_existing_file_intact_and_no_temp_file",
+              "seconds": 2.029,
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Library.test_library_file_export",
+              "name": "test_no_clobber_write_refuses_an_existing_file_and_leaves_it",
+              "seconds": 1.985,
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Library.test_library_file_export",
+              "name": "test_replace_runs_the_write_once",
+              "seconds": 1.852,
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Library.test_library_file_export",
+              "name": "test_prompt_collision_recheck_failure_reports_error_and_allows_retry",
+              "seconds": 2.098,
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Library.test_library_file_export",
+              "name": "test_prompt_render_failure_reports_error_and_allows_retry",
+              "seconds": 1.428,
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Library.test_library_notes_state",
+              "name": "test_export_content_markdown_has_frontmatter_and_heading",
+              "seconds": 1.291,
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Library.test_library_notes_state",
+              "name": "test_export_content_text_has_header_and_rule",
+              "seconds": 1.385,
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Library.test_library_notes_state",
+              "name": "test_export_content_blank_title_falls_back_to_untitled",
+              "seconds": 1.367,
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Library.test_library_notes_state",
+              "name": "test_export_content_now_defaults_when_omitted",
+              "seconds": 1.382,
+              "outcomes": []
+            }
+          ]
+        }
+      ],
+      "actual_child_cases": 0
+    },
+    {
+      "run": "task3-existing-escape-retry",
+      "exit_code": 1,
+      "reports": [
+        {
+          "entry": "textual-37266-37268/task3-existing-escape-retry/result.xml",
+          "sha256": "1e5a1da8ed800a4832359500bec75680f7c7175922f475de8e793ca3cf8bfa33",
+          "parent_wrapper": true,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_library_export_replace_confirm",
+              "name": "test_note_export_onto_an_existing_file_asks_escape_keeps_it_replace_writes",
+              "seconds": 68.674,
+              "outcomes": [
+                {
+                  "kind": "failure",
+                  "message_excerpt": "AssertionError: .library-notes-row never mounted within 30.0s (418 polls). Visible text: \u2039 Library | Local   | Navigation Browse Artifacts Create Study Import / Export Details Status Source \u00b7 Local Library sources did not answer \u00b7 waited 5 s Workspace Active \u00b7 Local Default Handoff \u00b7 unavailable until sources exist Actions Everything here is stored on this machine \u00b7 syncing to a server isn't available yet. Chunking Lab \u2014 compare how text is split for search \u25be scroll for more Library sources did not answer \u00b7 waited 5 s Select a note to edit it here. / focus search | F6 next pane | esc focus rail | F1 help \u00b7 Ctrl+P palette \u00b7 Ctrl+Q quit     \u23031 Home \u23032 Console   \u23033 Library \u23034 Roleplay \u23035 Watchlists \u23037 Schedules \u23038 Workflows \u23030 ACP F2 Lab F3 Logs F4 Settings F5 Research F7 Meetings More \u25be Manage Stop \u2039 Library / Notes Library notes Folder files Collapse Import\u2026 x \u25be   Media \u2014 your files   Conversations \u25b8 Notes   Prompts \u2014 reuse   Skills \u2014 AI add-ons   Collections (0)   Search / RAG \u2014 find a",
+                  "full_message_sha256": "a6cb7b39d92f0ec285c2b318deea196bdf872fd7cb48da0fa77e6ac5249ba3dc"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "actual_child_cases": 0
+    },
+    {
+      "run": "task3-green-notes",
+      "exit_code": 0,
+      "reports": [
+        {
+          "entry": "textual-37266-37268/task3-green-notes/result.xml",
+          "sha256": "011551b4250ab2198444721bf161f95e3bc09582c47e6f98f2d519f9c4231ff8",
+          "parent_wrapper": true,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_library_note_export_responsiveness",
+              "name": "test_note_export_dispatches_app_key_before_destination_release[new-ordinary]",
+              "seconds": 96.901,
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.UI.test_library_note_export_responsiveness",
+              "name": "test_note_export_dispatches_app_key_before_destination_release[new-held-writer]",
+              "seconds": 117.745,
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.UI.test_library_note_export_responsiveness",
+              "name": "test_note_export_dispatches_app_key_before_destination_release[replace-ordinary]",
+              "seconds": 110.152,
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.UI.test_library_note_export_responsiveness",
+              "name": "test_note_export_dispatches_app_key_before_destination_release[replace-held-writer]",
+              "seconds": 102.002,
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.UI.test_library_note_export_responsiveness",
+              "name": "test_note_export_late_collision_keeps_precious_file_until_answer[cancel]",
+              "seconds": 104.05,
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.UI.test_library_note_export_responsiveness",
+              "name": "test_note_export_late_collision_keeps_precious_file_until_answer[replace]",
+              "seconds": 112.417,
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.UI.test_library_note_export_responsiveness",
+              "name": "test_note_export_late_collision_keeps_precious_file_until_answer[recheck-error]",
+              "seconds": 98.161,
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.UI.test_library_note_export_responsiveness",
+              "name": "test_note_export_accepted_write_preserves_changed_result_owner[context-region]",
+              "seconds": 80.769,
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.UI.test_library_note_export_responsiveness",
+              "name": "test_note_export_accepted_write_preserves_changed_result_owner[retired-screen]",
+              "seconds": 98.24,
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.UI.test_library_note_export_responsiveness",
+              "name": "test_note_export_failed_replace_keeps_file_and_allows_text_retry",
+              "seconds": 92.06,
+              "outcomes": []
+            }
+          ]
+        },
+        {
+          "entry": "textual-37266-37268/task3-green-notes/child-receipts/test_note_export_accepted_writ0/private-profile-process/pytest.xml",
+          "sha256": "1bc7156a7252659873da58df044897b0347df9563dd48b14e8b29451df2918a6",
+          "parent_wrapper": false,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_library_note_export_responsiveness",
+              "name": "test_note_export_accepted_write_preserves_changed_result_owner[context-region]",
+              "seconds": 31.204,
+              "outcomes": []
+            }
+          ]
+        },
+        {
+          "entry": "textual-37266-37268/task3-green-notes/child-receipts/test_note_export_accepted_writ1/private-profile-process/pytest.xml",
+          "sha256": "b98db2bd0ce555c848d8b6eaa7af17c2043a0c38bea5e1e1f19620975b2a5335",
+          "parent_wrapper": false,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_library_note_export_responsiveness",
+              "name": "test_note_export_accepted_write_preserves_changed_result_owner[retired-screen]",
+              "seconds": 47.172,
+              "outcomes": []
+            }
+          ]
+        },
+        {
+          "entry": "textual-37266-37268/task3-green-notes/child-receipts/test_note_export_dispatches_ap0/private-profile-process/pytest.xml",
+          "sha256": "d92895f3637b30ece90381e717b94a029190aca9d639121dd2912a1b40cf86d9",
+          "parent_wrapper": false,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_library_note_export_responsiveness",
+              "name": "test_note_export_dispatches_app_key_before_destination_release[new-ordinary]",
+              "seconds": 33.092,
+              "outcomes": []
+            }
+          ]
+        },
+        {
+          "entry": "textual-37266-37268/task3-green-notes/child-receipts/test_note_export_dispatches_ap1/private-profile-process/pytest.xml",
+          "sha256": "017d2f6429d8ba369428463071a224833f739157796cf822f2e71f2f9f388224",
+          "parent_wrapper": false,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_library_note_export_responsiveness",
+              "name": "test_note_export_dispatches_app_key_before_destination_release[new-held-writer]",
+              "seconds": 57.445,
+              "outcomes": []
+            }
+          ]
+        },
+        {
+          "entry": "textual-37266-37268/task3-green-notes/child-receipts/test_note_export_dispatches_ap2/private-profile-process/pytest.xml",
+          "sha256": "1da7e7e60bd159c0d439894ac5e619cfaef988de0cbd8ad5e565db6506032363",
+          "parent_wrapper": false,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_library_note_export_responsiveness",
+              "name": "test_note_export_dispatches_app_key_before_destination_release[replace-ordinary]",
+              "seconds": 43.451,
+              "outcomes": []
+            }
+          ]
+        },
+        {
+          "entry": "textual-37266-37268/task3-green-notes/child-receipts/test_note_export_dispatches_ap3/private-profile-process/pytest.xml",
+          "sha256": "79ff89d619c78ce2cd1089fad62173f3824d792bf3f8fd93f2d94aa186424a69",
+          "parent_wrapper": false,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_library_note_export_responsiveness",
+              "name": "test_note_export_dispatches_app_key_before_destination_release[replace-held-writer]",
+              "seconds": 46.592,
+              "outcomes": []
+            }
+          ]
+        },
+        {
+          "entry": "textual-37266-37268/task3-green-notes/child-receipts/test_note_export_failed_replac0/private-profile-process/pytest.xml",
+          "sha256": "97cafe7829e62aae755825dad56c78d5a97345f5cd09382d5af8e8024d2e51e7",
+          "parent_wrapper": false,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_library_note_export_responsiveness",
+              "name": "test_note_export_failed_replace_keeps_file_and_allows_text_retry",
+              "seconds": 41.518,
+              "outcomes": []
+            }
+          ]
+        },
+        {
+          "entry": "textual-37266-37268/task3-green-notes/child-receipts/test_note_export_late_collisio0/private-profile-process/pytest.xml",
+          "sha256": "48feeeaf98342a561756cd3dab7e9f7fa02668ade8b88f5f3054866c6065a425",
+          "parent_wrapper": false,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_library_note_export_responsiveness",
+              "name": "test_note_export_late_collision_keeps_precious_file_until_answer[cancel]",
+              "seconds": 36.519,
+              "outcomes": []
+            }
+          ]
+        },
+        {
+          "entry": "textual-37266-37268/task3-green-notes/child-receipts/test_note_export_late_collisio1/private-profile-process/pytest.xml",
+          "sha256": "a06f99d85da60993affb9cc57509b18b8b6784af41782050623503e11f9b29e0",
+          "parent_wrapper": false,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_library_note_export_responsiveness",
+              "name": "test_note_export_late_collision_keeps_precious_file_until_answer[replace]",
+              "seconds": 57.829,
+              "outcomes": []
+            }
+          ]
+        },
+        {
+          "entry": "textual-37266-37268/task3-green-notes/child-receipts/test_note_export_late_collisio2/private-profile-process/pytest.xml",
+          "sha256": "6e17bd4796b64a667720e4d43c3d1d6a1c23a95bbd548e142d81b4b7d909d6e4",
+          "parent_wrapper": false,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_library_note_export_responsiveness",
+              "name": "test_note_export_late_collision_keeps_precious_file_until_answer[recheck-error]",
+              "seconds": 48.45,
+              "outcomes": []
+            }
+          ]
+        }
+      ],
+      "actual_child_cases": 10
+    },
+    {
+      "run": "task3-red-notes",
+      "exit_code": 1,
+      "reports": [
+        {
+          "entry": "textual-37266-37268/task3-red-notes/result.xml",
+          "sha256": "dd234162a84805cd575766a9481624ee1fcd956e53ae319b5ebfd8d490c18f65",
+          "parent_wrapper": true,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_library_note_export_responsiveness",
+              "name": "test_note_export_dispatches_app_key_before_destination_release[new-held-writer]",
+              "seconds": 110.03,
+              "outcomes": [
+                {
+                  "kind": "failure",
+                  "message_excerpt": "Failed: C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-1588dc8c13dc42aca352a9d6f4f1bfc0\\pytest\\test_note_export_dispatches_ap0\\private-profile-process\\pytest.log\n--- child failure: AttributeError: 'LibraryScreen' object has no attribute '_selected_note_id'\ntmp_path = WindowsPath('C:/Users/GDesktop-1/AppData/Local/codex-textual-test-1588dc8c13dc42aca352a9d6f4f1bfc0/pytest/test_note_export_dispatches_ap0/private-profile-process/pytest/test_note_export_dispatches_ap0')\nmonkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x00000296685E5400>\nrequest = <FixtureRequest for <Coroutine test_note_export_dispatches_app_key_before_destination_release[new-held-writer]>>\nheld = True, replace = False\n\n    @pytest.mark.parametrize(\"held\", [False, True], ids=[\"ordinary\", \"held-writer\"])\n    @pytest.mark.parametrize(\"replace\", [False, True], ids=[\"new\", \"replace\"])\n    @private_profile_test\n    async def test_note_export_dispatches_app_key_before_destination_release(\n        tmp_path, monkeyp",
+                  "full_message_sha256": "1b6f53405f0fb19b948eaff50c12f8f022a91a7d3347da35d1f6c85c9b0f8978"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "entry": "textual-37266-37268/task3-red-notes/child-receipts/test_note_export_dispatches_ap0/private-profile-process/pytest.xml",
+          "sha256": "c25a887505fe99c0c4e013d8c7b6d3bca0ca5b1def3b0e6c87abdda05310e304",
+          "parent_wrapper": false,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_library_note_export_responsiveness",
+              "name": "test_note_export_dispatches_app_key_before_destination_release[new-held-writer]",
+              "seconds": 36.555,
+              "outcomes": [
+                {
+                  "kind": "failure",
+                  "message_excerpt": "AttributeError: 'LibraryScreen' object has no attribute '_selected_note_id'",
+                  "full_message_sha256": "91cdd22bdb455c617156de250ff90d0eccb6f5088f6829d25d0301c7f68c3d0e"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "actual_child_cases": 1
+    },
+    {
+      "run": "task3-red-notes-dispatch",
+      "exit_code": 1,
+      "reports": [
+        {
+          "entry": "textual-37266-37268/task3-red-notes-dispatch/result.xml",
+          "sha256": "b1c20ba5cd04d3accae8102dc597a35a9413cd0ae066580e6d7652c100af943c",
+          "parent_wrapper": true,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_library_note_export_responsiveness",
+              "name": "test_note_export_dispatches_app_key_before_destination_release[new-held-writer]",
+              "seconds": 71.523,
+              "outcomes": [
+                {
+                  "kind": "failure",
+                  "message_excerpt": "Failed: C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-2b15db6e0fdb4ff89d16b640edab5dca\\pytest\\test_note_export_dispatches_ap0\\private-profile-process\\pytest.log\n--- child failure: AssertionError: Notes writer blocked App dispatch: [{\"event\": \"picker_or_confirmation_triggered\", \"time\": 621458.671}, {\"event\": \"writer_entered\", \"time\": 621460.093, \"thread\": 166688, \"main_thread\": 166688}, {\"event\": \"key_posted\", \"time\": 621460.093}, {\"event\": \"watchdog_released_write\", \"time\": 621463.109}, {\"event\": \"write_completed\", \"time\": 621463.156}, {\"event\": \"app_key_acknowledged\", \"time\": 621463.781, \"before_release\": false}, {\"event\": \"picker_or_confirmation_returned\", \"time\": 621464.078}]\nassert [False] == [True]\n  \n  At index 0 diff: False != True\n  Use -v to get more diff\ntmp_path = WindowsPath('C:/Users/GDesktop-1/AppData/Local/codex-textual-test-2b15db6e0fdb4ff89d16b640edab5dca/pytest/test_note_export_dispatches_ap0/private-profile-process/pytest/test_note_export_dispatches_ap0')\nmonk",
+                  "full_message_sha256": "9a9e5ecba507981532b060c43ab7b99c6594efe85029a9f68acc160828c387fe"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "entry": "textual-37266-37268/task3-red-notes-dispatch/child-receipts/test_note_export_dispatches_ap0/private-profile-process/pytest.xml",
+          "sha256": "681aeb4760df83a64795cd6569ad40bdb09280e9fb2b27104b16bfd8ab1dcce3",
+          "parent_wrapper": false,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_library_note_export_responsiveness",
+              "name": "test_note_export_dispatches_app_key_before_destination_release[new-held-writer]",
+              "seconds": 34.288,
+              "outcomes": [
+                {
+                  "kind": "failure",
+                  "message_excerpt": "AssertionError: Notes writer blocked App dispatch: [{\"event\": \"picker_or_confirmation_triggered\", \"time\": 621458.671}, {\"event\": \"writer_entered\", \"time\": 621460.093, \"thread\": 166688, \"main_thread\": 166688}, {\"event\": \"key_posted\", \"time\": 621460.093}, {\"event\": \"watchdog_released_write\", \"time\": 621463.109}, {\"event\": \"write_completed\", \"time\": 621463.156}, {\"event\": \"app_key_acknowledged\", \"time\": 621463.781, \"before_release\": false}, {\"event\": \"picker_or_confirmation_returned\", \"time\": 621464.078}]\nassert [False] == [True]\n  \n  At index 0 diff: False != True\n  Use -v to get more diff",
+                  "full_message_sha256": "93f1cb1b5a7f2d21c4ef49b662b63f071088ff199b30e6ba47a0582d2566e894"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "actual_child_cases": 1
+    },
+    {
+      "run": "task3-red-notes-native-newlines",
+      "exit_code": 1,
+      "reports": [
+        {
+          "entry": "textual-37266-37268/task3-red-notes-native-newlines/result.xml",
+          "sha256": "110fb10b9f92f45c1a1e178600d267f34aca4c53d2a6fc3e0d0f70fba2f6085b",
+          "parent_wrapper": true,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_library_note_export_responsiveness",
+              "name": "test_note_export_dispatches_app_key_before_destination_release[new-held-writer]",
+              "seconds": 138.3,
+              "outcomes": [
+                {
+                  "kind": "failure",
+                  "message_excerpt": "Failed: C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-8d950d1a0d3b4e2a98e6de714e9d55b9\\pytest\\test_note_export_dispatches_ap0\\private-profile-process\\pytest.log\n--- child failure: AssertionError: Source setup failed without its real Retry\nassert []\ntmp_path = WindowsPath('C:/Users/GDesktop-1/AppData/Local/codex-textual-test-8d950d1a0d3b4e2a98e6de714e9d55b9/pytest/test_note_export_dispatches_ap0/private-profile-process/pytest/test_note_export_dispatches_ap0')\nmonkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001CC4943B650>\nrequest = <FixtureRequest for <Coroutine test_note_export_dispatches_app_key_before_destination_release[new-held-writer]>>\nheld = True, replace = False\n\n    @pytest.mark.parametrize(\"held\", [False, True], ids=[\"ordinary\", \"held-writer\"])\n    @pytest.mark.parametrize(\"replace\", [False, True], ids=[\"new\", \"replace\"])\n    @private_profile_test\n    async def test_note_export_dispatches_app_key_before_destination_release(\n        tmp_path, monkeypatch, r",
+                  "full_message_sha256": "ba2100fa56604df6be7d128f8f344ab7340718fac815b47e6b24f47b52624e80"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "entry": "textual-37266-37268/task3-red-notes-native-newlines/child-receipts/test_note_export_dispatches_ap0/private-profile-process/pytest.xml",
+          "sha256": "25266a03a6045d317984a61c1251c5dc98348367b45deb36c691f7b9286418ca",
+          "parent_wrapper": false,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_library_note_export_responsiveness",
+              "name": "test_note_export_dispatches_app_key_before_destination_release[new-held-writer]",
+              "seconds": 46.125,
+              "outcomes": [
+                {
+                  "kind": "failure",
+                  "message_excerpt": "AssertionError: Source setup failed without its real Retry\nassert []",
+                  "full_message_sha256": "27a2930b7b93d177a0d0d61f10d73c5fe9a7ff1c8a5c070ff5a75483d74bd936"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "actual_child_cases": 1
+    },
+    {
+      "run": "task3-red-notes-ready",
+      "exit_code": 1,
+      "reports": [
+        {
+          "entry": "textual-37266-37268/task3-red-notes-ready/result.xml",
+          "sha256": "b39f6beefb4408867d69a1f16a9c67a3610742bac43b8c5d0b53e07ea9ccfa0a",
+          "parent_wrapper": true,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_library_note_export_responsiveness",
+              "name": "test_note_export_dispatches_app_key_before_destination_release[new-held-writer]",
+              "seconds": 116.231,
+              "outcomes": [
+                {
+                  "kind": "failure",
+                  "message_excerpt": "Failed: C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-4b86cb9eabef416f9ef4d02a1e425bdb\\pytest\\test_note_export_dispatches_ap0\\private-profile-process\\pytest.log\n--- child failure: AssertionError: assert b'---\\r\\ntitl...a budget line' == b'---\\ntitle:...a budget line'\n  \n  At index 3 diff: b'\\r' != b'\\n'\n  Use -v to get more diff\ntmp_path = WindowsPath('C:/Users/GDesktop-1/AppData/Local/codex-textual-test-4b86cb9eabef416f9ef4d02a1e425bdb/pytest/test_note_export_dispatches_ap0/private-profile-process/pytest/test_note_export_dispatches_ap0')\nmonkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001BC8D216CC0>\nrequest = <FixtureRequest for <Coroutine test_note_export_dispatches_app_key_before_destination_release[new-held-writer]>>\nheld = True, replace = False\n\n    @pytest.mark.parametrize(\"held\", [False, True], ids=[\"ordinary\", \"held-writer\"])\n    @pytest.mark.parametrize(\"replace\", [False, True], ids=[\"new\", \"replace\"])\n    @private_profile_test\n    async def test_note_expo",
+                  "full_message_sha256": "5db1631d2d4cfdc2020c18e49da5dcc2402b301157553326161d1621de2f4d94"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "entry": "textual-37266-37268/task3-red-notes-ready/child-receipts/test_note_export_dispatches_ap0/private-profile-process/pytest.xml",
+          "sha256": "e954e1d64a053103343bec5fa55a2ee8687a6764bc5090fa7162cda0b364f432",
+          "parent_wrapper": false,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_library_note_export_responsiveness",
+              "name": "test_note_export_dispatches_app_key_before_destination_release[new-held-writer]",
+              "seconds": 45.732,
+              "outcomes": [
+                {
+                  "kind": "failure",
+                  "message_excerpt": "AssertionError: assert b'---\\r\\ntitl...a budget line' == b'---\\ntitle:...a budget line'\n  \n  At index 3 diff: b'\\r' != b'\\n'\n  Use -v to get more diff",
+                  "full_message_sha256": "74389c4027c1aaed295984dd05d9d09920f6975b8863592c71c31bd4a56e3891"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "actual_child_cases": 1
+    },
+    {
+      "run": "task3-red-notes-recovery-ready",
+      "exit_code": 1,
+      "reports": [
+        {
+          "entry": "textual-37266-37268/task3-red-notes-recovery-ready/result.xml",
+          "sha256": "0f9a067486034eb7dffb1fc4e8a5f2e21f20020ea6c32fddf00523ea55f3e679",
+          "parent_wrapper": true,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_library_note_export_responsiveness",
+              "name": "test_note_export_dispatches_app_key_before_destination_release[new-held-writer]",
+              "seconds": 120.64,
+              "outcomes": [
+                {
+                  "kind": "failure",
+                  "message_excerpt": "Failed: C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-ec3e1ab94f6e432d8d96904dc1cbd817\\pytest\\test_note_export_dispatches_ap0\\private-profile-process\\pytest.log\n--- child failure: AssertionError: assert 'library-note-body' == 'library-note-export-md'\n  \n  - library-note-export-md\n  ?              ^^^ ----\n  + library-note-body\n  ?              ^  +\ntmp_path = WindowsPath('C:/Users/GDesktop-1/AppData/Local/codex-textual-test-ec3e1ab94f6e432d8d96904dc1cbd817/pytest/test_note_export_dispatches_ap0/private-profile-process/pytest/test_note_export_dispatches_ap0')\nmonkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001827F4DB950>\nrequest = <FixtureRequest for <Coroutine test_note_export_dispatches_app_key_before_destination_release[new-held-writer]>>\nheld = True, replace = False\n\n    @pytest.mark.parametrize(\"held\", [False, True], ids=[\"ordinary\", \"held-writer\"])\n    @pytest.mark.parametrize(\"replace\", [False, True], ids=[\"new\", \"replace\"])\n    @private_profile_test\n    asyn",
+                  "full_message_sha256": "6f3fddc7904f0935858df54f9cc31e27481c818e2e6a86a68abd67b488edb672"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "entry": "textual-37266-37268/task3-red-notes-recovery-ready/child-receipts/test_note_export_dispatches_ap0/private-profile-process/pytest.xml",
+          "sha256": "36d00d4af8c61c55e24ee2581a3f8324b994cc9bdd781451c9b4630f12e07592",
+          "parent_wrapper": false,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_library_note_export_responsiveness",
+              "name": "test_note_export_dispatches_app_key_before_destination_release[new-held-writer]",
+              "seconds": 48.822,
+              "outcomes": [
+                {
+                  "kind": "failure",
+                  "message_excerpt": "AssertionError: assert 'library-note-body' == 'library-note-export-md'\n  \n  - library-note-export-md\n  ?              ^^^ ----\n  + library-note-body\n  ?              ^  +",
+                  "full_message_sha256": "58ee7f1fe72b60a7b93bfdc168f48a3dc31df804b2c479db0e08739b7d832d28"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "actual_child_cases": 1
+    }
+  ],
+  "qualification": "GREEN:10 actual children and10 parent passes. Intended RED is task3-red-notes-dispatch; earlier attempts are invalid dispatch evidence. Compatibility18pass/1fail and exact retry1fail stop before export at source readiness; that exact old control needs hosted CI qualification. Source service is a seeded stand-in, not Notes SQLite. Native platform newline policy retained. Raw .log files stay private. XML messages are complete in archive; excerpts limited to1000characters."
+}

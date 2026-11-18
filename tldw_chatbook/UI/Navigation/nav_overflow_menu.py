@@ -110,7 +110,9 @@ class NavOverflowMenu(ModalScreen[None]):
             bool(getattr(self.app, "console_needs_attention", False))
         )
         runtime = getattr(self.app, "console_runtime", None)
-        recompute = getattr(runtime, "recompute_console_attention", None)
+        recompute = getattr(runtime, "request_console_attention_refresh", None)
+        if not callable(recompute):
+            recompute = getattr(runtime, "recompute_console_attention", None)
         if callable(recompute):
             recompute(force_projection=True)
 

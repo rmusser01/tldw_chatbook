@@ -1,0 +1,7 @@
+.......                                                                  [100%]
+============================= slowest 25 durations =============================
+1.22s call     Tests/UI/test_console_prompt_mixins.py::test_dirty_toggle_restores_truth_without_losing_editor[keep]
+1.08s call     Tests/UI/test_console_prompt_mixins.py::test_dirty_toggle_restores_truth_without_losing_editor[discard]
+
+(19 durations < 1s hidden.)
+7 passed in 8.80s

@@ -27,6 +27,7 @@ _UI = (
 from types import SimpleNamespace
 from textual.app import App
 from textual.widgets import Button,Input,Static
+from tldw_chatbook.css.Themes.themes import ThemeVariableDefaultsMixin
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library.library_skills_canvas import LibrarySkillsListCanvas
 from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SKILLS
@@ -55,28 +56,39 @@ notices=[]
 instance=SimpleNamespace(app_config={},local_skill_trust_service=trust,skills_scope_service=scope,notify=lambda message,**kwargs:notices.append(message))
 class Subject(LibraryScreen):
  def compose(self):
-  yield LibrarySkillsListCanvas(state=self._build_library_skills_state(),trust_posture=self._library_skills_trust_posture,id='library-skills-canvas')
+  yield LibrarySkillsListCanvas(state=self._build_library_skills_state(),trust_posture=self._skills_state.trust_posture,id='library-skills-canvas')
  def on_mount(self,event):
   event.prevent_default()
   self._refresh_library_skills_trust_posture()
  async def on_unmount(self):pass
-class Host(App):
+# TASK-33641.7: the Library sheet names $tldw-boundary, which no tcss defines;
+# the mixin supplies the guard names, as it does for TldwCli.
+class Host(ThemeVariableDefaultsMixin,App):
  def on_mount(self):
   self.subject=Subject(instance)
   self.subject._library_selected_row_id=LIBRARY_ROW_BROWSE_SKILLS
-  self.subject._library_skills_view='list'
+  self.subject._skills_state.view='list'
   self.subject._local_source_records['skills']=(None,context)
   self.push_screen(self.subject)
+# A wall-clock deadline, not a poll count: under a parallel run 250 polls ran
+# out waiting for the review modal. 20 s stays inside the 45 s process limit.
 async def wait_for(predicate):
- for _ in range(250):
-  if predicate():return
+ clock=asyncio.get_running_loop().time;deadline=clock()+20
+ while not predicate():
+  assert clock()<deadline,'Skills UI checkpoint did not settle'
   await asyncio.sleep(.02)
- raise AssertionError('Skills UI checkpoint did not settle')
+# Each posture load (on mount, then after the source snapshot) recomposes the
+# header, and a press on a Button a later load replaced is dropped with it: in
+# 3 of 400 [empty] runs the review never opened (PR #3169's CI run 2). So wait
+# for no worker left and let the last recompose land before pressing.
+async def settled_action(pilot,host):
+ await wait_for(lambda:hasattr(host,'subject') and bool(host.subject.query('#library-skills-trust-action')) and not host.workers)
+ await pilot.pause()
+ return host.subject.query_one('#library-skills-trust-action',Button)
 async def run():
  host=Host()
  async with host.run_test(size=(110,44)) as pilot:
-  await wait_for(lambda:hasattr(host,'subject') and bool(host.subject.query('#library-skills-trust-action')))
-  subject=host.subject;button=subject.query_one('#library-skills-trust-action',Button)
+  button=await settled_action(pilot,host);subject=host.subject
   assert str(button.label)=='Review restored skills',str(button.label)
   button.press()
   await wait_for(lambda:bool(host.screen.query('#skills-recovery-files')))
@@ -92,7 +104,7 @@ async def run():
   if action in ('service','root','navigation'):
    if action=='service':instance.local_skill_trust_service=service(restored)
    elif action=='root':trust.skills_dir=restored/'other-skills'
-   else:subject._library_skills_view='editor'
+   else:subject._skills_state.view='editor'
    await wait_for(lambda:host.screen.query_one('#skills-recovery-continue',Button).disabled)
    assert 'Selection changed' in str(host.screen.query_one('#skills-recovery-status',Static).content)
    await pilot.press('escape')
@@ -100,7 +112,8 @@ async def run():
    assert not trust.trust_store.store_dir.exists()
    return
   host.screen.query_one('#skills-recovery-continue',Button).press()
-  await wait_for(lambda:bool(host.screen.query('#skill-trust-bootstrap-input')))
+  # The Submit button mounts one container level after the inputs.
+  await wait_for(lambda:bool(host.screen.query('#skill-trust-bootstrap-submit')))
   if action=='cancel-passphrase':
    await pilot.press('escape')
    await wait_for(lambda:host.screen is subject)
@@ -190,13 +203,13 @@ history={p.relative_to(old).as_posix():p.read_bytes() for p in old.rglob('*') if
         + r"""
 async def run():
  host=Host()
- async with host.run_test(size=(110,44)):
+ async with host.run_test(size=(110,44)) as pilot:
   assert context.get('available_skills') or context.get('blocked_skills'),context
-  await wait_for(lambda:hasattr(host,'subject') and bool(host.subject.query('#library-skills-trust-action')))
-  button=host.subject.query_one('#library-skills-trust-action',Button)
+  button=await settled_action(pilot,host)
   assert str(button.label)=='Unlock',str(button.label)
   button.press()
-  await wait_for(lambda:bool(host.screen.query('#skill-trust-passphrase-input')))
+  # As above: Submit mounts one container level after the input.
+  await wait_for(lambda:bool(host.screen.query('#skill-trust-passphrase-submit')))
   host.screen.query_one('#skill-trust-passphrase-input',Input).value='old-passphrase'
   host.screen.query_one('#skill-trust-passphrase-submit',Button).press()
   await wait_for(lambda:trust.recovery_posture()=='ready')
@@ -208,3 +221,126 @@ print('retired and reopened')
 """
     )
     _run(tmp_path, "skills", "ordinary", script=script, timeout=45)
+
+
+_TRUST_ARCHIVE = r"""
+import asyncio,json,os,tomllib
+from pathlib import Path
+from Tests.network_guard import install,blocked_attempts
+install();os.umask(0o077)
+import keyring
+from keyring.backends.null import Keyring
+keyring.set_keyring(Keyring())
+from Tests.RuntimePolicy.test_server_credentials import FakeKeyring
+from tldw_chatbook.runtime_policy.server_credentials import KeyringServerCredentialStore
+from tldw_chatbook.Backup_Recovery import bootstrap,credentials
+from tldw_chatbook.Backup_Recovery.control_records import admission_authority
+from tldw_chatbook.Backup_Recovery.profile_paths import user_data_dir
+from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+from tldw_chatbook.Skills_Interop.skill_trust_service import SkillTrustService
+from tldw_chatbook.Skills_Interop.skill_trust_store import SkillTrustStore,FileSkillTrustGenerationMarkerStore
+from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
+store=KeyringServerCredentialStore(keyring_backend=FakeKeyring())
+credentials._credential_store=lambda:store
+source=Path(os.environ['TLDW_CONFIG_PATH'])
+data=Path(os.environ['XDG_DATA_HOME'])/'profile';data.mkdir(mode=0o700)
+source.write_text('[general]\nusers_name="Local"\n[paths]\ndata_dir='+json.dumps(str(data))+'\n');source.chmod(0o600)
+# The installed required stores, as a real profile has them (TASK-40135's PREPARE).
+import subprocess,sys
+prepare=('from pathlib import Path;import os;from Tests import network_guard;network_guard.install();'
+         'from Tests.Backup_Recovery.test_capture_service import _populate_required_dependencies;'
+         'from tldw_chatbook.Backup_Recovery.capture_service import preview_capture;'
+         "_populate_required_dependencies(preview_capture((Path(os.environ['TLDW_CONFIG_PATH']),),options={'allow_partial':True}));"
+         'assert not network_guard.blocked_attempts()')
+done=subprocess.run([sys.executable,'-c',prepare],capture_output=True,text=True,timeout=120)
+assert done.returncode==0,done.stderr[-4000:]
+root=user_data_dir(tomllib.loads(source.read_text()))/'skills';trust_root=root/'trust'
+trust=SkillTrustService(skills_dir=root/'skills',trust_store=SkillTrustStore(trust_root,FileSkillTrustGenerationMarkerStore(trust_root/'generation_marker.json',store_dir=trust_root)))
+trust.unlock_with_passphrase('old-passphrase',salt=b'6'*32)
+local=LocalSkillsService(store_dir=root,trust_service=trust)
+asyncio.run(local.create_skill(name='demo',content='---\nname: demo\ndescription: test\n---\n# Demo\n'))
+trust.bootstrap_trust()
+assert any(trust_root.rglob('*.json')),list(trust_root.rglob('*'))
+admission_authority(bootstrap.default_bootstrap_root())
+service=RecoveryService(Path.home()/'recovery-control')
+GROUP=('tools',);password=b'skill-trust-test';destination=Path.home()/'skills.tldw-backup.zip.age'
+def finished(operation):
+ result=service.wait(operation)
+ assert result['state']=='succeeded',dict(result)
+ return result
+try:
+ acknowledged=()
+ for _ in range(3):
+  options={'data_groups':GROUP,'encrypted':True,'credential_mode':'include','acknowledged_credential_issues':acknowledged}
+  preview=service.preview_backup((source,),options=options)
+  result=service.wait(service.start_backup((source,),preview.scope_digest,destination,options=options,password=password))
+  if result['state']=='succeeded':break
+  assert result['issues']==('review_required',),dict(result)
+  acknowledged=tuple(sorted(set(acknowledged)|set(result['review_issues'])))
+ else:raise AssertionError('backup review did not settle')
+ trust_issues=[i for i in acknowledged if i.startswith('credential_skill_trust_manual_unlock_required:')]
+ assert trust_issues,acknowledged  # still disclosed, and acknowledged at capture
+ inspection=service.start_inspection(destination,password=password);finished(inspection)
+ summary=service.summary(inspection)
+ profile=summary['profile_ids'][0]
+ try:
+  plan=service.preview_restore(inspection,mode='replace',profile_bases={},target_configs={profile:source},external_destinations={},profile_names={},target=service.preview_backup((source,),options={}),data_groups=GROUP)
+ except ValueError as error:
+  refused=str(error)
+ else:
+  refused=None
+ print('consistency',summary['consistency'],'replace refused:',refused)
+ assert (summary['consistency'],refused)==('coherent',None),(summary['consistency'],refused)
+ assert plan.mode=='replace'
+ assert set(trust_issues)<=set(summary['report']),summary['report']
+finally:
+ service.close()
+assert not blocked_attempts()
+print('retired and reopened')
+"""
+
+
+@pytest.mark.timeout(900)
+def test_include_mode_archive_with_skill_trust_files_is_not_partial(tmp_path):
+    """TASK-41123: an include-mode backup holding the skills trust store
+    discloses that the trust keys' keyring cache is left out
+    (`credential_skill_trust_manual_unlock_required`). That disclosure is
+    manual, like TASK-40135's Personal Context link keys: it must not make the
+    archive `partial`, which `plan_restore` refuses for a replace restore
+    (`partial_replacement`). It is still acknowledged at capture and listed in
+    the archive's report."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    from Tests.Backup_Recovery.test_config_sibling_capture import _wait_while_busy
+
+    # `_run`'s scratch layout, but no fixed budget: the child backs up, inspects
+    # and plans (114.7 s serially at load 75-88), so it fails only once it
+    # stops using CPU, with a wall backstop (TASK-40306's pattern).
+    root = tmp_path.resolve()
+    for name in ("home", "config", "data"):
+        (root / name).mkdir(mode=0o700)
+    environment = dict(
+        os.environ,
+        HOME=str(root / "home"),
+        USERPROFILE=str(root / "home"),
+        XDG_CONFIG_HOME=str(root / "config"),
+        XDG_DATA_HOME=str(root / "data"),
+        TLDW_CONFIG_PATH=str(root / "config" / "config.toml"),
+        TLDW_TEST_MODE="1",
+        TLDW_DISABLE_CONFIG_WATCH="1",
+    )
+    log = root / "trust-archive.log"
+    with log.open("w", encoding="utf-8") as output:
+        process = subprocess.Popen(
+            [sys.executable, "-X", "utf8", "-c", _TRUST_ARCHIVE],
+            cwd=Path(__file__).resolve().parents[2],
+            env=environment,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+        )
+        returncode = _wait_while_busy(process, idle=60, timeout=840)
+    text = log.read_text(encoding="utf-8", errors="replace")
+    assert returncode == 0 and "retired and reopened" in text, text[-8000:]

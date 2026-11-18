@@ -227,7 +227,9 @@ def render_change(item: dict[str, Any]) -> Text:
     # stripped -- those are never the subject of a diff a person reads, and
     # they are the one class `Text.append` does not neutralize.
     for line in strip_control_characters(body).splitlines():
-        style = "green" if line.startswith("+") else "red" if line.startswith("-") else None
+        style = (
+            "green" if line.startswith("+") else "red" if line.startswith("-") else None
+        )
         out.append(line, style=style)
         out.append("\n")
     return out
@@ -272,6 +274,7 @@ class StarToggleRequested(Message):
         self.item = item
         super().__init__()
 
+
 class OpenInBrowserRequested(Message):
     """Posted when the reader's Open button is pressed (TASK-3072 plan task 8).
 
@@ -284,6 +287,7 @@ class OpenInBrowserRequested(Message):
     def __init__(self, item: dict[str, Any] | None) -> None:
         self.item = item
         super().__init__()
+
 
 class ContentPane(RecomposeCaptureGuard, Vertical):
     """Hosts the reader for the currently selected item.

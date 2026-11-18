@@ -368,9 +368,7 @@ async def test_a_quiet_urls_baseline_survives_a_busy_siblings_churn(monkeypatch)
     assert "Beta has not been touched" in b_rows[0]["extracted_content"], (
         "B's surviving row must be B's own content, not a sibling URL's"
     )
-    assert len(_snapshots(db, source_id, _URL_A)) == n, (
-        "A is capped independently of B"
-    )
+    assert len(_snapshots(db, source_id, _URL_A)) == n, "A is capped independently of B"
 
     final = await _check(service, source_id)
     assert dict(final["stats"]["dispositions"]) == _counts(changed=1, unchanged=1), (

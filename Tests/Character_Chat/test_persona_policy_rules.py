@@ -50,8 +50,13 @@ def test_normalize_drops_malformed_rules_without_logging_private_values():
         logger.remove(sink_id)
 
     assert cleaned == [
-        {"rule_kind": "mcp_tool", "rule_name": "ok", "allowed": True,
-         "require_confirmation": False, "max_calls_per_turn": None}
+        {
+            "rule_kind": "mcp_tool",
+            "rule_name": "ok",
+            "allowed": True,
+            "require_confirmation": False,
+            "max_calls_per_turn": None,
+        }
     ]
     rendered = "".join(str(record) for record in records)
     assert rendered.count("Dropping malformed persona policy rule") == 2

@@ -1,0 +1,1550 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="18" skipped="0" tests="239" time="172.237" timestamp="2026-10-03T21:12:25.575628-07:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.Chat.test_console_chat_start" name="test_invalid_new_chat_never_asks_or_executes[arguments0]" time="0.237" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_invalid_new_chat_never_asks_or_executes[arguments1]" time="0.044" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_invalid_new_chat_never_asks_or_executes[arguments2]" time="0.046" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_invalid_new_chat_never_asks_or_executes[arguments3]" time="0.042" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_invalid_new_chat_never_asks_or_executes[arguments4]" time="0.046" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_invalid_new_chat_never_asks_or_executes[arguments5]" time="0.056" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_invalid_new_chat_never_asks_or_executes[arguments6]" time="0.051" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_invalid_new_chat_never_asks_or_executes[arguments7]" time="0.046" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_invalid_new_chat_never_asks_or_executes[arguments8]" time="0.044" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_invalid_new_chat_never_asks_or_executes[arguments9]" time="0.044" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_invalid_new_chat_never_asks_or_executes[arguments10]" time="0.046" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_remembered_draft_does_not_grant_start_or_casual" time="0.053" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_new_chat_uses_invocation_run_and_drops_model_internal_keys" time="0.062" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_new_chat_requires_trusted_preparation_even_with_an_allow" time="0.045" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_remembered_creation_rechecks_preparation_and_denials_cross_modes" time="0.044" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_known_creation_outcome_keeps_launch_status_and_no_repeat_instruction[draft]" time="0.046" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_known_creation_outcome_keeps_launch_status_and_no_repeat_instruction[not_started]" time="0.048" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_known_creation_outcome_keeps_launch_status_and_no_repeat_instruction[started]" time="0.045" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_known_creation_outcome_keeps_launch_status_and_no_repeat_instruction[review_required]" time="0.043" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_pending_v2_draft_survives_activation_and_reopen" time="0.465" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_v2_edit_or_clear_survives_reopen[edited opening]" time="0.444" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_v2_edit_or_clear_survives_reopen[]" time="0.475" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_v2_edit_or_clear_survives_reopen[human-edit-over-tool-cap]" time="0.455" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_unknown_handoff_version_cannot_restore_an_authorized_draft" time="0.426" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_session_reuse_never_reuses_creation_incarnation" time="0.470" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_automatic_primary_claims_share_two_slots_and_exact_release" time="0.434" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_automatic_claims_keep_manual_reserve_without_double_count" time="0.425" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_preparation_is_frozen_and_mutation_needs_approved_token" time="0.475" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_remembered_creation_works_detached_and_restores_fresh_defaults" time="0.420" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_changed_payload_or_stopped_source_cannot_reuse_approval" time="0.400" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_durable_acceptance_consumes_exact_handoff_with_receipt[False]" time="0.416" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_durable_acceptance_consumes_exact_handoff_with_receipt[True]" time="0.398" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_native_start_uses_both_receipts_and_literal_machine_request[hello]" time="1.550" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_native_start_uses_both_receipts_and_literal_machine_request[/help]" time="1.269" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_native_start_uses_both_receipts_and_literal_machine_request[@file]" time="1.294" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_new_chat_card_discloses_destination_mode_and_complete_instructions" time="0.036" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_manual_send_withdraws_prepared_start_before_busy_gate" time="1.267" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_machine_request_presentation_never_uses_human_name[True]" time="0.031" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_machine_request_presentation_never_uses_human_name[False]" time="0.030" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_unconfigured_destination_saves_absent_snapshot_and_reopens" time="0.404" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_workspace_destination_resolves_persona_without_source_identity[-same_workspace]" time="0.435" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_workspace_destination_resolves_persona_without_source_identity[-casual]" time="0.430" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_workspace_destination_resolves_persona_without_source_identity[explicit override-same_workspace]" time="0.467" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_workspace_destination_resolves_persona_without_source_identity[explicit override-casual]" time="0.456" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_reopened_machine_retry_is_explicit_and_retains_provenance" time="0.557" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_before_cutoff_withdrawal_preserves_latest_draft_and_refunds[source_stop]" time="0.793" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_before_cutoff_withdrawal_preserves_latest_draft_and_refunds[edit]" time="0.741" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_before_cutoff_withdrawal_preserves_latest_draft_and_refunds[clear]" time="0.736" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_ledger_cutoff_retains_charge_and_requires_conversation_receipt[source_stop]" time="1.153" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_ledger_cutoff_retains_charge_and_requires_conversation_receipt[write_failure]" time="0.930" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_ledger_cutoff_retains_charge_and_requires_conversation_receipt[target_stop]" time="0.957" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_live_machine_retry_starts_manual_work_without_reassigning_old_allowance" time="1.308" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_completion_observer_distinguishes_launch_outcomes[draft-Draft]" time="0.301" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_completion_observer_distinguishes_launch_outcomes[started-Started]" time="0.041" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_completion_observer_distinguishes_launch_outcomes[not_started-Not started]" time="0.039" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_completion_observer_distinguishes_launch_outcomes[review_required-Review required]" time="0.039" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_prepared_approval_round_releases_denied_records[no_view]" time="0.399" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_prepared_approval_round_releases_denied_records[deny]" time="0.435" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_prepared_approval_round_releases_denied_records[stopped]" time="0.398" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_prepared_approval_round_releases_denied_records[destination_changed]" time="0.441" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_refused_start_preserves_draft_without_dispatch_or_timer[disabled]" time="0.654" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_refused_start_preserves_draft_without_dispatch_or_timer[capacity]" time="0.624" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_refused_start_preserves_draft_without_dispatch_or_timer[staged]" time="0.781" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_refused_start_preserves_draft_without_dispatch_or_timer[unready]" time="0.833" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_handoff_writer_coalesces_edits_and_consumption_preserves_new_composer" time="0.570" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_handoff_writer_releases_its_thread_connection" time="0.469" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_unconfirmed_preaccept_settlement_requires_review[raise]" time="0.838" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_unconfirmed_preaccept_settlement_requires_review[false]" time="0.919" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_visible_pending_handoff_persists_every_composer_edit[]" time="0.507" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_visible_pending_handoff_persists_every_composer_edit[replacement]" time="0.527" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_configured_creation_snapshot_survives_changed_reopen_defaults" time="0.463" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_actual_next_send_builder_previews_creation_schemas_without_execution[False]" time="0.186" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_actual_next_send_builder_previews_creation_schemas_without_execution[True]" time="0.128" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_stop_keeps_native_claim_until_actual_bridge_worker_exits" time="1.360" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_initial_preparation_keeps_owner_until_uncertain_refund[source_stop-false]" time="0.768" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_initial_preparation_keeps_owner_until_uncertain_refund[source_stop-raise]" time="0.744" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_initial_preparation_keeps_owner_until_uncertain_refund[caller_cancel-false]" time="0.742" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_initial_preparation_keeps_owner_until_uncertain_refund[caller_cancel-raise]" time="0.730" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_initial_preparation_keeps_owner_until_uncertain_refund[shutdown-false]" time="0.697" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_initial_preparation_keeps_owner_until_uncertain_refund[shutdown-raise]" time="0.732" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_native_project_decision_refuses_before_both_fences[1]" time="0.926" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_native_project_decision_refuses_before_both_fences[2]" time="0.961" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_refused_native_outcome_reopens_as_display_only_status" time="0.605" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_native_start_child_and_wake_share_original_allowance[generation]" time="5.886"><failure message="AssertionError: ({'child': 0, 'parent': 2}, [{'agent_definition': None, 'agent_kind': 'subagent', 'assistant_message_id': None, 'budge...000, ...}, ...}], ConsoleRunState(status=&lt;ConsoleRunStatus.COMPLETED: 'completed'&gt;, visible_copy='Response complete.'))&#10;assert False">tmp_path = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-affected-green-profile-jgid_jp2/pytest/test_native_start_child_and_wa0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x119a3b5f0&gt;
+stop_limit = 'generation'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("stop_limit", ["generation", "deadline"])
+    async def test_native_start_child_and_wake_share_original_allowance(
+        tmp_path, monkeypatch, stop_limit
+    ):
+        import asyncio
+        import time
+        from dataclasses import replace
+        from threading import Event
+        from Tests.Chat.test_console_agent_swap import _Gateway
+        from Tests.Chat.test_console_agent_bridge import _fence
+        from Tests.Chat.test_console_fleet_wake import _settle
+        from Tests.Chat.test_fleet_attention import _AppStub
+        from Tests.Agents.test_agent_service import SUBAGENT_PROMPT_PREFIX
+        from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+        from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryPolicyCandidate
+    
+        monkeypatch.setenv(
+            "TLDW_AGENTS_MAX_AUTOWAKE_GENERATIONS",
+            "2" if stop_limit == "generation" else "5",
+        )
+        monkeypatch.setenv("TLDW_AGENTS_MAX_AUTOWAKE_CHILD_LAUNCHES", "1")
+        controller, store, runs, source, target, chain, request = await _native_start_rig(
+            tmp_path
+        )
+        child_entered, child_release = Event(), Event()
+        import httpx
+        from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
+    
+        calls = {"parent": 0, "child": 0}
+    
+        async def adapter(http_request):
+            messages = json.loads(http_request.content)["messages"]
+            is_child = str(messages[0].get("content", "")).startswith(
+                SUBAGENT_PROMPT_PREFIX
+            )
+            if is_child:
+                calls["child"] += 1
+                child_entered.set()
+                assert await asyncio.to_thread(child_release.wait, 30)
+                content = "child finished"
+            else:
+                calls["parent"] += 1
+                content = [
+                    _fence("spawn_subagent", {"task": "finish one child task"}),
+                    "native finished",
+                    "wake finished",
+                ][calls["parent"] - 1]
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [{"message": {"content": content}}],
+                    "usage": {
+                        "prompt_tokens": 2,
+                        "completion_tokens": 1,
+                        "total_tokens": 3,
+                    },
+                },
+            )
+    
+        client = httpx.AsyncClient(transport=httpx.MockTransport(adapter))
+        gateway = ConsoleProviderGateway(http_client=client)
+    
+        async def resolve(selection):
+            return replace(
+                await _Gateway([]).resolve_for_send(selection),
+                streaming=False,
+                base_url="http://127.0.0.1:9099",
+            )
+    
+        gateway.resolve_for_send = resolve
+        controller.provider_gateway = gateway
+        controller._agent_bridge._gateway = gateway
+        app = _AppStub(store.persistence.db)
+        from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+    
+        app.local_chat_conversation_service = ChatConversationService(store.persistence.db)
+        controller.app = app
+        runtime = ConsoleRuntime(app)
+        runtime.set_chat_store(store)
+        runtime.set_chat_controller(controller)
+        custody_errors = []
+        run_custodied = runtime._run_custodied_turn
+    
+        async def record_custody_error(*args, **kwargs):
+            try:
+                return await run_custodied(*args, **kwargs)
+            except Exception as exc:
+                custody_errors.append(repr(exc))
+                raise
+    
+        runtime._run_custodied_turn = record_custody_error
+        controller.fleet_wake.wire(app=app)
+        controller._agent_bridge.on_fleet_drained(
+            "native-integration", controller.fleet_wake.on_fleet_drained
+        )
+        try:
+            assert (await controller._chat_start.start(request)).launch_status == "started"
+&gt;           assert await asyncio.to_thread(child_entered.wait, 5), (
+                calls,
+                runs.list_runs(request.conversation_id),
+                controller.run_state_for(target.id),
+            )
+E           AssertionError: ({'child': 0, 'parent': 2}, [{'agent_definition': None, 'agent_kind': 'subagent', 'assistant_message_id': None, 'budge...000, ...}, ...}], ConsoleRunState(status=&lt;ConsoleRunStatus.COMPLETED: 'completed'&gt;, visible_copy='Response complete.'))
+E           assert False
+
+Tests/Chat/test_console_chat_start.py:1791: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_chat_start" name="test_native_start_child_and_wake_share_original_allowance[deadline]" time="5.944"><failure message="AssertionError: ({'child': 0, 'parent': 3}, [{'agent_definition': None, 'agent_kind': 'primary', 'assistant_message_id': '2bff9eb9-78c...000, ...}, ...}], ConsoleRunState(status=&lt;ConsoleRunStatus.COMPLETED: 'completed'&gt;, visible_copy='Response complete.'))&#10;assert False">tmp_path = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-affected-green-profile-jgid_jp2/pytest/test_native_start_child_and_wa1')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x11bdae720&gt;
+stop_limit = 'deadline'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("stop_limit", ["generation", "deadline"])
+    async def test_native_start_child_and_wake_share_original_allowance(
+        tmp_path, monkeypatch, stop_limit
+    ):
+        import asyncio
+        import time
+        from dataclasses import replace
+        from threading import Event
+        from Tests.Chat.test_console_agent_swap import _Gateway
+        from Tests.Chat.test_console_agent_bridge import _fence
+        from Tests.Chat.test_console_fleet_wake import _settle
+        from Tests.Chat.test_fleet_attention import _AppStub
+        from Tests.Agents.test_agent_service import SUBAGENT_PROMPT_PREFIX
+        from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+        from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryPolicyCandidate
+    
+        monkeypatch.setenv(
+            "TLDW_AGENTS_MAX_AUTOWAKE_GENERATIONS",
+            "2" if stop_limit == "generation" else "5",
+        )
+        monkeypatch.setenv("TLDW_AGENTS_MAX_AUTOWAKE_CHILD_LAUNCHES", "1")
+        controller, store, runs, source, target, chain, request = await _native_start_rig(
+            tmp_path
+        )
+        child_entered, child_release = Event(), Event()
+        import httpx
+        from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
+    
+        calls = {"parent": 0, "child": 0}
+    
+        async def adapter(http_request):
+            messages = json.loads(http_request.content)["messages"]
+            is_child = str(messages[0].get("content", "")).startswith(
+                SUBAGENT_PROMPT_PREFIX
+            )
+            if is_child:
+                calls["child"] += 1
+                child_entered.set()
+                assert await asyncio.to_thread(child_release.wait, 30)
+                content = "child finished"
+            else:
+                calls["parent"] += 1
+                content = [
+                    _fence("spawn_subagent", {"task": "finish one child task"}),
+                    "native finished",
+                    "wake finished",
+                ][calls["parent"] - 1]
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [{"message": {"content": content}}],
+                    "usage": {
+                        "prompt_tokens": 2,
+                        "completion_tokens": 1,
+                        "total_tokens": 3,
+                    },
+                },
+            )
+    
+        client = httpx.AsyncClient(transport=httpx.MockTransport(adapter))
+        gateway = ConsoleProviderGateway(http_client=client)
+    
+        async def resolve(selection):
+            return replace(
+                await _Gateway([]).resolve_for_send(selection),
+                streaming=False,
+                base_url="http://127.0.0.1:9099",
+            )
+    
+        gateway.resolve_for_send = resolve
+        controller.provider_gateway = gateway
+        controller._agent_bridge._gateway = gateway
+        app = _AppStub(store.persistence.db)
+        from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+    
+        app.local_chat_conversation_service = ChatConversationService(store.persistence.db)
+        controller.app = app
+        runtime = ConsoleRuntime(app)
+        runtime.set_chat_store(store)
+        runtime.set_chat_controller(controller)
+        custody_errors = []
+        run_custodied = runtime._run_custodied_turn
+    
+        async def record_custody_error(*args, **kwargs):
+            try:
+                return await run_custodied(*args, **kwargs)
+            except Exception as exc:
+                custody_errors.append(repr(exc))
+                raise
+    
+        runtime._run_custodied_turn = record_custody_error
+        controller.fleet_wake.wire(app=app)
+        controller._agent_bridge.on_fleet_drained(
+            "native-integration", controller.fleet_wake.on_fleet_drained
+        )
+        try:
+            assert (await controller._chat_start.start(request)).launch_status == "started"
+&gt;           assert await asyncio.to_thread(child_entered.wait, 5), (
+                calls,
+                runs.list_runs(request.conversation_id),
+                controller.run_state_for(target.id),
+            )
+E           AssertionError: ({'child': 0, 'parent': 3}, [{'agent_definition': None, 'agent_kind': 'primary', 'assistant_message_id': '2bff9eb9-78c...000, ...}, ...}], ConsoleRunState(status=&lt;ConsoleRunStatus.COMPLETED: 'completed'&gt;, visible_copy='Response complete.'))
+E           assert False
+
+Tests/Chat/test_console_chat_start.py:1791: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_chat_start" name="test_stop_during_started_status_write_does_not_dispatch_provider" time="1.069" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_saved_launch_status_projects_to_native_and_persisted_rows" time="2.420" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_malformed_launch_display_metadata_is_ignored[None]" time="0.095" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_malformed_launch_display_metadata_is_ignored[bad1]" time="0.096" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_malformed_launch_display_metadata_is_ignored[bad2]" time="0.096" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_malformed_launch_display_metadata_is_ignored[bad3]" time="0.098" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_malformed_launch_display_metadata_is_ignored[bad4]" time="0.086" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_malformed_launch_display_metadata_is_ignored[bad5]" time="0.086" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_creation_without_owner_loop_persists_not_started" time="0.523" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_stop_keeps_native_claim_until_generic_provider_adapter_exits" time="2.326" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_manual_recovery_clears_handoff_attention_but_retains_launch_history[not_started-Not started-runtime_disabled-0]" time="1.544" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_manual_recovery_clears_handoff_attention_but_retains_launch_history[review_required-Review required-settlement_unconfirmed-1]" time="1.854" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_unavailable_destination_refuses_creation_before_mutation[before_approval-archived]" time="0.621" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_unavailable_destination_refuses_creation_before_mutation[before_approval-removed]" time="0.574" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_unavailable_destination_refuses_creation_before_mutation[after_approval-archived]" time="0.661" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_unavailable_destination_refuses_creation_before_mutation[after_approval-removed]" time="0.628" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_destination_availability_is_rechecked_before_native_acceptance[before_start-archived]" time="1.120" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_destination_availability_is_rechecked_before_native_acceptance[before_start-removed]" time="0.863" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_destination_availability_is_rechecked_before_native_acceptance[before_start-unchanged]" time="1.955" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_destination_availability_is_rechecked_before_native_acceptance[readiness-archived]" time="1.300" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_destination_availability_is_rechecked_before_native_acceptance[readiness-removed]" time="1.145" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_destination_availability_is_rechecked_before_native_acceptance[readiness-unchanged]" time="1.835" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_runtime_update_during_readiness_rechecks_native_acceptance[False]" time="1.069" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_runtime_update_during_readiness_rechecks_native_acceptance[True]" time="1.634" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_missing_persona_notice_reaches_preview_and_normal_target_notice[False]" time="0.657" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_missing_persona_notice_reaches_preview_and_normal_target_notice[True]" time="0.640" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_prepared_native_start_keeps_exact_runtime_and_destination[backend]" time="1.045" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_prepared_native_start_keeps_exact_runtime_and_destination[bridge]" time="1.234" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_prepared_native_start_keeps_exact_runtime_and_destination[owner]" time="1.157" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_prepared_native_start_keeps_exact_runtime_and_destination[destination]" time="1.050" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_created_start_keeps_approved_destination_during_library_capture[False]" time="1.760" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_created_start_keeps_approved_destination_during_library_capture[True]" time="0.852" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_native_maintenance_refuses_before_attempt_or_shared_claim" time="0.770" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_native_start_never_enrolls_queue_stop_parent" time="1.736" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_native_configured_v2_initialization_and_stop_proposal[False]" time="1.483" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_native_configured_v2_initialization_and_stop_proposal[True]" time="2.140" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_native_commit_keeps_exact_worker_and_capacity_until_repeated_cancel_drains" time="1.134" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_unexpected_start_failure_is_type_only_and_accepted_cleanup_is_review[preaccept]" time="0.989" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_unexpected_start_failure_is_type_only_and_accepted_cleanup_is_review[accepted_cleanup]" time="0.962" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_failed_review_settlement_blocks_siblings_across_ledger_handles[raise-False]" time="0.997" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_failed_review_settlement_blocks_siblings_across_ledger_handles[raise-True]" time="0.766"><failure message="tldw_chatbook.Utils.private_paths.PrivatePathError: link_or_non_regular: non_regular_sqlite_artifact">tmp_path = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-affected-green-profile-jgid_jp2/pytest/test_failed_review_settlement_1')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x11f16c470&gt;
+alias = True, settlement_result = 'raise'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("alias", [False, True])
+    @pytest.mark.parametrize("settlement_result", ["raise", "false"])
+    async def test_failed_review_settlement_blocks_siblings_across_ledger_handles(tmp_path, monkeypatch, alias, settlement_result):
+        import asyncio
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+        from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+    
+        controller, store, runs, source, target, chain, request = await _native_start_rig(tmp_path)
+        owner = controller.fleet_wake.runtime_owner_id
+        def fail_commit(acceptance):
+            raise OSError("private commit failure")
+        from threading import Event
+        entered, release = Event(), Event()
+        def fail_settlement(*args, **kwargs):
+            entered.set()
+            assert release.wait(10)
+            if settlement_result == "raise":
+                raise OSError("private ledger failure")
+            return False
+        monkeypatch.setattr(store, "commit_durable_turn", fail_commit)
+        settle = runs.automatic_work.mark_chat_start_review_required
+        monkeypatch.setattr(runs.automatic_work, "mark_chat_start_review_required", fail_settlement)
+        peer_path = runs.db_path
+        if alias:
+            peer_path = tmp_path / "runs-alias.sqlite"
+            peer_path.symlink_to(runs.db_path)
+&gt;       peer = AgentRunsDB(peer_path, client_id="peer", reconcile_on_init=False)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/Chat/test_console_chat_start.py:2839: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tldw_chatbook/DB/AgentRuns_DB.py:333: in __init__
+    super().__init__(db_path, client_id)
+tldw_chatbook/DB/base_db.py:973: in __init__
+    self._initialize_schema()
+tldw_chatbook/DB/AgentRuns_DB.py:502: in _initialize_schema
+    with self.connection() as conn:
+         ^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/participants.py:436: in counted
+    with function(repository, *args, **kwargs) as native:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/DB/AgentRuns_DB.py:447: in connection
+    yield self._held_connection()
+          ^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/participants.py:586: in accessed
+    return function(repository, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/AgentRuns_DB.py:432: in _held_connection
+    conn = self._get_connection()
+           ^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/participants.py:586: in accessed
+    return function(repository, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/AgentRuns_DB.py:361: in _get_connection
+    conn = super()._get_connection()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/base_db.py:1006: in _get_connection
+    conn = connect_private_sqlite("db.base", self.db_path_str)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/private_sqlite.py:1933: in connect_private_sqlite
+    return _connect_registered_sqlite(
+tldw_chatbook/DB/private_sqlite.py:1611: in admitted
+    connection = function(owner_id, database, **kwargs)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/private_sqlite.py:1883: in _connect_registered_sqlite
+    prepare_in_helper(request, reservation=envelope, deadline=deadline)
+tldw_chatbook/DB/private_sqlite.py:1394: in prepare_in_helper
+    return _helper_result(Path(request.path), lease.initial_response)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+selected = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-affected-green-profile-jgid_jp2/pytest/test_failed_review_settlement_1/runs-alias.sqlite')
+response = {'operation': 'prepare', 'privacy_status': 'link_or_non_regular', 'reason': 'non_regular_sqlite_artifact', 'status': 'private_path_error', ...}
+
+    def _helper_result(selected: Path, response: dict[str, object]) -&gt; PrepareResult:
+        """Translate validated, source-free helper refusals at the parent boundary."""
+        status = response["status"]
+        if status == "private_path_error":
+&gt;           raise _failure(
+                selected,
+                PrivatePathStatus(response["privacy_status"]),
+                str(response["reason"]),
+            )
+E           tldw_chatbook.Utils.private_paths.PrivatePathError: link_or_non_regular: non_regular_sqlite_artifact
+
+tldw_chatbook/DB/private_sqlite.py:1350: PrivatePathError</failure></testcase><testcase classname="Tests.Chat.test_console_chat_start" name="test_failed_review_settlement_blocks_siblings_across_ledger_handles[false-False]" time="0.986" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_failed_review_settlement_blocks_siblings_across_ledger_handles[false-True]" time="0.638"><failure message="tldw_chatbook.Utils.private_paths.PrivatePathError: link_or_non_regular: non_regular_sqlite_artifact">tmp_path = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-affected-green-profile-jgid_jp2/pytest/test_failed_review_settlement_3')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x11f792990&gt;
+alias = True, settlement_result = 'false'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("alias", [False, True])
+    @pytest.mark.parametrize("settlement_result", ["raise", "false"])
+    async def test_failed_review_settlement_blocks_siblings_across_ledger_handles(tmp_path, monkeypatch, alias, settlement_result):
+        import asyncio
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+        from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+    
+        controller, store, runs, source, target, chain, request = await _native_start_rig(tmp_path)
+        owner = controller.fleet_wake.runtime_owner_id
+        def fail_commit(acceptance):
+            raise OSError("private commit failure")
+        from threading import Event
+        entered, release = Event(), Event()
+        def fail_settlement(*args, **kwargs):
+            entered.set()
+            assert release.wait(10)
+            if settlement_result == "raise":
+                raise OSError("private ledger failure")
+            return False
+        monkeypatch.setattr(store, "commit_durable_turn", fail_commit)
+        settle = runs.automatic_work.mark_chat_start_review_required
+        monkeypatch.setattr(runs.automatic_work, "mark_chat_start_review_required", fail_settlement)
+        peer_path = runs.db_path
+        if alias:
+            peer_path = tmp_path / "runs-alias.sqlite"
+            peer_path.symlink_to(runs.db_path)
+&gt;       peer = AgentRunsDB(peer_path, client_id="peer", reconcile_on_init=False)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/Chat/test_console_chat_start.py:2839: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tldw_chatbook/DB/AgentRuns_DB.py:333: in __init__
+    super().__init__(db_path, client_id)
+tldw_chatbook/DB/base_db.py:973: in __init__
+    self._initialize_schema()
+tldw_chatbook/DB/AgentRuns_DB.py:502: in _initialize_schema
+    with self.connection() as conn:
+         ^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/participants.py:436: in counted
+    with function(repository, *args, **kwargs) as native:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/DB/AgentRuns_DB.py:447: in connection
+    yield self._held_connection()
+          ^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/participants.py:586: in accessed
+    return function(repository, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/AgentRuns_DB.py:432: in _held_connection
+    conn = self._get_connection()
+           ^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/participants.py:586: in accessed
+    return function(repository, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/AgentRuns_DB.py:361: in _get_connection
+    conn = super()._get_connection()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/base_db.py:1006: in _get_connection
+    conn = connect_private_sqlite("db.base", self.db_path_str)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/private_sqlite.py:1933: in connect_private_sqlite
+    return _connect_registered_sqlite(
+tldw_chatbook/DB/private_sqlite.py:1611: in admitted
+    connection = function(owner_id, database, **kwargs)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/private_sqlite.py:1883: in _connect_registered_sqlite
+    prepare_in_helper(request, reservation=envelope, deadline=deadline)
+tldw_chatbook/DB/private_sqlite.py:1394: in prepare_in_helper
+    return _helper_result(Path(request.path), lease.initial_response)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+selected = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-affected-green-profile-jgid_jp2/pytest/test_failed_review_settlement_3/runs-alias.sqlite')
+response = {'operation': 'prepare', 'privacy_status': 'link_or_non_regular', 'reason': 'non_regular_sqlite_artifact', 'status': 'private_path_error', ...}
+
+    def _helper_result(selected: Path, response: dict[str, object]) -&gt; PrepareResult:
+        """Translate validated, source-free helper refusals at the parent boundary."""
+        status = response["status"]
+        if status == "private_path_error":
+&gt;           raise _failure(
+                selected,
+                PrivatePathStatus(response["privacy_status"]),
+                str(response["reason"]),
+            )
+E           tldw_chatbook.Utils.private_paths.PrivatePathError: link_or_non_regular: non_regular_sqlite_artifact
+
+tldw_chatbook/DB/private_sqlite.py:1350: PrivatePathError</failure></testcase><testcase classname="Tests.Chat.test_console_chat_start" name="test_native_acceptance_refuses_real_writer_contention_and_restores_timeout" time="1.027" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_native_uncontended_acceptance_restores_full_policy_and_retires_owned_handle" time="1.114"><failure message="AssertionError: assert 'review_required' == 'started'&#10;  &#10;  - started&#10;  + review_required">tmp_path = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-affected-green-profile-jgid_jp2/pytest/test_native_uncontended_accept0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x11f7904d0&gt;
+
+    @pytest.mark.asyncio
+    async def test_native_uncontended_acceptance_restores_full_policy_and_retires_owned_handle(tmp_path, monkeypatch):
+        import asyncio
+        import time
+    
+        controller, store, runs, source, target, chain, request = await _native_start_rig(tmp_path)
+        original = controller._chat_start.accept
+        timings = []
+        # No borrowed handle: the acceptance operation must retire its own handle.
+        runs.close()
+        async def measured(item):
+            started = time.perf_counter()
+            try:
+                return await original(item)
+            finally:
+                timings.append(time.perf_counter()-started)
+                assert getattr(runs._thread_local, "conn", None) is None
+        monkeypatch.setattr(controller._chat_start, "accept", measured)
+        try:
+&gt;           assert (await controller._chat_start.start(request)).launch_status == "started"
+E           AssertionError: assert 'review_required' == 'started'
+E             
+E             - started
+E             + review_required
+
+Tests/Chat/test_console_chat_start.py:2941: AssertionError</failure></testcase><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_two_targets_share_the_last_generation" time="0.415" /><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_recursive_starts_use_direct_root_and_local_primary" time="0.306" /><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_preparation_identity_abort_and_completion_are_exact" time="0.401" /><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_unavailable_source_mints_nothing[False]" time="0.158" /><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_unavailable_source_mints_nothing[True]" time="0.219" /><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_two_targets_race_for_one_generation" time="0.292" /><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_recovery_marks_foreign_starts_and_fences_old_owner[False]" time="0.234" /><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_recovery_marks_foreign_starts_and_fences_old_owner[True]" time="0.245" /><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_membership_and_attempt_identity_cannot_be_rewritten" time="0.192" /><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_descendant_unknown_usage_blocks_siblings" time="0.246" /><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_descendant_overage_pauses_siblings_and_late_usage_keeps_review" time="0.261" /><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_malformed_native_identity_cannot_mint_allowance[changes0]" time="0.160" /><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_malformed_native_identity_cannot_mint_allowance[changes1]" time="0.163" /><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_malformed_native_identity_cannot_mint_allowance[changes2]" time="0.142" /><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_malformed_native_identity_cannot_mint_allowance[changes3]" time="0.148" /><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_malformed_native_identity_cannot_mint_allowance[changes4]" time="0.196" /><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_descendant_unknown_usage_settles_late_without_restoring_authority" time="0.248" /><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_failed_native_write_rolls_back_member_and_reserved_generation" time="0.289" /><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_failed_native_acceptance_keeps_prepared_charge_and_unstarted_clock" time="0.192" /><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_acceptance_and_abort_race_has_one_winner" time="0.368" /><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_native_abort_never_refunds_a_separately_committed_reservation" time="0.283" /><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_stale_owner_cannot_pause_a_completed_native_replacement" time="0.463" /><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_same_owner_uncertain_start_pauses_root_without_refund_or_replay" time="0.380" /><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_review_settlement_never_rewrites_nonaccepted_work[prepared]" time="0.204" /><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_review_settlement_never_rewrites_nonaccepted_work[aborted]" time="0.225" /><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_review_settlement_never_rewrites_nonaccepted_work[completed]" time="0.251" /><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_stale_review_settlement_cannot_pause_healthy_replacement" time="0.215" /><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_transient_uncertainty_is_store_scoped_and_stale_owner_cannot_poison_replacement[False]" time="0.309" /><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_transient_uncertainty_is_store_scoped_and_stale_owner_cannot_poison_replacement[True]" time="0.009" /><testcase classname="Tests.DB.test_automatic_work_budget" name="test_automatic_work_indexes_serve_real_queries_without_statistics" time="1.123" /><testcase classname="Tests.DB.test_automatic_work_budget" name="test_automatic_work_commit_is_full_synced_and_rollback_restores_policy" time="0.203" /><testcase classname="Tests.DB.test_automatic_work_budget" name="test_same_submission_keeps_immutable_limits_and_scope" time="0.176" /><testcase classname="Tests.DB.test_automatic_work_budget" name="test_reserved_and_consumed_generations_share_one_finite_allowance" time="0.220" /><testcase classname="Tests.DB.test_automatic_work_budget" name="test_other_resource_kinds_are_finite[child_launch-child_launches]" time="0.149" /><testcase classname="Tests.DB.test_automatic_work_budget" name="test_other_resource_kinds_are_finite[model_call-model_calls]" time="0.161" /><testcase classname="Tests.DB.test_automatic_work_budget" name="test_other_resource_kinds_are_finite[tokens-budget_tokens]" time="0.196" /><testcase classname="Tests.DB.test_automatic_work_budget" name="test_invalid_reservation_amount_never_changes_balance[True]" time="0.158" /><testcase classname="Tests.DB.test_automatic_work_budget" name="test_invalid_reservation_amount_never_changes_balance[False]" time="0.140" /><testcase classname="Tests.DB.test_automatic_work_budget" name="test_invalid_reservation_amount_never_changes_balance[-1]" time="0.192" /><testcase classname="Tests.DB.test_automatic_work_budget" name="test_invalid_reservation_amount_never_changes_balance[0]" time="0.162" /><testcase classname="Tests.DB.test_automatic_work_budget" name="test_invalid_reservation_amount_never_changes_balance[1.0]" time="0.153" /><testcase classname="Tests.DB.test_automatic_work_budget" name="test_invalid_reservation_amount_never_changes_balance[1]" time="0.135" /><testcase classname="Tests.DB.test_automatic_work_budget" name="test_invalid_reservation_amount_never_changes_balance[9223372036854775808]" time="0.142" /><testcase classname="Tests.DB.test_automatic_work_budget" name="test_duplicate_id_cannot_change_amount_chain_kind_or_owner" time="0.176" /><testcase classname="Tests.DB.test_automatic_work_budget" name="test_actual_tokens_release_estimate_without_changing_run_accounting" time="0.286" /><testcase classname="Tests.DB.test_automatic_work_budget" name="test_legacy_child_attachment_cannot_conflict_with_parent_chain" time="0.243" /><testcase classname="Tests.DB.test_automatic_work_budget" name="test_unknown_usage_stays_reserved_and_pauses_chain_after_reopen" time="0.242" /><testcase classname="Tests.DB.test_automatic_work_budget" name="test_last_slot_is_atomic_across_separate_sqlite_connections" time="0.219" /><testcase classname="Tests.DB.test_automatic_work_budget" name="test_run_lineage_inherits_parent_and_cannot_be_reassigned" time="0.213" /><testcase classname="Tests.DB.test_automatic_work_budget" name="test_invalid_config_falls_back_to_finite_default[False]" time="0.210" /><testcase classname="Tests.DB.test_automatic_work_budget" name="test_invalid_config_falls_back_to_finite_default[True]" time="0.172" /><testcase classname="Tests.DB.test_automatic_work_budget" name="test_invalid_config_falls_back_to_finite_default[-1]" time="0.144" /><testcase classname="Tests.DB.test_automatic_work_budget" name="test_invalid_config_falls_back_to_finite_default[1.5]" time="0.145" /><testcase classname="Tests.DB.test_automatic_work_budget" name="test_invalid_config_falls_back_to_finite_default[nan]" time="0.146" /><testcase classname="Tests.DB.test_automatic_work_budget" name="test_invalid_config_falls_back_to_finite_default[inf]" time="0.143" /><testcase classname="Tests.DB.test_automatic_work_budget" name="test_invalid_config_falls_back_to_finite_default[bad]" time="0.200" /><testcase classname="Tests.DB.test_automatic_work_budget" name="test_env_limit_overrides_config_and_zero_disables_generations" time="0.167" /><testcase classname="Tests.DB.test_automatic_work_budget" name="test_usage_over_estimate_stops_further_admission_of_every_resource" time="0.200" /><testcase classname="Tests.DB.test_automatic_work_budget" name="test_legacy_parent_cannot_bridge_conversation_scope" time="0.155" /><testcase classname="Tests.DB.test_automatic_work_budget" name="test_descendant_resources_spend_the_same_root_balance[child_launch-child_launches]" time="0.185" /><testcase classname="Tests.DB.test_automatic_work_budget" name="test_descendant_resources_spend_the_same_root_balance[model_call-model_calls]" time="0.183" /><testcase classname="Tests.DB.test_automatic_work_budget" name="test_descendant_resources_spend_the_same_root_balance[tokens-budget_tokens]" time="0.209" /><testcase classname="Tests.DB.test_automatic_wake_attempts" name="test_repeated_claim_and_acceptance_grant_only_one_dispatch" time="0.239" /><testcase classname="Tests.DB.test_automatic_wake_attempts" name="test_discovered_survivor_is_claimable_after_every_terminal_parent[cancelled]" time="0.265" /><testcase classname="Tests.DB.test_automatic_wake_attempts" name="test_discovered_survivor_is_claimable_after_every_terminal_parent[done]" time="0.214" /><testcase classname="Tests.DB.test_automatic_wake_attempts" name="test_discovered_survivor_is_claimable_after_every_terminal_parent[error]" time="0.190" /><testcase classname="Tests.DB.test_automatic_wake_attempts" name="test_discovered_survivor_is_claimable_after_every_terminal_parent[stuck]" time="0.200" /><testcase classname="Tests.DB.test_automatic_wake_attempts" name="test_discovered_survivor_is_claimable_after_every_terminal_parent[superseded]" time="0.218" /><testcase classname="Tests.DB.test_automatic_wake_attempts" name="test_proven_preacceptance_abort_refunds_and_releases_exact_batch" time="0.218" /><testcase classname="Tests.DB.test_automatic_wake_attempts" name="test_startup_recovery_blocks_ambiguous_work_but_handle_reopen_does_not[False]" time="0.382" /><testcase classname="Tests.DB.test_automatic_wake_attempts" name="test_startup_recovery_blocks_ambiguous_work_but_handle_reopen_does_not[True]" time="0.317" /><testcase classname="Tests.DB.test_automatic_wake_attempts" name="test_two_claimers_cannot_charge_or_dispatch_the_same_result_twice" time="0.295" /><testcase classname="Tests.DB.test_automatic_wake_attempts" name="test_mixed_lineage_claim_rolls_back_entire_batch" time="0.294" /><testcase classname="Tests.DB.test_automatic_wake_attempts" name="test_transition_failure_cannot_partially_stamp_or_consume[accept]" time="0.340" /><testcase classname="Tests.DB.test_automatic_wake_attempts" name="test_transition_failure_cannot_partially_stamp_or_consume[complete]" time="0.261" /><testcase classname="Tests.DB.test_automatic_wake_attempts" name="test_claim_cannot_use_foreign_owner_session_or_a_nonterminal_run" time="0.251" /><testcase classname="Tests.DB.test_automatic_wake_attempts" name="test_completed_claim_survives_reopen_without_consuming_later_result" time="0.305" /><testcase classname="Tests.DB.test_automatic_wake_attempts" name="test_wakes_and_native_starts_cannot_own_the_same_target[False]" time="0.221" /><testcase classname="Tests.DB.test_automatic_wake_attempts" name="test_wakes_and_native_starts_cannot_own_the_same_target[True]" time="0.246" /><testcase classname="Tests.Chat.test_console_durable_commit_offload" name="test_stop_during_dispatch_cas_settles_before_returning[direct-False]" time="5.667"><failure message="TimeoutError">fut = &lt;coroutine object Event.wait at 0x11f086ea0&gt;, timeout = 5
+
+    async def wait_for(fut, timeout):
+        """Wait for the single Future or coroutine to complete, with timeout.
+    
+        Coroutine will be wrapped in Task.
+    
+        Returns result of the Future or coroutine.  When a timeout occurs,
+        it cancels the task and raises TimeoutError.  To avoid the task
+        cancellation, wrap it in shield().
+    
+        If the wait is cancelled, the task is also cancelled.
+    
+        If the task suppresses the cancellation and returns a value instead,
+        that value is returned.
+    
+        This function is a coroutine.
+        """
+        # The special case for timeout &lt;= 0 is for the following case:
+        #
+        # async def test_waitfor():
+        #     func_started = False
+        #
+        #     async def func():
+        #         nonlocal func_started
+        #         func_started = True
+        #
+        #     try:
+        #         await asyncio.wait_for(func(), 0)
+        #     except asyncio.TimeoutError:
+        #         assert not func_started
+        #     else:
+        #         assert False
+        #
+        # asyncio.run(test_waitfor())
+    
+    
+        if timeout is not None and timeout &lt;= 0:
+            fut = ensure_future(fut)
+    
+            if fut.done():
+                return fut.result()
+    
+            await _cancel_and_wait(fut)
+            try:
+                return fut.result()
+            except exceptions.CancelledError as exc:
+                raise TimeoutError from exc
+    
+        async with timeouts.timeout(timeout):
+&gt;           return await fut
+                   ^^^^^^^^^
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:520: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;asyncio.locks.Event object at 0x11f66ca40 [unset]&gt;
+
+    async def wait(self):
+        """Block until the internal flag is true.
+    
+        If the internal flag is true on entry, return True
+        immediately.  Otherwise, block until another coroutine calls
+        set() to set the flag to true, then return True.
+        """
+        if self._value:
+            return True
+    
+        fut = self._get_loop().create_future()
+        self._waiters.append(fut)
+        try:
+&gt;           await fut
+E           asyncio.exceptions.CancelledError
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/locks.py:212: CancelledError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-affected-green-profile-jgid_jp2/pytest/test_stop_during_dispatch_cas_0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x11f8d6b10&gt;
+after_commit = False, execution_path = 'direct'
+
+    @pytest.mark.parametrize("after_commit", [False, True])
+    @pytest.mark.parametrize("execution_path", ["direct", "agent", "sync"])
+    async def test_stop_during_dispatch_cas_settles_before_returning(
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        after_commit: bool,
+        execution_path: str,
+    ) -&gt; None:
+        """Stop must drain the actual SQLite handoff before terminal settlement."""
+        db, store, controller, gateway = _controller(tmp_path)
+        store.create_session(session_id="session-2", title="Background")
+        background_entered = asyncio.Event()
+        background_release = asyncio.Event()
+        original_stream = gateway.stream_chat
+    
+        async def background_stream(*args, **kwargs):
+            async for chunk in original_stream(*args, **kwargs):
+                yield chunk
+            background_entered.set()
+            await background_release.wait()
+    
+        monkeypatch.setattr(gateway, "stream_chat", background_stream)
+        background = asyncio.create_task(
+            controller.submit_draft("keep running", session_id="session-2")
+        )
+&gt;       await asyncio.wait_for(background_entered.wait(), 5)
+
+Tests/Chat/test_console_durable_commit_offload.py:67: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;Timeout [expired]&gt;
+exc_type = &lt;class 'asyncio.exceptions.CancelledError'&gt;
+exc_val = CancelledError(), exc_tb = &lt;traceback object at 0x120054780&gt;
+
+    async def __aexit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -&gt; Optional[bool]:
+        assert self._state in (_State.ENTERED, _State.EXPIRING)
+    
+        if self._timeout_handler is not None:
+            self._timeout_handler.cancel()
+            self._timeout_handler = None
+    
+        if self._state is _State.EXPIRING:
+            self._state = _State.EXPIRED
+    
+            if self._task.uncancel() &lt;= self._cancelling and exc_type is exceptions.CancelledError:
+                # Since there are no new cancel requests, we're
+                # handling this.
+&gt;               raise TimeoutError from exc_val
+E               TimeoutError
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/timeouts.py:115: TimeoutError</failure></testcase><testcase classname="Tests.Chat.test_console_durable_commit_offload" name="test_stop_during_dispatch_cas_settles_before_returning[direct-True]" time="5.557"><failure message="TimeoutError">fut = &lt;coroutine object Event.wait at 0x11f659000&gt;, timeout = 5
+
+    async def wait_for(fut, timeout):
+        """Wait for the single Future or coroutine to complete, with timeout.
+    
+        Coroutine will be wrapped in Task.
+    
+        Returns result of the Future or coroutine.  When a timeout occurs,
+        it cancels the task and raises TimeoutError.  To avoid the task
+        cancellation, wrap it in shield().
+    
+        If the wait is cancelled, the task is also cancelled.
+    
+        If the task suppresses the cancellation and returns a value instead,
+        that value is returned.
+    
+        This function is a coroutine.
+        """
+        # The special case for timeout &lt;= 0 is for the following case:
+        #
+        # async def test_waitfor():
+        #     func_started = False
+        #
+        #     async def func():
+        #         nonlocal func_started
+        #         func_started = True
+        #
+        #     try:
+        #         await asyncio.wait_for(func(), 0)
+        #     except asyncio.TimeoutError:
+        #         assert not func_started
+        #     else:
+        #         assert False
+        #
+        # asyncio.run(test_waitfor())
+    
+    
+        if timeout is not None and timeout &lt;= 0:
+            fut = ensure_future(fut)
+    
+            if fut.done():
+                return fut.result()
+    
+            await _cancel_and_wait(fut)
+            try:
+                return fut.result()
+            except exceptions.CancelledError as exc:
+                raise TimeoutError from exc
+    
+        async with timeouts.timeout(timeout):
+&gt;           return await fut
+                   ^^^^^^^^^
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:520: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;asyncio.locks.Event object at 0x1202657f0 [unset]&gt;
+
+    async def wait(self):
+        """Block until the internal flag is true.
+    
+        If the internal flag is true on entry, return True
+        immediately.  Otherwise, block until another coroutine calls
+        set() to set the flag to true, then return True.
+        """
+        if self._value:
+            return True
+    
+        fut = self._get_loop().create_future()
+        self._waiters.append(fut)
+        try:
+&gt;           await fut
+E           asyncio.exceptions.CancelledError
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/locks.py:212: CancelledError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-affected-green-profile-jgid_jp2/pytest/test_stop_during_dispatch_cas_1')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x11f66dc40&gt;
+after_commit = True, execution_path = 'direct'
+
+    @pytest.mark.parametrize("after_commit", [False, True])
+    @pytest.mark.parametrize("execution_path", ["direct", "agent", "sync"])
+    async def test_stop_during_dispatch_cas_settles_before_returning(
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        after_commit: bool,
+        execution_path: str,
+    ) -&gt; None:
+        """Stop must drain the actual SQLite handoff before terminal settlement."""
+        db, store, controller, gateway = _controller(tmp_path)
+        store.create_session(session_id="session-2", title="Background")
+        background_entered = asyncio.Event()
+        background_release = asyncio.Event()
+        original_stream = gateway.stream_chat
+    
+        async def background_stream(*args, **kwargs):
+            async for chunk in original_stream(*args, **kwargs):
+                yield chunk
+            background_entered.set()
+            await background_release.wait()
+    
+        monkeypatch.setattr(gateway, "stream_chat", background_stream)
+        background = asyncio.create_task(
+            controller.submit_draft("keep running", session_id="session-2")
+        )
+&gt;       await asyncio.wait_for(background_entered.wait(), 5)
+
+Tests/Chat/test_console_durable_commit_offload.py:67: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;Timeout [expired]&gt;
+exc_type = &lt;class 'asyncio.exceptions.CancelledError'&gt;
+exc_val = CancelledError(), exc_tb = &lt;traceback object at 0x11fd123c0&gt;
+
+    async def __aexit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -&gt; Optional[bool]:
+        assert self._state in (_State.ENTERED, _State.EXPIRING)
+    
+        if self._timeout_handler is not None:
+            self._timeout_handler.cancel()
+            self._timeout_handler = None
+    
+        if self._state is _State.EXPIRING:
+            self._state = _State.EXPIRED
+    
+            if self._task.uncancel() &lt;= self._cancelling and exc_type is exceptions.CancelledError:
+                # Since there are no new cancel requests, we're
+                # handling this.
+&gt;               raise TimeoutError from exc_val
+E               TimeoutError
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/timeouts.py:115: TimeoutError</failure></testcase><testcase classname="Tests.Chat.test_console_durable_commit_offload" name="test_stop_during_dispatch_cas_settles_before_returning[agent-False]" time="5.606"><failure message="TimeoutError">fut = &lt;coroutine object Event.wait at 0x11f1902e0&gt;, timeout = 5
+
+    async def wait_for(fut, timeout):
+        """Wait for the single Future or coroutine to complete, with timeout.
+    
+        Coroutine will be wrapped in Task.
+    
+        Returns result of the Future or coroutine.  When a timeout occurs,
+        it cancels the task and raises TimeoutError.  To avoid the task
+        cancellation, wrap it in shield().
+    
+        If the wait is cancelled, the task is also cancelled.
+    
+        If the task suppresses the cancellation and returns a value instead,
+        that value is returned.
+    
+        This function is a coroutine.
+        """
+        # The special case for timeout &lt;= 0 is for the following case:
+        #
+        # async def test_waitfor():
+        #     func_started = False
+        #
+        #     async def func():
+        #         nonlocal func_started
+        #         func_started = True
+        #
+        #     try:
+        #         await asyncio.wait_for(func(), 0)
+        #     except asyncio.TimeoutError:
+        #         assert not func_started
+        #     else:
+        #         assert False
+        #
+        # asyncio.run(test_waitfor())
+    
+    
+        if timeout is not None and timeout &lt;= 0:
+            fut = ensure_future(fut)
+    
+            if fut.done():
+                return fut.result()
+    
+            await _cancel_and_wait(fut)
+            try:
+                return fut.result()
+            except exceptions.CancelledError as exc:
+                raise TimeoutError from exc
+    
+        async with timeouts.timeout(timeout):
+&gt;           return await fut
+                   ^^^^^^^^^
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:520: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;asyncio.locks.Event object at 0x120210620 [unset]&gt;
+
+    async def wait(self):
+        """Block until the internal flag is true.
+    
+        If the internal flag is true on entry, return True
+        immediately.  Otherwise, block until another coroutine calls
+        set() to set the flag to true, then return True.
+        """
+        if self._value:
+            return True
+    
+        fut = self._get_loop().create_future()
+        self._waiters.append(fut)
+        try:
+&gt;           await fut
+E           asyncio.exceptions.CancelledError
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/locks.py:212: CancelledError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-affected-green-profile-jgid_jp2/pytest/test_stop_during_dispatch_cas_2')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x11f16c230&gt;
+after_commit = False, execution_path = 'agent'
+
+    @pytest.mark.parametrize("after_commit", [False, True])
+    @pytest.mark.parametrize("execution_path", ["direct", "agent", "sync"])
+    async def test_stop_during_dispatch_cas_settles_before_returning(
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        after_commit: bool,
+        execution_path: str,
+    ) -&gt; None:
+        """Stop must drain the actual SQLite handoff before terminal settlement."""
+        db, store, controller, gateway = _controller(tmp_path)
+        store.create_session(session_id="session-2", title="Background")
+        background_entered = asyncio.Event()
+        background_release = asyncio.Event()
+        original_stream = gateway.stream_chat
+    
+        async def background_stream(*args, **kwargs):
+            async for chunk in original_stream(*args, **kwargs):
+                yield chunk
+            background_entered.set()
+            await background_release.wait()
+    
+        monkeypatch.setattr(gateway, "stream_chat", background_stream)
+        background = asyncio.create_task(
+            controller.submit_draft("keep running", session_id="session-2")
+        )
+&gt;       await asyncio.wait_for(background_entered.wait(), 5)
+
+Tests/Chat/test_console_durable_commit_offload.py:67: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;Timeout [expired]&gt;
+exc_type = &lt;class 'asyncio.exceptions.CancelledError'&gt;
+exc_val = CancelledError(), exc_tb = &lt;traceback object at 0x11f82a640&gt;
+
+    async def __aexit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -&gt; Optional[bool]:
+        assert self._state in (_State.ENTERED, _State.EXPIRING)
+    
+        if self._timeout_handler is not None:
+            self._timeout_handler.cancel()
+            self._timeout_handler = None
+    
+        if self._state is _State.EXPIRING:
+            self._state = _State.EXPIRED
+    
+            if self._task.uncancel() &lt;= self._cancelling and exc_type is exceptions.CancelledError:
+                # Since there are no new cancel requests, we're
+                # handling this.
+&gt;               raise TimeoutError from exc_val
+E               TimeoutError
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/timeouts.py:115: TimeoutError</failure></testcase><testcase classname="Tests.Chat.test_console_durable_commit_offload" name="test_stop_during_dispatch_cas_settles_before_returning[agent-True]" time="5.546"><failure message="TimeoutError">fut = &lt;coroutine object Event.wait at 0x11f743ca0&gt;, timeout = 5
+
+    async def wait_for(fut, timeout):
+        """Wait for the single Future or coroutine to complete, with timeout.
+    
+        Coroutine will be wrapped in Task.
+    
+        Returns result of the Future or coroutine.  When a timeout occurs,
+        it cancels the task and raises TimeoutError.  To avoid the task
+        cancellation, wrap it in shield().
+    
+        If the wait is cancelled, the task is also cancelled.
+    
+        If the task suppresses the cancellation and returns a value instead,
+        that value is returned.
+    
+        This function is a coroutine.
+        """
+        # The special case for timeout &lt;= 0 is for the following case:
+        #
+        # async def test_waitfor():
+        #     func_started = False
+        #
+        #     async def func():
+        #         nonlocal func_started
+        #         func_started = True
+        #
+        #     try:
+        #         await asyncio.wait_for(func(), 0)
+        #     except asyncio.TimeoutError:
+        #         assert not func_started
+        #     else:
+        #         assert False
+        #
+        # asyncio.run(test_waitfor())
+    
+    
+        if timeout is not None and timeout &lt;= 0:
+            fut = ensure_future(fut)
+    
+            if fut.done():
+                return fut.result()
+    
+            await _cancel_and_wait(fut)
+            try:
+                return fut.result()
+            except exceptions.CancelledError as exc:
+                raise TimeoutError from exc
+    
+        async with timeouts.timeout(timeout):
+&gt;           return await fut
+                   ^^^^^^^^^
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:520: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;asyncio.locks.Event object at 0x120267470 [unset]&gt;
+
+    async def wait(self):
+        """Block until the internal flag is true.
+    
+        If the internal flag is true on entry, return True
+        immediately.  Otherwise, block until another coroutine calls
+        set() to set the flag to true, then return True.
+        """
+        if self._value:
+            return True
+    
+        fut = self._get_loop().create_future()
+        self._waiters.append(fut)
+        try:
+&gt;           await fut
+E           asyncio.exceptions.CancelledError
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/locks.py:212: CancelledError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-affected-green-profile-jgid_jp2/pytest/test_stop_during_dispatch_cas_3')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x11f8e0800&gt;
+after_commit = True, execution_path = 'agent'
+
+    @pytest.mark.parametrize("after_commit", [False, True])
+    @pytest.mark.parametrize("execution_path", ["direct", "agent", "sync"])
+    async def test_stop_during_dispatch_cas_settles_before_returning(
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        after_commit: bool,
+        execution_path: str,
+    ) -&gt; None:
+        """Stop must drain the actual SQLite handoff before terminal settlement."""
+        db, store, controller, gateway = _controller(tmp_path)
+        store.create_session(session_id="session-2", title="Background")
+        background_entered = asyncio.Event()
+        background_release = asyncio.Event()
+        original_stream = gateway.stream_chat
+    
+        async def background_stream(*args, **kwargs):
+            async for chunk in original_stream(*args, **kwargs):
+                yield chunk
+            background_entered.set()
+            await background_release.wait()
+    
+        monkeypatch.setattr(gateway, "stream_chat", background_stream)
+        background = asyncio.create_task(
+            controller.submit_draft("keep running", session_id="session-2")
+        )
+&gt;       await asyncio.wait_for(background_entered.wait(), 5)
+
+Tests/Chat/test_console_durable_commit_offload.py:67: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;Timeout [expired]&gt;
+exc_type = &lt;class 'asyncio.exceptions.CancelledError'&gt;
+exc_val = CancelledError(), exc_tb = &lt;traceback object at 0x11fd1a3c0&gt;
+
+    async def __aexit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -&gt; Optional[bool]:
+        assert self._state in (_State.ENTERED, _State.EXPIRING)
+    
+        if self._timeout_handler is not None:
+            self._timeout_handler.cancel()
+            self._timeout_handler = None
+    
+        if self._state is _State.EXPIRING:
+            self._state = _State.EXPIRED
+    
+            if self._task.uncancel() &lt;= self._cancelling and exc_type is exceptions.CancelledError:
+                # Since there are no new cancel requests, we're
+                # handling this.
+&gt;               raise TimeoutError from exc_val
+E               TimeoutError
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/timeouts.py:115: TimeoutError</failure></testcase><testcase classname="Tests.Chat.test_console_durable_commit_offload" name="test_stop_during_dispatch_cas_settles_before_returning[sync-False]" time="5.580"><failure message="TimeoutError">fut = &lt;coroutine object Event.wait at 0x11f6e3ae0&gt;, timeout = 5
+
+    async def wait_for(fut, timeout):
+        """Wait for the single Future or coroutine to complete, with timeout.
+    
+        Coroutine will be wrapped in Task.
+    
+        Returns result of the Future or coroutine.  When a timeout occurs,
+        it cancels the task and raises TimeoutError.  To avoid the task
+        cancellation, wrap it in shield().
+    
+        If the wait is cancelled, the task is also cancelled.
+    
+        If the task suppresses the cancellation and returns a value instead,
+        that value is returned.
+    
+        This function is a coroutine.
+        """
+        # The special case for timeout &lt;= 0 is for the following case:
+        #
+        # async def test_waitfor():
+        #     func_started = False
+        #
+        #     async def func():
+        #         nonlocal func_started
+        #         func_started = True
+        #
+        #     try:
+        #         await asyncio.wait_for(func(), 0)
+        #     except asyncio.TimeoutError:
+        #         assert not func_started
+        #     else:
+        #         assert False
+        #
+        # asyncio.run(test_waitfor())
+    
+    
+        if timeout is not None and timeout &lt;= 0:
+            fut = ensure_future(fut)
+    
+            if fut.done():
+                return fut.result()
+    
+            await _cancel_and_wait(fut)
+            try:
+                return fut.result()
+            except exceptions.CancelledError as exc:
+                raise TimeoutError from exc
+    
+        async with timeouts.timeout(timeout):
+&gt;           return await fut
+                   ^^^^^^^^^
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:520: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;asyncio.locks.Event object at 0x1202f7740 [unset]&gt;
+
+    async def wait(self):
+        """Block until the internal flag is true.
+    
+        If the internal flag is true on entry, return True
+        immediately.  Otherwise, block until another coroutine calls
+        set() to set the flag to true, then return True.
+        """
+        if self._value:
+            return True
+    
+        fut = self._get_loop().create_future()
+        self._waiters.append(fut)
+        try:
+&gt;           await fut
+E           asyncio.exceptions.CancelledError
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/locks.py:212: CancelledError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-affected-green-profile-jgid_jp2/pytest/test_stop_during_dispatch_cas_4')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x120213440&gt;
+after_commit = False, execution_path = 'sync'
+
+    @pytest.mark.parametrize("after_commit", [False, True])
+    @pytest.mark.parametrize("execution_path", ["direct", "agent", "sync"])
+    async def test_stop_during_dispatch_cas_settles_before_returning(
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        after_commit: bool,
+        execution_path: str,
+    ) -&gt; None:
+        """Stop must drain the actual SQLite handoff before terminal settlement."""
+        db, store, controller, gateway = _controller(tmp_path)
+        store.create_session(session_id="session-2", title="Background")
+        background_entered = asyncio.Event()
+        background_release = asyncio.Event()
+        original_stream = gateway.stream_chat
+    
+        async def background_stream(*args, **kwargs):
+            async for chunk in original_stream(*args, **kwargs):
+                yield chunk
+            background_entered.set()
+            await background_release.wait()
+    
+        monkeypatch.setattr(gateway, "stream_chat", background_stream)
+        background = asyncio.create_task(
+            controller.submit_draft("keep running", session_id="session-2")
+        )
+&gt;       await asyncio.wait_for(background_entered.wait(), 5)
+
+Tests/Chat/test_console_durable_commit_offload.py:67: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;Timeout [expired]&gt;
+exc_type = &lt;class 'asyncio.exceptions.CancelledError'&gt;
+exc_val = CancelledError(), exc_tb = &lt;traceback object at 0x1201a0800&gt;
+
+    async def __aexit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -&gt; Optional[bool]:
+        assert self._state in (_State.ENTERED, _State.EXPIRING)
+    
+        if self._timeout_handler is not None:
+            self._timeout_handler.cancel()
+            self._timeout_handler = None
+    
+        if self._state is _State.EXPIRING:
+            self._state = _State.EXPIRED
+    
+            if self._task.uncancel() &lt;= self._cancelling and exc_type is exceptions.CancelledError:
+                # Since there are no new cancel requests, we're
+                # handling this.
+&gt;               raise TimeoutError from exc_val
+E               TimeoutError
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/timeouts.py:115: TimeoutError</failure></testcase><testcase classname="Tests.Chat.test_console_durable_commit_offload" name="test_stop_during_dispatch_cas_settles_before_returning[sync-True]" time="5.589"><failure message="TimeoutError">fut = &lt;coroutine object Event.wait at 0x11f6e02e0&gt;, timeout = 5
+
+    async def wait_for(fut, timeout):
+        """Wait for the single Future or coroutine to complete, with timeout.
+    
+        Coroutine will be wrapped in Task.
+    
+        Returns result of the Future or coroutine.  When a timeout occurs,
+        it cancels the task and raises TimeoutError.  To avoid the task
+        cancellation, wrap it in shield().
+    
+        If the wait is cancelled, the task is also cancelled.
+    
+        If the task suppresses the cancellation and returns a value instead,
+        that value is returned.
+    
+        This function is a coroutine.
+        """
+        # The special case for timeout &lt;= 0 is for the following case:
+        #
+        # async def test_waitfor():
+        #     func_started = False
+        #
+        #     async def func():
+        #         nonlocal func_started
+        #         func_started = True
+        #
+        #     try:
+        #         await asyncio.wait_for(func(), 0)
+        #     except asyncio.TimeoutError:
+        #         assert not func_started
+        #     else:
+        #         assert False
+        #
+        # asyncio.run(test_waitfor())
+    
+    
+        if timeout is not None and timeout &lt;= 0:
+            fut = ensure_future(fut)
+    
+            if fut.done():
+                return fut.result()
+    
+            await _cancel_and_wait(fut)
+            try:
+                return fut.result()
+            except exceptions.CancelledError as exc:
+                raise TimeoutError from exc
+    
+        async with timeouts.timeout(timeout):
+&gt;           return await fut
+                   ^^^^^^^^^
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:520: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;asyncio.locks.Event object at 0x1201af1d0 [unset]&gt;
+
+    async def wait(self):
+        """Block until the internal flag is true.
+    
+        If the internal flag is true on entry, return True
+        immediately.  Otherwise, block until another coroutine calls
+        set() to set the flag to true, then return True.
+        """
+        if self._value:
+            return True
+    
+        fut = self._get_loop().create_future()
+        self._waiters.append(fut)
+        try:
+&gt;           await fut
+E           asyncio.exceptions.CancelledError
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/locks.py:212: CancelledError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-affected-green-profile-jgid_jp2/pytest/test_stop_during_dispatch_cas_5')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x12024c110&gt;
+after_commit = True, execution_path = 'sync'
+
+    @pytest.mark.parametrize("after_commit", [False, True])
+    @pytest.mark.parametrize("execution_path", ["direct", "agent", "sync"])
+    async def test_stop_during_dispatch_cas_settles_before_returning(
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        after_commit: bool,
+        execution_path: str,
+    ) -&gt; None:
+        """Stop must drain the actual SQLite handoff before terminal settlement."""
+        db, store, controller, gateway = _controller(tmp_path)
+        store.create_session(session_id="session-2", title="Background")
+        background_entered = asyncio.Event()
+        background_release = asyncio.Event()
+        original_stream = gateway.stream_chat
+    
+        async def background_stream(*args, **kwargs):
+            async for chunk in original_stream(*args, **kwargs):
+                yield chunk
+            background_entered.set()
+            await background_release.wait()
+    
+        monkeypatch.setattr(gateway, "stream_chat", background_stream)
+        background = asyncio.create_task(
+            controller.submit_draft("keep running", session_id="session-2")
+        )
+&gt;       await asyncio.wait_for(background_entered.wait(), 5)
+
+Tests/Chat/test_console_durable_commit_offload.py:67: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;Timeout [expired]&gt;
+exc_type = &lt;class 'asyncio.exceptions.CancelledError'&gt;
+exc_val = CancelledError(), exc_tb = &lt;traceback object at 0x11f820f80&gt;
+
+    async def __aexit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -&gt; Optional[bool]:
+        assert self._state in (_State.ENTERED, _State.EXPIRING)
+    
+        if self._timeout_handler is not None:
+            self._timeout_handler.cancel()
+            self._timeout_handler = None
+    
+        if self._state is _State.EXPIRING:
+            self._state = _State.EXPIRED
+    
+            if self._task.uncancel() &lt;= self._cancelling and exc_type is exceptions.CancelledError:
+                # Since there are no new cancel requests, we're
+                # handling this.
+&gt;               raise TimeoutError from exc_val
+E               TimeoutError
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/timeouts.py:115: TimeoutError</failure></testcase><testcase classname="Tests.Chat.test_console_durable_commit_offload" name="test_send_does_not_stall_event_loop_while_write_lock_is_held" time="2.605"><failure message="AssertionError: send finished in 0.102s; the 2s lock holder never contended&#10;assert 0.10179166699526832 &gt;= (2.0 * 0.5)">tmp_path = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-affected-green-profile-jgid_jp2/pytest/test_send_does_not_stall_event0')
+
+    async def test_send_does_not_stall_event_loop_while_write_lock_is_held(
+        tmp_path: Path,
+    ) -&gt; None:
+        """Probe (a): loop stays responsive while the durable commit waits."""
+    
+        db, store, controller, gateway = _controller(tmp_path)
+        db_path = str(tmp_path / "controller.sqlite")
+        hold_seconds = 2.0
+    
+        acquired = threading.Event()
+        blocker = threading.Thread(
+            target=_hold_write_lock,
+            args=(db_path, hold_seconds, acquired),
+            daemon=True,
+        )
+        blocker.start()
+        assert acquired.wait(timeout=5)
+    
+        stalls: list[float] = []
+        stop = asyncio.Event()
+    
+        async def heartbeat() -&gt; None:
+            last = time.monotonic()
+            while not stop.is_set():
+                await asyncio.sleep(0.01)
+                now = time.monotonic()
+                stalls.append(now - last)
+                last = now
+    
+        monitor = asyncio.create_task(heartbeat())
+        # Let the heartbeat actually start ticking BEFORE the send: a task that
+        # has not reached its first ``await`` yet cannot observe a stall.
+        await asyncio.sleep(0.05)
+        assert stalls, "heartbeat must be running before the send starts"
+        started = time.monotonic()
+        result = await controller.submit_draft("stall probe", session_id="session-1")
+        elapsed = time.monotonic() - started
+        stop.set()
+        await monitor
+        blocker.join(timeout=5)
+    
+        max_stall = max(stalls) if stalls else 0.0
+        # The send itself must have waited for the artificial lock holder --
+        # otherwise the probe proved nothing about contention.
+&gt;       assert elapsed &gt;= hold_seconds * 0.5, (
+            f"send finished in {elapsed:.3f}s; the 2s lock holder never contended"
+        )
+E       AssertionError: send finished in 0.102s; the 2s lock holder never contended
+E       assert 0.10179166699526832 &gt;= (2.0 * 0.5)
+
+Tests/Chat/test_console_durable_commit_offload.py:266: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_durable_commit_offload" name="test_dispatch_begins_only_after_commit_is_durably_visible" time="0.680"><failure message="AssertionError: assert False is True&#10; +  where False = ConsoleSubmitResult(accepted=False, should_clear_draft=False, visible_copy='Hooks unavailable; review or disable hooks...ual'&gt;, queue_entry_id=None, committed_context_epoch=None, preparation_id=None, provider_started=False, queue_notice='').accepted">tmp_path = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-affected-green-profile-jgid_jp2/pytest/test_dispatch_begins_only_afte0')
+
+    async def test_dispatch_begins_only_after_commit_is_durably_visible(
+        tmp_path: Path,
+    ) -&gt; None:
+        """Probe (b): the provider stream starts only after the durable commit.
+    
+        Visibility is checked from an INDEPENDENT connection, so only committed
+        data counts. This is the ordering barrier's regression guard: under the
+        mutation "dispatch no longer waits for the commit" it must fail.
+        """
+    
+        db = CharactersRAGDB(tmp_path / "controller.sqlite", client_id="task14-test")
+        from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+        from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+        from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    
+        store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        store.create_session(session_id="session-1", title="Chat 1")
+        gateway = _CommitVisibilityGateway(db, str(tmp_path / "controller.sqlite"))
+        controller = ConsoleChatController(
+            store=store,
+            provider_gateway=gateway,
+            provider="llama_cpp",
+            model="test-model",
+        )
+    
+        result = await controller.submit_draft(
+            "ordering probe draft", session_id="session-1"
+        )
+    
+&gt;       assert result.accepted is True
+E       AssertionError: assert False is True
+E        +  where False = ConsoleSubmitResult(accepted=False, should_clear_draft=False, visible_copy='Hooks unavailable; review or disable hooks...ual'&gt;, queue_entry_id=None, committed_context_epoch=None, preparation_id=None, provider_started=False, queue_notice='').accepted
+
+Tests/Chat/test_console_durable_commit_offload.py:308: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_durable_commit_offload" name="test_cancel_during_offloaded_commit_leaves_consistent_state" time="5.550"><failure message="AssertionError: the durable commit never started; the probe cancelled too early&#10;assert {}&#10; +  where {} = &lt;tldw_chatbook.Chat.console_chat_store.ConsoleChatStore object at 0x12011f470&gt;._durable_commit_in_flight">tmp_path = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-affected-green-profile-jgid_jp2/pytest/test_cancel_during_offloaded_c0')
+
+    async def test_cancel_during_offloaded_commit_leaves_consistent_state(
+        tmp_path: Path,
+    ) -&gt; None:
+        """Shutdown-path walk: cancelling a send mid-commit corrupts nothing.
+    
+        ``asyncio.to_thread`` survives task cancellation, so the commit thread
+        runs its single transaction to completion. The DB must end atomically
+        consistent (the whole turn, or nothing), the provider must never have
+        been called, no unretrieved-exception noise may leak, and the restore
+        reconcile must recognize the committed checkpoint — the same
+        crash-window recovery the checkpoint machinery already owns.
+        """
+    
+        import gc
+    
+        db, store, controller, gateway = _controller(tmp_path)
+        db_path = str(tmp_path / "controller.sqlite")
+    
+        acquired = threading.Event()
+        release = threading.Event()
+    
+        def hold() -&gt; None:
+            connection = sqlite3.connect(db_path, timeout=5)
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                acquired.set()
+                release.wait(timeout=10)
+                connection.commit()
+            finally:
+                connection.close()
+    
+        blocker = threading.Thread(target=hold, daemon=True)
+        blocker.start()
+        assert acquired.wait(timeout=5)
+    
+        loop = asyncio.get_running_loop()
+        unhandled: list[dict[str, Any]] = []
+        loop.set_exception_handler(lambda _loop, context: unhandled.append(context))
+        try:
+            task = asyncio.create_task(
+                controller.submit_draft("cancelled mid-commit", session_id="session-1")
+            )
+            # Wait until the durable commit is genuinely in flight (reservation
+            # registered; the worker thread is blocked on the held write lock)
+            # so the cancellation deterministically lands mid-commit.
+            deadline = time.monotonic() + 5
+            while time.monotonic() &lt; deadline and not store._durable_commit_in_flight:
+                await asyncio.sleep(0.01)
+&gt;           assert store._durable_commit_in_flight, (
+                "the durable commit never started; the probe cancelled too early"
+            )
+E           AssertionError: the durable commit never started; the probe cancelled too early
+E           assert {}
+E            +  where {} = &lt;tldw_chatbook.Chat.console_chat_store.ConsoleChatStore object at 0x12011f470&gt;._durable_commit_in_flight
+
+Tests/Chat/test_console_durable_commit_offload.py:366: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_durable_commit_offload" name="test_clean_restore_reconcile_takes_no_write_lock" time="0.624" /><testcase classname="Tests.Chat.test_console_durable_commit_offload" name="test_valid_checkpoint_reconcile_takes_no_write_lock" time="0.525" /><testcase classname="Tests.Chat.test_console_durable_commit_offload" name="test_terminal_checkpoint_reconcile_still_deletes_under_write_lock" time="0.503" /><testcase classname="Tests.Chat.test_console_durable_commit_diagnostics" name="test_a_failed_durable_commit_records_the_exception_type" time="0.198"><failure message="assert &quot;Couldn't save the prepared turn&quot; in (('Hooks unavailable; review or disable hooks before sending.'))&#10; +  where 'Hooks unavailable; review or disable hooks before sending.' = ConsoleSubmitResult(accepted=False, should_clear_draft=False, visible_copy='Hooks unavailable; review or disable hooks...ual'&gt;, queue_entry_id=None, committed_context_epoch=None, preparation_id=None, provider_started=False, queue_notice='').visible_copy">@pytest.mark.asyncio
+    async def test_a_failed_durable_commit_records_the_exception_type() -&gt; None:
+        """The refusal is attributable from logs alone, with no product edit."""
+        controller, _store = _controller_with_failing_commit()
+    
+        with CapturedLines() as captured:
+            result = await controller.submit_draft("capital of Japan?")
+    
+        assert result.accepted is False
+&gt;       assert "Couldn't save the prepared turn" in (result.visible_copy or "")
+E       assert "Couldn't save the prepared turn" in (('Hooks unavailable; review or disable hooks before sending.'))
+E        +  where 'Hooks unavailable; review or disable hooks before sending.' = ConsoleSubmitResult(accepted=False, should_clear_draft=False, visible_copy='Hooks unavailable; review or disable hooks...ual'&gt;, queue_entry_id=None, committed_context_epoch=None, preparation_id=None, provider_started=False, queue_notice='').visible_copy
+
+Tests/Chat/test_console_durable_commit_diagnostics.py:106: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_durable_commit_diagnostics" name="test_the_failure_log_does_not_leak_the_exception_message" time="0.204" /><testcase classname="Tests.Chat.test_console_close_during_durable_postcommit" name="test_releasing_a_claim_after_the_session_closed_does_not_raise" time="0.547" /><testcase classname="Tests.Chat.test_console_close_during_durable_postcommit" name="test_retirement_has_already_released_the_in_flight_claim" time="0.495" /><testcase classname="Tests.Chat.test_console_close_during_durable_postcommit" name="test_a_changed_fingerprint_still_raises" time="0.548" /><testcase classname="Tests.Chat.test_console_close_during_durable_postcommit" name="test_a_retired_preparation_reports_retirement_not_a_changed_fingerprint" time="0.583" /><testcase classname="Tests.Chat.test_console_close_during_durable_postcommit" name="test_an_effect_that_fails_while_the_chat_closes_reports_its_own_cause" time="0.699" /><testcase classname="Tests.Chat.test_console_close_during_durable_postcommit" name="test_closing_the_chat_during_a_successful_effect_does_not_raise" time="0.599" /><testcase classname="Tests.Chat.test_console_close_during_durable_postcommit" name="test_a_failing_release_never_replaces_the_original_failure" time="0.613" /><testcase classname="Tests.Chat.test_console_close_during_durable_postcommit" name="test_resume_after_the_chat_was_closed_does_not_raise" time="0.669"><failure message="AssertionError: harness precondition: the turn was accepted&#10;assert False is True&#10; +  where False = ConsoleSubmitResult(accepted=False, should_clear_draft=False, visible_copy='Hooks unavailable; review or disable hooks...ual'&gt;, queue_entry_id=None, committed_context_epoch=None, preparation_id=None, provider_started=False, queue_notice='').accepted">tmp_path = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-affected-green-profile-jgid_jp2/pytest/test_resume_after_the_chat_was0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x120210a40&gt;
+
+    @pytest.mark.asyncio
+    async def test_resume_after_the_chat_was_closed_does_not_raise(
+        tmp_path, monkeypatch: pytest.MonkeyPatch
+    ) -&gt; None:
+        """AC1 on the path production actually takes.
+    
+        A postcommit step fails, leaving a continuation to resume. The user closes
+        the chat before it resumes -- so the whole sequence now runs against a
+        retired preparation.
+        """
+    
+        _db, store, controller, _gateway = _controller(tmp_path)
+        original = store.publish_durable_turn_identity
+        calls = 0
+    
+        def fail_once(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("injected identity publication")
+            return original(*args, **kwargs)
+    
+        monkeypatch.setattr(store, "publish_durable_turn_identity", fail_once)
+        first = await controller.submit_draft(
+            "draft the user abandoned", session_id="session-1"
+        )
+&gt;       assert first.accepted is True, "harness precondition: the turn was accepted"
+E       AssertionError: harness precondition: the turn was accepted
+E       assert False is True
+E        +  where False = ConsoleSubmitResult(accepted=False, should_clear_draft=False, visible_copy='Hooks unavailable; review or disable hooks...ual'&gt;, queue_entry_id=None, committed_context_epoch=None, preparation_id=None, provider_started=False, queue_notice='').accepted
+
+Tests/Chat/test_console_close_during_durable_postcommit.py:265: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_close_during_durable_postcommit" name="test_resume_after_close_leaves_no_dangling_continuation" time="0.647"><failure message="AssertionError: assert False is True&#10; +  where False = ConsoleSubmitResult(accepted=False, should_clear_draft=False, visible_copy='Hooks unavailable; review or disable hooks...ual'&gt;, queue_entry_id=None, committed_context_epoch=None, preparation_id=None, provider_started=False, queue_notice='').accepted">tmp_path = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-affected-green-profile-jgid_jp2/pytest/test_resume_after_close_leaves0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x11fd2b830&gt;
+
+    @pytest.mark.asyncio
+    async def test_resume_after_close_leaves_no_dangling_continuation(
+        tmp_path, monkeypatch: pytest.MonkeyPatch
+    ) -&gt; None:
+        """Closing must not strand the continuation the resume was meant to clear.
+    
+        Without this, "does not raise" could be satisfied by bailing out early and
+        leaking the very state the sequence exists to release.
+        """
+    
+        _db, store, controller, _gateway = _controller(tmp_path)
+        original = store.publish_durable_turn_identity
+        calls = 0
+    
+        def fail_once(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("injected identity publication")
+            return original(*args, **kwargs)
+    
+        monkeypatch.setattr(store, "publish_durable_turn_identity", fail_once)
+        first = await controller.submit_draft("another draft", session_id="session-1")
+&gt;       assert first.accepted is True
+E       AssertionError: assert False is True
+E        +  where False = ConsoleSubmitResult(accepted=False, should_clear_draft=False, visible_copy='Hooks unavailable; review or disable hooks...ual'&gt;, queue_entry_id=None, committed_context_epoch=None, preparation_id=None, provider_started=False, queue_notice='').accepted
+
+Tests/Chat/test_console_close_during_durable_postcommit.py:297: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_close_during_durable_postcommit" name="test_closing_midway_through_the_effect_sequence_does_not_raise" time="0.660"><failure message="AssertionError: harness precondition: the turn was accepted&#10;assert False is True&#10; +  where False = ConsoleSubmitResult(accepted=False, should_clear_draft=False, visible_copy='Hooks unavailable; review or disable hooks...ual'&gt;, queue_entry_id=None, committed_context_epoch=None, preparation_id=None, provider_started=False, queue_notice='').accepted">tmp_path = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-affected-green-profile-jgid_jp2/pytest/test_closing_midway_through_th0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x12047a300&gt;
+
+    @pytest.mark.asyncio
+    async def test_closing_midway_through_the_effect_sequence_does_not_raise(
+        tmp_path, monkeypatch: pytest.MonkeyPatch
+    ) -&gt; None:
+        """Close DURING the sequence -- Qodo's finding #2 on #2123.
+    
+        Closing before the resume is caught by the early lookup. Closing while the
+        sequence runs is the harder case: the effect that notices retirement
+        completes benignly, and then the NEXT fingerprint-validated effect raises.
+        Suppressing retirement per-effect only moved the raise one effect along, so
+        this is the test that distinguishes the two.
+    
+        The close happens inside effect #1 of eight, leaving the remaining seven to
+        cope with a preparation that no longer exists.
+        """
+    
+        _db, store, controller, _gateway = _controller(tmp_path)
+        original = store.publish_durable_turn_identity
+        calls = 0
+    
+        def fail_then_close(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                # Leaves a continuation for `resume_durable_postcommit` to pick up.
+                raise RuntimeError("injected identity publication")
+            # Second call is effect #1 of the resumed sequence: the user closes the
+            # chat right here, mid-flight.
+            result = original(*args, **kwargs)
+            store.close_session("session-1")
+            return result
+    
+        monkeypatch.setattr(store, "publish_durable_turn_identity", fail_then_close)
+        first = await controller.submit_draft("mid-sequence draft", session_id="session-1")
+&gt;       assert first.accepted is True, "harness precondition: the turn was accepted"
+E       AssertionError: harness precondition: the turn was accepted
+E       assert False is True
+E        +  where False = ConsoleSubmitResult(accepted=False, should_clear_draft=False, visible_copy='Hooks unavailable; review or disable hooks...ual'&gt;, queue_entry_id=None, committed_context_epoch=None, preparation_id=None, provider_started=False, queue_notice='').accepted
+
+Tests/Chat/test_console_close_during_durable_postcommit.py:341: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_close_during_durable_postcommit" name="test_retiring_an_already_retired_acceptance_is_a_no_op" time="0.579" /><testcase classname="Tests.Chat.test_console_close_during_durable_postcommit" name="test_a_different_acceptance_on_a_retired_id_still_raises" time="0.603" /><testcase classname="Tests.Chat.test_console_close_during_durable_postcommit" name="test_completed_effects_survive_the_close_that_retired_them" time="0.593" /><testcase classname="Tests.Chat.test_console_close_during_durable_postcommit" name="test_retirement_proof_survives_a_flood_of_unrelated_closes" time="0.609" /><testcase classname="Tests.Chat.test_console_close_during_durable_postcommit" name="test_protecting_tombstones_still_honours_the_cap" time="0.603" /><testcase classname="Tests.Chat.test_console_close_during_durable_postcommit" name="test_releasing_activity_lets_the_tombstone_be_evicted_again" time="0.551" /></testsuite></testsuites>

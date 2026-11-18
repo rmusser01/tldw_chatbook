@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-c",
+    "import json,pytest,sys\nfrom pathlib import Path\nclass Probe:\n @pytest.hookimpl(hookwrapper=True)\n def pytest_fixture_setup(self,fixturedef,request):\n  outcome=yield\n  if fixturedef.argname not in ('snapshot_case','wired_case'): return\n  case=outcome.get_result()\n  from tldw_chatbook import config\n  from tldw_chatbook.MCP import console_snapshot as m\n  from tldw_chatbook.Backup_Recovery import mcp_source_participants as sources\n  result={'fixture':fixturedef.argname,'standard_console':m.standard_console_sources(case.service),'standard_local':m.standard_local_catalog_sources(case.local,case.source),'app_service_same':getattr(case.app,'unified_mcp_service',None) is case.service,'source_checks':{},'methods':{}}\n  for name,source in [('catalog',case.source),('permission',case.permissions)]:\n   bound=sources._BINDINGS.get(source)\n   row={'bound':bound is not None,'config_same':bool(bound and bound.config is config),'profile_same':bool(bound and bound.profile==config._CONFIG_CACHE_SOURCE),'path_matches_data':source.path.parent==config.get_user_data_dir()}\n   try: sources.selection(source);row['selection']='valid'\n   except Exception as exc:row['selection']=type(exc).__name__+':'+str(exc)\n   result['source_checks'][name]=row\n  for receiver,owner,names in [(case.service,m.UnifiedMCPControlPlaneService,('permission_store','execution_log','get_kill_switch','effective_tool_states','_audit_downgrade_if_fresh')),(case.local,m.LocalMCPControlService,(*m._LOCAL_CATALOG_METHODS,'get_inventory')),(case.source,m.LocalMCPStore,m._STORE_CATALOG_METHODS),(case.permissions,m.MCPPermissionStore,m._PERMISSION_METHODS)]:\n   for name in names:result['methods'][owner.__name__+'.'+name]={'class':m._original_class_member(owner,name),'bound':m._original_bound_method(receiver,name,owner)}\n  print('SOURCE_PROBE '+json.dumps(result),flush=True)\nraise SystemExit(pytest.main(sys.argv[1:],plugins=[Probe()]))\n",
+    "-q",
+    "-s",
+    "--setup-only",
+    "Tests/Chat/test_console_async_mcp_snapshot.py::test_actual_screen_wiring_prepares_native_mcp_sources_off_ui_loop[queued]"
+  ],
+  "profile": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3162-resync\\test-runtime\\current-dev-source-probe-e76abb6c43",
+  "outer_timeout_seconds": 90
+}

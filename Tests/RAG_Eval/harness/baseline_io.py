@@ -60,6 +60,7 @@ the numbers never asked for, while *not* comparing
 transformers/torch/chromadb lets a real numeric shift through with no
 fingerprint change to explain it.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -436,7 +437,9 @@ def compare_or_update(
         A `GateOutcome`. Callers gate on ``outcome.ok``.
     """
     baselines_dir = Path(baselines_dir)
-    fingerprint = dict(fingerprint if fingerprint is not None else current_fingerprint())
+    fingerprint = dict(
+        fingerprint if fingerprint is not None else current_fingerprint()
+    )
     detector = RegressionDetector(
         baseline_dir=baselines_dir,
         default_threshold=FAIL_BAND,
@@ -531,7 +534,11 @@ def compare_or_update(
         summary = (
             f"No regression. {len(deltas)} metric(s) within {FAIL_BAND:.2f} of "
             f"baseline"
-            + (f"; {len(warnings)} past the {WARN_BAND:.2f} warn band." if warnings else ".")
+            + (
+                f"; {len(warnings)} past the {WARN_BAND:.2f} warn band."
+                if warnings
+                else "."
+            )
         )
         status = GateStatus.PASSED
 
@@ -677,7 +684,9 @@ def format_outcome(outcome: GateOutcome) -> str:
     lines = [f"[rag-eval baselines] {outcome.status.value.upper()}: {outcome.summary}"]
     lines.append(
         "  environment: "
-        + ", ".join(f"{key}={value}" for key, value in sorted(outcome.fingerprint.items()))
+        + ", ".join(
+            f"{key}={value}" for key, value in sorted(outcome.fingerprint.items())
+        )
     )
     if outcome.details:
         lines.append("  regressions:")
@@ -686,7 +695,9 @@ def format_outcome(outcome: GateOutcome) -> str:
         lines.append("  warnings:")
         lines.extend(delta.describe() for delta in outcome.warnings)
     if outcome.deltas:
-        lines.append(f"  all gated metrics ({len(outcome.deltas)}), baseline -> current:")
+        lines.append(
+            f"  all gated metrics ({len(outcome.deltas)}), baseline -> current:"
+        )
         lines.extend(delta.describe() for delta in outcome.deltas)
     return "\n".join(lines)
 

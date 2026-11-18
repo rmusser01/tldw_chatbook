@@ -1060,7 +1060,7 @@ class ThemePane(ContentSwitcher):
 
     @on(SettingsThemeEditor.Saved)
     def _saved(self, event: SettingsThemeEditor.Saved) -> None:
-        """Save / Save as return to the picker with the saved theme highlighted.
+        """Return after an unchanged Save, with the saved theme highlighted.
 
         The category-leave Save tears this pane down right after saving, so
         a detached pane just ignores the message.
@@ -1069,6 +1069,19 @@ class ThemePane(ContentSwitcher):
         if not self.is_attached:
             return
         try:
+            editor = self._editor()
+            if event.session is not None and editor._stale(event.session):
+                return
+            # Child input can precede its Changed message to the editor.
+            # Check the live draft again at the actual picker handoff.
+            if (
+                event.working_palette is not None
+                and editor._working_palette() != event.working_palette
+            ):
+                editor.is_modified = True
+                return
+            if editor.is_modified:
+                return
             # TASK-33241: one rescan, not show_picker's plus a second one.
             self.show_picker(highlight=event.theme_name)
         except QueryError:

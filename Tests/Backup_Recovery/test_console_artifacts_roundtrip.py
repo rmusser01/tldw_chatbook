@@ -35,6 +35,8 @@ from tldw_chatbook.Agents.run_log_format import iter_records
 from Tests.Chat.test_console_agent_bridge import _ChunkGateway,_test_resolution
 async def main():
  app=TldwCli();entered,release=threading.Event(),threading.Event()
+ # The required research owner is lazy; allocate genuine native data before capture.
+ app.local_research_service.create_session(title='Fixture research',query='retained fixture query')
  class Gateway(_ChunkGateway):
   async def stream_chat(self,*args,**kwargs):
    entered.set()

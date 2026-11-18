@@ -1,7 +1,7 @@
 ---
 id: TASK-32863
 title: TTS near-term convergence — dead isolated engine and voice-manager base adoption
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-19 08:24'
 labels:
@@ -76,3 +76,16 @@ few-minute user recording. The base instead gained a
 `max_reference_audio_bytes` bound (100 MB, matching Higgs's own) under
 TASK-32901, which is what `ChatterboxVoiceManager` was missing.
 <!-- SECTION:NOTES:END -->
+
+## Closeout audit 2026-10-11
+
+Board audit (branch `chore/board-prune-prune-d`, dev at a3c47c6c72): this task's work is
+landed on `origin/dev` but the status field was never flipped. Verdict: **Done**.
+
+Both quick wins were already on dev when the tier-2 review checked; the task file's own
+Implementation Notes (added by 6f457445e2, 2026-09-22) say "ticked here with the evidence" with
+all three ACs ticked. Verified in tree: `chatterbox_isolated.py` absent (zero grep hits across
+tldw_chatbook/ and Tests/); `class HiggsVoiceProfileManager(VoiceManagerBase)` at
+`tldw_chatbook/TTS/backends/higgs_voice_manager.py:51` with the shared CRUD on the base.
+
+AC checkboxes are left as found; this section is the audit's evidence record.

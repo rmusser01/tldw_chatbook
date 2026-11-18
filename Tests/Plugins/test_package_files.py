@@ -5,9 +5,11 @@ import stat
 
 import pytest
 
+from Tests.Plugins import platform_support
 from tldw_chatbook.Plugins.inspection import inspect_package
 
 
+@platform_support.package_capture
 def test_materialization_preserves_bytes_mode_and_digest(native_package, tmp_path):
     from tldw_chatbook.Plugins.package_files import materialize_package
 
@@ -29,6 +31,7 @@ def test_materialization_preserves_bytes_mode_and_digest(native_package, tmp_pat
     assert (destination / "run").read_bytes() == b"must never execute\n"
 
 
+@platform_support.package_capture
 def test_internal_file_link_materializes_as_regular_file(native_package, tmp_path):
     from tldw_chatbook.Plugins.package_files import materialize_package
 
@@ -45,6 +48,7 @@ def test_internal_file_link_materializes_as_regular_file(native_package, tmp_pat
     )
 
 
+@platform_support.package_capture
 @pytest.mark.parametrize("kind", ["external", "directory", "fifo", "broken"])
 def test_unsafe_entries_abort_materialization_with_no_destination(
     kind, native_package, tmp_path
@@ -70,6 +74,7 @@ def test_unsafe_entries_abort_materialization_with_no_destination(
     assert materialize_package(root, tmp_path / "snapshot").content_digest
 
 
+@platform_support.package_capture
 def test_escaping_skill_has_narrow_inspection_boundary(native_package, tmp_path):
     root = native_package()
     outside = tmp_path / "outside"
@@ -85,6 +90,7 @@ def test_escaping_skill_has_narrow_inspection_boundary(native_package, tmp_path)
     assert "package_path_escape" in {d.code for d in result.diagnostics}
 
 
+@platform_support.package_capture
 @pytest.mark.parametrize(
     "limit,value",
     [
@@ -106,6 +112,7 @@ def test_streamed_snapshot_limits_abort(
     assert not (tmp_path / "snapshot").exists()
 
 
+@platform_support.package_capture
 def test_case_collision_is_rejected_before_destination_write(native_package, tmp_path):
     from tldw_chatbook.Plugins.package_files import materialize_package
 
@@ -117,6 +124,7 @@ def test_case_collision_is_rejected_before_destination_write(native_package, tmp
     assert not (tmp_path / "snapshot").exists()
 
 
+@platform_support.package_capture
 def test_destination_ancestor_link_and_nested_destination_are_rejected(
     native_package, tmp_path
 ):
@@ -130,6 +138,7 @@ def test_destination_ancestor_link_and_nested_destination_are_rejected(
     assert not (root / "snapshot").exists()
 
 
+@platform_support.package_capture
 def test_link_provenance_is_distinct_from_materialized_content(
     native_package, tmp_path
 ):
@@ -151,6 +160,7 @@ def test_link_provenance_is_distinct_from_materialized_content(
         copied.link_targets["alias"] = "other"
 
 
+@platform_support.package_capture
 def test_case_and_unicode_collisions_are_detected_on_capture(native_package, tmp_path):
     from tldw_chatbook.Plugins.package_files import materialize_package
 
@@ -173,6 +183,7 @@ def test_case_and_unicode_collisions_are_detected_on_capture(native_package, tmp
             materialize_package(root, tmp_path / f"snapshot-{first}")
 
 
+@platform_support.package_capture
 def test_destination_write_does_not_follow_replaced_directory(
     native_package, tmp_path, monkeypatch
 ):
@@ -206,6 +217,7 @@ def test_destination_write_does_not_follow_replaced_directory(
     assert not destination.exists()
 
 
+@platform_support.package_capture
 def test_file_count_limit_counts_files_without_charging_parent_directories(
     native_package, tmp_path, monkeypatch
 ):
@@ -216,6 +228,7 @@ def test_file_count_limit_counts_files_without_charging_parent_directories(
     assert package_files.materialize_package(root, tmp_path / "snapshot").content_digest
 
 
+@platform_support.package_capture
 @pytest.mark.parametrize("directories", [False, True])
 def test_rejected_entries_consume_traversal_and_diagnostic_budgets(
     native_package, tmp_path, monkeypatch, directories
@@ -245,6 +258,7 @@ def test_rejected_entries_consume_traversal_and_diagnostic_budgets(
     assert not (tmp_path / "snapshot-invalid").exists()
 
 
+@platform_support.package_capture
 def test_stat_failures_consume_visited_entry_budget(native_package, monkeypatch):
     from tldw_chatbook.Plugins import package_files
 
@@ -285,3 +299,33 @@ def test_stat_failures_consume_visited_entry_budget(native_package, monkeypatch)
     assert result.rejected
     assert "package_file_count_limit" in result.activation_blockers
     assert visits == 3
+
+
+def test_collision_comparison_is_platform_independent():
+    from tldw_chatbook.Plugins.package_files import collision_key
+
+    assert collision_key("Case") == collision_key("case")
+    assert collision_key("é") == collision_key("e\u0301")
+
+
+@pytest.mark.skipif(
+    platform_support.PACKAGE_CAPTURE, reason="native unsupported capture control"
+)
+def test_native_unsupported_capture_refuses_before_destination(tmp_path):
+    from tldw_chatbook.Plugins.package_files import materialize_package
+
+    destination = tmp_path / "destination"
+    with pytest.raises(ValueError, match="platform_capture_unqualified"):
+        materialize_package(tmp_path, destination)
+    assert not destination.exists()
+
+
+def test_missing_descriptor_capability_refuses_before_filesystem_setup(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.Plugins.package_files import materialize_package
+
+    monkeypatch.setattr(os, "supports_dir_fd", set())
+    with pytest.raises(ValueError, match="platform_capture_unqualified"):
+        materialize_package(tmp_path, tmp_path / "destination")
+    assert not (tmp_path / "destination").exists()

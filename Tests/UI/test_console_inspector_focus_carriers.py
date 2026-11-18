@@ -19,7 +19,7 @@ cannot be mistaken for a focus cue:
 TASK-24702 already ruled out the obvious repair: on this near-black theme a
 background tint cannot reach the 3:1 non-text floor at any alpha short of
 opaque, so the carrier has to change CELLS, not colours. The house answer is
-the accent edge (`outline-left: thick $ds-action-focus`), which paints a
+the accent edge (`outline-left: thick $ds-active-fg`), which paints a
 solid block glyph. Two physics facts decide where it can be applied, both
 measured rather than assumed:
 
@@ -55,6 +55,12 @@ from tldw_chatbook.Widgets.Console.console_inspector_section import (
     ConsoleInspectorSectionRow,
 )
 from tldw_chatbook.Workspaces.change_tracking import ChangedFile
+
+# TASK-38111: every case boots `_build_test_app()`, whose `load_settings()`
+# the per-test TLDW_CONFIG_PATH redirect refuses (RecoveryRequired
+# raw_source_selection_changed); keep the collection-time sandbox profile,
+# as app_factory's docstring asks of its callers.
+pytestmark = pytest.mark.bootstrap_profile
 
 
 #: The two terminal sizes the rail's critique was measured at.
@@ -321,6 +327,11 @@ async def test_the_collapsed_rail_handle_has_a_focus_carrier(size):
         )
         opener = console.query_one("#console-inspector-rail-open", Button)
         assert opener in console.focus_chain, "the handle is not a Tab stop"
+        # The delayed activation restore must retain a user-focused collapsed handle.
+        console.set_focus(opener, scroll_visible=False)
+        console._restore_console_workbench_focus()
+        await pilot.pause()
+        assert host.focused is opener
         unfocused, focused = await _focus_carrier_rows(host, pilot, console, opener)
         assert unfocused != focused, (
             "focusing the collapsed rail's handle changes nothing a keyboard "

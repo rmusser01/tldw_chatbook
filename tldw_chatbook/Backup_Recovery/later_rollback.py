@@ -628,6 +628,29 @@ def _preserved_snapshot_members(source, archive, target):
     return preserved
 
 
+# Tree owners whose whole root a restore may create, and a later rollback may
+# retire again after reobserving it. TASK-40305 added the Actor Pack and
+# reaction trees, which a restore creates in a profile that never had them.
+_CREATED_TREE_ROOT_OWNERS = frozenset(
+    {
+        "persona.visual_identity_builtin",
+        "eval.definitions",
+        "persona.actor_packs",
+        "persona.visual_identity",
+    }
+)
+# Single-file owners whose file a restore may create, and a later rollback may
+# retire after the same proof as a created root (TASK-41113). Other one-file
+# data owners (dictionary history, RAG context, ...) can join with a test.
+_CREATED_FILE_OWNERS = frozenset({"personas"})
+# Artwork tree owners whose existing root a restore may add a nested pack
+# folder to, which a later rollback may retire again (TASK-41113 for the
+# Actor Pack and reaction trees).
+_NESTED_CREATED_OWNERS = frozenset(
+    {"persona.assets", "persona.actor_packs", "persona.visual_identity"}
+)
+
+
 def _builtin_sources(plan):
     return tuple(
         item
@@ -638,13 +661,24 @@ def _builtin_sources(plan):
 
 
 def _stage_read_sources(plan):
-    """Read preserved persona safety trees and reviewed created-tree retirements."""
+    """Read preserved persona safety trees and reviewed created-tree (and
+    created-file) retirements."""
     sources = {item.logical_id: item for item in _builtin_sources(plan)}
     retired = dict(plan.retire)
+    for item in plan.target.items:
+        if (
+            item.owner in _CREATED_FILE_OWNERS
+            and item.status == "included"
+            and item.metadata is not None
+            and item.metadata.kind == "file"
+            and item.metadata.root_id == item.logical_id
+            and retired.get(item.logical_id) == item.path
+        ):
+            sources[item.logical_id] = item
     roots = {
         item.logical_id: item
         for item in plan.target.items
-        if item.owner in {"persona.visual_identity_builtin", "eval.definitions"}
+        if item.owner in _CREATED_TREE_ROOT_OWNERS
         and item.status == "included_directory"
         and item.metadata is not None
         and item.metadata.parent_id is None
@@ -664,11 +698,13 @@ def _stage_read_sources(plan):
     active_roots = {
         item.metadata.root_id
         for item in plan.target.items
-        if item.owner == "persona.assets"
+        if item.owner in _NESTED_CREATED_OWNERS
         and item.status == "included_directory"
         and item.metadata is not None
         and item.metadata.parent_id is not None
         and retired.get(item.logical_id) == item.path
+        # A folder inside a created root retired whole is that root's member.
+        and item.metadata.root_id not in roots
     }
     for key in active_roots:
         semantic = [row for row in plan.target.items if row.logical_id == key]
@@ -677,8 +713,8 @@ def _stage_read_sources(plan):
             len(semantic) != 1
             or len(parts) != 3
             or parts[0] != "profile"
-            or parts[2] != "persona.assets"
-            or semantic[0].owner != "persona.assets"
+            or parts[2] not in _NESTED_CREATED_OWNERS
+            or semantic[0].owner != parts[2]
             or semantic[0].status != "included_directory"
             or semantic[0].metadata is None
             or semantic[0].metadata.kind != "directory"
@@ -1190,7 +1226,7 @@ def _created_config_file_targets(
             tokens = {
                 "path:" + str(item.path),
                 "path:" + str(item.path.resolve()),
-                f"inode:{info.st_dev}:{info.st_ino}",
+                bootstrap.inode_token(info),
             }
             with pinned_directory(selector.parent) as parent:
                 posture = os.fstat(parent)
@@ -1204,7 +1240,7 @@ def _created_config_file_targets(
                 ):
                     raise ValueError("local_snapshot_created_scope_unverified")
                 if any(
-                    tokens.intersection(entry["historical"])
+                    tokens.intersection(bootstrap.identity_view(entry["historical"]))
                     or any(
                         bootstrap._overlap(item.path, Path(path))
                         for path in entry["roots"]
@@ -1247,7 +1283,7 @@ def _created_persona_subtree(
         root is None
         or len(identity) != 3
         or identity[0] != "profile"
-        or identity[2] != "persona.assets"
+        or identity[2] != item.owner
         or root.owner != item.owner
         or root.status != "included_directory"
         or root.metadata is None
@@ -1340,14 +1376,14 @@ def _created_persona_subtree(
         len(matching) != 1
         or matching[0].metadata is None
         or matching[0].metadata.relative_path != item.metadata.relative_path
-        or matching[0].metadata.root_id != f"profile:{profile}:persona.assets"
+        or matching[0].metadata.root_id != f"profile:{profile}:{item.owner}"
         or matching[0].metadata.parent_id is None
     ):
         raise ValueError("local_snapshot_created_scope_unverified")
     recorded = {
         row.previous.path: row.previous
         for row in prepared.directory_metadata
-        if row.owner_id == "persona.assets"
+        if row.owner_id == item.owner
     }
     native = {row.logical_id: row for row in observed}
     current, proved = matching[0], []
@@ -1374,13 +1410,15 @@ def _created_persona_subtree(
 def _created_destination_target(
     journal, original, prepared, rows, target, *, session=None, config_files=()
 ):
-    """Reobserve only committed inactive builtin/eval roots created by this copy."""
+    """Reobserve only committed builtin, Actor Pack, reaction or eval roots
+    (and nested Persona packs, and the persona store file) created by this copy."""
     from pydantic import TypeAdapter
 
     from tldw_chatbook.Evals.recovery import _DefinitionsAdapter
     from tldw_chatbook.Persona_Visual.recovery import _Assets
 
     from .activation import ActivationStore, _private
+    from .config_adapter import _Definition
     from .generation_witnesses import _witnesses
     from .models import DISCOVERY_CONTEXT_KEY, DiscoveryContext
     from .owner_registry import install_adapters
@@ -1417,33 +1455,45 @@ def _created_destination_target(
         item = saved.get(artifact.logical_id)
         active_persona = (
             item is not None
-            and item.owner == "persona.assets"
+            and item.owner in _NESTED_CREATED_OWNERS
             and item.status == "included_directory"
             and item.metadata is not None
             and item.metadata.kind == "directory"
             and item.metadata.parent_id is not None
         )
+        # An archived single file sits directly under its synthetic archive root.
+        created_file = (
+            item is not None
+            and item.owner in _CREATED_FILE_OWNERS
+            and item.status == "included"
+            and item.metadata is not None
+            and item.metadata.kind == "file"
+            and item.metadata.parent_id == item.metadata.root_id
+            and item.metadata.relative_path == item.path.name
+        )
         if (
             item is None
             or item.metadata is None
             or item.metadata.parent_id is not None
-            and not active_persona
+            and not (active_persona or created_file)
             or artifact.candidate is None
-            or artifact.candidate.kind != "directory"
+            or artifact.candidate.kind != ("file" if created_file else "directory")
             or item.path != Path(artifact.target)
         ):
             raise ValueError("local_snapshot_absence_unclassified")
         owner = owners.get(item.owner)
         if not (
-            item.owner == "persona.visual_identity_builtin"
-            and type(owner) is _Assets
-            or item.owner == "eval.definitions"
-            and type(owner) is _DefinitionsAdapter
+            item.owner in _CREATED_TREE_ROOT_OWNERS
+            and type(owner) is (
+                _DefinitionsAdapter if item.owner == "eval.definitions" else _Assets
+            )
             or active_persona
             and type(owner) is _Assets
+            or created_file
+            and type(owner) is _Definition
         ):
             raise ValueError("local_snapshot_absence_unclassified")
-        members = [
+        members = [item] if created_file else [
             row
             for row in saved.values()
             if row.metadata.root_id == item.logical_id
@@ -1541,7 +1591,8 @@ def _created_destination_target(
                     ):
                         raise ValueError("local_snapshot_created_scope_unverified")
             info = os.stat(item.path, follow_symlinks=False)
-            if not stat.S_ISDIR(info.st_mode) or (info.st_dev, info.st_ino) != (
+            kind = stat.S_ISREG if created_file else stat.S_ISDIR
+            if not kind(info.st_mode) or (info.st_dev, info.st_ino) != (
                 artifact.candidate.device,
                 artifact.candidate.inode,
             ):
@@ -1562,8 +1613,11 @@ def _created_destination_target(
                     raise ValueError("local_snapshot_created_scope_unverified")
                 continue
             context = DiscoveryContext(config.path, config.logical_id.split(":", 2)[1])
-            entries = _RawDeclaration(item.owner)._tree(
-                {DISCOVERY_CONTEXT_KEY: context}, item.path
+            declaration = _RawDeclaration(item.owner)
+            entries = (
+                (declaration._item({DISCOVERY_CONTEXT_KEY: context}, item.path),)
+                if created_file
+                else declaration._tree({DISCOVERY_CONTEXT_KEY: context}, item.path)
             )
             if {(row.path, row.status) for row in entries} != {
                 (row.path, row.status) for row in members
@@ -1921,7 +1975,7 @@ def _known_absences(plan, original, prepared, created=None, *, active_ancestors=
             row = current.get(key)
             if (
                 created_key is None
-                or item.owner != "persona.assets"
+                or item.owner not in _NESTED_CREATED_OWNERS
                 or row is None
                 or row.owner != item.owner
                 or row.path != ancestor

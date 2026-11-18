@@ -1,15 +1,12 @@
-"""TASK-2154.10: reduced-motion option for the setup backdrop and splash (FR-08, AC-04).
+"""TASK-2154.10: reduced-motion option for the startup splash (FR-08, AC-04).
 
-`appearance.reduce_motion = true` must render the Console setup backdrop and
-the startup splash as static frames (no animation timers). For the SPLASH the
-default (False) keeps the animated behavior. For the setup BACKDROP the
-static frame became the only presentation in TASK-23021 (the animation's
-whole-screen repaint cost ~4% of a core at idle on every new user's first
-screen), so both settings must now produce the frozen field -- the setting's
-promise holds trivially, and these tests keep it pinned.
+`appearance.reduce_motion = true` must render the startup splash as a static
+frame (no animation timer); the default (False) keeps the animated behavior.
+The Console setup backdrop this option also covered was a still frame for
+everyone after TASK-23021, and TASK-33008.4 removed it: the card now sits on
+a plain dim fill, which draws nothing that could move.
 """
 
-import random
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -24,11 +21,7 @@ from tldw_chatbook.Chat.console_onboarding_state import (
     ConsoleSetupCardState,
     ConsoleSetupStep,
 )
-from tldw_chatbook.Widgets.Console.console_setup_modal import (
-    CONSOLE_SETUP_MODAL_BACKDROP_ID,
-    ConsoleSetupBackdrop,
-    ConsoleSetupModal,
-)
+from tldw_chatbook.Widgets.Console.console_setup_modal import ConsoleSetupModal
 from tldw_chatbook.Widgets.splash_screen import SplashScreen
 
 
@@ -37,24 +30,9 @@ def _fake_cli_setting(section, key=None, default=None):
     return default
 
 
-class BackdropHarness(ConsolidatedCSSApp):
-    def compose(self) -> ComposeResult:
-        yield ConsoleSetupBackdrop(rng=random.Random(7))
-
-
 class ModalHarness(ConsolidatedCSSApp):
-    def __init__(self, state: ConsoleSetupCardState, *, reduced_motion: bool):
-        super().__init__()
-        self._state = state
-        self._reduced_motion = reduced_motion
-
     def compose(self) -> ComposeResult:
         yield ConsoleSetupModal(id="console-setup-modal")
-
-    async def on_mount(self) -> None:
-        modal = self.query_one("#console-setup-modal", ConsoleSetupModal)
-        modal.reduced_motion = self._reduced_motion
-        modal.sync_card_state(self._state)
 
 
 class SplashHarness(ConsolidatedCSSApp):
@@ -74,69 +52,26 @@ def _blocking_state() -> ConsoleSetupCardState:
 
 
 # ---------------------------------------------------------------------------
-# ConsoleSetupBackdrop
+# ConsoleSetupModal: a guidance sync reads no config.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_backdrop_renders_static_frame_and_arms_no_timer():
-    """TASK-23021 retired the snow animation for everyone: the field is one
-    still frame per (re)size, with no timers -- which is exactly what AC-04's
-    reduced-motion presentation always was. The setting's promise (this
-    backdrop never animates under reduce_motion) therefore holds trivially,
-    and is pinned here so a re-animated backdrop cannot ship without
-    re-answering both this test and the reduce_motion contract."""
-    app = BackdropHarness()
+async def test_guidance_sync_needs_no_config_read_while_backup_pauses_storage():
+    """Rendering a mounted modal needs no new disk admission during backup.
 
-    async with app.run_test(size=(80, 24)):
-        backdrop = app.query_one(ConsoleSetupBackdrop)
-        # The static frame is seeded on mount/resize...
-        assert backdrop.flake_count > 0
-        rendered = str(backdrop.render())
-        assert any(glyph in rendered for glyph in ("·", "•", "*"))
-
-        # ...and no timer exists to ever advance it.
-        assert len(backdrop._timers) == 0
-
-
-# ---------------------------------------------------------------------------
-# ConsoleSetupModal: the reduce_motion preference is still recorded, and the
-# backdrop stays frozen in BOTH settings.
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("reduced_motion", [True, False])
-async def test_modal_records_preference_and_backdrop_stays_frozen(
-    reduced_motion,
-):
-    app = ModalHarness(_blocking_state(), reduced_motion=reduced_motion)
-
-    async with app.run_test(size=(80, 24)):
-        modal = app.query_one("#console-setup-modal", ConsoleSetupModal)
-        assert modal.is_blocking
-        # The ChatScreen writes this on every guidance sync; the recorded
-        # preference must round-trip even though the backdrop no longer
-        # branches on it.
-        assert modal.reduced_motion is reduced_motion
-        backdrop = app.query_one(
-            f"#{CONSOLE_SETUP_MODAL_BACKDROP_ID}", ConsoleSetupBackdrop
-        )
-        assert len(backdrop._timers) == 0
-        rendered = str(backdrop.render())
-        assert any(glyph in rendered for glyph in ("·", "•", "*"))
-
-
-@pytest.mark.asyncio
-async def test_guidance_uses_accepted_appearance_while_backup_pauses_config():
-    """Rendering a mounted modal needs no new disk admission during backup."""
+    Rewritten on purpose (TASK-33008.4) from
+    ``test_guidance_uses_accepted_appearance_while_backup_pauses_config``,
+    which also pinned the ``reduce_motion`` value the sync copied onto the
+    modal for the removed backdrop. The contract kept: with no app config
+    on the screen and every CLI-setting read refused, the sync still shows
+    the card and its steps.
+    """
     from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
-    app = ModalHarness(_blocking_state(), reduced_motion=False)
-    owner = SimpleNamespace(app_config={"appearance": {"reduce_motion": True}})
+    app = ModalHarness()
     screen = SimpleNamespace(
-        app_instance=owner,
         query_one=app.query_one,
         _pending_console_launch_context=None,
         _console_detected_local_server=None,
@@ -149,12 +84,13 @@ async def test_guidance_uses_accepted_appearance_while_backup_pauses_config():
             "tldw_chatbook.UI.Screens.chat_screen.get_cli_setting",
             side_effect=RecoveryRequired("storage_locally_paused"),
         ):
-            for preference in (True, False):
-                owner.app_config["appearance"]["reduce_motion"] = preference
-                ChatScreen._sync_console_setup_modal(
-                    screen, _blocking_state(), action_label="Set up", action_tooltip="Set up"
-                )
-                assert app.query_one(ConsoleSetupModal).reduced_motion is preference
+            ChatScreen._sync_console_setup_modal(
+                screen, _blocking_state(), action_label="Set up", action_tooltip="Set up"
+            )
+            modal = app.query_one(ConsoleSetupModal)
+            assert modal.is_blocking and modal.display
+            step = app.query_one("#console-setup-step-1", Static)
+            assert "Add an API key" in str(step.render())
 
 
 # ---------------------------------------------------------------------------

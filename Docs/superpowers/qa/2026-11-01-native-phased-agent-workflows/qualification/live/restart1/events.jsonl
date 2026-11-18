@@ -1,0 +1,5 @@
+{"event": "ready", "label": "whole-mounted-chat", "pid": 22790, "time": 1793849814.867678}
+{"conversation": "83a23240-e7e8-4748-9ce8-0d5cb8320b1d", "event": "hydrated-original-chat", "pid": 22790, "session": "a16f4c53-890d-404e-ab16-d198c29fc0ed", "time": 1793849816.46105}
+{"event": "ready", "label": "named-chat-tab", "pid": 22790, "time": 1793849816.4671931}
+{"base": "", "event": "native-provider", "model": "gpt-5.6-terra", "pid": 22790, "provider": "openai", "ready": false, "time": 1793849816.480843}
+{"event": "creators-returned", "pid": 22790, "time": 1793849816.717837}

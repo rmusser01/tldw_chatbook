@@ -77,12 +77,12 @@ def stub_characters(monkeypatch):
     monkeypatch.setattr(
         character_handler_module,
         "fetch_all_characters",
-        lambda: [dict(character) for character in CHARACTERS],
+        lambda _db: [dict(character) for character in CHARACTERS],
     )
     monkeypatch.setattr(
         character_handler_module,
         "fetch_character_by_id",
-        lambda character_id: next(
+        lambda _db, character_id: next(
             dict(character)
             for character in CHARACTERS
             if str(character["id"]) == str(character_id)
@@ -197,7 +197,9 @@ async def _open_persona_editor(pilot):
     await pilot.click("#personas-mode-personas")
     await pilot.pause()
     await pilot.app.workers.wait_for_complete()
-    await pilot.click("#personas-library-row-persona-p-1")
+    from Tests.UI.roleplay_frame_harness import select_roleplay_item
+
+    await select_roleplay_item(pilot, pilot.app.screen, "persona:p-1", via="click")
     await pilot.pause()
     screen.post_message(EditPersonaProfileRequested("p-1"))
     await pilot.pause()

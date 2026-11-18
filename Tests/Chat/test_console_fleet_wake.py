@@ -336,6 +336,44 @@ def test_dispose_is_terminal_idempotent_and_safe_without_a_sink():
     assert no_sink.pending_conversation_ids() == ()
 
 
+@pytest.mark.asyncio
+async def test_claim_drain_waits_for_the_conversations_physical_work():
+    """TASK-33666: a provider worker that outlived its run keeps the slot."""
+    from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity, WorkOrigin
+
+    capacity = RuntimeCapacity()
+    wake = ConsoleFleetWakeCoordinator(
+        SimpleNamespace(_agent_bridge=SimpleNamespace(runtime_capacity=capacity))
+    )
+    primary = capacity.begin_execution(origin=WorkOrigin.AUTOMATIC, conversation_id="c")
+    child = capacity.begin_execution(
+        origin=WorkOrigin.AUTOMATIC, conversation_id="c", child=True
+    )
+    capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="other")
+    model = primary.reserve_model()
+    primary.finish_root()
+    drain = asyncio.create_task(wake.drain_automatic_primary("c"))
+    goal = None
+    try:
+        await asyncio.sleep(0.15)
+        drain.cancel()
+        await asyncio.sleep(0.15)
+        assert not drain.done(), "a cancelled awaiter released a live model worker"
+        model.finish()
+        # Neither the child (its own capacity) nor another conversation holds it.
+        # (asyncio.wait, not wait_for: the drain absorbs wait_for's cancel.)
+        assert drain in (await asyncio.wait({drain}, timeout=1))[0]
+        goal = asyncio.create_task(wake.drain_automatic_primary("c", children=True))
+        await asyncio.sleep(0.15)
+        assert not goal.done(), "a goal iteration's wait ignored its live child"
+        wake.dispose()
+        assert goal in (await asyncio.wait({goal}, timeout=1))[0]
+    finally:
+        model.finish()
+        child.finish_root()
+        await asyncio.wait({drain, goal} - {None}, timeout=1)
+
+
 def test_buddy_wake_callback_runs_outside_registry_lock_and_is_post_fenced():
     """A reentrant terminal dispose cannot deadlock or leave a late lease."""
     dispose_finished = threading.Event()
@@ -713,6 +751,159 @@ async def test_a_redelivered_drain_cannot_double_deliver(tmp_path, request):
         await _quiet(lambda: len(gateway.payloads) > 1)
         assert len(gateway.payloads) == 1
         assert gateway.payloads[0][-1]["content"].count("child answer") == 1
+    finally:
+        chacha.close()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_wake_takes_no_mixin_anchor_from_an_earlier_unsaved_user_row(
+    tmp_path, request
+):
+    """TASK-39119: a wake writes no USER row, so the chat's last USER row is an
+    earlier turn's. The wake anchored its mix-in attempt there, and when that
+    row was not saved yet the turn was blocked ("Mix-in attempt could not be
+    saved; response was not sent.") and never reached the provider. The save
+    is held back here by never persisting the row."""
+    chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
+        tmp_path
+    )
+    try:
+        earlier = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="An earlier question",
+            persist=False,
+        )
+        _parent, run_id = _terminal_subagent_run(runs_db, session.id)
+        controller.fleet_wake.on_fleet_drained(
+            _drain(session.id, _survivor(run_id, session_id=session.id))
+        )
+        assert await _settle(lambda: gateway.payloads), (
+            "the wake never reached the provider: "
+            f"{controller.run_state_for(session.id)!r}"
+        )
+        anchors = chacha.get_connection().execute(
+            "SELECT user_message_id FROM console_prompt_mixin_attempts"
+        ).fetchall()
+        assert anchors == [], f"the wake recorded mix-in attempts: {anchors}"
+        assert earlier.id not in str(gateway.payloads[0][-1])
+    finally:
+        chacha.close()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_failed_wake_reply_is_saved_as_failed(tmp_path, request):
+    """TASK-39119 review: a wake takes no mix-in anchor, and the attempt's
+    transaction was its reply row's only save before provider entry. Without
+    it a failed wake reply left no row: nothing to show or retry after a
+    restart. The empty reply row is saved before the provider is entered."""
+    chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
+        tmp_path
+    )
+    try:
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="An earlier question",
+            persist=True,
+        )
+
+        def provider_down():
+            raise RuntimeError("provider down")
+
+        gateway.on_stream = provider_down
+        _parent, run_id = _terminal_subagent_run(runs_db, session.id)
+        controller.fleet_wake.on_fleet_drained(
+            _drain(session.id, _survivor(run_id, session_id=session.id))
+        )
+
+        def failed_rows():
+            return chacha.get_connection().execute(
+                "SELECT content, deleted, assistant_generation_state FROM messages "
+                "WHERE conversation_id=? AND lower(sender)='assistant'",
+                (session.persisted_conversation_id,),
+            ).fetchall()
+
+        assert await _settle(lambda: gateway.payloads)
+        assert await _settle(
+            lambda: [tuple(row) for row in failed_rows()] == [("", 0, "failed")]
+        ), f"the failed wake reply was not saved as failed: {failed_rows()}"
+        # r12p-rev2 M1: it recorded no mix-ins, so it offers a plain Retry,
+        # not "Regenerate with current mix-ins".
+        from tldw_chatbook.Chat.console_message_actions import (
+            ConsoleMessageActionService,
+        )
+
+        reply = next(
+            row
+            for row in reversed(store.messages_for_session(session.id))
+            if row.role is ConsoleMessageRole.ASSISTANT
+        )
+        offered = [
+            (action.action_id, action.label)
+            for action in ConsoleMessageActionService().available_actions(reply)
+            if action.action_id in {"retry", "regenerate"}
+        ]
+        assert offered == [("retry", "Retry")], offered
+    finally:
+        chacha.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("earlier_user_row", [False, True])
+@private_profile_test
+async def test_a_wake_reply_is_the_durable_active_leaf(
+    tmp_path, request, earlier_user_row
+):
+    """TASK-39119 review r12p-rev2 C1: the reply row saved before provider
+    entry left pending persistence, so the write that moves the durable
+    active-leaf cursor onto it never ran. A restart then walked from the
+    wake's notice and lost the reply."""
+    chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
+        tmp_path
+    )
+    try:
+        if earlier_user_row:
+            store.append_message(
+                session.id,
+                role=ConsoleMessageRole.USER,
+                content="An earlier question",
+                persist=True,
+            )
+        _parent, run_id = _terminal_subagent_run(runs_db, session.id)
+        controller.fleet_wake.on_fleet_drained(
+            _drain(session.id, _survivor(run_id, session_id=session.id))
+        )
+
+        def reply():
+            rows = store.messages_for_session(session.id)
+            return next(
+                (
+                    row
+                    for row in reversed(rows)
+                    if row.role is ConsoleMessageRole.ASSISTANT
+                    and row.content == gateway.reply
+                    and row.persisted_message_id is not None
+                ),
+                None,
+            )
+
+        def durable_leaf():
+            return chacha.get_connection().execute(
+                "SELECT active_leaf_message_id FROM conversations WHERE id=?",
+                (session.persisted_conversation_id,),
+            ).fetchone()[0]
+
+        assert await _settle(lambda: reply() is not None, 10)
+        await _settle(lambda: durable_leaf() == reply().persisted_message_id, 5)
+        rows = {row.persisted_message_id: row for row in store.messages_for_session(session.id)}
+        leaf = rows.get(durable_leaf())
+        assert durable_leaf() == reply().persisted_message_id, (
+            "the durable leaf is not the wake's reply: "
+            f"{leaf.role.value if leaf else None} {getattr(leaf, 'content', '')[:40]!r}"
+        )
     finally:
         chacha.close()
 
@@ -1539,6 +1730,8 @@ def test_a_failed_delivery_task_never_wedges_the_delivering_flag(monkeypatch):
     session = SimpleNamespace(id="s-1", persisted_conversation_id="conv-1")
     controller = SimpleNamespace(
         _disposed=False,
+        max_parallel_runs=3,
+        _live_busy_session_ids=lambda: [],
         store=SimpleNamespace(sessions=lambda: [session]),
         send_refusal_copy=lambda session_id: None,
     )
@@ -1551,7 +1744,7 @@ def test_a_failed_delivery_task_never_wedges_the_delivering_flag(monkeypatch):
         def is_closed(self):
             return False
 
-        def create_task(self, coro):
+        def create_task(self, coro, *, context=None):
             self.calls += 1
             coro.close()
             raise RuntimeError("Event loop is closed")
@@ -1584,7 +1777,7 @@ def test_a_failed_delivery_task_never_wedges_the_delivering_flag(monkeypatch):
         def is_closed(self):
             return False
 
-        def create_task(self, coro):
+        def create_task(self, coro, *, context=None):
             self.tasks.append(coro)
             coro.close()
             return _FakeTask()
@@ -1595,6 +1788,142 @@ def test_a_failed_delivery_task_never_wedges_the_delivering_flag(monkeypatch):
     assert healthy.tasks, (
         "the pending wake was lost after the failed attempt"
     )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_wake_keeps_its_claim_until_the_conversations_worker_exits(
+    tmp_path, request
+):
+    """TASK-33666: the delivery's slot outlasts its turn while a worker runs."""
+    from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity, WorkOrigin
+
+    rig = _controller_rig(tmp_path)
+    chacha, _, db, _, session, _, bridge, controller = rig
+    wake = controller.fleet_wake
+    bridge.runtime_capacity = capacity = RuntimeCapacity()
+    workers = []
+
+    def turn_ends_before_its_worker(notice, **kwargs):
+        if not workers:
+            owner = capacity.begin_execution(
+                origin=WorkOrigin.AUTOMATIC, conversation_id=session.id
+            )
+            workers.append(owner.reserve_model())
+            owner.finish_root()
+        raise RuntimeError("turn ended")
+
+    wake.bind_runtime_submitter(turn_ends_before_its_worker)
+    try:
+        _, child = _terminal_subagent_run(db, session.id)
+        wake.on_fleet_drained(_drain(session.id, _survivor(child)))
+        assert await _settle(lambda: bool(workers))
+        await asyncio.sleep(0.3)
+        assert session.id in wake._automatic_primary_claims
+        workers[0].finish()
+        assert await _settle(lambda: session.id not in wake._automatic_primary_claims)
+    finally:
+        wake.dispose()
+        db.close()
+        chacha.close()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_draining_wake_lets_its_conversations_close_fence_release(
+    tmp_path, request
+):
+    """TASK-33666: only the claim outlasts the turn, so a close still unfences."""
+    from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity, WorkOrigin
+
+    rig = _controller_rig(tmp_path)
+    chacha, _, db, _, session, _, bridge, controller = rig
+    wake = controller.fleet_wake
+    bridge.runtime_capacity = capacity = RuntimeCapacity()
+    workers = []
+
+    def turn_ends_before_its_worker(notice, **kwargs):
+        if not workers:
+            owner = capacity.begin_execution(
+                origin=WorkOrigin.AUTOMATIC, conversation_id=session.id
+            )
+            workers.append(owner.reserve_model())
+            owner.finish_root()
+        raise RuntimeError("turn ended")
+
+    wake.bind_runtime_submitter(turn_ends_before_its_worker)
+    try:
+        _, child = _terminal_subagent_run(db, session.id)
+        wake.on_fleet_drained(_drain(session.id, _survivor(child)))
+        assert await _settle(lambda: bool(workers))
+        assert await _settle(
+            lambda: session.id not in wake.delivering_conversation_ids()
+        ), "a delivery whose turn ended still counts as delivering"
+        assert session.id in wake._automatic_primary_claims
+        wake.fence_conversation(session.id, generation=1)
+        assert wake.release_conversation_fence(session.id, generation=1)
+        await asyncio.sleep(0.2)
+        assert session.id in wake._automatic_primary_claims
+        workers[0].finish()
+        assert await _settle(lambda: session.id not in wake._automatic_primary_claims)
+    finally:
+        wake.dispose()
+        db.close()
+        chacha.close()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_draining_wakes_claim_keeps_a_second_wake_turn_out_of_its_session(
+    tmp_path, request
+):
+    """TASK-33666: once a draining wake has left delivery, only its claim keeps a
+    second wake turn in the same session from starting beside the old worker.
+
+    The submitter refuses before acceptance, so the wake's result stays
+    pending and every retry is a second turn for the same session."""
+    from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity, WorkOrigin
+
+    rig = _controller_rig(tmp_path)
+    chacha, _, db, _, session, _, bridge, controller = rig
+    wake = controller.fleet_wake
+    bridge.runtime_capacity = capacity = RuntimeCapacity()
+    workers, calls = [], []
+
+    def turn_ends_before_its_worker(notice, **kwargs):
+        calls.append(notice)
+        if not workers:
+            owner = capacity.begin_execution(
+                origin=WorkOrigin.AUTOMATIC, conversation_id=session.id
+            )
+            workers.append(owner.reserve_model())
+            owner.finish_root()
+        raise RuntimeError("turn ended")
+
+    wake.bind_runtime_submitter(turn_ends_before_its_worker)
+    try:
+        _, child = _terminal_subagent_run(db, session.id)
+        wake.on_fleet_drained(_drain(session.id, _survivor(child)))
+        assert await _settle(lambda: bool(workers))
+        assert await _settle(
+            lambda: session.id not in wake.delivering_conversation_ids()
+        )
+        first_claim = wake._automatic_primary_claims[session.id]
+        for _ in range(6):  # retries of the pending wake, each a second turn
+            wake._retry_after.clear()
+            wake._coalesce_until.clear()
+            wake.retry_soon()
+            await asyncio.sleep(0.25)
+        assert len(calls) == 1, "a second wake turn started beside the old worker"
+        assert session.id not in wake.delivering_conversation_ids()
+        assert wake._automatic_primary_claims[session.id] is first_claim
+        workers[0].finish()
+        # The worker gone, the claim is released and the next retry is admitted.
+        assert await _settle(lambda: len(calls) >= 2)
+    finally:
+        wake.dispose()
+        db.close()
+        chacha.close()
 
 
 @pytest.mark.asyncio

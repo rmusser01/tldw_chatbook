@@ -1,0 +1,82 @@
+FFFFFFF                                                                  [100%]
+=================================== FAILURES ===================================
+_ test_invalid_saved_source_reference_keeps_prepare_and_confirmed_repair_available[null] _
+Tests/ChaChaNotesDB/test_portrait_region_settings.py:350: in test_invalid_saved_source_reference_keeps_prepare_and_confirmed_repair_available
+    regions(db, source)
+Tests/ChaChaNotesDB/test_portrait_region_settings.py:37: in regions
+    return db.get_character_portrait_regions(
+tldw_chatbook/DB/ChaChaNotes_DB.py:9293: in get_character_portrait_regions
+    return get_regions(
+tldw_chatbook/DB/portrait_region_settings.py:120: in get_regions
+    _row_source(row), deserialize_recipe(row["recipe_json"]), row["revision"]
+    ^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/portrait_region_settings.py:83: in _row_source
+    tuple(json.loads(row["source_ref_json"])),
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: 'NoneType' object is not iterable
+_ test_invalid_saved_source_reference_keeps_prepare_and_confirmed_repair_available[1] _
+Tests/ChaChaNotesDB/test_portrait_region_settings.py:350: in test_invalid_saved_source_reference_keeps_prepare_and_confirmed_repair_available
+    regions(db, source)
+Tests/ChaChaNotesDB/test_portrait_region_settings.py:37: in regions
+    return db.get_character_portrait_regions(
+tldw_chatbook/DB/ChaChaNotes_DB.py:9293: in get_character_portrait_regions
+    return get_regions(
+tldw_chatbook/DB/portrait_region_settings.py:120: in get_regions
+    _row_source(row), deserialize_recipe(row["recipe_json"]), row["revision"]
+    ^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/portrait_region_settings.py:83: in _row_source
+    tuple(json.loads(row["source_ref_json"])),
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: 'int' object is not iterable
+_ test_invalid_saved_source_reference_keeps_prepare_and_confirmed_repair_available[true] _
+Tests/ChaChaNotesDB/test_portrait_region_settings.py:350: in test_invalid_saved_source_reference_keeps_prepare_and_confirmed_repair_available
+    regions(db, source)
+Tests/ChaChaNotesDB/test_portrait_region_settings.py:37: in regions
+    return db.get_character_portrait_regions(
+tldw_chatbook/DB/ChaChaNotes_DB.py:9293: in get_character_portrait_regions
+    return get_regions(
+tldw_chatbook/DB/portrait_region_settings.py:120: in get_regions
+    _row_source(row), deserialize_recipe(row["recipe_json"]), row["revision"]
+    ^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/portrait_region_settings.py:83: in _row_source
+    tuple(json.loads(row["source_ref_json"])),
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: 'bool' object is not iterable
+_ test_invalid_saved_source_reference_keeps_prepare_and_confirmed_repair_available[{}] _
+Tests/ChaChaNotesDB/test_portrait_region_settings.py:349: in test_invalid_saved_source_reference_keeps_prepare_and_confirmed_repair_available
+    with pytest.raises(ValueError):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE <class 'ValueError'>
+_ test_invalid_saved_source_reference_keeps_prepare_and_confirmed_repair_available[""] _
+Tests/ChaChaNotesDB/test_portrait_region_settings.py:349: in test_invalid_saved_source_reference_keeps_prepare_and_confirmed_repair_available
+    with pytest.raises(ValueError):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE <class 'ValueError'>
+_ test_invalid_saved_source_reference_keeps_prepare_and_confirmed_repair_available[[true]] _
+Tests/ChaChaNotesDB/test_portrait_region_settings.py:357: in test_invalid_saved_source_reference_keeps_prepare_and_confirmed_repair_available
+    repaired = db.save_character_portrait_regions(source, recipe, expected_revision=revision)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/ChaChaNotes_DB.py:9307: in save_character_portrait_regions
+    return save_regions(self, source, recipe, expected_revision=expected_revision)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/portrait_region_settings.py:149: in save_regions
+    and _row_source(row) == source
+        ^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/portrait_region_settings.py:85: in _row_source
+    _validate_source(source)
+tldw_chatbook/Character_Chat/portrait_performance.py:274: in _validate_source
+    raise ValueError("portrait_performance_source_invalid")
+E   ValueError: portrait_performance_source_invalid
+____ test_corrupt_optional_regions_keep_manual_import_and_remove_available _____
+Tests/UI/test_personas_portrait_performance.py:688: in test_corrupt_optional_regions_keep_manual_import_and_remove_available
+    assert await controller.handle(CharacterPerformanceRequested("prepare"))
+E   assert False
+=========================== short test summary info ============================
+FAILED Tests/ChaChaNotesDB/test_portrait_region_settings.py::test_invalid_saved_source_reference_keeps_prepare_and_confirmed_repair_available[null]
+FAILED Tests/ChaChaNotesDB/test_portrait_region_settings.py::test_invalid_saved_source_reference_keeps_prepare_and_confirmed_repair_available[1]
+FAILED Tests/ChaChaNotesDB/test_portrait_region_settings.py::test_invalid_saved_source_reference_keeps_prepare_and_confirmed_repair_available[true]
+FAILED Tests/ChaChaNotesDB/test_portrait_region_settings.py::test_invalid_saved_source_reference_keeps_prepare_and_confirmed_repair_available[{}]
+FAILED Tests/ChaChaNotesDB/test_portrait_region_settings.py::test_invalid_saved_source_reference_keeps_prepare_and_confirmed_repair_available[""]
+FAILED Tests/ChaChaNotesDB/test_portrait_region_settings.py::test_invalid_saved_source_reference_keeps_prepare_and_confirmed_repair_available[[true]]
+FAILED Tests/UI/test_personas_portrait_performance.py::test_corrupt_optional_regions_keep_manual_import_and_remove_available
+7 failed, 47 deselected in 5.55s

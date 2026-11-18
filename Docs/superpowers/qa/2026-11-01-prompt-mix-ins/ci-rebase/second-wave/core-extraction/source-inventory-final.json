@@ -1,0 +1,77 @@
+[
+  {
+    "path": "tldw_chatbook/Chat/console_chat_controller.py",
+    "lines": 29162,
+    "sha256": "4750b5abb9bdb5464f4dd40d03c4bfe475777b4a75f9185cc43069251ca954d8"
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_chat_store.py",
+    "lines": 22317,
+    "sha256": "2a062a56aad58b80aa17c81692846c5b14fc84f8e93481e515d160b2f578122f"
+  },
+  {
+    "path": "tldw_chatbook/Chat/chat_persistence_service.py",
+    "lines": 4239,
+    "sha256": "3072f8c584fe702198b0858d86b92b20472ef1873a82a88b11df0bac7cf124b1"
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_trace_service.py",
+    "lines": 6587,
+    "sha256": "d6c4e55ee9c68c72bedee5df17b572a0409518f6245818ba41ff1ee093f079f0"
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_display_state.py",
+    "lines": 2875,
+    "sha256": "c6abcb12f57818b840199e10e52d9acd03f6504c4d51f7a5087db5c4475a6d23"
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_chat_fork.py",
+    "lines": 1851,
+    "sha256": "c769c199b19bd332c3f90ce3cde78c988baf7e61d8543e2ec7fbb466b0417415"
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_trace_models.py",
+    "lines": 663,
+    "sha256": "4bd71b12adad8b44cc6ec651e78de26830bd979a09296180fd52d0dc46c7306f"
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_agent_reply.py",
+    "lines": 1150,
+    "sha256": "726264735ea5fc72a6ea1c8325349abf630d40f20aa4782e7898f120605ed6ab"
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_settings_persistence.py",
+    "lines": 788,
+    "sha256": "08fcb8074a743b4c355c579cc89c4cddad4deb3f731a49ade5c1b9fd168b7945"
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_memory_banner.py",
+    "lines": 207,
+    "sha256": "94bc28d17d40adda977eaad7393061b9c1baf775df48958460262669684ebb56"
+  },
+  {
+    "path": "Tests/Tools/test_admitted_root_consumer_census.py",
+    "lines": 174,
+    "sha256": "a951d7932aaf89fddb56fdd50d1b0f1c2fddc838c58886fe97fdf068bc4a1442"
+  },
+  {
+    "path": "Tests/Chat/test_console_auxiliary_routing.py",
+    "lines": 107,
+    "sha256": "ad446ec9601865a71c81dbbc1eb22f583a945742b54ad063d9fa647e7ddc5d40"
+  },
+  {
+    "path": "Tests/Chat/test_console_chat_fork_persistence.py",
+    "lines": 1660,
+    "sha256": "62bb67ee9107931235e58ead60ec65b8c388284d9ecd3edfa3f97d5bdea9239a"
+  },
+  {
+    "path": "Tests/Chat/test_console_chat_controller.py",
+    "lines": 12183,
+    "sha256": "585b7de929a1715e57f5272ef81d245aae2102082029d034df0caa6517b501a2"
+  },
+  {
+    "path": "Tests/Chat/test_console_prompt_mixin_retry.py",
+    "lines": 2023,
+    "sha256": "aed2da88c421955a163469b7b85378d7a25a8d1480faad48049a2ab5beccdfb2"
+  }
+]

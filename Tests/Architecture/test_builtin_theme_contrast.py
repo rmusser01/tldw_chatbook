@@ -58,6 +58,8 @@ def test_core_variables_do_not_freeze_readable_tokens_to_literals():
     for token in (
         "ds-focus-bg",
         "ds-status-error-readable",
+        # Roleplay frame B1: the readable warning foreground (the Unsaved chip).
+        "ds-status-warning-readable",
         "ds-text-placeholder",
         "ds-text-disabled-readable",
         # TASK-31429: Console rail grammar (active = primary hue, value =

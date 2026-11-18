@@ -1,0 +1,56 @@
+{
+  "owned_count": 489,
+  "protected_paths": 279,
+  "protected_unchanged": true,
+  "staged_paths": 61,
+  "staged_sha256": "c5fcb00eab4ea09c49d1797567cbd4cc9f0eb9bb8d99cc2355f764638aaa7248",
+  "local_links": [
+    {
+      "source": "Docs/Architecture/console.md",
+      "target": "../superpowers/qa/2026-11-01-native-phased-agent-workflows/README.md",
+      "exists": true
+    },
+    {
+      "source": "Docs/Architecture/agent-runtime.md",
+      "target": "../superpowers/qa/2026-11-01-native-phased-agent-workflows/README.md",
+      "exists": true
+    },
+    {
+      "source": "Docs/Architecture/backup-recovery.md",
+      "target": "../superpowers/qa/2026-11-01-native-phased-agent-workflows/README.md",
+      "exists": true
+    },
+    {
+      "source": "Docs/User_Guide/console/agent-runs-and-tools.md",
+      "target": "../../superpowers/qa/2026-11-01-native-phased-agent-workflows/README.md",
+      "exists": true
+    },
+    {
+      "source": "Docs/User_Guide/settings.md",
+      "target": "console/agent-runs-and-tools.md#run-a-phased-workflow-in-this-chat",
+      "exists": true
+    },
+    {
+      "source": "backlog/docs/lessons-testing-evidence.md",
+      "target": "../../Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/README.md",
+      "exists": true
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/README.md",
+      "target": "qualification/README.md",
+      "exists": true
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/README.md",
+      "target": "rulings/index.md",
+      "exists": true
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/README.md",
+      "target": "rulings/README.md",
+      "exists": true
+    }
+  ],
+  "diff_check": 0,
+  "root_rulings_excluded": true
+}

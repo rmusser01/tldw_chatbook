@@ -1,0 +1,123 @@
+[
+  {
+    "label": "baseline",
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "Tests/QA/test_project_chat_uat.py::test_project_chat_uat[wrong-family]",
+      "-q",
+      "-o",
+      "addopts=",
+      "--timeout=240",
+      "--tb=short",
+      "--basetemp=/private/tmp/mixins-4b1-uat-fix/baseline-pytest",
+      "--junitxml=/private/tmp/mixins-4b1-uat-fix/baseline.xml"
+    ],
+    "env": {
+      "TLDW_UAT_ARTIFACTS": "/private/tmp/mixins-4b1-uat-fix/baseline-artifacts"
+    },
+    "stdout_stderr": "/private/tmp/mixins-4b1-uat-fix/baseline.log",
+    "sandbox": "default",
+    "qualification": "setup failure only, loopback PermissionError"
+  },
+  {
+    "label": "baseline-native",
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "Tests/QA/test_project_chat_uat.py::test_project_chat_uat[wrong-family]",
+      "-q",
+      "-o",
+      "addopts=",
+      "--timeout=240",
+      "--tb=short",
+      "--basetemp=/private/tmp/mixins-4b1-uat-fix/baseline-native-pytest",
+      "--junitxml=/private/tmp/mixins-4b1-uat-fix/baseline-native.xml"
+    ],
+    "env": {
+      "TLDW_UAT_ARTIFACTS": "/private/tmp/mixins-4b1-uat-fix/baseline-native-artifacts"
+    },
+    "stdout_stderr": "/private/tmp/mixins-4b1-uat-fix/baseline-native.log",
+    "sandbox": "escalated local loopback",
+    "qualification": "original/native"
+  },
+  {
+    "label": "control-red",
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "Tests/QA/test_project_chat_uat_support.py::test_approval_readiness_waits_for_children_without_filtering_rows",
+      "-q",
+      "-o",
+      "addopts=",
+      "--timeout=30",
+      "--tb=short",
+      "--basetemp=/private/tmp/mixins-4b1-uat-fix/control-red-pytest",
+      "--junitxml=/private/tmp/mixins-4b1-uat-fix/control-red.xml"
+    ],
+    "env": {},
+    "stdout_stderr": "/private/tmp/mixins-4b1-uat-fix/control-red.log",
+    "sandbox": "default",
+    "qualification": "deterministic real-card predicate control"
+  },
+  {
+    "label": "control-green",
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "Tests/QA/test_project_chat_uat_support.py::test_approval_readiness_waits_for_children_without_filtering_rows",
+      "-q",
+      "-o",
+      "addopts=",
+      "--timeout=30",
+      "--tb=short",
+      "--basetemp=/private/tmp/mixins-4b1-uat-fix/control-green-pytest",
+      "--junitxml=/private/tmp/mixins-4b1-uat-fix/control-green.xml"
+    ],
+    "env": {},
+    "stdout_stderr": "/private/tmp/mixins-4b1-uat-fix/control-green.log",
+    "sandbox": "default",
+    "qualification": "deterministic real-card predicate control"
+  },
+  {
+    "label": "final",
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "Tests/QA/test_project_chat_uat.py",
+      "Tests/QA/test_project_chat_uat_support.py",
+      "Tests/QA/test_project_chat_uat_reports.py",
+      "-x",
+      "-q",
+      "-o",
+      "addopts=",
+      "--timeout=240",
+      "--tb=short",
+      "--basetemp=/private/tmp/mixins-4b1-uat-fix/final-pytest",
+      "--junitxml=/private/tmp/mixins-4b1-uat-fix/final.xml"
+    ],
+    "env": {
+      "TLDW_UAT_ARTIFACTS": "/private/tmp/mixins-4b1-uat-fix/final-artifacts"
+    },
+    "stdout_stderr": "/private/tmp/mixins-4b1-uat-fix/final.log",
+    "sandbox": "escalated local loopback",
+    "qualification": "original/native"
+  },
+  {
+    "label": "validator",
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "scripts/check_project_chat_uat.py",
+      "--junit",
+      "/private/tmp/mixins-4b1-uat-fix/final.xml",
+      "--artifacts",
+      "/private/tmp/mixins-4b1-uat-fix/final-artifacts"
+    ],
+    "stdout_stderr": "/private/tmp/mixins-4b1-uat-fix/validator.log"
+  }
+]

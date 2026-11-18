@@ -1038,9 +1038,12 @@ def _first_profile_container(
             raise ValueError("replacement_config_container_unverified")
         state.append((item.path, item.metadata, info.st_dev, info.st_ino, info.st_mode))
     if user_data:
-        tokens = {f"inode:{dev}:{ino}" for _, _, dev, ino, _ in state}
+        from .bootstrap import identity_view, inode_token_for
+
+        tokens = {inode_token_for(ino) for _, _, _dev, ino, _ in state}
+
         if any(
-            tokens.intersection(entry["historical"])
+            tokens.intersection(identity_view(entry["historical"]))
             for name, entry in registry.items()
             if name not in names or any(name in row["namespaces"] for row in profiles)
         ):
@@ -1650,6 +1653,8 @@ def replace(
                 issue
                 for issue in plan.acknowledged_credential_issues
                 if issue != "credential_isolated_retention_required"
+                # TASK-40136: locked-restore cases are not safety-copy omissions.
+                and not issue.startswith("credential_personal_context_restore_locked:")
             ),
         )
         reader._check(cancel)
@@ -1657,6 +1662,7 @@ def replace(
             candidate, journal, session=session, cancel=cancel
         )
         reader._check(cancel)
+        _install_personal_context_keys(archive, plan, candidate, cancel)
         publish_candidate(candidate, plan, journal, rollback, session=session)
         try:
             # This held session has now performed the same durable moves that
@@ -1697,8 +1703,26 @@ def replace(
                 _rollback_replacement(
                     journal, prepared, session, check_credentials, recovery_cancel
                 )
+            _forget_personal_context_keys(plan, candidate)
             raise ValueError("replacement_rolled_back") from None
     return operation
+
+
+def _forget_personal_context_keys(plan, candidate):
+    """TASK-40135: after a rollback, delete only the accounts this restore created."""
+    from tldw_chatbook.Personal_Context.recovery import forget_restored_keys
+
+    forget_restored_keys(plan, candidate)
+
+
+def _install_personal_context_keys(archive, plan, candidate, cancel):
+    """TASK-40135: the restored keys' fresh accounts, written before publication."""
+    if any(issue.startswith("personal_context_restore_readable:") for issue in plan.issues):
+        from tldw_chatbook.Personal_Context.recovery import install_restored_keys
+
+        install_restored_keys(
+            archive, reader.verify_sealed(archive, cancel), plan, candidate
+        )
 
 
 def _verify_applied_credentials(candidate, journal, *, session, records):
@@ -2368,6 +2392,7 @@ def recover_replacement(
                 _rollback_replacement(
                     journal, prepared, session, check_credentials, cancel
                 )
+                _forget_personal_context_keys(plan, candidate)
                 return "rolled_back"
             if any(
                 row.event in {"rollback_started", "rollback_credentials_planned"}
@@ -2377,6 +2402,10 @@ def recover_replacement(
             _apply_replacement_credentials(
                 candidate, journal, session=session, cancel=cancel
             )
+            if records[-1].event != "committed":
+                _install_personal_context_keys(
+                    _acquired_source(candidate, plan, cancel), plan, candidate, cancel
+                )
             rollback = next(
                 row.evidence["ciphertext"]["path"]
                 for row in records
@@ -2397,6 +2426,7 @@ def recover_replacement(
                 _rollback_replacement(
                     journal, prepared, session, check_credentials, Event()
                 )
+                _forget_personal_context_keys(plan, candidate)
                 raise ValueError("replacement_rolled_back") from None
             return "committed"
 

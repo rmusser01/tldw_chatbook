@@ -1,0 +1,33 @@
+{
+  "tldw_chatbook/Chat/console_agent_bridge.py": {
+    "both_changed": [],
+    "upstream_only_but_new_differs": []
+  },
+  "tldw_chatbook/Chat/console_chat_controller.py": {
+    "both_changed": [
+      "ConsoleChatController",
+      "ConsoleChatController._resolve_dispatch_retry_context",
+      "ConsoleChatController._submit_draft_body"
+    ],
+    "upstream_only_but_new_differs": []
+  },
+  "tldw_chatbook/UI/Console_Modules/workspace.py": {
+    "both_changed": [
+      "ConsoleWorkspaceController"
+    ],
+    "upstream_only_but_new_differs": []
+  },
+  "tldw_chatbook/UI/Screens/settings_screen.py": {
+    "both_changed": [
+      "SettingsScreen",
+      "SettingsScreen._category_ownership_records"
+    ],
+    "upstream_only_but_new_differs": []
+  },
+  "tldw_chatbook/app_lifecycle.py": {
+    "both_changed": [
+      "LifecycleMixin"
+    ],
+    "upstream_only_but_new_differs": []
+  }
+}

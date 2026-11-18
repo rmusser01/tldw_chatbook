@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 from dataclasses import fields, replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -46,7 +47,7 @@ from tldw_chatbook.Chat.console_project_instructions import (
     fingerprint_canonical_locator,
 )
 from tldw_chatbook.Chat.console_roleplay_identity import ConsolePresentationContext
-from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+from tldw_chatbook.Chat.console_runtime import ConsoleRuntime, ensure_console_runtime
 from tldw_chatbook.Chat.console_scratch_space import (
     ConsoleScratchSnapshot,
     ConsoleScratchSpaceManager,
@@ -1157,16 +1158,17 @@ async def test_recovery_refuses_to_merge_an_ambiguous_live_draft_and_keeps_suffi
 
 
 @pytest.mark.asyncio
-async def test_recovery_restores_exact_objects_before_later_attachment_suffix():
+@pytest.mark.parametrize("live_draft", ("", "captured draft"))
+async def test_recovery_restores_exact_objects_before_later_attachment_suffix(
+    live_draft,
+):
     """A compatible recovery restores its original attachment objects in order."""
     store = ConsoleChatStore()
     session = store.create_session(title="Recovery", workspace_id="global")
     transferred = PendingAttachment(
         "/old", "old.png", "image", "attachment", data=b"old"
     )
-    newer = PendingAttachment(
-        "/new", "new.png", "image", "attachment", data=b"new"
-    )
+    newer = PendingAttachment("/new", "new.png", "image", "attachment", data=b"new")
     store.add_pending_attachment(session.id, transferred)
     controller = _CustodyController(fail_before_acceptance=True)
     runtime = ConsoleRuntime(SimpleNamespace())
@@ -1185,6 +1187,7 @@ async def test_recovery_restores_exact_objects_before_later_attachment_suffix():
         await runtime.wait_for_turn(turn_id)
     await asyncio.sleep(0)
     store.add_pending_attachment(session.id, newer)
+    store.set_session_draft(session.id, live_draft)
 
     restored = runtime.restore_turn_recovery(turn_id)
 
@@ -1193,6 +1196,157 @@ async def test_recovery_restores_exact_objects_before_later_attachment_suffix():
     assert store.pending_attachments(session.id) == [transferred, newer]
     assert store.pending_attachments(session.id)[0] is transferred
     assert runtime.recoveries_for_session(session.id) == ()
+
+
+async def _runtime_failed_retrieval():
+    """Retain a real controller's refused preparation through runtime custody."""
+    from Tests.Chat.test_console_automatic_library_preparation import (
+        ConsoleChatStore as AutomaticStore,
+        _PolicyCoordinator,
+        _RagService,
+        _StreamingFence,
+    )
+
+    store = AutomaticStore()
+    store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.AUTOMATIC)
+    session = store.create_session(title="Retrieval recovery")
+    gateway = _StreamingFence()
+    service = _RagService(error=RuntimeError("retrieval unavailable"))
+    app = SimpleNamespace(library_rag_search_service=service)
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    runtime = ensure_console_runtime(app)
+    runtime.set_chat_store(store)
+    runtime.set_chat_controller(controller)
+    request = ConsoleTurnCustodyRequest(
+        turn_id="retrieval-owner",
+        session_id=session.id,
+        draft="exact retrieval text",
+        configuration=controller.resolve_runtime_turn_configuration_snapshot(
+            session.id
+        ),
+    )
+    runtime.accept_turn(request)
+    with pytest.raises(RuntimeError, match="refused before durable acceptance"):
+        await runtime.wait_for_turn(request.turn_id)
+    await asyncio.sleep(0)
+    preparation = store.preparation_for_session(session.id)
+    assert preparation.state is ConsoleTurnPreparationState.PAUSED
+    assert preparation.pause_kind.value == "retrieval"
+    assert gateway.provider_calls == 0
+    return runtime, controller, store, session, request, preparation, gateway, service
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ("restore", "discard"))
+async def test_recovery_action_releases_its_real_retrieval_pause(action):
+    (
+        runtime,
+        controller,
+        store,
+        session,
+        request,
+        preparation,
+        gateway,
+        service,
+    ) = await _runtime_failed_retrieval()
+    newer = PendingAttachment(
+        "/new", "new.txt", "text", "attachment", text_content="new text"
+    )
+    store.add_pending_attachment(session.id, newer)
+    try:
+        if action == "restore":
+            store.set_session_draft(session.id, request.draft)
+            runtime.restore_turn_recovery(request.turn_id)
+            assert store.session_draft(session.id) == request.draft
+        else:
+            store.set_session_draft(session.id, "newer draft")
+            assert runtime.discard_turn_recovery(request.turn_id)
+            assert store.session_draft(session.id) == "newer draft"
+        assert store.pending_attachments(session.id) == [newer]
+        assert store.pending_attachments(session.id)[0] is newer
+        assert store.preparation_for_session(session.id) is None
+        assert runtime.recoveries_for_session(session.id) == ()
+        service.error = None
+        result = await controller.submit_draft("following send")
+        assert result.accepted
+        assert gateway.provider_calls == 1
+    finally:
+        await runtime.dispose()
+
+
+@pytest.mark.asyncio
+async def test_failed_retrieval_release_keeps_recovery_for_retry(monkeypatch):
+    runtime, controller, store, session, request, preparation, _, _ = (
+        await _runtime_failed_retrieval()
+    )
+    entry = runtime.recoveries_for_session(session.id)[0]
+
+    def refuse_cancel(_preparation_id):
+        raise RuntimeError("cancellation unavailable")
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(controller, "cancel_library_preparation", refuse_cancel)
+            with pytest.raises(RuntimeError, match="cancellation unavailable"):
+                runtime.discard_turn_recovery(request.turn_id)
+            assert runtime.recoveries_for_session(session.id) == (entry,)
+            assert store.preparation_for_session(session.id) is preparation
+        assert runtime.discard_turn_recovery(request.turn_id)
+        assert store.preparation_for_session(session.id) is None
+    finally:
+        await runtime.dispose()
+
+
+@pytest.mark.asyncio
+async def test_older_recovery_does_not_cancel_newer_same_text_retrieval_pause():
+    (
+        runtime,
+        controller,
+        store,
+        session,
+        request,
+        old_preparation,
+        _,
+        _,
+    ) = await _runtime_failed_retrieval()
+    try:
+        controller.cancel_library_preparation(old_preparation.preparation_id)
+        result = await controller.submit_draft(request.draft)
+        assert not result.accepted
+        newer = store.preparation_for_session(session.id)
+        assert newer.preparation_id != old_preparation.preparation_id
+        assert runtime.discard_turn_recovery(request.turn_id)
+        assert store.preparation_for_session(session.id) is newer
+    finally:
+        await runtime.dispose()
+
+
+@pytest.mark.asyncio
+async def test_retrieval_recovery_preserves_later_draft_and_attachment_on_refused_restore():
+    (
+        runtime,
+        _,
+        store,
+        session,
+        request,
+        preparation,
+        _,
+        _,
+    ) = await _runtime_failed_retrieval()
+    later = PendingAttachment(
+        "/later", "later.png", "image", "attachment", data=b"later"
+    )
+    try:
+        store.set_session_draft(session.id, "later edit")
+        store.add_pending_attachment(session.id, later)
+        with pytest.raises(RuntimeError, match="live draft changed"):
+            runtime.restore_turn_recovery(request.turn_id)
+        assert store.session_draft(session.id) == "later edit"
+        assert store.pending_attachments(session.id) == [later]
+        assert store.preparation_for_session(session.id) is preparation
+        assert len(runtime.recoveries_for_session(session.id)) == 1
+    finally:
+        await runtime.dispose()
 
 
 def _settings(
@@ -1693,11 +1847,10 @@ def test_frozen_workspace_binding_maximum_excludes_later_roots(
         ) == (sandbox,)
         initial_note = roots_module.workspace_context_note(
             "workspace-a",
-            launch_cwd=tmp_path,
             registry=registry,
             binding_authority=frozen_authority,
         )
-        assert "  - a (read-only)" in initial_note
+        assert "  - binding-a → a [read-only]" in initial_note
         assert roots_module.frozen_workspace_roots(
             "workspace-a", frozen_authority, registry=registry
         ) == (root_a,)
@@ -1717,9 +1870,8 @@ def test_frozen_workspace_binding_maximum_excludes_later_roots(
             write=True,
             sandbox_root=sandbox,
         ) == (sandbox,)
-        assert "  - b" not in roots_module.workspace_context_note(
+        assert "binding-b" not in roots_module.workspace_context_note(
             "workspace-a",
-            launch_cwd=tmp_path,
             registry=registry,
             binding_authority=frozen_authority,
         )
@@ -3303,3 +3455,90 @@ def test_a_viewless_send_builds_the_mounted_sends_selection():
         assert _send_fields(viewless) == _send_fields(mounted)
     assert mounted.system_prompt == "Kestrel settings prompt."
     assert controller._provider_selection_for_session(blank.id).max_tokens is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ("restore", "discard"))
+async def test_saved_recovery_cleanup_can_retry_after_sqlite_failure(tmp_path, action):
+    from Tests.Chat.test_console_automatic_library_preparation import (
+        _PolicyCoordinator,
+        _RagService,
+        _StreamingFence,
+    )
+    from Tests.console_provider_doubles import persisted_console_store
+    from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+    from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryPolicyDefaults
+
+    store = persisted_console_store(
+        db_path=tmp_path / "chat.db",
+        library_policy_defaults=ConsoleLibraryPolicyDefaults(
+            auto_retrieve=ConsoleAutoRetrieve.AUTOMATIC,
+            assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+        ),
+    )
+    store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.AUTOMATIC)
+    session = store.create_session(title="Saved recovery")
+    gateway, service = _StreamingFence(), _RagService()
+    app = SimpleNamespace(
+        library_rag_search_service=service,
+        local_chat_conversation_service=ChatConversationService(store.persistence.db),
+    )
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    runtime = ensure_console_runtime(app)
+    runtime.set_chat_store(store)
+    runtime.set_chat_controller(controller)
+    connection = store.persistence.db.get_connection()
+    try:
+        first = await controller.submit_draft("initial saved turn")
+        assert first.accepted and session.persisted_conversation_id
+        service.error = RuntimeError("retrieval unavailable")
+        request = ConsoleTurnCustodyRequest(
+            turn_id="saved-recovery",
+            session_id=session.id,
+            draft="held second turn",
+            configuration=controller.resolve_runtime_turn_configuration_snapshot(
+                session.id
+            ),
+        )
+        runtime.accept_turn(request)
+        with pytest.raises(RuntimeError, match="refused before durable acceptance"):
+            await runtime.wait_for_turn(request.turn_id)
+        await asyncio.sleep(0)
+        preparation = store.preparation_for_session(session.id)
+        entry = runtime.recoveries_for_session(session.id)[0]
+        recover = getattr(runtime, f"{action}_turn_recovery")
+
+        connection.execute("PRAGMA query_only=ON")
+        try:
+            with pytest.raises(sqlite3.OperationalError):
+                recover(request.turn_id)
+        finally:
+            connection.execute("PRAGMA query_only=OFF")
+
+        assert store.preparation_for_session(session.id) is preparation
+        assert preparation.state is ConsoleTurnPreparationState.PAUSED
+        assert runtime.recoveries_for_session(session.id) == (entry,)
+        assert preparation.transient_user_message_id in {
+            message.id for message in store.messages_for_session(session.id)
+        }
+        assert preparation.preparation_id in controller._prepared_send_continuations
+        assert store.session_draft(session.id) == ""
+
+        recover(request.turn_id)
+        assert runtime.recoveries_for_session(session.id) == ()
+        assert store.preparation_for_session(session.id) is None
+        assert preparation.preparation_id not in controller._prepared_send_continuations
+        assert preparation.transient_user_message_id not in {
+            message.id for message in store.messages_for_session(session.id)
+        }
+        assert store.session_draft(session.id) == (
+            request.draft if action == "restore" else ""
+        )
+        service.error = None
+        following = await controller.submit_draft("following send")
+        assert following.accepted
+        assert "held second turn" not in repr(gateway.messages)
+    finally:
+        connection.execute("PRAGMA query_only=OFF")
+        await runtime.dispose()
+        store.persistence.db.close_connection()

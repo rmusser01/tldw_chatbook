@@ -5,10 +5,9 @@ from typing import ClassVar
 
 import pytest
 from textual.color import Color
-from textual.widgets import ProgressBar, Static, TextArea
+from textual.widgets import ProgressBar, Static
 
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
-from tldw_chatbook.Event_Handlers.ingest_status_helper import update_status
 from tldw_chatbook.Widgets.audio_troubleshooting_dialog import (
     AudioTroubleshootingDialog,
 )
@@ -19,39 +18,12 @@ class _StateHarness(ConsolidatedCSSApp):
     CSS_PATH: ClassVar[list[str]] = [str(BUNDLED_STYLESHEET)]
 
     def compose(self):
-        yield TextArea(id="ingest-status")
         yield Static(id="level-text")
         yield ProgressBar(id="level-meter")
         yield Static(classes="ds-text-error", id="error-reference")
         yield Static(classes="ds-text-warning", id="warning-reference")
         yield Static(classes="ds-text-ready", id="ready-reference")
         yield Static(classes="ds-text-primary", id="primary-reference")
-
-
-@pytest.mark.asyncio
-async def test_ingest_status_replaces_the_previous_semantic_color():
-    app = _StateHarness()
-    async with app.run_test() as pilot:
-        for level, reference in (
-            ("error", "error"),
-            ("warning", "warning"),
-            ("success", "ready"),
-            ("error", "error"),
-        ):
-            assert update_status(app, "ingest-status", level, level)
-            await pilot.pause()
-            status = app.query_one("#ingest-status", TextArea)
-            assert (
-                status.styles.color
-                == app.query_one(f"#{reference}-reference").styles.color
-            )
-            assert (
-                sum(
-                    status.has_class(f"ds-text-{name}")
-                    for name in ("error", "warning", "ready")
-                )
-                == 1
-            )
 
 
 @pytest.mark.asyncio

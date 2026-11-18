@@ -13,6 +13,7 @@ import pytest
 from PIL import Image as PILImage
 
 import tldw_chatbook.UI.Console_Modules.video as console_video_module
+from tldw_chatbook.Chat import console_generate_image as generation_owner
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Chat.console_chat_models import GenerationVariantMeta
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
@@ -281,7 +282,7 @@ async def test_h3_command_uses_raw_instruction_one_memory_image_and_count_one(
         raise AssertionError("generic image preparation must not run for H3")
 
     monkeypatch.setattr(
-        image_module, "prepare_generation_request", _generic_must_not_run
+        generation_owner, "prepare_generation_request", _generic_must_not_run
     )
     monkeypatch.setattr(image_module, "get_image_generation_config", _cfg)
     monkeypatch.setattr(
@@ -309,7 +310,7 @@ async def test_h3_command_uses_raw_instruction_one_memory_image_and_count_one(
         )
         return BatchResult(successes=[(_png_bytes(), "image/png", meta)], errors=[])
 
-    monkeypatch.setattr(image_module, "run_generation_batch", _batch)
+    monkeypatch.setattr(generation_owner, "run_generation_batch", _batch)
 
     persistence_order: list[str] = []
     original_append = store.append_generation_message
@@ -440,12 +441,12 @@ async def test_h3_refusals_happen_before_generic_preparation_or_generation(
         lambda: [{"name": "comfyui", "is_configured": True}],
     )
     monkeypatch.setattr(
-        image_module,
+        generation_owner,
         "prepare_generation_request",
         lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("generic prep called")),
     )
     monkeypatch.setattr(
-        image_module,
+        generation_owner,
         "run_generation_batch",
         lambda **_k: (_ for _ in ()).throw(AssertionError("generation called")),
     )
@@ -488,7 +489,7 @@ async def test_h3_source_header_read_runs_off_loop_while_pump_remains_responsive
         screen._image, "_h3_reference_from_snapshot", _barrier_header_read
     )
     monkeypatch.setattr(
-        image_module,
+        generation_owner,
         "run_generation_batch",
         lambda **_kwargs: (_ for _ in ()).throw(ImageGenerationCancelled()),
     )
@@ -536,7 +537,7 @@ async def test_h3_oversize_source_is_rejected_before_decode_or_dispatch(monkeypa
         lambda *_args: (_ for _ in ()).throw(AssertionError("decode called")),
     )
     monkeypatch.setattr(
-        image_module,
+        generation_owner,
         "run_generation_batch",
         lambda **_kwargs: (_ for _ in ()).throw(AssertionError("dispatch called")),
     )
@@ -605,7 +606,7 @@ async def test_h3_canonical_validation_performs_the_only_full_source_decode(
         assert issues == []
         return BatchResult(successes=[], errors=["canonical-only"])
 
-    monkeypatch.setattr(image_module, "run_generation_batch", _canonical_batch)
+    monkeypatch.setattr(generation_owner, "run_generation_batch", _canonical_batch)
     await screen._console_command_generate_image(
         CommandParse(kind="command", name="generate-image", args=":comfyui change it")
     )
@@ -685,7 +686,7 @@ async def test_h3_warning_band_is_rejected_by_canonical_ceiling_before_full_deco
         )
         return BatchResult(successes=[], errors=["canonical-refusal"])
 
-    monkeypatch.setattr(image_module, "run_generation_batch", _canonical_batch)
+    monkeypatch.setattr(generation_owner, "run_generation_batch", _canonical_batch)
     await screen._console_command_generate_image(
         CommandParse(kind="command", name="generate-image", args=":comfyui change it")
     )
@@ -721,7 +722,7 @@ async def test_stop_before_adapter_success_is_expected_and_retains_source(monkey
         assert event.wait(2)
         raise ImageGenerationCancelled()
 
-    monkeypatch.setattr(image_module, "run_generation_batch", _cancelled_batch)
+    monkeypatch.setattr(generation_owner, "run_generation_batch", _cancelled_batch)
     task = asyncio.create_task(
         screen._console_command_generate_image(
             CommandParse(
@@ -793,7 +794,7 @@ async def test_app_owned_task_cancellation_drains_linearized_runner_before_rerai
         finally:
             thread_settled.set()
 
-    monkeypatch.setattr(image_module, "run_generation_batch", _linearized_batch)
+    monkeypatch.setattr(generation_owner, "run_generation_batch", _linearized_batch)
     append_count = 0
     original_append = store.append_generation_message
 
@@ -876,7 +877,7 @@ async def test_terminal_generation_never_syncs_stale_origin_screen(monkeypatch):
             errors=[],
         )
 
-    monkeypatch.setattr(image_module, "run_generation_batch", _success_batch)
+    monkeypatch.setattr(generation_owner, "run_generation_batch", _success_batch)
     original_append = store.append_generation_message
 
     def _durable_append(session_id: str, **kwargs):
@@ -938,7 +939,7 @@ async def test_persistence_failure_retains_source_and_emits_sanitized_copy(monke
             errors=[],
         )
 
-    monkeypatch.setattr(image_module, "run_generation_batch", _success_batch)
+    monkeypatch.setattr(generation_owner, "run_generation_batch", _success_batch)
     monkeypatch.setattr(
         store,
         "append_generation_message",
@@ -1005,7 +1006,7 @@ async def test_failure_guidance_persistence_error_falls_back_without_masking_pri
         lambda: [{"name": "comfyui", "is_configured": True}],
     )
     monkeypatch.setattr(
-        image_module,
+        generation_owner,
         "run_generation_batch",
         lambda **_kwargs: (_ for _ in ()).throw(
             RuntimeError("primary sentinel response /private/source.png")
@@ -1099,7 +1100,7 @@ async def test_postcommit_consume_exception_keeps_success_and_logs_only_type(
             errors=[],
         )
 
-    monkeypatch.setattr(image_module, "run_generation_batch", _success_batch)
+    monkeypatch.setattr(generation_owner, "run_generation_batch", _success_batch)
     original_append = store.append_generation_message
 
     def _durable_append(session_id: str, **kwargs):

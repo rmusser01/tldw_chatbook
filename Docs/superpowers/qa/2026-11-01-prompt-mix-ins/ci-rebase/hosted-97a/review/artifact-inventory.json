@@ -1,0 +1,30 @@
+{
+  "artifacts": [
+    {
+      "path": "/private/tmp/mixins-97a-archive-review/review.md",
+      "sha256": "dd5769eac28d41c45f46f4507071193ccf2c8db16c5e18acb735b4fca5082cd4",
+      "bytes": 4955
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-review/scope.json",
+      "sha256": "20e30dc01b53c40f23b30d7c3a6e03bb9afb5f146c66896fcbe5d958b0572119",
+      "bytes": 10265
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-review/reviewed.patch",
+      "sha256": "8c7e8d4ceceecd8b73e2112de322886980a3ab244a57b22f021965e786bff33a",
+      "bytes": 12022
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-review/root-gates-addendum.md",
+      "sha256": "c247acf1d00a7f378e57c41579f061874d1dddfb880756ff9b3ee90dcb2a8c2d",
+      "bytes": 2545
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-review/root-gates-addendum.json",
+      "sha256": "22bbe23d8a3ba2a1b7f27f346345bf19c6af52211b9653518849bd9684a4994a",
+      "bytes": 3784
+    }
+  ],
+  "self_excluded": "artifact-inventory.json"
+}

@@ -1,0 +1,1481 @@
+........................................................................ [ 12%]
+........................................................................ [ 25%]
+........................................................................ [ 37%]
+........................................................................ [ 50%]
+........................................................................ [ 62%]
+........................................................................ [ 75%]
+........................................................................ [ 87%]
+...................................................EEEEEEEEEEEEEEEEEEE   [100%]
+==================================== ERRORS ====================================
+_ ERROR at setup of test_accepted_user_remains_in_request_context_but_not_current[accepted] _
+
+fixturedef = <FixtureDef argname='_disable_model_catalog_refresh' scope='function' baseid='Tests/UI'>
+request = <SubRequest '_disable_model_catalog_refresh' for <Function test_accepted_user_remains_in_request_context_but_not_current[accepted]>>
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_fixture_setup(fixturedef: FixtureDef, request) -> object | None:
+        asyncio_mode = _get_asyncio_mode(request.config)
+        if not _is_asyncio_fixture_function(fixturedef.func):
+            if asyncio_mode == Mode.STRICT:
+                # Ignore async fixtures without explicit asyncio mark in strict mode
+                # This applies to pytest_trio fixtures, for example
+                return (yield)
+            if not _is_coroutine_or_asyncgen(fixturedef.func):
+>               return (yield)
+                        ^^^^^
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/UI/conftest.py:192: in _disable_model_catalog_refresh
+    monkeypatch.setattr(
+tldw_chatbook/app.py:671: in <module>
+    APP_CONFIG = load_settings()
+                 ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2027: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c94d250>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+---------------------------- Captured stderr setup -----------------------------
+2026-10-03 12:45:57.223 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+2026-10-03 12:45:57.483 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+_ ERROR at setup of test_accepted_user_remains_in_request_context_but_not_current[dispatch_started] _
+
+fixturedef = <FixtureDef argname='_disable_model_catalog_refresh' scope='function' baseid='Tests/UI'>
+request = <SubRequest '_disable_model_catalog_refresh' for <Function test_accepted_user_remains_in_request_context_but_not_current[dispatch_started]>>
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_fixture_setup(fixturedef: FixtureDef, request) -> object | None:
+        asyncio_mode = _get_asyncio_mode(request.config)
+        if not _is_asyncio_fixture_function(fixturedef.func):
+            if asyncio_mode == Mode.STRICT:
+                # Ignore async fixtures without explicit asyncio mark in strict mode
+                # This applies to pytest_trio fixtures, for example
+                return (yield)
+            if not _is_coroutine_or_asyncgen(fixturedef.func):
+>               return (yield)
+                        ^^^^^
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/UI/conftest.py:192: in _disable_model_catalog_refresh
+    monkeypatch.setattr(
+tldw_chatbook/app.py:671: in <module>
+    APP_CONFIG = load_settings()
+                 ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2027: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c94d250>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+_ ERROR at setup of test_accepted_user_remains_in_request_context_but_not_current[ephemeral_accepted] _
+
+fixturedef = <FixtureDef argname='_disable_model_catalog_refresh' scope='function' baseid='Tests/UI'>
+request = <SubRequest '_disable_model_catalog_refresh' for <Function test_accepted_user_remains_in_request_context_but_not_current[ephemeral_accepted]>>
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_fixture_setup(fixturedef: FixtureDef, request) -> object | None:
+        asyncio_mode = _get_asyncio_mode(request.config)
+        if not _is_asyncio_fixture_function(fixturedef.func):
+            if asyncio_mode == Mode.STRICT:
+                # Ignore async fixtures without explicit asyncio mark in strict mode
+                # This applies to pytest_trio fixtures, for example
+                return (yield)
+            if not _is_coroutine_or_asyncgen(fixturedef.func):
+>               return (yield)
+                        ^^^^^
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/UI/conftest.py:192: in _disable_model_catalog_refresh
+    monkeypatch.setattr(
+tldw_chatbook/app.py:671: in <module>
+    APP_CONFIG = load_settings()
+                 ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2027: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c94d250>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+_ ERROR at setup of test_accepted_user_remains_in_request_context_but_not_current[ephemeral_dispatch_started] _
+
+fixturedef = <FixtureDef argname='_disable_model_catalog_refresh' scope='function' baseid='Tests/UI'>
+request = <SubRequest '_disable_model_catalog_refresh' for <Function test_accepted_user_remains_in_request_context_but_not_current[ephemeral_dispatch_started]>>
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_fixture_setup(fixturedef: FixtureDef, request) -> object | None:
+        asyncio_mode = _get_asyncio_mode(request.config)
+        if not _is_asyncio_fixture_function(fixturedef.func):
+            if asyncio_mode == Mode.STRICT:
+                # Ignore async fixtures without explicit asyncio mark in strict mode
+                # This applies to pytest_trio fixtures, for example
+                return (yield)
+            if not _is_coroutine_or_asyncgen(fixturedef.func):
+>               return (yield)
+                        ^^^^^
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/UI/conftest.py:192: in _disable_model_catalog_refresh
+    monkeypatch.setattr(
+tldw_chatbook/app.py:671: in <module>
+    APP_CONFIG = load_settings()
+                 ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2027: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c94d250>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+_ ERROR at setup of test_unaccepted_checkpoint_excludes_persisted_user_from_both_projections _
+
+fixturedef = <FixtureDef argname='_disable_model_catalog_refresh' scope='function' baseid='Tests/UI'>
+request = <SubRequest '_disable_model_catalog_refresh' for <Function test_unaccepted_checkpoint_excludes_persisted_user_from_both_projections>>
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_fixture_setup(fixturedef: FixtureDef, request) -> object | None:
+        asyncio_mode = _get_asyncio_mode(request.config)
+        if not _is_asyncio_fixture_function(fixturedef.func):
+            if asyncio_mode == Mode.STRICT:
+                # Ignore async fixtures without explicit asyncio mark in strict mode
+                # This applies to pytest_trio fixtures, for example
+                return (yield)
+            if not _is_coroutine_or_asyncgen(fixturedef.func):
+>               return (yield)
+                        ^^^^^
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/UI/conftest.py:192: in _disable_model_catalog_refresh
+    monkeypatch.setattr(
+tldw_chatbook/app.py:671: in <module>
+    APP_CONFIG = load_settings()
+                 ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2027: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c94d250>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+_____ ERROR at setup of test_production_shaped_remote_owner_is_not_current _____
+
+fixturedef = <FixtureDef argname='_disable_model_catalog_refresh' scope='function' baseid='Tests/UI'>
+request = <SubRequest '_disable_model_catalog_refresh' for <Function test_production_shaped_remote_owner_is_not_current>>
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_fixture_setup(fixturedef: FixtureDef, request) -> object | None:
+        asyncio_mode = _get_asyncio_mode(request.config)
+        if not _is_asyncio_fixture_function(fixturedef.func):
+            if asyncio_mode == Mode.STRICT:
+                # Ignore async fixtures without explicit asyncio mark in strict mode
+                # This applies to pytest_trio fixtures, for example
+                return (yield)
+            if not _is_coroutine_or_asyncgen(fixturedef.func):
+>               return (yield)
+                        ^^^^^
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/UI/conftest.py:192: in _disable_model_catalog_refresh
+    monkeypatch.setattr(
+tldw_chatbook/app.py:671: in <module>
+    APP_CONFIG = load_settings()
+                 ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2027: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c94d250>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+_ ERROR at setup of test_failed_user_is_excluded_but_failed_assistant_usage_is_current _
+
+fixturedef = <FixtureDef argname='_disable_model_catalog_refresh' scope='function' baseid='Tests/UI'>
+request = <SubRequest '_disable_model_catalog_refresh' for <Function test_failed_user_is_excluded_but_failed_assistant_usage_is_current>>
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_fixture_setup(fixturedef: FixtureDef, request) -> object | None:
+        asyncio_mode = _get_asyncio_mode(request.config)
+        if not _is_asyncio_fixture_function(fixturedef.func):
+            if asyncio_mode == Mode.STRICT:
+                # Ignore async fixtures without explicit asyncio mark in strict mode
+                # This applies to pytest_trio fixtures, for example
+                return (yield)
+            if not _is_coroutine_or_asyncgen(fixturedef.func):
+>               return (yield)
+                        ^^^^^
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/UI/conftest.py:192: in _disable_model_catalog_refresh
+    monkeypatch.setattr(
+tldw_chatbook/app.py:671: in <module>
+    APP_CONFIG = load_settings()
+                 ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2027: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c94d250>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+_ ERROR at setup of test_stopped_continuation_usage_is_current_but_not_request_context _
+
+fixturedef = <FixtureDef argname='_disable_model_catalog_refresh' scope='function' baseid='Tests/UI'>
+request = <SubRequest '_disable_model_catalog_refresh' for <Function test_stopped_continuation_usage_is_current_but_not_request_context>>
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_fixture_setup(fixturedef: FixtureDef, request) -> object | None:
+        asyncio_mode = _get_asyncio_mode(request.config)
+        if not _is_asyncio_fixture_function(fixturedef.func):
+            if asyncio_mode == Mode.STRICT:
+                # Ignore async fixtures without explicit asyncio mark in strict mode
+                # This applies to pytest_trio fixtures, for example
+                return (yield)
+            if not _is_coroutine_or_asyncgen(fixturedef.func):
+>               return (yield)
+                        ^^^^^
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/UI/conftest.py:192: in _disable_model_catalog_refresh
+    monkeypatch.setattr(
+tldw_chatbook/app.py:671: in <module>
+    APP_CONFIG = load_settings()
+                 ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2027: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c94d250>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+_ ERROR at setup of test_actual_turn_usage_replaces_the_user_row_estimate_in_current _
+
+fixturedef = <FixtureDef argname='_disable_model_catalog_refresh' scope='function' baseid='Tests/UI'>
+request = <SubRequest '_disable_model_catalog_refresh' for <Function test_actual_turn_usage_replaces_the_user_row_estimate_in_current>>
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_fixture_setup(fixturedef: FixtureDef, request) -> object | None:
+        asyncio_mode = _get_asyncio_mode(request.config)
+        if not _is_asyncio_fixture_function(fixturedef.func):
+            if asyncio_mode == Mode.STRICT:
+                # Ignore async fixtures without explicit asyncio mark in strict mode
+                # This applies to pytest_trio fixtures, for example
+                return (yield)
+            if not _is_coroutine_or_asyncgen(fixturedef.func):
+>               return (yield)
+                        ^^^^^
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/UI/conftest.py:192: in _disable_model_catalog_refresh
+    monkeypatch.setattr(
+tldw_chatbook/app.py:671: in <module>
+    APP_CONFIG = load_settings()
+                 ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2027: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c94d250>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+_ ERROR at setup of test_context_projection_adds_live_draft_and_seeded_greeting _
+
+fixturedef = <FixtureDef argname='_disable_model_catalog_refresh' scope='function' baseid='Tests/UI'>
+request = <SubRequest '_disable_model_catalog_refresh' for <Function test_context_projection_adds_live_draft_and_seeded_greeting>>
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_fixture_setup(fixturedef: FixtureDef, request) -> object | None:
+        asyncio_mode = _get_asyncio_mode(request.config)
+        if not _is_asyncio_fixture_function(fixturedef.func):
+            if asyncio_mode == Mode.STRICT:
+                # Ignore async fixtures without explicit asyncio mark in strict mode
+                # This applies to pytest_trio fixtures, for example
+                return (yield)
+            if not _is_coroutine_or_asyncgen(fixturedef.func):
+>               return (yield)
+                        ^^^^^
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/UI/conftest.py:192: in _disable_model_catalog_refresh
+    monkeypatch.setattr(
+tldw_chatbook/app.py:671: in <module>
+    APP_CONFIG = load_settings()
+                 ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2027: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c94d250>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+_ ERROR at setup of test_admitted_historical_media_makes_forecast_unavailable __
+
+fixturedef = <FixtureDef argname='_disable_model_catalog_refresh' scope='function' baseid='Tests/UI'>
+request = <SubRequest '_disable_model_catalog_refresh' for <Function test_admitted_historical_media_makes_forecast_unavailable>>
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_fixture_setup(fixturedef: FixtureDef, request) -> object | None:
+        asyncio_mode = _get_asyncio_mode(request.config)
+        if not _is_asyncio_fixture_function(fixturedef.func):
+            if asyncio_mode == Mode.STRICT:
+                # Ignore async fixtures without explicit asyncio mark in strict mode
+                # This applies to pytest_trio fixtures, for example
+                return (yield)
+            if not _is_coroutine_or_asyncgen(fixturedef.func):
+>               return (yield)
+                        ^^^^^
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/UI/conftest.py:192: in _disable_model_catalog_refresh
+    monkeypatch.setattr(
+tldw_chatbook/app.py:671: in <module>
+    APP_CONFIG = load_settings()
+                 ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2027: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c94d250>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+___ ERROR at setup of test_zero_input_price_is_known_and_empty_draft_is_dash ___
+
+fixturedef = <FixtureDef argname='_disable_model_catalog_refresh' scope='function' baseid='Tests/UI'>
+request = <SubRequest '_disable_model_catalog_refresh' for <Function test_zero_input_price_is_known_and_empty_draft_is_dash>>
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_fixture_setup(fixturedef: FixtureDef, request) -> object | None:
+        asyncio_mode = _get_asyncio_mode(request.config)
+        if not _is_asyncio_fixture_function(fixturedef.func):
+            if asyncio_mode == Mode.STRICT:
+                # Ignore async fixtures without explicit asyncio mark in strict mode
+                # This applies to pytest_trio fixtures, for example
+                return (yield)
+            if not _is_coroutine_or_asyncgen(fixturedef.func):
+>               return (yield)
+                        ^^^^^
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/UI/conftest.py:192: in _disable_model_catalog_refresh
+    monkeypatch.setattr(
+tldw_chatbook/app.py:671: in <module>
+    APP_CONFIG = load_settings()
+                 ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2027: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c94d250>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+____ ERROR at setup of test_invalid_draft_never_promises_a_next_send_charge ____
+
+fixturedef = <FixtureDef argname='_disable_model_catalog_refresh' scope='function' baseid='Tests/UI'>
+request = <SubRequest '_disable_model_catalog_refresh' for <Function test_invalid_draft_never_promises_a_next_send_charge>>
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_fixture_setup(fixturedef: FixtureDef, request) -> object | None:
+        asyncio_mode = _get_asyncio_mode(request.config)
+        if not _is_asyncio_fixture_function(fixturedef.func):
+            if asyncio_mode == Mode.STRICT:
+                # Ignore async fixtures without explicit asyncio mark in strict mode
+                # This applies to pytest_trio fixtures, for example
+                return (yield)
+            if not _is_coroutine_or_asyncgen(fixturedef.func):
+>               return (yield)
+                        ^^^^^
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/UI/conftest.py:192: in _disable_model_catalog_refresh
+    monkeypatch.setattr(
+tldw_chatbook/app.py:671: in <module>
+    APP_CONFIG = load_settings()
+                 ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2027: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c94d250>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+_ ERROR at setup of test_pending_media_or_unknown_forecast_inputs_are_unavailable[True-1000-3.0] _
+
+fixturedef = <FixtureDef argname='_disable_model_catalog_refresh' scope='function' baseid='Tests/UI'>
+request = <SubRequest '_disable_model_catalog_refresh' for <Function test_pending_media_or_unknown_forecast_inputs_are_unavailable[True-1000-3.0]>>
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_fixture_setup(fixturedef: FixtureDef, request) -> object | None:
+        asyncio_mode = _get_asyncio_mode(request.config)
+        if not _is_asyncio_fixture_function(fixturedef.func):
+            if asyncio_mode == Mode.STRICT:
+                # Ignore async fixtures without explicit asyncio mark in strict mode
+                # This applies to pytest_trio fixtures, for example
+                return (yield)
+            if not _is_coroutine_or_asyncgen(fixturedef.func):
+>               return (yield)
+                        ^^^^^
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/UI/conftest.py:192: in _disable_model_catalog_refresh
+    monkeypatch.setattr(
+tldw_chatbook/app.py:671: in <module>
+    APP_CONFIG = load_settings()
+                 ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2027: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c94d250>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+_ ERROR at setup of test_pending_media_or_unknown_forecast_inputs_are_unavailable[False-None-3.0] _
+
+fixturedef = <FixtureDef argname='_disable_model_catalog_refresh' scope='function' baseid='Tests/UI'>
+request = <SubRequest '_disable_model_catalog_refresh' for <Function test_pending_media_or_unknown_forecast_inputs_are_unavailable[False-None-3.0]>>
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_fixture_setup(fixturedef: FixtureDef, request) -> object | None:
+        asyncio_mode = _get_asyncio_mode(request.config)
+        if not _is_asyncio_fixture_function(fixturedef.func):
+            if asyncio_mode == Mode.STRICT:
+                # Ignore async fixtures without explicit asyncio mark in strict mode
+                # This applies to pytest_trio fixtures, for example
+                return (yield)
+            if not _is_coroutine_or_asyncgen(fixturedef.func):
+>               return (yield)
+                        ^^^^^
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/UI/conftest.py:192: in _disable_model_catalog_refresh
+    monkeypatch.setattr(
+tldw_chatbook/app.py:671: in <module>
+    APP_CONFIG = load_settings()
+                 ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2027: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c94d250>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+_ ERROR at setup of test_pending_media_or_unknown_forecast_inputs_are_unavailable[False-1000-None] _
+
+fixturedef = <FixtureDef argname='_disable_model_catalog_refresh' scope='function' baseid='Tests/UI'>
+request = <SubRequest '_disable_model_catalog_refresh' for <Function test_pending_media_or_unknown_forecast_inputs_are_unavailable[False-1000-None]>>
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_fixture_setup(fixturedef: FixtureDef, request) -> object | None:
+        asyncio_mode = _get_asyncio_mode(request.config)
+        if not _is_asyncio_fixture_function(fixturedef.func):
+            if asyncio_mode == Mode.STRICT:
+                # Ignore async fixtures without explicit asyncio mark in strict mode
+                # This applies to pytest_trio fixtures, for example
+                return (yield)
+            if not _is_coroutine_or_asyncgen(fixturedef.func):
+>               return (yield)
+                        ^^^^^
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/UI/conftest.py:192: in _disable_model_catalog_refresh
+    monkeypatch.setattr(
+tldw_chatbook/app.py:671: in <module>
+    APP_CONFIG = load_settings()
+                 ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2027: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c94d250>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+_ ERROR at setup of test_unknown_current_pricing_does_not_hide_known_next_send_forecast _
+
+fixturedef = <FixtureDef argname='_disable_model_catalog_refresh' scope='function' baseid='Tests/UI'>
+request = <SubRequest '_disable_model_catalog_refresh' for <Function test_unknown_current_pricing_does_not_hide_known_next_send_forecast>>
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_fixture_setup(fixturedef: FixtureDef, request) -> object | None:
+        asyncio_mode = _get_asyncio_mode(request.config)
+        if not _is_asyncio_fixture_function(fixturedef.func):
+            if asyncio_mode == Mode.STRICT:
+                # Ignore async fixtures without explicit asyncio mark in strict mode
+                # This applies to pytest_trio fixtures, for example
+                return (yield)
+            if not _is_coroutine_or_asyncgen(fixturedef.func):
+>               return (yield)
+                        ^^^^^
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/UI/conftest.py:192: in _disable_model_catalog_refresh
+    monkeypatch.setattr(
+tldw_chatbook/app.py:671: in <module>
+    APP_CONFIG = load_settings()
+                 ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2027: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c94d250>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+_ ERROR at setup of test_nonempty_tracker_failure_is_unavailable_but_true_empty_is_zero _
+
+fixturedef = <FixtureDef argname='_disable_model_catalog_refresh' scope='function' baseid='Tests/UI'>
+request = <SubRequest '_disable_model_catalog_refresh' for <Function test_nonempty_tracker_failure_is_unavailable_but_true_empty_is_zero>>
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_fixture_setup(fixturedef: FixtureDef, request) -> object | None:
+        asyncio_mode = _get_asyncio_mode(request.config)
+        if not _is_asyncio_fixture_function(fixturedef.func):
+            if asyncio_mode == Mode.STRICT:
+                # Ignore async fixtures without explicit asyncio mark in strict mode
+                # This applies to pytest_trio fixtures, for example
+                return (yield)
+            if not _is_coroutine_or_asyncgen(fixturedef.func):
+>               return (yield)
+                        ^^^^^
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/UI/conftest.py:192: in _disable_model_catalog_refresh
+    monkeypatch.setattr(
+tldw_chatbook/app.py:671: in <module>
+    APP_CONFIG = load_settings()
+                 ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2027: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c94d250>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+_ ERROR at setup of test_idle_refresh_coalesces_and_uses_late_bound_callbacks __
+
+fixturedef = <FixtureDef argname='_disable_model_catalog_refresh' scope='function' baseid='Tests/UI'>
+request = <SubRequest '_disable_model_catalog_refresh' for <Function test_idle_refresh_coalesces_and_uses_late_bound_callbacks>>
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_fixture_setup(fixturedef: FixtureDef, request) -> object | None:
+        asyncio_mode = _get_asyncio_mode(request.config)
+        if not _is_asyncio_fixture_function(fixturedef.func):
+            if asyncio_mode == Mode.STRICT:
+                # Ignore async fixtures without explicit asyncio mark in strict mode
+                # This applies to pytest_trio fixtures, for example
+                return (yield)
+            if not _is_coroutine_or_asyncgen(fixturedef.func):
+>               return (yield)
+                        ^^^^^
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/UI/conftest.py:192: in _disable_model_catalog_refresh
+    monkeypatch.setattr(
+tldw_chatbook/app.py:671: in <module>
+    APP_CONFIG = load_settings()
+                 ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2027: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c94d250>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+============================= slowest 25 durations =============================
+2.02s call     Tests/Chat/test_console_provider_gateway.py::test_aclose_does_not_close_a_still_running_childs_client
+
+(24 durations < 1s hidden.)
+=========================== short test summary info ============================
+ERROR Tests/UI/test_console_spend_projection.py::test_accepted_user_remains_in_request_context_but_not_current[accepted]
+ERROR Tests/UI/test_console_spend_projection.py::test_accepted_user_remains_in_request_context_but_not_current[dispatch_started]
+ERROR Tests/UI/test_console_spend_projection.py::test_accepted_user_remains_in_request_context_but_not_current[ephemeral_accepted]
+ERROR Tests/UI/test_console_spend_projection.py::test_accepted_user_remains_in_request_context_but_not_current[ephemeral_dispatch_started]
+ERROR Tests/UI/test_console_spend_projection.py::test_unaccepted_checkpoint_excludes_persisted_user_from_both_projections
+ERROR Tests/UI/test_console_spend_projection.py::test_production_shaped_remote_owner_is_not_current
+ERROR Tests/UI/test_console_spend_projection.py::test_failed_user_is_excluded_but_failed_assistant_usage_is_current
+ERROR Tests/UI/test_console_spend_projection.py::test_stopped_continuation_usage_is_current_but_not_request_context
+ERROR Tests/UI/test_console_spend_projection.py::test_actual_turn_usage_replaces_the_user_row_estimate_in_current
+ERROR Tests/UI/test_console_spend_projection.py::test_context_projection_adds_live_draft_and_seeded_greeting
+ERROR Tests/UI/test_console_spend_projection.py::test_admitted_historical_media_makes_forecast_unavailable
+ERROR Tests/UI/test_console_spend_projection.py::test_zero_input_price_is_known_and_empty_draft_is_dash
+ERROR Tests/UI/test_console_spend_projection.py::test_invalid_draft_never_promises_a_next_send_charge
+ERROR Tests/UI/test_console_spend_projection.py::test_pending_media_or_unknown_forecast_inputs_are_unavailable[True-1000-3.0]
+ERROR Tests/UI/test_console_spend_projection.py::test_pending_media_or_unknown_forecast_inputs_are_unavailable[False-None-3.0]
+ERROR Tests/UI/test_console_spend_projection.py::test_pending_media_or_unknown_forecast_inputs_are_unavailable[False-1000-None]
+ERROR Tests/UI/test_console_spend_projection.py::test_unknown_current_pricing_does_not_hide_known_next_send_forecast
+ERROR Tests/UI/test_console_spend_projection.py::test_nonempty_tracker_failure_is_unavailable_but_true_empty_is_zero
+ERROR Tests/UI/test_console_spend_projection.py::test_idle_refresh_coalesces_and_uses_late_bound_callbacks
+555 passed, 19 errors in 63.10s (0:01:03)

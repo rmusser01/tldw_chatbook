@@ -1,0 +1,8 @@
+....                                                                     [100%]
+============================= slowest 25 durations =============================
+2.93s call     Tests/UI/test_library_prompt_mixins.py::test_real_console_mixin_consumer_enables_without_touching_composer_or_system
+2.23s call     Tests/UI/test_console_prompts_controller.py::test_library_prompt_insert_handoff_appends_onto_the_live_draft
+2.12s call     Tests/UI/test_console_prompts_controller.py::test_library_prompt_insert_handoff_is_blocked_before_setup_completes
+
+(9 durations < 1s hidden.)
+4 passed in 10.16s

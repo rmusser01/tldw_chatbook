@@ -244,6 +244,14 @@ def _unlink_quietly(path: Path) -> None:
         logger.debug(f"Could not remove control socket {path}: {exc}")
 
 
+@dataclass(frozen=True)
+class _ControlDirectorySource:
+    """Original manager directory selection only; never connection proof."""
+
+    directory: Path | None
+    configuration: tuple
+
+
 class SshMasterManager:
     """Owns the ControlMaster lifecycle for remote workspace bindings.
 
@@ -299,6 +307,9 @@ class SshMasterManager:
         #: afterwards, so a straggler call connects directly instead of
         #: leaving a detached master behind (TASK-33406).
         self._closed = False
+        self._native_acceptances = {}
+        self._native_checks = {}
+        self._native_control_directory = None
 
     @property
     def ssh_bin(self) -> str:
@@ -344,6 +355,20 @@ class SshMasterManager:
         with self._registry_lock:
             if self._control_dir is None and not self._mux_unusable:
                 self._control_dir = self._resolve_control_dir()
+                if (
+                    getattr(self._resolve_control_dir, "__func__", None)
+                    is _NATIVE_MASTER_METHODS["_resolve_control_dir"]
+                ):
+                    self._native_control_directory = _ControlDirectorySource(
+                        self._control_dir,
+                        (
+                            self._ssh_bin,
+                            self._control_persist,
+                            self._enabled,
+                            self._connect_timeout_s,
+                            self._state_dir,
+                        ),
+                    )
             return self._control_dir
 
     def _resolve_control_dir(self) -> Path | None:
@@ -465,6 +490,11 @@ class SshMasterManager:
         Args:
             loc: A validated locator.
         """
+        from tldw_chatbook.Tools.workspace_tool_executor import current_ssh_call
+
+        native = current_ssh_call()
+        if native is not None:
+            native.check()
         if not self._enabled or self._closed:
             return
         key = _host_key(loc)
@@ -476,12 +506,12 @@ class SshMasterManager:
                 return
             try:
                 control_dir = self.control_path_for(loc)
+                if native is not None:
+                    native.control_directory(self, control_dir)
             except OSError as exc:
                 # An unusable state dir must degrade to direct connections
                 # (logged), not raise through the send path.
-                logger.warning(
-                    f"control dir for {loc.host} is unavailable: {exc!r}"
-                )
+                logger.warning(f"control dir for {loc.host} is unavailable: {exc!r}")
                 return
             if control_dir is None:
                 # No dir fits sun_path (logged at resolution): no masters,
@@ -491,6 +521,9 @@ class SshMasterManager:
             known = self._sockets.get(key)
             if known is not None:
                 if known.exists():
+                    from tldw_chatbook.Tools.workspace_tool_executor import accept_master
+
+                    accept_master(self, loc, control_dir)
                     return
                 # Tracked socket vanished (crashed master cleaned up after
                 # itself, or a janitor): forget it and spawn fresh.
@@ -499,12 +532,18 @@ class SshMasterManager:
             elif self._master_alive(loc):
                 # A master from outside this process still owns the socket;
                 # starting ours would race for the same %C path.
+                from tldw_chatbook.Tools.workspace_tool_executor import accept_master
+
+                accept_master(self, loc, control_dir)
                 return
             if self._closed:
                 # close_all began during the check above: skip the spawn so
                 # its barrier (and app quit) need not wait for a handshake.
                 return
             self._spawn_master(loc, key, control_dir)
+            from tldw_chatbook.Tools.workspace_tool_executor import accept_master
+
+            accept_master(self, loc, control_dir)
 
     def restart_if_dead(self, loc: RemoteLocator) -> bool:
         """Failure-triggered health path: replace a dead master.
@@ -622,12 +661,22 @@ class SshMasterManager:
             *build_ssh_argv(loc, ["-O", "check", "-o", option], []),
         ]
         try:
-            completed = subprocess.run(
-                argv,
-                capture_output=True,
-                timeout=_CHECK_TIMEOUT_SECONDS,
-                check=False,
+            from tldw_chatbook.Tools.workspace_tool_executor import current_ssh_call
+
+            native = current_ssh_call()
+            completed = (
+                native.finite_helper(argv, timeout=_CHECK_TIMEOUT_SECONDS)
+                if native is not None
+                else subprocess.run(
+                    argv,
+                    capture_output=True,
+                    timeout=_CHECK_TIMEOUT_SECONDS,
+                    check=False,
+                )
             )
+            if native is not None and completed.returncode == 0:
+                with self._registry_lock:
+                    self._native_checks[_host_key(loc)] = (native, loc, tuple(argv))
         except (subprocess.TimeoutExpired, OSError) as exc:
             logger.debug(f"ssh -O check could not run for {loc.host}: {exc!r}")
             return False
@@ -672,12 +721,13 @@ class SshMasterManager:
         ]
         argv = [self._ssh_bin, *build_ssh_argv(loc, options, [])]
         try:
-            completed = subprocess.run(
+            from tldw_chatbook.Tools.workspace_tool_executor import run_master_launcher
+
+            completed = run_master_launcher(
+                self,
+                loc,
                 argv,
-                capture_output=True,
-                timeout=self._connect_timeout_s + _MASTER_SPAWN_GRACE_SECONDS,
-                check=False,
-                start_new_session=True,
+                self._connect_timeout_s + _MASTER_SPAWN_GRACE_SECONDS,
             )
         except (subprocess.TimeoutExpired, OSError) as exc:
             logger.warning(
@@ -1271,6 +1321,11 @@ class RemoteWorkspaceTransport:
             raise ValueError(
                 f"python must be a bare interpreter name: {python!r}"
             )
+        from tldw_chatbook.Tools.workspace_tool_executor import current_ssh_call
+
+        native = current_ssh_call()
+        if native is not None:
+            native.check()
         _bundle, compressed, bootstrap = _bundle_payload()
         # Spec ("Transport & executor"): each call logs the bundle hash
         # for audit — one debug line at spawn, endpoint label + stamp
@@ -1304,6 +1359,8 @@ class RemoteWorkspaceTransport:
                     f"ssh could not be run: {exc}",
                 ),
             )
+        if native is not None:
+            native.request.issued = True
         stderr_capture = _BoundedCapture(_STDERR_CAPTURE_CAP)
         stderr_thread = threading.Thread(
             target=_drain_stderr,
@@ -1342,6 +1399,9 @@ class RemoteWorkspaceTransport:
                 exit_code = proc.wait()
             stdin_thread.join(timeout=_THREAD_JOIN_SECONDS)
             stderr_thread.join(timeout=_THREAD_JOIN_SECONDS)
+            if native is not None:
+                native.retire_process(proc, (stdin_thread, stderr_thread))
+                native.request.local_returned = True
         stderr_bytes = stderr_capture.value()
 
         if local_error is not None:
@@ -1511,3 +1571,43 @@ class RemoteWorkspaceTransport:
             )
         except Exception as exc:  # noqa: BLE001 - janitor must not break the call
             logger.warning(f"mux master restart for {loc.host} failed: {exc!r}")
+
+
+_NATIVE_TRANSPORT_METHODS = {
+    name: getattr(RemoteWorkspaceTransport, name)
+    for name in (
+        "call",
+        "classify_exchange_failure",
+        "_classify_failure",
+        "_restart_master_after_mux_failure",
+    )
+}
+_NATIVE_MASTER_METHODS = {
+    name: getattr(SshMasterManager, name)
+    for name in (
+        "ensure_master",
+        "_spawn_master",
+        "_master_alive",
+        "client_options",
+        "restart_if_dead",
+        "control_path_for",
+        "_control_path_option",
+        "close_all",
+        "_resolve_control_dir",
+        "_dir_names",
+    )
+}
+_NATIVE_TRANSPORT_MANAGER = RemoteWorkspaceTransport.master_manager
+_NATIVE_TRANSPORT_FUNCTIONS = {
+    name: globals()[name]
+    for name in (
+        "_bundle_payload",
+        "_remote_command",
+        "build_ssh_argv",
+        "_feed_stdin",
+        "_drain_stderr",
+        "_watch_exchange",
+        "_settle_process",
+        "_kill_group",
+    )
+}

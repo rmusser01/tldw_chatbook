@@ -52,6 +52,26 @@ register(
 
 register(
     PromptSpec(
+        id="agents.console_light_surface_hint",
+        subsystem="agents",
+        title="Plain chat tool hint",
+        description=(
+            "The one line appended to plain Console chat's system prompt when "
+            "its light tool set (date and time, calculator, ask-you-a-question) "
+            "is offered."
+        ),
+        used_in="Chat/console_agent_bridge.py (build_console_first_request_plan)",
+        default="Answer directly; call a tool only when the request needs one.",
+        contract_note=(
+            "TASK-34100.5.3: without it, gpt-4.1-nano answered 'Reply with "
+            "just: hi' with a tool call 15 times in 15 (probe 2026-10-05); "
+            "with it, 0 in 15. Never sent when no tool is offered."
+        ),
+    )
+)
+
+register(
+    PromptSpec(
         id="agents.tool_protocol",
         subsystem="agents",
         title="Tool-call fence protocol",

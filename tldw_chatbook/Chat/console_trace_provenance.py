@@ -61,6 +61,7 @@ class TraceProvenanceSource(str, Enum):
     SKILL_RENDER = "skill_render"
     WORLD_INFO = "world_info"
     DICTIONARY_TRANSFORM = "dictionary_transform"
+    PROMPT_MIXINS = "prompt_mixins"
     CITATION_EVIDENCE = "citation_evidence"
     PREFILL = "prefill"
 
@@ -77,6 +78,9 @@ class TraceOmissionReason(str, Enum):
     PERSISTENCE_FAILED = "persistence_failed"
     ALIGNMENT_MISMATCH = "alignment_mismatch"
     UNSUPPORTED_REPLACEMENT_SPAN = "unsupported_replacement_span"
+    # A placeholder that one link of a chained replacement leaves in place of
+    # its group; the chain's final link replaces it (ADR-337, 2026-11-06).
+    REPLACEMENT_CHAIN_LINK = "replacement_chain_link"
 
 
 class TraceTransformKind(str, Enum):
@@ -95,6 +99,7 @@ class TraceTransformKind(str, Enum):
     MESSAGE_REWRITE = "message_rewrite"
     RUNTIME_GUIDANCE = "runtime_guidance"
     CURRENT_TURN_TEXT = "current_turn_text"
+    PROMPT_MIXINS = "prompt_mixins"
     WINDOWING = "windowing"
 
 
@@ -463,6 +468,9 @@ class RequestRouteTraceProvenance:
     predicate: str = ""
     actor_id: str | None = field(default=None, repr=False)
     chain_id: str | None = field(default=None, repr=False)
+    # A spawned child's call: the saved user revision of the spawning turn.
+    # The child's own rows carry no saved revision (TASK-41310).
+    parent_revision_id: str | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if type(self.route) is not ConsoleRequestRoute:
@@ -489,6 +497,12 @@ class RequestRouteTraceProvenance:
             raise TraceProvenanceAlignmentError(
                 "actor and chain identity are not valid for this route"
             )
+        if self.parent_revision_id is not None:
+            if not record.actor_chain_required:
+                raise TraceProvenanceAlignmentError(
+                    "a child call needs an actor and chain route"
+                )
+            SemanticRevisionRef(self.parent_revision_id)
 
 
 def request_route_provenance(
@@ -496,6 +510,7 @@ def request_route_provenance(
     *,
     actor_id: str | None = None,
     chain_id: str | None = None,
+    parent_revision_id: str | None = None,
 ) -> RequestRouteTraceProvenance:
     """Build the structural route descriptor from the closed route census."""
 
@@ -507,7 +522,37 @@ def request_route_provenance(
         record.predicate,
         actor_id=actor_id,
         chain_id=chain_id,
+        parent_revision_id=parent_revision_id,
     )
+
+
+def stream_fallback_route_provenance(
+    original: RequestRouteTraceProvenance,
+    *,
+    provider: str,
+    execution_key: str,
+    has_tools: bool,
+) -> RequestRouteTraceProvenance:
+    """Keep generic agent retries on the existing failed-call continuation.
+
+    Direct llama and plain requests retain their established fallback route.
+    The TOOL_LOOP admission still proves the settled prior call and unchanged
+    request surface; this projection grants no adapter authority by itself.
+    """
+    generic = bool(execution_key) and not (
+        provider in {"llama_cpp", "local_llamacpp"} and not has_tools
+    )
+    if generic and original.route in {
+        ConsoleRequestRoute.AGENT_FIRST,
+        ConsoleRequestRoute.TOOL_LOOP,
+    }:
+        return request_route_provenance(
+            ConsoleRequestRoute.TOOL_LOOP,
+            actor_id=original.actor_id,
+            chain_id=original.chain_id,
+            parent_revision_id=original.parent_revision_id,
+        )
+    return request_route_provenance(ConsoleRequestRoute.LLAMA_FALLBACK)
 
 
 @dataclass(frozen=True, slots=True)
@@ -626,12 +671,20 @@ def _validate_derived_shape(descriptor: DerivedTraceProvenance) -> None:
                 "runtime guidance requires its result/control source and exact guidance inputs"
             )
         return
-    if transform is TraceTransformKind.CURRENT_TURN_TEXT:
+    if transform in {
+        TraceTransformKind.CURRENT_TURN_TEXT,
+        TraceTransformKind.PROMPT_MIXINS,
+    }:
         if (
             len(descriptor.inputs) != 1
             or type(descriptor.inputs[0]) is not SavedRevisionTraceProvenance
             or artifact is None
-            or artifact.source is not TraceProvenanceSource.ACTIVE_REQUEST
+            or artifact.source
+            is not (
+                TraceProvenanceSource.PROMPT_MIXINS
+                if transform is TraceTransformKind.PROMPT_MIXINS
+                else TraceProvenanceSource.ACTIVE_REQUEST
+            )
         ):
             raise TraceProvenanceAlignmentError(
                 "current-turn text requires one saved source and its active artifact"
@@ -660,6 +713,23 @@ def _validate_derived_shape(descriptor: DerivedTraceProvenance) -> None:
         ):
             raise TraceProvenanceAlignmentError(
                 "sidecar attachment artifact contradicts its owner"
+            )
+        return
+    if (
+        transform is TraceTransformKind.MESSAGE_REWRITE
+        and artifact is not None
+        and artifact.source is TraceProvenanceSource.PROVIDER_OVERLAY
+    ):
+        if (
+            len(descriptor.inputs) != 2
+            or type(descriptor.inputs[0]) is not SavedRevisionTraceProvenance
+            or type(descriptor.inputs[1]) is not DerivedTraceProvenance
+            or descriptor.inputs[1].transform
+            is not TraceTransformKind.CONTINUATION_ATTACHMENT
+            or descriptor.inputs[1].inputs != (descriptor.inputs[0],)
+        ):
+            raise TraceProvenanceAlignmentError(
+                "completed replay transform requires its exact saved continuation owner"
             )
         return
     required_artifacts = {
@@ -738,9 +808,21 @@ def current_turn_source_revision_id(descriptor: TraceProvenance) -> str | None:
     """
     if type(descriptor) is SavedRevisionTraceProvenance:
         return descriptor.revision_id
+    if type(descriptor) is DerivedTraceProvenance and descriptor.transform in {
+        TraceTransformKind.CURRENT_TURN_TEXT,
+        TraceTransformKind.PROMPT_MIXINS,
+    }:
+        return descriptor.inputs[0].revision_id
+    return None
+
+
+def completed_replay_source_revision_id(descriptor: TraceProvenance) -> str | None:
+    """Identify only the closed saved-owner/continuation replay derivation."""
     if (
         type(descriptor) is DerivedTraceProvenance
-        and descriptor.transform is TraceTransformKind.CURRENT_TURN_TEXT
+        and descriptor.transform is TraceTransformKind.MESSAGE_REWRITE
+        and descriptor.artifact is not None
+        and descriptor.artifact.source is TraceProvenanceSource.PROVIDER_OVERLAY
     ):
         return descriptor.inputs[0].revision_id
     return None
@@ -817,6 +899,8 @@ def _descriptor_matches_category(
             for item in descriptor.inputs[1:]
         )
     if type(descriptor) is DerivedTraceProvenance and descriptor.artifact is not None:
+        if descriptor.transform is TraceTransformKind.PROMPT_MIXINS:
+            return TraceProvenanceSource.ACTIVE_REQUEST in artifact_sources
         return descriptor.artifact.source in artifact_sources
     if type(descriptor) is SavedRevisionTraceProvenance:
         return allow_saved
@@ -1113,6 +1197,22 @@ class ConsoleRequestProvenance:
         ):
             raise TraceProvenanceAlignmentError(
                 "trace provenance category mismatch: metadata"
+            )
+        def has_saved(descriptor: TraceProvenance) -> bool:
+            return type(descriptor) is SavedRevisionTraceProvenance or (
+                type(descriptor) is DerivedTraceProvenance
+                and any(has_saved(item) for item in descriptor.inputs)
+            )
+
+        if any(
+            type(item) is RequestRouteTraceProvenance
+            and item.parent_revision_id is not None
+            for item in self.metadata
+        ) and any(has_saved(item) for item in self.flattened_messages()):
+            # TASK-41310: a child's rows are its own; it names the spawning
+            # turn only through its route, never by borrowing saved rows.
+            raise TraceProvenanceAlignmentError(
+                "a child call route cannot carry saved message rows"
             )
         policies: set[FrozenTracePolicy] = set()
 
@@ -1454,7 +1554,8 @@ def trace_provenance_admission_transaction(
         raise TypeError("database must provide a transaction context")
     local = getattr(database, "_local", None)
     if local is not None:
-        active = getattr(local, "transaction_depth", 0) > 0
+        depth_of = getattr(database, "managed_transaction_depth", None)
+        active = callable(depth_of) and depth_of() > 0
         connection = getattr(local, "conn", None)
         active = active or bool(
             connection is not None and getattr(connection, "in_transaction", False)

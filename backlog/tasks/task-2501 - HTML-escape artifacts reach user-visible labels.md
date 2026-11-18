@@ -1,7 +1,7 @@
 ---
 id: TASK-2501
 title: HTML-escape artifacts reach user-visible labels
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-04 21:52'
 labels:
@@ -25,7 +25,17 @@ This is not a one-off bug in a single widget: `_safe_display_text` is the module
 
 ## Acceptance Criteria
 
-- [ ] Titles/labels containing `&` (and other HTML-special characters) render literally, not as HTML entities, in the staged-evidence strip, the Inspector "Sources" tray, and the Console Settings modal's "Sources" line
-- [ ] The fix is applied module-wide in `console_display_state.py` (e.g. `_safe_display_text` stops HTML-escaping when every consumer is a markup-free sink), not patched one call site at a time
-- [ ] The existing Rich-markup-injection protection these call sites also provide (e.g. a title containing `[/]` or `[bold]`) is unchanged — this task fixes the redundant HTML-escaping artifact, not the markup-safety behavior PR-T1's I1 fix (`2c5600041`) shipped
-- [ ] A test pins a `&`-containing title rendering literally on at least the strip and the Settings modal's "Sources" line
+- [x] Titles/labels containing `&` (and other HTML-special characters) render literally, not as HTML entities, in the staged-evidence strip, the Inspector "Sources" tray, and the Console Settings modal's "Sources" line
+- [x] The fix is applied module-wide in `console_display_state.py` (e.g. `_safe_display_text` stops HTML-escaping when every consumer is a markup-free sink), not patched one call site at a time
+- [x] The existing Rich-markup-injection protection these call sites also provide (e.g. a title containing `[/]` or `[bold]`) is unchanged — this task fixes the redundant HTML-escaping artifact, not the markup-safety behavior PR-T1's I1 fix (`2c5600041`) shipped
+- [x] A test pins a `&`-containing title rendering literally on at least the strip and the Settings modal's "Sources" line
+
+## Closeout audit 2026-10-11
+
+Verdict: DONE (verified against origin/dev @ a3c47c6c72).
+
+Evidence:
+- `tldw_chatbook/Chat/console_display_state.py:94-122` — `_safe_display_text` no longer HTML-escapes; its docstring cites TASK-32802.4 with exactly this task's rationale ("every destination these values reach is a terminal surface that renders them literally... none of them decode entities"), covers the already-encoded-input doubling case, and fixes the markup failure mode at the sinks.
+- Fix applied module-wide (the helper is the single convention), matching AC2; the same fix was made on the Library side in `library_rag_state.py` (RAG-30/31).
+- Landed in `a2faa20c96` ("fix: stop escaping text that is rendered literally").
+- All three ACs ticked.

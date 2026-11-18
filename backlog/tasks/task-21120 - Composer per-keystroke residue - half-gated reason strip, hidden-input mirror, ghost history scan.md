@@ -2,7 +2,7 @@
 id: TASK-21120
 title: >-
   Composer per-keystroke residue - half-gated reason strip, hidden-input mirror, ghost history scan
-status: To Do
+status: Won't Do
 assignee: []
 created_date: '2026-08-22'
 labels:
@@ -69,3 +69,11 @@ evidence above is what a re-verification pass measured against dev before dispat
 accepted, close this as "retired on evidence" rather than "won't fix", because the mechanism was
 real and only the cost or the prescribed fix was wrong.
 
+
+## Closeout audit 2026-10-11
+
+Board-prune audit (branch chore/board-prune-c, base a3c47c6c72): retired on evidence (board 'Won't Do' enum), accepting the task's own 2026-08-24 closure recommendation.
+
+- The re-verification in-file found the premise mis-stated on all three legs: no ARIA announcement exists for the reason gate; the hidden-input "skip unchanged text" fix can never fire while typing; only the ghost-scan cap survives, and the real cost (blink tick arming a full reflow ~2x/s) already shipped separately as TASK-21692.
+- Code state on origin/dev a3c47c6c72 is consistent with retirement rather than a task-driven fix: the mirror cache landed independently (task-24453, console_composer_bar.py:2039), the strip update is content-equality gated (:2173), and the ghost scan is focus/caret-gated over capped history - no work remains to dispatch under this ID.
+- Closed as "retired on evidence" per the recommendation's own wording (the mechanism was real; the cost or prescribed fix was wrong).

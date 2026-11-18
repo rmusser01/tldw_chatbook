@@ -32,6 +32,39 @@ class ProductionCssComposerApp(ComposerApp):
     ]
 
 
+@pytest.mark.asyncio
+async def test_voice_presentation_reads_current_composer_helper_bindings(monkeypatch):
+    from tldw_chatbook.Widgets.Console import console_composer_bar as owner
+
+    app = ProductionCssComposerApp()
+    async with app.run_test(size=(120, 35)) as pilot:
+        await pilot.pause()
+        composer = app.query_one(ConsoleComposerBar)
+        cleared, swapped = [], []
+        original_clear = owner._clear_static_content
+        original_swap = owner._swap_size_class
+
+        def clear(widget):
+            cleared.append(widget)
+            return original_clear(widget)
+
+        def swap(widget, prefix, wanted):
+            swapped.append((widget, prefix, wanted))
+            return original_swap(widget, prefix, wanted)
+
+        monkeypatch.setattr(owner, "resolve_glyph", lambda _name: "REC")
+        monkeypatch.setattr(owner, "_clear_static_content", clear)
+        monkeypatch.setattr(owner, "_swap_size_class", swap)
+        composer.set_voice_status(STATE_LISTENING, elapsed_seconds=3)
+        await pilot.pause()
+        chip = composer.query_one("#console-voice-status", Static)
+        assert "REC 0:03" in _painted(chip)
+        composer.set_voice_status(STATE_IDLE)
+        await pilot.pause()
+        assert chip in cleared
+        assert (chip, "w-", "w-0") in swapped
+
+
 def _visible(widget) -> bool:
     """True only when the widget and every ancestor are displayed.
 
@@ -183,7 +216,9 @@ async def test_the_transcribing_label_truncates_from_the_right_not_the_left():
         chip = composer.query_one("#console-voice-status", Static)
         painted = _painted(chip)
         assert "◉" in painted
-        assert "Transcr" in painted, f"expected the label's start to survive, got {painted!r}"
+        assert "Transcr" in painted, (
+            f"expected the label's start to survive, got {painted!r}"
+        )
         assert "scribing" not in painted, (
             f"the label was still truncated from the left, got {painted!r}"
         )
@@ -366,7 +401,9 @@ async def test_production_css_busy_status_stays_meaningful_at_narrow_width():
         chip = composer.query_one("#console-voice-status", Static)
         painted = _painted(chip)
         assert painted == "Queued"
-        assert str(chip.tooltip) == "Local transcription busy — dictation will run next."
+        assert (
+            str(chip.tooltip) == "Local transcription busy — dictation will run next."
+        )
         assert composer.query_one("#console-dictation").region.right <= app.size.width
         assert _visible(chip)
         assert chip.region.x + chip.region.width <= composer.region.right
@@ -439,7 +476,9 @@ async def test_the_mic_tooltips_claim_nothing_the_backend_no_longer_does():
             tooltip = str(mic.tooltip)
             lowered = tooltip.lower()
             assert tooltip, f"{state} has no tooltip"
-            assert len(tooltip) <= 90, f"{state} tooltip is too long to hover: {tooltip}"
+            assert len(tooltip) <= 90, (
+                f"{state} tooltip is too long to hover: {tooltip}"
+            )
             for word in forbidden:
                 assert word not in lowered, f"{state} tooltip still claims {word!r}"
 

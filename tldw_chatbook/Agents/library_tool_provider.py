@@ -1,6 +1,6 @@
 """Descriptor-backed Console ToolProvider over `LocalLibraryToolService`.
 
-task-1337 / ADR-030/031/032. Synchronous `ToolProvider`: it runs on the
+task-1337 / ADR-298/031/032. Synchronous `ToolProvider`: it runs on the
 agent worker thread and delegates to the shared synchronous
 `LocalLibraryToolService`. Result mapping follows the spec's Console/MCP
 parity rule: a successful payload is JSON-serialized into
@@ -49,6 +49,7 @@ from tldw_chatbook.Library.library_tool_contract import (
     json_dumps_compact,
     make_public_id,
 )
+
 if TYPE_CHECKING:
     from tldw_chatbook.Notes.agent_lessons import AgentLessonClassification
 
@@ -153,7 +154,9 @@ class _BuiltinLibraryAuthorityIssuer:
             dead_ref: weakref.ReferenceType[BuiltinLibraryAuthority],
             *,
             key: int = authority_key,
-            owner_ref: weakref.ReferenceType[_BuiltinLibraryAuthorityIssuer] = issuer_ref,
+            owner_ref: weakref.ReferenceType[
+                _BuiltinLibraryAuthorityIssuer
+            ] = issuer_ref,
         ) -> None:
             owner = owner_ref()
             if owner is None:
@@ -167,9 +170,7 @@ class _BuiltinLibraryAuthorityIssuer:
             self._builtin_library_authorities[authority_key] = authority_ref
         return authority
 
-    def authenticates_builtin_authority(
-        self, authority: object
-    ) -> bool:
+    def authenticates_builtin_authority(self, authority: object) -> bool:
         """Authenticate only the exact currently issued object for this instance."""
         if (
             not isinstance(authority, BuiltinLibraryAuthority)
@@ -332,9 +333,7 @@ class LibraryToolProvider(_BuiltinLibraryAuthorityIssuer):
             isinstance(expected_version, bool) or not isinstance(expected_version, int)
         ):
             raise AgentLessonPreflightError()
-        expected_organization_version = arguments.get(
-            "expected_organization_version"
-        )
+        expected_organization_version = arguments.get("expected_organization_version")
         if expected_organization_version is not None and not isinstance(
             expected_organization_version, str
         ):
@@ -368,7 +367,9 @@ class LibraryToolProvider(_BuiltinLibraryAuthorityIssuer):
 
         normalized = str(run_id or "")
         with self._agent_lesson_approval_lock:
-            stale = [key for key in self._agent_lesson_approvals if key[0] == normalized]
+            stale = [
+                key for key in self._agent_lesson_approvals if key[0] == normalized
+            ]
             for key in stale:
                 self._agent_lesson_approvals.pop(key, None)
 
@@ -498,8 +499,7 @@ class LibraryToolProvider(_BuiltinLibraryAuthorityIssuer):
             ):
                 raise _AgentLessonAuthorityRefusal("content_changed")
             if (
-                reviewed.observed_organization_version
-                != observed_organization_version
+                reviewed.observed_organization_version != observed_organization_version
                 or reviewed.receipt_version != receipt_version
             ):
                 raise _AgentLessonAuthorityRefusal("organization_changed")
@@ -635,3 +635,42 @@ __all__ = [
     "BuiltinLibraryAuthority",
     "LibraryToolProvider",
 ]
+
+
+# Original Library read interfaces; unknown replacements require OPAQUE custody.
+from types import FunctionType as _LibraryFunction
+
+_NATIVE_ORDINARY_LIBRARY_CLASS = LibraryToolProvider
+_NATIVE_ORDINARY_LIBRARY_METHODS = tuple(
+    (name, value)
+    for name, value in vars(LibraryToolProvider).items()
+    if isinstance(value, (_LibraryFunction, staticmethod, classmethod, property))
+)
+_NATIVE_ORDINARY_LIBRARY_FUNCTIONS = tuple(
+    (
+        function,
+        function.__code__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        tuple((function.__kwdefaults__ or {}).items()),
+        function.__closure__,
+        tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+    )
+    for function in (
+        *(
+            value
+            for value in tuple(globals().values())
+            if type(value) is _LibraryFunction and value.__module__ == __name__
+        ),
+        *(
+            value.__func__ if isinstance(value, (staticmethod, classmethod)) else value
+            for _name, value in _NATIVE_ORDINARY_LIBRARY_METHODS
+            if not isinstance(value, property)
+        ),
+    )
+)
+
+
+def is_native_library_provider(provider: object) -> bool:
+    """Recognize the original Library provider class."""
+    return type(provider) is _NATIVE_ORDINARY_LIBRARY_CLASS

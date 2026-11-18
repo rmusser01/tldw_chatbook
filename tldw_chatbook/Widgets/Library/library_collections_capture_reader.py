@@ -196,6 +196,103 @@ class CollectionsCaptureReaderPresentation:
         return False, _reason_copy(capability.reason)
 
 
+def _free_text_values(
+    presentation: CollectionsCaptureReaderPresentation,
+) -> dict[str, tuple[Any, str]]:
+    """Each free-text field's (owning capture, composed value), by widget id.
+
+    TASK-41126 review r15lc-rev2: these are read by their own actions, not kept
+    in state, so a repaint carries their typed text while both are unchanged.
+    """
+    request = presentation.state.requested_scope
+    loaded = presentation.state.loaded_detail
+    return {
+        "library-collections-filter": (None, request.search if request else ""),
+        "library-collections-filter-domain": (
+            None,
+            (request.domain or "") if request else "",
+        ),
+        "library-collections-filter-tags": (
+            None,
+            ", ".join(request.tags) if request else "",
+        ),
+        "library-collections-filter-date-from": (
+            None,
+            (request.date_from or "") if request else "",
+        ),
+        "library-collections-filter-date-to": (
+            None,
+            (request.date_to or "") if request else "",
+        ),
+        "library-collections-linked-note-id": (
+            loaded.capture.identity if loaded else None,
+            "",
+        ),
+    }
+
+
+async def recompose_capture_panes(
+    screen: Any, presentation: CollectionsCaptureReaderPresentation
+) -> bool:
+    """Re-render the mounted capture panes from ``presentation`` (TASK-40328).
+
+    Only the scope rows and the Items and Work panes recompose, never the
+    screen, and only when their presentation changed or their last recompose
+    never finished; a control the rebuild removed is focused again by id, or
+    the content's first control when it is gone (TASK-41126).
+
+    Args:
+        screen: The Library screen (a ``BaseAppScreen``) hosting the panes.
+        presentation: The new render input for every pane.
+
+    Returns:
+        False, having done nothing, when the Items or Work pane is not mounted.
+    """
+    items = screen.query("#library-collections-items")
+    work = screen.query("#library-collections-work")
+    if not items or not work:
+        return False
+    scopes = screen.query("#library-collections-scopes")
+    panes = [
+        pane
+        for pane in (*scopes, items.first(), work.first())
+        if pane.presentation != presentation or getattr(pane, "_half_built", False)
+    ]
+    focused = screen.focused
+    owned = focused is not None and any(
+        pane is focused or pane in focused.ancestors for pane in panes
+    )
+    focus_id = focused.id if owned else None
+    composed = _free_text_values(presentation)
+    for pane in panes:
+        previous = _free_text_values(pane.presentation)
+        typed = {
+            widget.id: widget.value
+            for field_id, value in composed.items()
+            if previous[field_id] == value
+            for widget in pane.query(f"#{field_id}")
+        }
+        screen.release_mouse_capture_for_teardown()
+        pane.presentation = presentation
+        # Until its recompose completes: a cancelled entry worker can leave the
+        # pane half rebuilt, and an identical repaint must not skip it then.
+        pane._half_built = True
+        await pane.recompose()
+        pane._half_built = False
+        for field_id, text in typed.items():
+            for widget in pane.query(f"#{field_id}"):
+                widget.value = text
+    screen.sweep_stale_mouse_capture()
+    # Textual moved focus off the removed widget. Restore it as a whole-screen
+    # recompose does: the same id if focusable, else the content's first control.
+    if focus_id and getattr(screen.focused, "id", None) != focus_id:
+        targets = [target for target in screen.query(f"#{focus_id}") if target.focusable]
+        target = targets[0] if targets else screen._first_focusable_in_content()
+        if target is not None:
+            target.focus()
+    return True
+
+
 class LibraryCollectionsScopeRows(Vertical):
     """Contextual capture scopes mounted directly beneath Collections."""
 
@@ -487,26 +584,26 @@ class LibraryCollectionsItemsPane(Vertical):
                         compact=True,
                         disabled=self.presentation.quick_capture_saving,
                     )
+        values = _free_text_values(self.presentation)
         if self.presentation.filters_open:
-            request = state.requested_scope
             with Vertical(id="library-collections-filters-form"):
                 yield Input(
-                    value=(request.domain or "") if request is not None else "",
+                    value=values["library-collections-filter-domain"][1],
                     placeholder="Domain",
                     id="library-collections-filter-domain",
                 )
                 yield Input(
-                    value=", ".join(request.tags) if request is not None else "",
+                    value=values["library-collections-filter-tags"][1],
                     placeholder="Tags, comma separated",
                     id="library-collections-filter-tags",
                 )
                 yield Input(
-                    value=(request.date_from or "") if request is not None else "",
+                    value=values["library-collections-filter-date-from"][1],
                     placeholder="From date (YYYY-MM-DD)",
                     id="library-collections-filter-date-from",
                 )
                 yield Input(
-                    value=(request.date_to or "") if request is not None else "",
+                    value=values["library-collections-filter-date-to"][1],
                     placeholder="To date (YYYY-MM-DD)",
                     id="library-collections-filter-date-to",
                 )
@@ -522,7 +619,7 @@ class LibraryCollectionsItemsPane(Vertical):
                         compact=True,
                     )
         yield Input(
-            value=state.requested_scope.search if state.requested_scope else "",
+            value=values["library-collections-filter"][1],
             placeholder="Filter captures",
             id="library-collections-filter",
         )

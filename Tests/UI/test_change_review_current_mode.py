@@ -40,9 +40,11 @@ from tldw_chatbook.UI.Screens.change_review_screen import (
     _land_on_ui,
     CHECKING_FOR_CHANGES_COPY,
     CURRENT_MODE_SENTINEL,
-    AgentRunsChangeReviewProvider,
     ChangeReviewDiffPane,
     ChangeReviewScreen,
+)
+from tldw_chatbook.Workspaces.change_review_provider import (
+    AgentRunsChangeReviewProvider,
 )
 from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService
 from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker

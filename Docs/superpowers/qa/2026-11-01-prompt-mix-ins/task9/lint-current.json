@@ -1,0 +1,1280 @@
+[
+  {
+    "file": "tldw_chatbook/Chat/console_chat_models.py",
+    "code": "UP035",
+    "message": "Import from `collections.abc` instead: `Iterable`, `Mapping`",
+    "location": {
+      "column": 1,
+      "row": 10
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_models.py",
+    "code": "I001",
+    "message": "Import block is un-sorted or un-formatted",
+    "location": {
+      "column": 5,
+      "row": 18
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_models.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 41,
+      "row": 62
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_models.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 17,
+      "row": 553
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_models.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 50,
+      "row": 592
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_models.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 10,
+      "row": 627
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_models.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 17,
+      "row": 685
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_models.py",
+    "code": "TRY004",
+    "message": "Prefer `TypeError` exception for invalid type",
+    "location": {
+      "column": 13,
+      "row": 924
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_models.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 44,
+      "row": 1064
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_models.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 10,
+      "row": 1071
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_models.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 50,
+      "row": 1158
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_models.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 15,
+      "row": 1210
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_models.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 24,
+      "row": 1215
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_models.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 32,
+      "row": 1219
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_models.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 22,
+      "row": 1222
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_models.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 12,
+      "row": 1261
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_models.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 15,
+      "row": 1268
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_models.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 15,
+      "row": 1272
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_models.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 28,
+      "row": 1279
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_models.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 21,
+      "row": 1306
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_models.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 15,
+      "row": 1365
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_models.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 12,
+      "row": 1369
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_models.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 15,
+      "row": 1370
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_models.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 28,
+      "row": 1371
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_models.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 10,
+      "row": 1397
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_models.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 10,
+      "row": 1416
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_models.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 42,
+      "row": 1484
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_models.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 32,
+      "row": 1506
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "I001",
+    "message": "Import block is un-sorted or un-formatted",
+    "location": {
+      "column": 1,
+      "row": 3
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "UP035",
+    "message": "Import from `collections.abc` instead: `Callable`, `Iterable`, `Mapping`, `Sequence`",
+    "location": {
+      "column": 1,
+      "row": 21
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "I001",
+    "message": "Import block is un-sorted or un-formatted",
+    "location": {
+      "column": 5,
+      "row": 56
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "I001",
+    "message": "Import block is un-sorted or un-formatted",
+    "location": {
+      "column": 1,
+      "row": 68
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "F401",
+    "message": "`tldw_chatbook.Chat.console_roleplay_identity.resolve_console_message_presentation` imported but unused",
+    "location": {
+      "column": 5,
+      "row": 212
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 15,
+      "row": 316
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 15,
+      "row": 334
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 28,
+      "row": 350
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 28,
+      "row": 366
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 15,
+      "row": 382
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 18,
+      "row": 591
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 58,
+      "row": 1309
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "UP017",
+    "message": "Use `datetime.UTC` alias",
+    "location": {
+      "column": 25,
+      "row": 1420
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 42,
+      "row": 1714
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 30,
+      "row": 1731
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 20,
+      "row": 2222
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 24,
+      "row": 3140
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 16,
+      "row": 3355
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 20,
+      "row": 3389
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 24,
+      "row": 4086
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 20,
+      "row": 4272
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 24,
+      "row": 4436
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 16,
+      "row": 4490
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 20,
+      "row": 4528
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 16,
+      "row": 4552
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 16,
+      "row": 4594
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 24,
+      "row": 4708
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "TRY004",
+    "message": "Prefer `TypeError` exception for invalid type",
+    "location": {
+      "column": 13,
+      "row": 5029
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 16,
+      "row": 5868
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "SIM117",
+    "message": "Use a single `with` statement with multiple contexts instead of nested `with` statements",
+    "location": {
+      "column": 9,
+      "row": 5998
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "TRY004",
+    "message": "Prefer `TypeError` exception for invalid type",
+    "location": {
+      "column": 17,
+      "row": 6621
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "TRY004",
+    "message": "Prefer `TypeError` exception for invalid type",
+    "location": {
+      "column": 13,
+      "row": 7389
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "TRY004",
+    "message": "Prefer `TypeError` exception for invalid type",
+    "location": {
+      "column": 13,
+      "row": 7497
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "TRY004",
+    "message": "Prefer `TypeError` exception for invalid type",
+    "location": {
+      "column": 13,
+      "row": 7517
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "TRY004",
+    "message": "Prefer `TypeError` exception for invalid type",
+    "location": {
+      "column": 13,
+      "row": 8046
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 24,
+      "row": 8537
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 16,
+      "row": 8667
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 16,
+      "row": 8837
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "SIM401",
+    "message": "Use `lifecycle.generation_bases.get(conversation_id, session.generation_durable_snapshot)` instead of an `if` block",
+    "location": {
+      "column": 13,
+      "row": 9284
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "SIM401",
+    "message": "Use `lifecycle.context_bases.get(conversation_id, session.context_policy_durable_revision)` instead of an `if` block",
+    "location": {
+      "column": 13,
+      "row": 9289
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 28,
+      "row": 9346
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 28,
+      "row": 9456
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 16,
+      "row": 9765
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 24,
+      "row": 9872
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 24,
+      "row": 9992
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 16,
+      "row": 10067
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 20,
+      "row": 10086
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "SIM102",
+    "message": "Use a single `if` statement instead of nested `if` statements",
+    "location": {
+      "column": 17,
+      "row": 10177
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 45,
+      "row": 10221
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 24,
+      "row": 10325
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 19,
+      "row": 11242
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 19,
+      "row": 11291
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 25,
+      "row": 11914
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 25,
+      "row": 11932
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "SIM102",
+    "message": "Use a single `if` statement instead of nested `if` statements",
+    "location": {
+      "column": 13,
+      "row": 12752
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "SIM102",
+    "message": "Use a single `if` statement instead of nested `if` statements",
+    "location": {
+      "column": 9,
+      "row": 13429
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 28,
+      "row": 13728
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "TRY201",
+    "message": "Use `raise` without specifying exception name",
+    "location": {
+      "column": 27,
+      "row": 13732
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 20,
+      "row": 13849
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 20,
+      "row": 13887
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 20,
+      "row": 13930
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 16,
+      "row": 14050
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 16,
+      "row": 14072
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 16,
+      "row": 14102
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 16,
+      "row": 14345
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "RET501",
+    "message": "Do not explicitly `return None` in function if it is the only possible return value",
+    "location": {
+      "column": 13,
+      "row": 14596
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 20,
+      "row": 14606
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 16,
+      "row": 14687
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 16,
+      "row": 14713
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 16,
+      "row": 14811
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 16,
+      "row": 14958
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "C408",
+    "message": "Unnecessary `dict()` call (rewrite as a literal)",
+    "location": {
+      "column": 18,
+      "row": 14973
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 16,
+      "row": 15067
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 16,
+      "row": 15190
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 16,
+      "row": 15298
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "UP037",
+    "message": "Remove quotes from type annotation",
+    "location": {
+      "column": 51,
+      "row": 15430
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 20,
+      "row": 15545
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "SIM117",
+    "message": "Use a single `with` statement with multiple contexts instead of nested `with` statements",
+    "location": {
+      "column": 9,
+      "row": 15684
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "SIM117",
+    "message": "Use a single `with` statement with multiple contexts instead of nested `with` statements",
+    "location": {
+      "column": 9,
+      "row": 16828
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 24,
+      "row": 17224
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "TRY004",
+    "message": "Prefer `TypeError` exception for invalid type",
+    "location": {
+      "column": 13,
+      "row": 18364
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 24,
+      "row": 18840
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 20,
+      "row": 18870
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 28,
+      "row": 18881
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 16,
+      "row": 18948
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 16,
+      "row": 19001
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 16,
+      "row": 19074
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "TRY004",
+    "message": "Prefer `TypeError` exception for invalid type",
+    "location": {
+      "column": 13,
+      "row": 19131
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 24,
+      "row": 19518
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 20,
+      "row": 19546
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 24,
+      "row": 19643
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 24,
+      "row": 19710
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 24,
+      "row": 19971
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 16,
+      "row": 19989
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 16,
+      "row": 20192
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "C408",
+    "message": "Unnecessary `dict()` call (rewrite as a literal)",
+    "location": {
+      "column": 41,
+      "row": 20318
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 20,
+      "row": 20539
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 20,
+      "row": 20566
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 20,
+      "row": 20584
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 16,
+      "row": 20587
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 20,
+      "row": 20591
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 16,
+      "row": 20737
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "TRY004",
+    "message": "Prefer `TypeError` exception for invalid type",
+    "location": {
+      "column": 17,
+      "row": 20835
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "C408",
+    "message": "Unnecessary `dict()` call (rewrite as a literal)",
+    "location": {
+      "column": 41,
+      "row": 21011
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 16,
+      "row": 21180
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 16,
+      "row": 21200
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 16,
+      "row": 21318
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "TRY004",
+    "message": "Prefer `TypeError` exception for invalid type",
+    "location": {
+      "column": 21,
+      "row": 21411
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 16,
+      "row": 21601
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "C408",
+    "message": "Unnecessary `dict()` call (rewrite as a literal)",
+    "location": {
+      "column": 46,
+      "row": 21691
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 16,
+      "row": 21714
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 20,
+      "row": 21746
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 16,
+      "row": 21933
+    }
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_store.py",
+    "code": "BLE001",
+    "message": "Do not catch blind exception: `Exception`",
+    "location": {
+      "column": 16,
+      "row": 22532
+    }
+  }
+]

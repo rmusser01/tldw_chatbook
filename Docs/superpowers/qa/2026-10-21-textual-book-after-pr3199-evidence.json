@@ -1,0 +1,1170 @@
+{
+  "schema_version": 1,
+  "utc": "2026-10-22T01:25:26.575869+00:00",
+  "qualification": {
+    "utc": "2026-10-22T01:23:13.775860+00:00",
+    "pr": {
+      "baseRefName": "dev",
+      "headRefOid": "8ff5f0e2d4f3016445545e84f9e30a5233b8fddd",
+      "mergeCommit": {
+        "oid": "2a5afa03b31f60e00bdcd10a161e3e351fad023b"
+      },
+      "mergedAt": "2026-10-22T01:22:37Z",
+      "state": "MERGED",
+      "statusCheckRollup": [
+        {
+          "__typename": "CheckRun",
+          "completedAt": "0001-01-01T00:00:00Z",
+          "conclusion": "",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39705317539/job/119583875820",
+          "name": "Merge queue",
+          "startedAt": "2026-10-22T01:22:42Z",
+          "status": "IN_PROGRESS",
+          "workflowName": "Merge Queue"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T00:25:19Z",
+          "conclusion": "SKIPPED",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39699570231/job/119565264975",
+          "name": "platform-evidence",
+          "startedAt": "2026-10-22T00:25:19Z",
+          "status": "COMPLETED",
+          "workflowName": "TASK-19637 pinned workspace platform evidence"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T00:25:20Z",
+          "conclusion": "SKIPPED",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39699570259/job/119565270634",
+          "name": "Linux storage - Python ${{ matrix.python }}",
+          "startedAt": "2026-10-22T00:25:20Z",
+          "status": "COMPLETED",
+          "workflowName": "TASK-32011 one-off Linux storage evidence"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T00:53:52Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39699570251/job/119578200653",
+          "name": "PR Fast Lane",
+          "startedAt": "2026-10-22T00:31:24Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T00:31:45Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39699570233/job/119565265656",
+          "name": "UI latency guardrails",
+          "startedAt": "2026-10-22T00:25:22Z",
+          "status": "COMPLETED",
+          "workflowName": "Perf Guard"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T00:47:06Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39699570251/job/119578196504",
+          "name": "PR Fast Lane (admission-sensitive)",
+          "startedAt": "2026-10-22T00:31:24Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T00:40:51Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39699570251/job/119578213432",
+          "name": "PR Fast Lane (admission-sensitive 2)",
+          "startedAt": "2026-10-22T00:31:24Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T00:45:14Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39699570251/job/119578167851",
+          "name": "UI Fast Lane (1)",
+          "startedAt": "2026-10-22T00:31:24Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T00:43:41Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39699570251/job/119578212184",
+          "name": "UI Fast Lane (2)",
+          "startedAt": "2026-10-22T00:31:24Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T00:43:47Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39699570251/job/119578168858",
+          "name": "UI Fast Lane (3)",
+          "startedAt": "2026-10-22T00:31:24Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T00:48:52Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39699570251/job/119578201400",
+          "name": "UI Fast Lane (4)",
+          "startedAt": "2026-10-22T00:31:24Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T00:42:19Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39699570251/job/119578209906",
+          "name": "UI Fast Lane (5)",
+          "startedAt": "2026-10-22T00:31:24Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T00:45:50Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39699570251/job/119578209471",
+          "name": "UI Fast Lane (6)",
+          "startedAt": "2026-10-22T00:31:24Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T01:18:20Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39699570251/job/119578167805",
+          "name": "UI Fast Lane (7)",
+          "startedAt": "2026-10-22T01:04:45Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T00:45:09Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39699570251/job/119578208063",
+          "name": "UI Fast Lane (8)",
+          "startedAt": "2026-10-22T00:31:24Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T00:44:52Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39699570251/job/119578168935",
+          "name": "UI Fast Lane (9)",
+          "startedAt": "2026-10-22T00:31:24Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T00:43:07Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39699570251/job/119578169055",
+          "name": "UI Fast Lane (10)",
+          "startedAt": "2026-10-22T00:31:24Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T00:42:44Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39699570251/job/119578169215",
+          "name": "UI Fast Lane (11)",
+          "startedAt": "2026-10-22T00:31:24Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T00:45:35Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39699570251/job/119578169137",
+          "name": "UI Fast Lane (12)",
+          "startedAt": "2026-10-22T00:31:24Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T00:45:19Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39699570251/job/119578168843",
+          "name": "UI Fast Lane (13)",
+          "startedAt": "2026-10-22T00:31:24Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T00:45:47Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39699570251/job/119578221393",
+          "name": "Console P0 regression gate",
+          "startedAt": "2026-10-22T00:31:24Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T00:37:36Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39699570251/job/119578168293",
+          "name": "Dreams and Guardian boundary contracts",
+          "startedAt": "2026-10-22T00:31:24Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T00:36:16Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39699570251/job/119578168482",
+          "name": "Dreams tracking tests",
+          "startedAt": "2026-10-22T00:31:24Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T01:22:34Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39699570251/job/119582528589",
+          "name": "Derived artifacts reproduce from their sources",
+          "startedAt": "2026-10-22T01:18:24Z",
+          "status": "COMPLETED",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "0001-01-01T00:00:00Z",
+          "conclusion": "",
+          "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39699570251/job/119583846672",
+          "name": "Merge queue tick",
+          "startedAt": "2026-10-22T01:22:37Z",
+          "status": "IN_PROGRESS",
+          "workflowName": "Derived Artifacts"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-22T00:25:12Z",
+          "conclusion": "NEUTRAL",
+          "detailsUrl": "https://www.cubic.dev/pr/rmusser01/tldw_chatbook/pull/3199",
+          "name": "cubic · AI code reviewer",
+          "startedAt": "2026-10-22T00:25:13Z",
+          "status": "COMPLETED",
+          "workflowName": ""
+        },
+        {
+          "__typename": "StatusContext",
+          "context": "CodeRabbit",
+          "startedAt": "2026-10-22T00:25:17Z",
+          "state": "SUCCESS",
+          "targetUrl": ""
+        }
+      ],
+      "url": "https://github.com/rmusser01/tldw_chatbook/pull/3199"
+    },
+    "dev": "2a5afa03b31f60e00bdcd10a161e3e351fad023b",
+    "candidate": "8ff5f0e2d4f3016445545e84f9e30a5233b8fddd",
+    "candidate_tree": "d37078a10e6a3262055c36843cb720e7cf8995b0",
+    "dev_tree": "d37078a10e6a3262055c36843cb720e7cf8995b0",
+    "ci": {
+      "required_run": {
+        "id": 39699570251,
+        "run_attempt": 3,
+        "status": "completed",
+        "conclusion": "success",
+        "head_sha": "8ff5f0e2d4f3016445545e84f9e30a5233b8fddd",
+        "html_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39699570251"
+      },
+      "required_check": {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-22T01:22:34Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39699570251/job/119582528589",
+        "name": "Derived artifacts reproduce from their sources",
+        "startedAt": "2026-10-22T01:18:24Z",
+        "status": "COMPLETED",
+        "workflowName": "Derived Artifacts"
+      },
+      "perf_run": {
+        "id": 39699570233,
+        "run_attempt": 2,
+        "status": "completed",
+        "conclusion": "success",
+        "head_sha": "8ff5f0e2d4f3016445545e84f9e30a5233b8fddd",
+        "html_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/39699570233"
+      },
+      "history": "Attempt1 held for approval. First executed attempt2 failed UI7 Stop visibility in unchanged code; aggregate failed only its UI prerequisite. Existing queue bounded failed-job retry ran attempt3. No Stop-flake repair is claimed."
+    },
+    "sources": [
+      {
+        "path": "tldw_chatbook/UI/Screens/personas_screen.py",
+        "candidate_blob": "3ff4e82f4f81b803d15f7acb5e9f07c67e1343f9",
+        "dev_blob": "3ff4e82f4f81b803d15f7acb5e9f07c67e1343f9",
+        "identical": true,
+        "git_utf8_lf_sha256": "2a8d484f29ec170e7bf0c923744170f0cd16cb9955abc58d30323c3338b8becc"
+      },
+      {
+        "path": "tldw_chatbook/Widgets/Persona_Widgets/personas_character_editor_widget.py",
+        "candidate_blob": "f706b4388c67430c86305ccbf5c5caa43ce063e3",
+        "dev_blob": "f706b4388c67430c86305ccbf5c5caa43ce063e3",
+        "identical": true,
+        "git_utf8_lf_sha256": "e795b1d5719a4a5616da380d134069f25422a541b3669a6899c282d7f9117ee6"
+      },
+      {
+        "path": "tldw_chatbook/Widgets/Persona_Widgets/persona_profile_editor_widget.py",
+        "candidate_blob": "2496584fe4116c6d403ef1bb249e8de62ee3207d",
+        "dev_blob": "2496584fe4116c6d403ef1bb249e8de62ee3207d",
+        "identical": true,
+        "git_utf8_lf_sha256": "7af2dc841e9bd1394468a8b3374df55070ef9e7022d11bf42d692213b8c9ff46"
+      },
+      {
+        "path": "tldw_chatbook/UI/Screens/settings_screen.py",
+        "candidate_blob": "e99561db4f5aa8345e579fe3d3b9d529550ccc7b",
+        "dev_blob": "e99561db4f5aa8345e579fe3d3b9d529550ccc7b",
+        "identical": true,
+        "git_utf8_lf_sha256": "465aa836922f1fda3a85d14249588754b0439d1746288f80d1fc7b32edc1dedb"
+      },
+      {
+        "path": "tldw_chatbook/Widgets/settings_image_gen_panel.py",
+        "candidate_blob": "5c3d65d877ef62ea6ed3dcfc87d853fde753b811",
+        "dev_blob": "5c3d65d877ef62ea6ed3dcfc87d853fde753b811",
+        "identical": true,
+        "git_utf8_lf_sha256": "6262cdeb8fa68aee5711a4e6aee6368587b4f7d7f70bd920cf66f335be289bb7"
+      },
+      {
+        "path": "tldw_chatbook/Widgets/settings_video_gen_panel.py",
+        "candidate_blob": "b358434434863853713ba0ddacec535a857ad4d8",
+        "dev_blob": "b358434434863853713ba0ddacec535a857ad4d8",
+        "identical": true,
+        "git_utf8_lf_sha256": "c1189780cc9d17cfe6e8f3e1b711fb623cda071b47b6b4673ea49213d4c1ba0a"
+      },
+      {
+        "path": "tldw_chatbook/UI/Study_Modules/quizzes_handler.py",
+        "candidate_blob": "bedfa7530567cfa9fd78ccde3f30998bce2fcf24",
+        "dev_blob": "bedfa7530567cfa9fd78ccde3f30998bce2fcf24",
+        "identical": true,
+        "git_utf8_lf_sha256": "164fac06fac0b0736592619d188d9716cc5da9f9890529b9df806a801d42dd09"
+      },
+      {
+        "path": "tldw_chatbook/UI/Study_Window.py",
+        "candidate_blob": "be48e8ca2b1fa154def3d19fc30f9e582f18f116",
+        "dev_blob": "be48e8ca2b1fa154def3d19fc30f9e582f18f116",
+        "identical": true,
+        "git_utf8_lf_sha256": "b8e04726b5ca172fef9873c814d3d0193fd697e80b376cce5e1b0817e0a0f0b7"
+      },
+      {
+        "path": "tldw_chatbook/Study_Interop/quiz_scope_service.py",
+        "candidate_blob": "cbb969cba0f9bf6d99a46742919205a2b807b687",
+        "dev_blob": "cbb969cba0f9bf6d99a46742919205a2b807b687",
+        "identical": true,
+        "git_utf8_lf_sha256": "78910df671ae8ccd23598ca48c7170fbd7f691c4425f8525c2fd5188e83103dc"
+      },
+      {
+        "path": "tldw_chatbook/Study_Interop/local_quiz_service.py",
+        "candidate_blob": "3038f7e7d30dd0553c910f2b464653912f6606bf",
+        "dev_blob": "3038f7e7d30dd0553c910f2b464653912f6606bf",
+        "identical": true,
+        "git_utf8_lf_sha256": "a5302d4b257a91028b39da4932b0c3b9ae49b00960b5652d2b0cc2f217c11546"
+      },
+      {
+        "path": "tldw_chatbook/UI/STTS_Window.py",
+        "candidate_blob": "1f7ea3956ff7a65eb06eb8119f7e92189d3ff7fc",
+        "dev_blob": "1f7ea3956ff7a65eb06eb8119f7e92189d3ff7fc",
+        "identical": true,
+        "git_utf8_lf_sha256": "59d43306e7a562507e091f45bf860c350544e9851f82b2b9dd9efb1b9cab7600"
+      },
+      {
+        "path": "tldw_chatbook/Study_Interop/server_quiz_service.py",
+        "candidate_blob": "c2f8a73721c46e4a6f184ced734a3a08c2d59378",
+        "dev_blob": "c2f8a73721c46e4a6f184ced734a3a08c2d59378",
+        "identical": true,
+        "git_utf8_lf_sha256": "d2e6f3b8f1ef0109e2ec85252c3bcb9d60a886bd3c28804a21784ff8ebf3a5d4"
+      }
+    ],
+    "all_sources_identical": true,
+    "refreshed_overlaps_advanced": [],
+    "new_overlaps": {},
+    "open_pr_count": 25,
+    "open_pr_file_count": 3512,
+    "open_pr_heads": {
+      "3203": {
+        "headRefName": "codex/console-send-test-controls",
+        "headRefOid": "fd01bd1d041ec85b015bddd2a2e46d41e9e5276e",
+        "number": 3203,
+        "title": "test(console): retain replay and held-gate cleanup controls",
+        "url": "https://github.com/rmusser01/tldw_chatbook/pull/3203"
+      },
+      "3202": {
+        "headRefName": "codex/transcription-import-readiness",
+        "headRefOid": "ea48677119fd8e6d1f9cb64025b6335b4d91267c",
+        "number": 3202,
+        "title": "Validate transcription readiness before Library imports",
+        "url": "https://github.com/rmusser01/tldw_chatbook/pull/3202"
+      },
+      "3200": {
+        "headRefName": "fix/library-stt-url-scheme-collapse",
+        "headRefOid": "0d085eda773bc1385119d533366edb2ca2632b0d",
+        "number": 3200,
+        "title": "fix(ingest): YouTube URL ingest failing as inference_failed in the parakeet local-STT lane (task-35080)",
+        "url": "https://github.com/rmusser01/tldw_chatbook/pull/3200"
+      },
+      "3192": {
+        "headRefName": "fix/sse-comment-frames-local-streaming",
+        "headRefOid": "37e82b8f06a3f8db06be47c33b8de05a96df161f",
+        "number": 3192,
+        "title": "Fix local-provider streaming: drop SSE comment frames; admit llama_cpp/vllm to native tools",
+        "url": "https://github.com/rmusser01/tldw_chatbook/pull/3192"
+      },
+      "3191": {
+        "headRefName": "fix/task-33620.15.1-config-sync-cadence",
+        "headRefOid": "e554392aa0af8df51e320f4a13d85e2a8de45754",
+        "number": 3191,
+        "title": "perf(console): run the poll's checked config projections only when an input changes (TASK-33620.15.1)",
+        "url": "https://github.com/rmusser01/tldw_chatbook/pull/3191"
+      },
+      "3190": {
+        "headRefName": "fix/task-33628.5.1-poll-test-flake",
+        "headRefOid": "07b36c94c31bf2f5b67f9641f23b98e3351c6f5e",
+        "number": 3190,
+        "title": "test(console): the provider-selection test helper renders before callers press Send, within a bound (TASK-35660)",
+        "url": "https://github.com/rmusser01/tldw_chatbook/pull/3190"
+      },
+      "3187": {
+        "headRefName": "perf/task-33620.15.6-sqlite-helper-spawns",
+        "headRefOid": "5e83c06ef8680457c8d434cee3ac5555dbc806cb",
+        "number": 3187,
+        "title": "perf(console): decide and reload a Character display check on one SQLite handle (TASK-33620.15.6)",
+        "url": "https://github.com/rmusser01/tldw_chatbook/pull/3187"
+      },
+      "3184": {
+        "headRefName": "fix/task-34000-clarify-rebased",
+        "headRefOid": "76850b108cf21d178c5e26cec811d5d97b3c6fce",
+        "number": 3184,
+        "title": "fix(library): clarify batch — RAG Answer names its bill, Reports demo asks first, sync roots named, nav veto says why, Media links on use (TASK-34000)",
+        "url": "https://github.com/rmusser01/tldw_chatbook/pull/3184"
+      },
+      "3183": {
+        "headRefName": "fix/task-35836-mount-refresh-deferral",
+        "headRefOid": "0945d280e258515c0763d67d46e4fd024d5de46a",
+        "number": 3183,
+        "title": "fix(console): the Console mount's refreshes retry instead of waiting out a config rebuild (TASK-35836)",
+        "url": "https://github.com/rmusser01/tldw_chatbook/pull/3183"
+      },
+      "3173": {
+        "headRefName": "fix/console-uat-findings",
+        "headRefOid": "fcc6066d51857869c332e9d9779d5fb1098bb8f4",
+        "number": 3173,
+        "title": "fix(console): address Console UAT 2026-10-17 findings — resume-send guard, late-shutdown finalization, Windows refusal guidance",
+        "url": "https://github.com/rmusser01/tldw_chatbook/pull/3173"
+      },
+      "3172": {
+        "headRefName": "chore/task-33132-dreams-guardian-migration",
+        "headRefOid": "a3da967db73d582e6902cc8060e39f4a02553ce9",
+        "number": 3172,
+        "title": "refactor(db): Guardian_DB onto SQLiteStoreKernel + opened-connection hook (TASK-33132 migration 6)",
+        "url": "https://github.com/rmusser01/tldw_chatbook/pull/3172"
+      },
+      "3166": {
+        "headRefName": "codex/windows-interaction-performance",
+        "headRefOid": "34f88d6322ee2819d3e189e97eda5bc0e3f419f1",
+        "number": 3166,
+        "title": "Reduce Windows Settings, Library and Console interaction overhead",
+        "url": "https://github.com/rmusser01/tldw_chatbook/pull/3166"
+      },
+      "3162": {
+        "headRefName": "codex/agent-archive-recovery-pr",
+        "headRefOid": "366bd3dbfa620b466c6fecb38c363e3093130841",
+        "number": 3162,
+        "title": "feat(console): add agent-assisted archived chat recovery",
+        "url": "https://github.com/rmusser01/tldw_chatbook/pull/3162"
+      },
+      "3157": {
+        "headRefName": "feat/18934-kanban-board",
+        "headRefOid": "ebba583bd1ae2ceea1e87e78f3d07597cc76a7e6",
+        "number": 3157,
+        "title": "feat(kanban): port backlog-md-py board TUI as the Kanban destination (TASK-18934, ADR-237)",
+        "url": "https://github.com/rmusser01/tldw_chatbook/pull/3157"
+      },
+      "3156": {
+        "headRefName": "feat/18928-approval-suggestions",
+        "headRefOid": "58d8425296c3d2c095a574331249dbd0e9c736ac",
+        "number": 3156,
+        "title": "feat(mcp): approval-history mining with Always-allow suggestion review (TASK-18928)",
+        "url": "https://github.com/rmusser01/tldw_chatbook/pull/3156"
+      },
+      "3155": {
+        "headRefName": "feat/18925-os-notifications",
+        "headRefOid": "082ed66b5b5867cf6b5494758ff90c6fcfcce7e3",
+        "number": 3155,
+        "title": "feat(console): opt-in OS notifications for background events (TASK-18925)",
+        "url": "https://github.com/rmusser01/tldw_chatbook/pull/3155"
+      },
+      "3148": {
+        "headRefName": "codex/managed-plugins",
+        "headRefOid": "97ac608aba159bd8696ea50d279261867d97e16a",
+        "number": 3148,
+        "title": "Add managed plugins, Git marketplaces and expanded hooks",
+        "url": "https://github.com/rmusser01/tldw_chatbook/pull/3148"
+      },
+      "3134": {
+        "headRefName": "fix/skill-trust-keyring-retry-storm",
+        "headRefOid": "0334fa4ca84008e5a06980807e1a06e7987042a7",
+        "number": 3134,
+        "title": "Stop per-skill keyring retry storm that discards console replies",
+        "url": "https://github.com/rmusser01/tldw_chatbook/pull/3134"
+      },
+      "3096": {
+        "headRefName": "codex/structured-document-editing-pr",
+        "headRefOid": "5afd95ddf931b4a0c5a856f7ca9edb6018c7fd0a",
+        "number": 3096,
+        "title": "Add YAML, JSON and JSONL checks and reversible formatting to Notes",
+        "url": "https://github.com/rmusser01/tldw_chatbook/pull/3096"
+      },
+      "3066": {
+        "headRefName": "fix/task-33621.20-library-auto-outcome",
+        "headRefOid": "eae226a39599e0054f1dd7eff073ffb9fb548730",
+        "number": 3066,
+        "title": "fix(console): a paused Automatic Library send shows why, offers Retry / Send once without Library / Cancel, and never jams the chat (TASK-33621.20)",
+        "url": "https://github.com/rmusser01/tldw_chatbook/pull/3066"
+      },
+      "3050": {
+        "headRefName": "codex/console-send-lag-integration",
+        "headRefOid": "2557f186f6e635567c370824fa43e2aadec6b82d",
+        "number": 3050,
+        "title": "Reduce Console Send delay with integrated preparation and Windows admission fixes",
+        "url": "https://github.com/rmusser01/tldw_chatbook/pull/3050"
+      },
+      "3049": {
+        "headRefName": "claude/console-send-admission-cost",
+        "headRefOid": "bdff2a2d957c9b3ee4cf532589562b901c193df3",
+        "number": 3049,
+        "title": "perf(console): cut Windows Send latency (stacked on #3023)",
+        "url": "https://github.com/rmusser01/tldw_chatbook/pull/3049"
+      },
+      "3036": {
+        "headRefName": "codex/console-approval-ux",
+        "headRefOid": "0b9ae198219290eea25b41561d0eeba0e260fa29",
+        "number": 3036,
+        "title": "Clarify Console permission approvals and decision feedback",
+        "url": "https://github.com/rmusser01/tldw_chatbook/pull/3036"
+      },
+      "2819": {
+        "headRefName": "chore/sync-nightly-workflow-to-main",
+        "headRefOid": "d55a54e0eed3fdfa30d818aa20d7f33b3917fc2c",
+        "number": 2819,
+        "title": "chore: sync nightly-deep.yml to main so the collection-error repair actually runs",
+        "url": "https://github.com/rmusser01/tldw_chatbook/pull/2819"
+      },
+      "1655": {
+        "headRefName": "codex/task-13208-windows-audio-cpp",
+        "headRefOid": "a1e4c2920a9d566496a7be8c4d76023972089c05",
+        "number": 1655,
+        "title": "feat(tts): add Windows audio.cpp lifecycle parity",
+        "url": "https://github.com/rmusser01/tldw_chatbook/pull/1655"
+      }
+    },
+    "overlapping_target_paths": {
+      "3184": [
+        "tldw_chatbook/UI/Screens/settings_screen.py"
+      ],
+      "3166": [
+        "tldw_chatbook/UI/Screens/settings_screen.py"
+      ],
+      "3162": [
+        "tldw_chatbook/UI/Screens/settings_screen.py"
+      ],
+      "3155": [
+        "tldw_chatbook/UI/Screens/settings_screen.py"
+      ],
+      "3148": [
+        "tldw_chatbook/UI/Screens/personas_screen.py",
+        "tldw_chatbook/UI/Screens/settings_screen.py",
+        "tldw_chatbook/Widgets/settings_image_gen_panel.py",
+        "tldw_chatbook/Widgets/settings_video_gen_panel.py"
+      ],
+      "3050": [
+        "tldw_chatbook/UI/Screens/personas_screen.py",
+        "tldw_chatbook/Widgets/settings_image_gen_panel.py"
+      ],
+      "3049": [
+        "tldw_chatbook/UI/Screens/personas_screen.py",
+        "tldw_chatbook/Widgets/settings_image_gen_panel.py"
+      ]
+    },
+    "method_screening_reference": {
+      "local_receipt": "forms/overlap-method-screening.json",
+      "comparisons": 56,
+      "all_reproduced_by_independent_review": true
+    }
+  },
+  "book": {
+    "title": "Creating TUI Applications with Textual and Python",
+    "author": "Michael Driscoll",
+    "edition": "2025-07-25",
+    "pdf_pages": 455,
+    "sha256": "798aafc3ac58704c5053249ed228f5a45629355c3627e9611a3e78da815e9ab6",
+    "reference_not_instructions": true
+  },
+  "environment": {
+    "python": "3.12.10",
+    "textual": "8.2.8",
+    "os": "Windows",
+    "mounted_harnesses_not_live_terminal": true
+  },
+  "tasks": [
+    {
+      "id": 36097,
+      "rank": 1,
+      "priority": "medium",
+      "title": "Keep newer Character and Persona edits dirty when earlier saves finish",
+      "path": "backlog/tasks/task-36097 - Keep-newer-Character-and-Persona-edits-dirty-when-earlier-saves-finish.md",
+      "related_tasks": [
+        "481",
+        "33622.14",
+        "33791",
+        "33910.8",
+        "33910.14"
+      ],
+      "adrs": [
+        "046-roleplay-chat-display-identity-and-template-provenance.md",
+        "033-application-session-state-ownership.md"
+      ]
+    },
+    {
+      "id": 36098,
+      "rank": 2,
+      "priority": "medium",
+      "title": "Preserve newer Image and Video Settings drafts after pending saves",
+      "path": "backlog/tasks/task-36098 - Preserve-newer-Image-and-Video-Settings-drafts-after-pending-saves.md",
+      "related_tasks": [
+        "32926",
+        "23191",
+        "33002.10",
+        "33002.11",
+        "35680",
+        "35867",
+        "32190",
+        "32810.3",
+        "3401.12"
+      ],
+      "adrs": [
+        "033-settings-commit-models-three-honestly-labeled.md",
+        "044-ephemeral-generated-video-storage-playback-and-streaming.md",
+        "150-design-token-system-and-design-language.md",
+        "161-component-pattern-library.md"
+      ]
+    },
+    {
+      "id": 36099,
+      "rank": 3,
+      "priority": "medium",
+      "title": "Keep newer Study quiz drafts when earlier creates complete",
+      "path": "backlog/tasks/task-36099 - Keep-newer-Study-quiz-drafts-when-earlier-creates-complete.md",
+      "related_tasks": [
+        "34752",
+        "34751",
+        "33007"
+      ],
+      "adrs": [
+        "033-application-session-state-ownership.md",
+        "011-chatbook-workbench-ui-system.md"
+      ]
+    },
+    {
+      "id": 36100,
+      "rank": 4,
+      "priority": "medium",
+      "title": "Reject audiobook chapter results after their source text changes",
+      "path": "backlog/tasks/task-36100 - Reject-audiobook-chapter-results-after-their-source-text-changes.md",
+      "related_tasks": [
+        "15478",
+        "15773",
+        "16849",
+        "16850",
+        "19576",
+        "32800.4",
+        "2011"
+      ],
+      "adrs": [
+        "033-application-session-state-ownership.md",
+        "011-chatbook-workbench-ui-system.md"
+      ]
+    }
+  ],
+  "observations": {
+    "character": {
+      "before": {
+        "text": "Submitted-new",
+        "focused": true,
+        "dirty": true,
+        "aggregate_dirty": true,
+        "save_inflight": true
+      },
+      "after": {
+        "text": "Submitted-new",
+        "persisted": "Submitted",
+        "version": 1,
+        "dirty": false,
+        "aggregate_dirty": false,
+        "save_inflight": false,
+        "snapshot_equal": true
+      },
+      "navigation_allowed_without_prompt": true,
+      "after_actual_new_shortcut": {
+        "name": "",
+        "edit_mode": "create",
+        "screen_stack_depth": 2
+      }
+    },
+    "persona": {
+      "before": {
+        "text": "Persona-new",
+        "dirty": true,
+        "aggregate_dirty": true,
+        "save_inflight": true
+      },
+      "after": {
+        "text": "Persona-new",
+        "persisted": "Persona",
+        "version": 1,
+        "dirty": false,
+        "aggregate_dirty": false,
+        "save_inflight": false
+      },
+      "navigation_allowed_without_prompt": true,
+      "after_actual_new_click": {
+        "name": "",
+        "edit_mode": "create",
+        "screen_stack_depth": 2
+      }
+    },
+    "image": {
+      "category": "image_generation",
+      "before": {
+        "text": "original-submitted-new",
+        "focused": true,
+        "dirty": true
+      },
+      "after": {
+        "text": "original-submitted",
+        "persisted": "original-submitted",
+        "same_input": false,
+        "focused": false,
+        "dirty": false,
+        "focused_id": "settings-detail-pane-body"
+      }
+    },
+    "video": {
+      "category": "video_generation",
+      "before": {
+        "text": "original-submitted-new",
+        "focused": true,
+        "dirty": true
+      },
+      "after": {
+        "text": "original-submitted",
+        "persisted": "original-submitted",
+        "same_input": false,
+        "focused": false,
+        "dirty": false,
+        "focused_id": "settings-detail-pane-body"
+      }
+    },
+    "quiz": {
+      "verb": "create_quiz",
+      "submitted": {
+        "mode": "local",
+        "scope_type": "global",
+        "workspace_id": null,
+        "name": "Submitted quiz",
+        "description": "Submitted description",
+        "time_limit_seconds": null,
+        "passing_score": null
+      },
+      "draft_before_completion": [
+        "Submitted quiz-new",
+        "Submitted description-new"
+      ],
+      "draft_after_completion": [
+        "",
+        ""
+      ],
+      "persisted": [
+        "Submitted quiz",
+        "Submitted description"
+      ],
+      "focused_after": "new-quiz-description-input"
+    },
+    "question": {
+      "verb": "create_question",
+      "submitted": {
+        "mode": "local",
+        "quiz_id": "1b3c019b-0ded-45f0-86fd-73a71858d406",
+        "question_type": "fill_blank",
+        "question_text": "Submitted question",
+        "correct_answer": "Submitted answer",
+        "options": null,
+        "explanation": null,
+        "hint": null,
+        "hint_penalty_points": 0,
+        "points": 1,
+        "order_index": 0,
+        "tags": null,
+        "source_citations": null
+      },
+      "draft_before_completion": [
+        "Submitted question-new",
+        "Submitted answer-new"
+      ],
+      "draft_after_completion": [
+        "",
+        ""
+      ],
+      "persisted": [
+        "Submitted question",
+        "Submitted answer"
+      ],
+      "focused_after": "quiz-correct-answer-input"
+    },
+    "chapter_unchanged": {
+      "clear": false,
+      "detector_inputs": [
+        "Chapter 1: Old source\nThis is the old chapter body."
+      ],
+      "before_completion": {
+        "source": "Chapter 1: Old source\nThis is the old chapter body.",
+        "generation": 1,
+        "initial_generation": 1,
+        "chapters": []
+      },
+      "after_completion": {
+        "source": "Chapter 1: Old source\nThis is the old chapter body.",
+        "generation": 1,
+        "chapter_titles": [
+          "Old source"
+        ],
+        "chapter_bodies": [
+          "This is the old chapter body."
+        ],
+        "editor_titles": [
+          "Old source"
+        ],
+        "table_rows": [
+          1
+        ]
+      }
+    },
+    "chapter_cleared": {
+      "clear": true,
+      "detector_inputs": [
+        "Chapter 1: Old source\nThis is the old chapter body."
+      ],
+      "before_completion": {
+        "source": "",
+        "generation": 1,
+        "initial_generation": 1,
+        "chapters": []
+      },
+      "after_completion": {
+        "source": "",
+        "generation": 1,
+        "chapter_titles": [
+          "Old source"
+        ],
+        "chapter_bodies": [
+          "This is the old chapter body."
+        ],
+        "editor_titles": [
+          "Old source"
+        ],
+        "table_rows": [
+          1
+        ]
+      }
+    }
+  },
+  "receipts": [
+    {
+      "label": "Character enhanced",
+      "local_receipt": ".test-tmp/textual-audit-after-3199/forms/run-2/result.xml",
+      "sha256": "0230b0b842c1f1c661ea34baba996548c0bb3b786f1c46a0c2f251dae7c617a9",
+      "suites": [
+        {
+          "tests": "1",
+          "failures": "1",
+          "errors": "0",
+          "skipped": "0",
+          "time": "32.131"
+        }
+      ]
+    },
+    {
+      "label": "Persona",
+      "local_receipt": ".test-tmp/textual-audit-after-3199/forms/run-persona/result.xml",
+      "sha256": "49328a2adbdef6baf3297a93732586c3a8e8cfb376a5c648a7790c35e0a61e1b",
+      "suites": [
+        {
+          "tests": "1",
+          "failures": "1",
+          "errors": "0",
+          "skipped": "0",
+          "time": "20.946"
+        }
+      ]
+    },
+    {
+      "label": "Image and Video",
+      "local_receipt": ".test-tmp/textual-audit-after-3199/forms/run-media-2/result.xml",
+      "sha256": "3df90718697dfa8c756e691c68c8f74a85e7dff0b2a768bc60e634e80b988b12",
+      "suites": [
+        {
+          "tests": "2",
+          "failures": "2",
+          "errors": "0",
+          "skipped": "0",
+          "time": "67.036"
+        }
+      ]
+    },
+    {
+      "label": "Study pair",
+      "local_receipt": ".test-tmp/textual-audit-after-3199/actions/results.xml",
+      "sha256": "275826b42b0ccd7d5cf6cc94008b84d65d14c41142ee09b2b82aefe43c8f3cd9",
+      "suites": [
+        {
+          "tests": "2",
+          "failures": "2",
+          "errors": "0",
+          "skipped": "0",
+          "time": "21.829"
+        }
+      ]
+    },
+    {
+      "label": "Chapter control and clear",
+      "local_receipt": ".test-tmp/textual-audit-after-3199/workers/chapter-result.xml",
+      "sha256": "e1f93a6b4364acea11f1b0ac8cbc167950653d140d0dfbbb2b60836a38ffe1f8",
+      "suites": [
+        {
+          "tests": "2",
+          "failures": "1",
+          "errors": "0",
+          "skipped": "0",
+          "time": "27.513"
+        }
+      ]
+    }
+  ],
+  "child_receipts": [
+    {
+      "local_receipt": ".test-tmp/textual-audit-after-3199/forms/run-2/base/test_pending_character_save_ke0/private-profile-process/pytest.xml",
+      "sha256": "772d1245dc115ff9931908494d0b4bfb1261476d73c05419dc629701f84fcb67",
+      "tests": [
+        {
+          "name": "test_pending_character_save_keeps_newer_typing_dirty",
+          "failure": "AssertionError: {'after': {'aggregate_dirty': False, 'dirty': False, 'persisted': 'Submitted', 'save_inflight': False, ...}, 'after_ac...e_dirty': True, 'dirty': True, 'focused': True, 'save_inflight': True, ...}, 'navigation_allowed_without_prompt': True}\nassert False",
+          "errors": 0
+        }
+      ]
+    },
+    {
+      "local_receipt": ".test-tmp/textual-audit-after-3199/forms/run-persona/base/test_pending_persona_save_keep0/private-profile-process/pytest.xml",
+      "sha256": "56c8bc21ce8f743a4772357c68ec52ba7ca31d76ffffc9c70e3a05eb5fcbc52e",
+      "tests": [
+        {
+          "name": "test_pending_persona_save_keeps_newer_typing_dirty",
+          "failure": "AssertionError: {'after': {'aggregate_dirty': False, 'dirty': False, 'persisted': 'Persona', 'save_inflight': False, ...}, 'after_actu..._dirty': True, 'dirty': True, 'save_inflight': True, 'text': 'Persona-new'}, 'navigation_allowed_without_prompt': True}\nassert False",
+          "errors": 0
+        }
+      ]
+    },
+    {
+      "local_receipt": ".test-tmp/textual-audit-after-3199/forms/run-media-2/base/test_media_save_preserves_newe0/private-profile-process/pytest.xml",
+      "sha256": "c174267414a5f20864ef6d939efedbbb8c88052d20c2fc65fcfbb4829d208701",
+      "tests": [
+        {
+          "name": "test_media_save_preserves_newer_typing[image-openrouter]",
+          "failure": "AssertionError: {'after': {'dirty': False, 'focused': False, 'focused_id': 'settings-detail-pane-body', 'persisted': 'original-submitted', ...}, 'before': {'dirty': True, 'focused': True, 'text': 'original-submitted-new'}, 'category': 'image_generation'}\nassert 'original-submitted' == 'original-submitted-new'\n  \n  - original-submitted-new\n  ?                   ----\n  + original-submitted",
+          "errors": 0
+        }
+      ]
+    },
+    {
+      "local_receipt": ".test-tmp/textual-audit-after-3199/forms/run-media-2/base/test_media_save_preserves_newe1/private-profile-process/pytest.xml",
+      "sha256": "b54114044e0c6713e345ec345a565272800108ca915550db2e27e2f40c153a88",
+      "tests": [
+        {
+          "name": "test_media_save_preserves_newer_typing[video-minimax]",
+          "failure": "AssertionError: {'after': {'dirty': False, 'focused': False, 'focused_id': 'settings-detail-pane-body', 'persisted': 'original-submitted', ...}, 'before': {'dirty': True, 'focused': True, 'text': 'original-submitted-new'}, 'category': 'video_generation'}\nassert 'original-submitted' == 'original-submitted-new'\n  \n  - original-submitted-new\n  ?                   ----\n  + original-submitted",
+          "errors": 0
+        }
+      ]
+    },
+    {
+      "local_receipt": ".test-tmp/textual-audit-after-3199/actions/pytest/test_newer_authoring_draft_sur0/private-profile-process/pytest.xml",
+      "sha256": "13d29ef7a057d006b1577a339ad07d6f4a3bce6bef2287dc3d9d91235fc86960",
+      "tests": [
+        {
+          "name": "test_newer_authoring_draft_survives_pending_create[create_quiz]",
+          "failure": "AssertionError: {'draft_after_completion': ['', ''], 'draft_before_completion': ['Submitted quiz-new', 'Submitted description-new'], 'focused_after': 'new-quiz-description-input', 'persisted': ['Submitted quiz', 'Submitted description'], ...}\nassert ['', ''] == ['Submitted q...cription-new']\n  \n  At index 0 diff: '' != 'Submitted quiz-new'\n  Use -v to get more diff",
+          "errors": 0
+        }
+      ]
+    },
+    {
+      "local_receipt": ".test-tmp/textual-audit-after-3199/actions/pytest/test_newer_authoring_draft_sur1/private-profile-process/pytest.xml",
+      "sha256": "d75dd4d0cf085a30c462c0ceb4310c65a47aa4a95ab9004a26e668980bea9bb6",
+      "tests": [
+        {
+          "name": "test_newer_authoring_draft_survives_pending_create[create_question]",
+          "failure": "AssertionError: {'draft_after_completion': ['', ''], 'draft_before_completion': ['Submitted question-new', 'Submitted answer-new'], 'focused_after': 'quiz-correct-answer-input', 'persisted': ['Submitted question', 'Submitted answer'], ...}\nassert ['', ''] == ['Submitted q...d answer-new']\n  \n  At index 0 diff: '' != 'Submitted question-new'\n  Use -v to get more diff",
+          "errors": 0
+        }
+      ]
+    },
+    {
+      "local_receipt": ".test-tmp/textual-audit-after-3199/workers/pytest/test_chapter_completion_uses_c0/private-profile-process/pytest.xml",
+      "sha256": "b4cda095aad6abb60b43a1176ec726df196214de921654a0ed281df8406987a5",
+      "tests": [
+        {
+          "name": "test_chapter_completion_uses_current_source[False]",
+          "failure": null,
+          "errors": 0
+        }
+      ]
+    },
+    {
+      "local_receipt": ".test-tmp/textual-audit-after-3199/workers/pytest/test_chapter_completion_uses_c1/private-profile-process/pytest.xml",
+      "sha256": "0a4e5f70220f744b9929868697892f9b76a0ad805b709c83cbbdc5c44b3cd55b",
+      "tests": [
+        {
+          "name": "test_chapter_completion_uses_current_source[True]",
+          "failure": "AssertionError: {'after_completion': {'chapter_bodies': ['This is the old chapter body.'], 'chapter_titles': ['Old source'], 'editor_t...eration': 1, 'source': ''}, 'clear': True, 'detector_inputs': ['Chapter 1: Old source\n  This is the old chapter body.']}\nassert [Chapter(numb...io_file=None)] == []\n  \n  Left contains one more item: Chapter(number=1, title='Old source', content='This is the old chapter body.', start_position=0, end_position=1, voice=None, narrator_notes=None, estimated_duration=None, audio_file=None)\n  Use -v to get more diff",
+          "errors": 0
+        }
+      ]
+    }
+  ],
+  "final_case_summary": {
+    "cases": 8,
+    "ordinary_control_passes": 1,
+    "intended_red_findings": 7,
+    "setup_errors": 0,
+    "fixes_implemented": false
+  },
+  "excluded_attempts": [
+    {
+      "scope": "initial media setup",
+      "setup_errors": 2,
+      "seconds": 6.83,
+      "reason": "raw_source_selection_changed before bodies; corrected to the existing admitted profile without weakening guards"
+    },
+    {
+      "scope": "initial Character witness",
+      "intended_failures": 1,
+      "seconds": 39.71,
+      "reason": "superseded by enhanced actual-New witness, not an additional distinct case"
+    }
+  ],
+  "independent_superpowers_review": {
+    "sha256": "ad20e64a9ed8ce4038226b763e47d14ffbb8bd18e17c5d31acb6a3a517abc437",
+    "critical": 0,
+    "important": 0,
+    "minor_refinements_applied": [
+      "ADR044 partial supersession",
+      "controlled-await limits and future control distinction",
+      "preserve current focus without stealing a later focus move"
+    ]
+  },
+  "allocation": {
+    "max_claimed": 36067,
+    "buffer": 30,
+    "allocated": [
+      36097,
+      36098,
+      36099,
+      36100
+    ],
+    "sweep_utc": "2026-10-22T01:23:45.414886+00:00",
+    "ref_count": 283,
+    "unique_ref_oids": 271,
+    "worktree_count": 53,
+    "nul_delimited": true
+  },
+  "diagnostics": [
+    {
+      "local_path": ".test-tmp/textual-audit-after-3199/forms/test_pending_save.py",
+      "sha256": "e3a785da023b88ac52e0ecf69b79374a511d15974e3f7d6e4af2852775accae4"
+    },
+    {
+      "local_path": ".test-tmp/textual-audit-after-3199/forms/test_media_save.py",
+      "sha256": "b6e0f49e54bd311091e54b93a3eab084dabf74e67203402937f745747ad50909"
+    },
+    {
+      "local_path": ".test-tmp/textual-audit-after-3199/actions/test_quiz_drafts.py",
+      "sha256": "d7603fb7eb608d7541ae267f0ba92ece825c43c3df6c94e108226d07b226af6e"
+    },
+    {
+      "local_path": ".test-tmp/textual-audit-after-3199/workers/test_chapter_freshness.py",
+      "sha256": "e9f8a331b752baa87df9207adfedf5b506e7f0c03893ea8b536da0a86408e6e6"
+    }
+  ],
+  "final_filing_review": {
+    "sha256": "1b59603f8efa1dd29551131b12c3f92f094178d233a58bb2be20f2c9234449c1",
+    "assessment": "Approved",
+    "critical": 0,
+    "important": 0,
+    "minor": 0
+  },
+  "artifact_validation": {
+    "task_files_checked": 5605,
+    "ids_and_windows_paths": "pass",
+    "frontmatter_and_owned_sections": "pass",
+    "cli_readable_new_tasks": 4,
+    "unchecked_acceptance_criteria": 16,
+    "local_links_and_json_yaml": "pass",
+    "parent_receipt_cases": 8,
+    "intended_failures": 7,
+    "control_passes": 1,
+    "setup_errors": 0,
+    "matching_source_blobs": 12,
+    "new_product_source_changes": 0
+  },
+  "final_ci_verification": {
+    "utc": "2026-10-22T01:31:02.281120+00:00",
+    "pr_state": "MERGED",
+    "merge_commit": "2a5afa03b31f60e00bdcd10a161e3e351fad023b",
+    "head": "8ff5f0e2d4f3016445545e84f9e30a5233b8fddd",
+    "required": {
+      "run_id": 39699570251,
+      "attempt": 3,
+      "status": "completed",
+      "conclusion": "success"
+    },
+    "perf": {
+      "run_id": 39699570233,
+      "status": "completed",
+      "conclusion": "success"
+    }
+  }
+}

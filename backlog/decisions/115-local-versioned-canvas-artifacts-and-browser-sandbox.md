@@ -3,7 +3,7 @@
 Status: Accepted
 Date: 2026-09-03
 Related Task: Implementation tasks will be created from the approved design during planning.
-Related: TASK-31003, ADR-069, ADR-032
+Related: TASK-31003, ADR-317, ADR-300
 
 ## Decision
 
@@ -237,8 +237,8 @@ authoritative dashboards.
 
 - [Approved design spec](../../Docs/superpowers/specs/2026-09-03-chatbook-canvas-design.md)
 - [TASK-31003: Define server synchronization contract for Canvas artifacts](../tasks/task-31003%20-%20Define-server-synchronization-contract-for-Canvas-artifacts.md)
-- [ADR-069: Console project-instruction local state and preflight](069-console-project-instruction-local-state-and-preflight.md)
-- [ADR-032: Local agent tool permission boundary](032-local-agent-tool-permission-boundary.md)
+- [ADR-317: Console project-instruction local state and preflight](317-console-project-instruction-local-state-and-preflight.md)
+- [ADR-300: Local agent tool permission boundary](300-local-agent-tool-permission-boundary.md)
 - [Claude Code artifacts](https://code.claude.com/docs/en/artifacts)
 - [Claude Code checkpointing](https://code.claude.com/docs/en/checkpointing)
 - [Claude Artifacts](https://support.claude.com/en/articles/9487310-what-are-artifacts-and-how-do-i-use-them)

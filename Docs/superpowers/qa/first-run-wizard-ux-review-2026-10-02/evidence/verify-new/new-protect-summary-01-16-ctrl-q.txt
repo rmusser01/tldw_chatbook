@@ -1,0 +1,9 @@
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/requests/__init__.py:113: RequestsD
+ependencyWarning: urllib3 (2.6.3) or chardet (6.0.0dev0)/charset_normalizer (3.4.4) doesn't match a supported version!
+  warnings.warn(
+2026-10-03 00:50:32.229 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter no
+t installed. Markdown import will not be available.
+2026-10-03 00:55:34 [ERROR   ] tldw_chatbook.Utils.config_encryption:651 - Decryption failed: ValueError
+2026-10-03 00:55:34 [ERROR   ] tldw_chatbook.config:651 - Failed to decrypt config: Failed to decrypt value. Invalid pas
+sword or corrupted data.
+EXITED:0

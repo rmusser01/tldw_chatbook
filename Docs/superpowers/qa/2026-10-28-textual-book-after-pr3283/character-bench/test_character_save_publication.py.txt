@@ -1,0 +1,186 @@
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import inspect
+import json
+from pathlib import Path
+
+import pytest
+from textual import on
+from textual.events import Key
+from textual.message import Message
+from textual.widgets import Button, Input
+
+from Tests.private_profile import private_profile_test
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.test_evals_screen import EvalsHarness, _FakeAppInstance
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.Evals_DB import EvalsDB
+from tldw_chatbook.Evals.character_probe.models import CharacterProbeConfig, Probe, ProbeSet
+from tldw_chatbook.Evals.character_probe.storage import (
+    load_character_bench,
+    save_character_bench,
+    save_probe_set,
+)
+from tldw_chatbook.UI.Evals.card_picker import CardPicker
+from tldw_chatbook.UI.Evals.character_bench_editor import CharacterBenchEditor
+from tldw_chatbook.UI.Evals.library_rail import LibraryRail
+from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen
+
+ROOT = Path.cwd().resolve()
+OUT = ROOT / '.test-tmp/textual-after3283/character-bench'
+
+
+async def until(predicate):
+    async with asyncio.timeout(10):
+        while not predicate():
+            await asyncio.sleep(.01)
+
+
+class Hold(Message):
+    pass
+
+
+class GatedScreen(EvalsScreen):
+    def __init__(self, instance):
+        super().__init__(instance)
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self.publication_consumed = asyncio.Event()
+        self.hold_rail = False
+        self.rail_entered = asyncio.Event()
+        self.rail_release = asyncio.Event()
+
+    @on(Hold)
+    async def hold(self, event):
+        event.stop()
+        self.entered.set()
+        await self.release.wait()
+
+    @on(CharacterBenchEditor.Saved)
+    def observe_publication(self):
+        # Textual dispatch still invokes EvalsScreen's production handler.
+        self.publication_consumed.set()
+
+    async def _replace_region(self, region_id, content):
+        await super()._replace_region(region_id, content)
+        if region_id == '#lab-rail' and self.hold_rail:
+            self.rail_entered.set()
+            await self.rail_release.wait()
+
+
+class Host(ConsolidatedCSSApp):
+    CSS_PATH = EvalsHarness.CSS_PATH
+
+    def __init__(self, instance):
+        super().__init__()
+        self.app_instance = instance
+
+    async def on_mount(self):
+        await self.push_screen(GatedScreen(self.app_instance))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('case', ['ordinary', 'later-input', 'during-refresh', 'departure', 'departure-pending'])
+@private_profile_test
+async def test_character_save_publication(request, case):
+    identities = []
+    for owner in (EvalsScreen, CharacterBenchEditor, EvalsDB, CharactersRAGDB, load_character_bench, CardPicker):
+        path = Path(inspect.getsourcefile(owner)).resolve()
+        assert path.is_relative_to(ROOT)
+        identities.append(dict(owner=str(owner), path=str(path), sha256=hashlib.sha256(path.read_bytes()).hexdigest()))
+    (OUT / f'{case}-identity.json').write_text(json.dumps(identities, indent=2), encoding='utf8')
+    db = EvalsDB(db_path=':memory:', client_id='book3283-character')
+    cards = CharactersRAGDB(':memory:', 'book3283-character')
+    try:
+        card_id = cards.add_character_card({'name': 'Vex'})
+        probe_set_id = save_probe_set(db, 'probe set', ProbeSet(probes=(Probe(turns=('Hello there.',)),)))
+        target_id = db.create_model(name='target', provider='llama_cpp', model_id='test')
+        bench_id = save_character_bench(db, CharacterProbeConfig(
+            name='Original', probe_set_id=probe_set_id,
+            character_ids=(card_id,), target_ids=(target_id,),
+        ))
+        app = Host(_FakeAppInstance(db, chachanotes_db=cards))
+        async with app.run_test(size=(160, 45)) as pilot:
+            screen = app.screen
+            screen.select(kind='character_bench', id=bench_id)
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            editor = screen.query_one(CharacterBenchEditor)
+            field = editor.query_one('#evals-cb-name', Input)
+            assert editor.query_one(CardPicker).selected_ids() == (card_id,)
+            field.focus()
+            await pilot.press('home', 'shift+end', 'backspace', *'Saved')
+            assert field.value == 'Saved' and field.has_focus
+            screen.hold_rail = case == 'during-refresh'
+            screen.post_message(Hold())
+            before = None
+            lock_held = False
+            try:
+                await until(screen.entered.is_set)
+                editor.query_one('#evals-cb-save', Button).press()
+                await until(lambda: load_character_bench(db, bench_id).name == 'Saved')
+                if case == 'during-refresh':
+                    screen.release.set()
+                    await until(screen.rail_entered.is_set)
+                if case in ('later-input', 'during-refresh'):
+                    for char in '-new':
+                        field.post_message(Key(char, char))
+                    await until(lambda: field.value == 'Saved-new' and field.cursor_position == 9)
+                    assert field.has_focus
+                    assert field.selection.start == 9 and field.selection.end == 9
+                    before = dict(text=field.value, focus=field.has_focus, cursor=field.cursor_position,
+                                  selection=[field.selection.start, field.selection.end], dirty=editor.is_dirty())
+                elif case.startswith('departure'):
+                    if case == 'departure-pending':
+                        await screen._selection_swap_lock.acquire()
+                        lock_held = True
+                    # This is the documented public shell selection API, not a fabricated message.
+                    screen.select(kind='dataset', id=probe_set_id)
+                    if not lock_held:
+                        await app.workers.wait_for_complete()
+                        assert screen.query('#evals-probeset-detail-name')
+                    before = dict(selection_kind=screen._selection.kind, selection_id=screen._selection.id,
+                                  mounted_probe_set=bool(screen.query('#evals-probeset-detail-name')))
+            finally:
+                screen.release.set()
+                screen.rail_release.set()
+                try:
+                    await until(screen.publication_consumed.is_set)
+                finally:
+                    if lock_held:
+                        screen._selection_swap_lock.release()
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+            current_fields = screen.query('#evals-cb-name')
+            current = current_fields.first(Input) if current_fields else None
+            stored = load_character_bench(db, bench_id)
+            rail_labels = [str(button.label) for button in screen.query_one(LibraryRail).query(Button)]
+            after = dict(text=current.value if current else None,
+                         same_input=current is field, focus=current.has_focus if current else False,
+                         cursor=current.cursor_position if current else None,
+                         selection=[current.selection.start, current.selection.end] if current else None,
+                         selection_kind=screen._selection.kind, selection_id=screen._selection.id,
+                         mounted_probe_set=bool(screen.query('#evals-probeset-detail-name')))
+            observation = dict(case=case, before=before, after=after, stored_name=stored.name,
+                               stored_character_ids=list(stored.character_ids), rail_contains_saved=any('Saved' in x for x in rail_labels))
+            (OUT / f'{case}-observation.json').write_text(json.dumps(observation, indent=2), encoding='utf8')
+            assert stored.name == 'Saved'
+            assert stored.character_ids == (card_id,)
+            assert any('Saved' in x for x in rail_labels)
+            if case.startswith('departure'):
+                assert screen._selection.kind == 'dataset', 'queued character Save displaced newer public shell selection'
+                assert screen._selection.id == probe_set_id
+                assert screen.query('#evals-probeset-detail-name')
+            else:
+                assert current.value == ('Saved-new' if case != 'ordinary' else 'Saved'), 'queued character Save replaced newer accepted child input'
+                if case != 'ordinary':
+                    assert current is field and current.has_focus and current.cursor_position == 9
+                    assert [current.selection.start, current.selection.end] == before['selection']
+                else:
+                    assert current is not field
+                    assert not screen.query_one(CharacterBenchEditor).is_dirty()
+    finally:
+        db.close()
+        cards.close()

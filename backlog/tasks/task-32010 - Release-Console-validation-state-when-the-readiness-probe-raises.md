@@ -27,7 +27,7 @@ An exception during provider readiness validation leaves a failed Console send m
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: no
-ADR path: N/A (existing ownership follows backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md; existing diagnostics follow ADR-029).
+ADR path: N/A (existing ownership follows backlog/decisions/336-console-turn-lifetime-and-navigation-boundary.md; existing diagnostics follow ADR-029).
 Reason: routine bug fix within the existing readiness exception handler; no new runtime, persistence, UI or diagnostic interface.
 1. Extend the existing readiness exception regression to prove terminal state, slot release, retry, cancellation and owning-session isolation. Preserve the failing mounted Enter evidence from TASK-31977.
 2. Release only the owning validation state in its existing exception cleanup, retaining exception propagation and existing failed-echo handling.
@@ -39,7 +39,7 @@ Reason: routine bug fix within the existing readiness exception handler; no new 
 <!-- SECTION:NOTES:BEGIN -->
 Fixed a reproducible pre-provider send lifecycle defect: readiness exceptions failed the optimistic user echo but left its session VALIDATING, occupying a send slot and keeping the transcript timer polling every 200ms. The existing exception handler now releases manual/queued validation state to BLOCKED, or STOPPED for cancellation, while preserving exception propagation and failed-echo history exclusion. It targets only the live owning session and does not overwrite an already-terminal state.
 
-Scope: no new capture tool, logging surface, dependency or UI timer workaround. AGENT_WAKE retains its separate coordinator retry lifecycle: applying cleanup to wakes changed immediate retry ordering and failed its existing fairness regression, so that independent lifecycle remains unchanged. ADR required: no; routine cleanup under existing ADR-094 controller ownership and ADR-029 diagnostic privacy.
+Scope: no new capture tool, logging surface, dependency or UI timer workaround. AGENT_WAKE retains its separate coordinator retry lifecycle: applying cleanup to wakes changed immediate retry ordering and failed its existing fairness regression, so that independent lifecycle remains unchanged. ADR required: no; routine cleanup under existing ADR-336 controller ownership and ADR-029 diagnostic privacy.
 
 Extended the existing controller exception regression with real retry/provider-payload assertions and inactive-session isolation; added cancellation, close and shutdown cases. Extended the existing mounted diagnostic test with actual Enter, capture enabled, four persisted conversations, 80x24 and 160x45 layouts, failed-draft restoration, timer termination and the existing actual compositor counter. Added an incident-backed testing lesson.
 

@@ -8,6 +8,7 @@ import faulthandler
 import functools
 import logging
 import os
+import re
 import signal
 import sys
 import threading
@@ -446,6 +447,18 @@ class LogsBufferHandler(logging.Handler):
         app._log_records_lock = threading.Lock()
         app._log_records_seq = 0
 
+    def snapshot_report_tail(
+        self, limit: int = 500
+    ) -> tuple[int, int, tuple[tuple[str, str, str], ...]]:
+        """Return the sequence watermark, buffer size, and immutable sanitized tail."""
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError("report log limit must be between 1 and 500")
+        from itertools import islice
+
+        with self.app._log_records_lock:
+            records = tuple(reversed(tuple(islice(reversed(self.app._log_records), limit))))
+            return self.app._log_records_seq, len(self.app._log_records), records
+
     def emit(self, record: logging.LogRecord) -> None:
         """Append the redacted line to the buffers, then show it in the Logs view.
 
@@ -640,15 +653,39 @@ def _forward_loguru_to_standard(message) -> None:
     std_level = level_mapping.get(record["level"].name, logging.INFO)
     std_logger = logging.getLogger(record["name"])
     extra = {"_tldw_source_path": str(record["file"].path)}
+    text = _with_bound_exception_type(record)
     if record["exception"]:
         std_logger.log(
             std_level,
-            record["message"],
+            text,
             exc_info=record["exception"],
             extra=extra,
         )
     else:
-        std_logger.log(std_level, record["message"], extra=extra)
+        std_logger.log(std_level, text, extra=extra)
+
+
+#: A bound ``exception_type`` is rendered only when it is a plain class name.
+_BOUND_EXCEPTION_TYPE = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}")
+
+
+def _with_bound_exception_type(record) -> str:
+    """Return the message, plus a bound ``exception_type`` when one is present.
+
+    TASK-38989: bounded logs (Persona Buddy, its preferences) keep a fixed
+    category message and bind the failure class instead of interpolating it.
+    This forwarder is the only production loguru sink and passes on only the
+    message, so the class must be appended here or users never see it. Only
+    that one reviewed key is rendered, and only as a plain class name; no
+    other ``extra`` field reaches the log. The persistent sink's formatter
+    still redacts the whole line.
+    """
+    exception_type = record["extra"].get("exception_type")
+    if isinstance(exception_type, str) and _BOUND_EXCEPTION_TYPE.fullmatch(
+        exception_type
+    ):
+        return f"{record['message']}: {exception_type}"
+    return record["message"]
 
 
 #: (loguru sink id, level) of the forwarder ``configure_application_logging``

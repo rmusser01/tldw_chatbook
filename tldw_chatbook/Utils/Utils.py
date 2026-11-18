@@ -40,8 +40,8 @@ from typing import Optional
 
 #
 # 3rd-Party Imports
-# Note: chardet is imported lazily inside safe_read_file() and
-# FileProcessor.detect_encoding() -- its only two callers -- since it pulls
+# Note: chardet is imported lazily inside
+# FileProcessor.detect_encoding() -- its only caller -- since it pulls
 # in ~40 submodules (~21ms) that most imports of this module never need.
 import unicodedata
 from loguru import logger
@@ -320,62 +320,6 @@ def save_to_file(video_urls, filename):
 
 
 
-def safe_read_file(file_path):
-    encodings = [
-        "utf-8",
-        "utf-16",
-        "ascii",
-        "latin-1",
-        "iso-8859-1",
-        "cp1252",
-        "utf-8-sig",
-    ]
-
-    logging.info(f"Attempting to read file: {file_path}")
-
-    try:
-        with open(file_path, "rb") as file:
-            logging.debug(f"Reading file in binary mode: {file_path}")
-            raw_data = file.read()
-    except FileNotFoundError:
-        logging.error(f"File not found: {file_path}")
-        return f"File not found: {file_path}"
-    except Exception as e:
-        logging.error(f"An error occurred while reading the file: {e}")
-        return f"An error occurred while reading the file: {e}"
-
-    if not raw_data:
-        logging.warning(f"File is empty: {file_path}")
-        return ""
-
-    # Use chardet to detect the encoding (imported lazily -- rarely-used path)
-    import chardet
-
-    detected = chardet.detect(raw_data)
-    if detected["encoding"] is not None:
-        encodings.insert(0, detected["encoding"])
-        logging.info(f"Detected encoding: {detected['encoding']}")
-
-    for encoding in encodings:
-        logging.info(f"Trying encoding: {encoding}")
-        try:
-            decoded_content = raw_data.decode(encoding)
-            # Check if the content is mostly printable
-            if (
-                sum(c.isprintable() for c in decoded_content) / len(decoded_content)
-                > 0.90
-            ):
-                logging.info(f"Successfully decoded file with encoding: {encoding}")
-                return decoded_content
-        except UnicodeDecodeError:
-            logging.debug(f"Failed to decode with {encoding}")
-            continue
-
-    # If all decoding attempts fail, return the error message
-    logging.error(f"Unable to decode the file {file_path}")
-    return f"Unable to decode the file {file_path}"
-
-
 #
 # End of Files-saving Function Definitions
 #######################################################################################################################
@@ -406,21 +350,6 @@ def generate_unique_filename(base_path, base_filename):
 #######################################################################################################################
 #
 # Sanitization/Verification Functions
-
-
-# Helper function to validate URL format
-def is_valid_url(url: str) -> bool:
-    regex = re.compile(
-        r"^(?:http|ftp)s?://"  # http:// or https://
-        r"(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}\.?)|"  # domain...
-        r"localhost|"  # localhost...
-        r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|"  # ...or ipv4
-        r"\[?[A-F0-9]*:[A-F0-9:]+\]?)"  # ...or ipv6
-        r"(?::\d+)?"  # optional port
-        r"(?:/?|[/?]\S+)$",
-        re.IGNORECASE,
-    )
-    return re.match(regex, url) is not None
 
 
 def verify_checksum(file_path, expected_checksum):

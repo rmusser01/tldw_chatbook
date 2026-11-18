@@ -5,8 +5,8 @@
 # vocabulary. They are not Console-specific -- Evals' library rail uses the
 # same triangles. See ADR-034 (backlog/decisions/034-shared-rail-disclosure-glyphs.md).
 from tldw_chatbook.Widgets.destination_rail import (  # noqa: E402
-    GLYPH_COLLAPSED,
-    GLYPH_EXPANDED,
+    GLYPH_COLLAPSED,  # noqa: F401 - intentional re-export (ADR-034): one import site for the glyph vocabulary
+    GLYPH_EXPANDED,  # noqa: F401 - intentional re-export (ADR-034): one import site for the glyph vocabulary
 )
 
 GLYPH_HOOKS = "⚓"

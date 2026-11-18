@@ -1090,7 +1090,7 @@ class ChatbookExportManagementWindow(ModalScreen):
             cancel_label="Cancel",
         )
 
-        result = await self.app_instance.push_screen(dialog, wait_for_dismiss=True)
+        result = await self.app_instance.push_screen_wait(dialog)
 
         if result:
             try:

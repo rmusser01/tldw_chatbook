@@ -269,18 +269,21 @@ def test_destination_label_rejects_backslashes_and_bidi_controls(
         ("faß.de", "xn--fa-hia.de"),
     ],
 )
-def test_unicode_and_punycode_hosts_share_one_destination_identity(
+def test_a_unicode_host_is_refused_and_its_punycode_spelling_keeps_its_identity(
     unicode_host: str,
     punycode_host: str,
 ) -> None:
+    """TASK-40300 AC#5: the send refuses a non-ASCII host (the endpoint
+    contract's host rule), so project instructions give it the refused
+    identity too; its punycode spelling is an ordinary host."""
     unicode_endpoint = f"https://{unicode_host}/v1"
     punycode_endpoint = f"https://{punycode_host}/v1"
 
-    assert fingerprint_provider_destination(
-        "openai", unicode_endpoint
-    ) == fingerprint_provider_destination("openai", punycode_endpoint)
+    with pytest.raises(ValueError, match="invalid provider endpoint"):
+        fingerprint_provider_destination("openai", unicode_endpoint)
+    assert len(fingerprint_provider_destination("openai", punycode_endpoint)) == 64
     assert sanitized_destination_label("OpenAI", unicode_endpoint) == (
-        f"OpenAI (https://{punycode_host})"
+        "OpenAI (invalid endpoint)"
     )
     assert sanitized_destination_label("OpenAI", punycode_endpoint) == (
         f"OpenAI (https://{punycode_host})"
@@ -407,7 +410,7 @@ def test_ssh_binding_admitted_when_cache_ready() -> None:
 def test_ssh_binding_missing_requires_reselection() -> None:
     """MISSING is a retarget-class failure: admission refuses (None), so
     the resolver raises binding_unavailable -> explicit re-selection
-    (ADR-069 parity with a deleted local folder)."""
+    (ADR-317 parity with a deleted local folder)."""
     from tldw_chatbook.Chat import console_chat_controller as controller
     from tldw_chatbook.Tools.remote_binding_status import RemoteBindingStatusCache
 
@@ -424,7 +427,7 @@ def test_ssh_binding_missing_requires_reselection() -> None:
 def test_ssh_binding_blocked_admits_degraded_without_forcing_reselection() -> None:
     """BLOCKED is transient (flaky link, not a retarget): the selection
     still resolves -- degraded with a warning -- and never forces the
-    ADR-069 recovery dialog."""
+    ADR-317 recovery dialog."""
     from tldw_chatbook.Chat import console_chat_controller as controller
     from tldw_chatbook.Tools.remote_binding_status import BindingState
     from tldw_chatbook.Tools.remote_binding_status import RemoteBindingStatusCache
@@ -930,7 +933,7 @@ def test_remote_exclusion_provider_output_consumable_by_both_executor_seams(
 def test_remote_instruction_io_for_selection_builds_reader_or_degrades() -> None:
     """Task 19 dispatch wiring: a remote selection yields the executor-
     backed instruction reader; construction failure degrades to ``None``
-    (ADR-069 posture: content-free warning, proceed)."""
+    (ADR-317 posture: content-free warning, proceed)."""
     from types import SimpleNamespace
 
     from tldw_chatbook.Agents.project_instruction_resolver import RemoteInstructionIO

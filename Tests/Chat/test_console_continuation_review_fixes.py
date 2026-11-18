@@ -312,11 +312,16 @@ class _ReasoningOnlyGateway:
             readiness_key="moonshot",
             execution_key="moonshot",
             continuation_protocol="chat_completions",
+            # resolve_for_send pins the continuation tuple a durable final
+            # continuation is bound to; without it the run is not durable.
             resolved_destination=ConsoleResolvedDestination(
                 provider="moonshot",
                 model="kimi-k3",
                 endpoint_identity="https://api.moonshot.ai/v1",
                 egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+                continuation_provider="moonshot",
+                continuation_protocol="chat_completions",
+                continuation_base_url="https://api.moonshot.ai/v1",
             ),
         )
 

@@ -57,6 +57,16 @@ READ_FILE_MAX_BYTES = 10 * 1024 * 1024
 DIFF_CONTENT_KEYS = ("old_content", "new_content")
 
 
+def _sandbox_config_path(settings) -> Path:
+    """Select the configured sandbox without provisioning app or tool storage."""
+    from ..Backup_Recovery import profile_paths
+
+    default = profile_paths.user_data_dir(settings) / "tool_sandbox"
+    return Path(
+        settings.get("tools", {}).get("file_sandbox_root") or default
+    ).expanduser()
+
+
 def _resolve_sandbox_config() -> str:
     """Return the configured sandbox root string (indirection for tests)."""
     from ..config import get_cli_setting, get_user_data_dir
@@ -104,6 +114,10 @@ def is_within(
     if is_sensitive_path(resolved, context=context):
         return False
     return resolved == root_resolved or root_resolved in resolved.parents
+
+
+# Direct call-shape anchors for optional finite context sharing only.
+_IS_WITHIN_ORIGINAL = (is_within, is_within.__code__, is_within.__defaults__)
 
 
 def _tool_sandbox_root() -> Path:
@@ -158,6 +172,30 @@ _FILE_TOOL_PATH_ARGS: dict[str, tuple[str, bool]] = {
     "list_directory": ("directory_path", False),
     "write_file": ("file_path", True),
 }
+
+#: Built-in tools whose RELATIVE path argument resolves inside the run's
+#: private sandbox (``validate_path_multi`` anchors relative paths to the
+#: first root only). The workspace-context note names these so an agent does
+#: not expect a relative path to land in a bound folder (TASK-33940.1).
+SCRATCH_RELATIVE_PATH_TOOLS: frozenset[str] = frozenset(_FILE_TOOL_PATH_ARGS)
+
+
+def _foreign_file_path_error(tool_name: str, args: Mapping[str, Any]) -> str | None:
+    """Reject fs_* addressing before a built-in can fall back to scratch."""
+    if not {"root_alias", "path"}.intersection(args):
+        return None
+    workspace_tool = {
+        "read_file": "fs_read",
+        "list_directory": "fs_list",
+        "write_file": "fs_write",
+    }[tool_name]
+    path_key = _FILE_TOOL_PATH_ARGS[tool_name][0]
+    return (
+        f"{tool_name} does not accept root_alias or path; it uses {path_key}. "
+        "Relative paths refer to private scratch. For a bound project folder, "
+        f"use find_tools to find {workspace_tool}, then load_tools before calling "
+        "it with root_alias and path."
+    )
 
 
 def path_precheck_failed(
@@ -319,6 +357,9 @@ class ReadFileTool(Tool):
         Returns:
             Dictionary with file content or error
         """
+        argument_error = _foreign_file_path_error(self.name, kwargs)
+        if argument_error is not None:
+            return {"error": argument_error}
         file_path = kwargs.get("file_path")
         if not file_path:
             return {"error": "No file path provided"}
@@ -413,7 +454,10 @@ class ListDirectoryTool(Tool):
             "properties": {
                 "directory_path": {
                     "type": "string",
-                    "description": "The path to the directory to list",
+                    "description": (
+                        "Directory path. Relative paths use private scratch; "
+                        "for a project root_alias, use fs_list instead."
+                    ),
                 },
                 "include_hidden": {
                     "type": "boolean",
@@ -454,7 +498,14 @@ class ListDirectoryTool(Tool):
         Returns:
             Dictionary with directory contents or error
         """
-        directory_path = kwargs.get("directory_path", ".")
+        argument_error = _foreign_file_path_error(self.name, kwargs)
+        if argument_error is not None:
+            return {"error": argument_error}
+        directory_path = kwargs.get("directory_path")
+        if not isinstance(directory_path, (str, Path)) or not str(directory_path).strip():
+            return {
+                "error": "directory_path is required; use '.' explicitly for private scratch."
+            }
         include_hidden = kwargs.get("include_hidden", False)
         recursive = kwargs.get("recursive", False)
         # TASK-32806.6: the schema says `maximum: 5`, but nothing clamped
@@ -690,6 +741,9 @@ class WriteFileTool(Tool):
         Returns:
             Dictionary with success status or error
         """
+        argument_error = _foreign_file_path_error(self.name, kwargs)
+        if argument_error is not None:
+            return {"error": argument_error}
         file_path = kwargs.get("file_path")
         content = kwargs.get("content")
 
@@ -1896,3 +1950,121 @@ class GrepFiles(Tool):
             # keep the run alive.
             logger.error(f"Error grepping pattern {raw_pattern!r}: {exc}")
             return {"error": f"Failed to grep files: {exc}"}
+
+
+# Definition-time originals for the finite stock run-log availability read.
+_RUN_LOG_PROBE_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    (
+        *(
+            (globals(), name, globals()[name])
+            for name in (
+                "_tool_sandbox_root",
+                "_resolve_sandbox_config",
+                "current_run_sandbox_root",
+            )
+        ),
+    ),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for _owner, _name, descriptor in (
+            *(
+                (globals(), name, globals()[name])
+                for name in (
+                    "_tool_sandbox_root",
+                    "_resolve_sandbox_config",
+                    "current_run_sandbox_root",
+                )
+            ),
+        )
+        if callable(descriptor) or isinstance(descriptor, (staticmethod, classmethod))
+        for outer in (
+            descriptor.__func__
+            if isinstance(descriptor, (staticmethod, classmethod))
+            else descriptor,
+        )
+        if hasattr(outer, "__code__")
+        for function in (
+            outer,
+            *((outer.__wrapped__,) if hasattr(outer, "__wrapped__") else ()),
+            *(
+                (outer.__wrapped__.__wrapped__,)
+                if hasattr(outer, "__wrapped__")
+                and hasattr(outer.__wrapped__, "__wrapped__")
+                else ()
+            ),
+        )
+    ),
+)
+
+# Definition-time closed builtin implementations; no tool is constructed here.
+_NATIVE_ORDINARY_TOOL_CLASSES = (
+    ReadFileTool,
+    WriteFileTool,
+    ListDirectoryTool,
+    GlobFiles,
+    GrepFiles,
+)
+_NATIVE_ORDINARY_TOOL_DESCRIPTORS = tuple(
+    (cls, name, descriptor)
+    for cls in _NATIVE_ORDINARY_TOOL_CLASSES
+    for name, descriptor in vars(cls).items()
+    if callable(descriptor)
+    or isinstance(descriptor, (staticmethod, classmethod, property))
+)
+_NATIVE_ORDINARY_TOOL_FUNCTIONS = tuple(
+    (
+        name,
+        value,
+        value.__code__,
+        value.__defaults__,
+        value.__kwdefaults__,
+        tuple((value.__kwdefaults__ or {}).items()),
+    )
+    for name, value in tuple(globals().items())
+    if isinstance(value, type(lambda: None)) and value.__module__ == __name__
+)
+
+from inspect import getattr_static as _ordinary_getattr_static
+
+_NATIVE_ORDINARY_TOOL_DESCRIPTORS += tuple(
+    (cls, name, _ordinary_getattr_static(cls, name))
+    for cls in _NATIVE_ORDINARY_TOOL_CLASSES
+    for name in ("__init__", "__new__")
+)
+_NATIVE_ORDINARY_TOOL_IMPLEMENTATIONS = tuple(
+    (
+        function,
+        function.__code__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        tuple((function.__kwdefaults__ or {}).items()),
+        function.__closure__,
+        tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+    )
+    for function in (
+        *(record[1] for record in _NATIVE_ORDINARY_TOOL_FUNCTIONS),
+        *(
+            descriptor.__func__
+            if isinstance(descriptor, (staticmethod, classmethod))
+            else descriptor.fget
+            if isinstance(descriptor, property)
+            else descriptor
+            for _cls, _name, descriptor in _NATIVE_ORDINARY_TOOL_DESCRIPTORS
+        ),
+    )
+    if isinstance(function, type(lambda: None))
+)

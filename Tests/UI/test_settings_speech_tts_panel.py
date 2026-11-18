@@ -49,9 +49,9 @@ from tldw_chatbook.TTS.openai_compatible_config import (
 from tldw_chatbook.UI.Lab_Modules import lab_speech_status as lab_speech_status_module
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens import settings_screen as settings_screen_module
-from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
-from tldw_chatbook.UI.Screens.settings_speech_tts import (
+from tldw_chatbook.UI.Speech.settings_speech_tts import (
     BUILT_IN_TTS_PROVIDER_ORDER,
     GLOBAL_TTS_PROVIDER_FIELD_IDS,
     CredentialIntent,
@@ -616,7 +616,7 @@ async def test_scope_banner_points_to_the_two_profile_surfaces() -> None:
     """The pointer card names where profiles actually live (task 1, slice 4).
 
     Voice profiles are a Speech Lab concept and per-character assignment
-    lives in the Roleplay character editor (ADR-039 scope separation) --
+    lives in the Roleplay character editor (ADR-304 scope separation) --
     neither is managed from this panel. The card is a two-line static
     note; the single "Open Speech Lab" action lives with the Save actions.
     """
@@ -4516,7 +4516,7 @@ def test_optional_number_validator_rejects_non_finite_values():
     """PR #2638 Qodo #5: NaN compares False to every bound and infinity
     passes a positive lower bound, yet neither belongs in config -- the
     shared helper every realtime numeric knob uses must refuse them."""
-    from tldw_chatbook.UI.Screens.settings_speech_tts import (
+    from tldw_chatbook.UI.Speech.settings_speech_tts import (
         GlobalSpeechTTSValidationError,
     )
     from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
@@ -4534,3 +4534,27 @@ def test_optional_number_validator_rejects_non_finite_values():
                 high=None,
                 exclusive_low=True,
             )
+
+
+# --- review fix (PR #3089): drift pin for the mirrored panel constants ------
+
+
+def test_panel_default_constants_match_the_voice_input_source():
+    """The four compose-time placeholder constants in the panel are mirrors
+    of `console_voice_input`'s (inlined there to keep the settings
+    pre-import route light — PR #3089). This pin turns the "verified
+    2026-10-12" provenance comment into an enforced contract: a source
+    change without a panel update fails here, not silently in the UI."""
+    from tldw_chatbook.Chat import console_voice_input as source
+    from tldw_chatbook.Widgets.Settings_Widgets import speech_tts_settings_panel as panel
+
+    assert (
+        panel.DEFAULT_HANDSFREE_SEND_DELAY_SECONDS
+        == source.DEFAULT_HANDSFREE_SEND_DELAY_SECONDS
+    )
+    assert (
+        panel.DEFAULT_REALTIME_IDLE_TIMEOUT_MINUTES
+        == source.DEFAULT_REALTIME_IDLE_TIMEOUT_MINUTES
+    )
+    assert panel.DEFAULT_REALTIME_MODEL == source.DEFAULT_REALTIME_MODEL
+    assert panel.DEFAULT_REALTIME_PROVIDER == source.DEFAULT_REALTIME_PROVIDER

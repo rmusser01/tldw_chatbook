@@ -34,6 +34,7 @@ from textual._path import CSSPathType, _css_path_type_as_list
 from textual.app import App
 
 from tldw_chatbook.css import build_css
+from tldw_chatbook.css.Themes.themes import ThemeVariableDefaultsMixin
 from tldw_chatbook.css.tie_aware_stylesheet import TieAwareStylesheet
 
 CSS_DIR = Path(build_css.__file__).parent
@@ -119,8 +120,15 @@ def _merge_screen_css_paths(css_path: CSSPathType | None) -> list[str]:
 _ReturnType = TypeVar("_ReturnType")
 
 
-class ConsolidatedCSSApp(App[_ReturnType]):
-    """An ``App`` that loads the consolidated widget CSS, as the real app does."""
+class ConsolidatedCSSApp(ThemeVariableDefaultsMixin, App[_ReturnType]):
+    """An ``App`` that loads the consolidated widget CSS, as the real app does.
+
+    TASK-33641.1: the widget sheets name ``$tldw-boundary`` and
+    ``$tldw-active-edge`` (the tab bar), which no tcss defines. The mixin
+    supplies them as it does for ``TldwCli``; without it a harness started in
+    a subprocess, where Tests/conftest.py never imports the themes module,
+    fails the stylesheet parse.
+    """
 
     CSS_PATH = [str(_SCREEN_CSS_SCOPED), str(_SCREEN_CSS_SELF)]
 

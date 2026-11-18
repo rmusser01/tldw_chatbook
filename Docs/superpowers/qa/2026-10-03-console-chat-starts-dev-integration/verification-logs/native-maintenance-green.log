@@ -1,0 +1,6 @@
+..                                                                       [100%]
+============================= slowest 25 durations =============================
+1.77s call     Tests/Chat/test_console_chat_start.py::test_native_start_never_enrolls_queue_stop_parent
+
+(5 durations < 1s hidden.)
+2 passed in 3.48s

@@ -244,8 +244,16 @@ def test_nested_context_is_distinct_final_block_after_parallel_anthropic_results
             "role": "assistant",
             "content": "",
             "tool_calls": [
-                {"id": "a", "type": "function", "function": {"name": "one", "arguments": "{}"}},
-                {"id": "b", "type": "function", "function": {"name": "two", "arguments": "{}"}},
+                {
+                    "id": "a",
+                    "type": "function",
+                    "function": {"name": "one", "arguments": "{}"},
+                },
+                {
+                    "id": "b",
+                    "type": "function",
+                    "function": {"name": "two", "arguments": "{}"},
+                },
             ],
         },
         {"role": "tool", "tool_call_id": "a", "content": "deferred-a"},

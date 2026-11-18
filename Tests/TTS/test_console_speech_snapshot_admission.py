@@ -144,6 +144,7 @@ class _RecordingHandler(TTSEventHandler):
         expected_destination_fingerprint=None,
         playback_lifecycle=None,
         cancellation_is_success=None,
+        presentation=None,
     ) -> None:
         self.generated.append((text, message_id, voice))
         self.resolutions.append(resolution)

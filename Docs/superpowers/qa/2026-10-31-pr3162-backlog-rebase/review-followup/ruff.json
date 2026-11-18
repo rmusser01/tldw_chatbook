@@ -1,0 +1,274 @@
+[
+  {
+    "cell": null,
+    "code": "F811",
+    "end_location": {
+      "column": 79,
+      "row": 43
+    },
+    "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3162-resync\\tldw_tui\\Tests\\Chat\\test_archive_recovery_coordinator.py",
+    "fix": null,
+    "location": {
+      "column": 64,
+      "row": 43
+    },
+    "message": "Redefinition of unused `recovery_stores` from line 9",
+    "noqa_row": 43,
+    "url": "https://docs.astral.sh/ruff/rules/redefined-while-unused"
+  },
+  {
+    "cell": null,
+    "code": "F811",
+    "end_location": {
+      "column": 72,
+      "row": 76
+    },
+    "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3162-resync\\tldw_tui\\Tests\\Chat\\test_archive_recovery_coordinator.py",
+    "fix": null,
+    "location": {
+      "column": 57,
+      "row": 76
+    },
+    "message": "Redefinition of unused `recovery_stores` from line 9",
+    "noqa_row": 76,
+    "url": "https://docs.astral.sh/ruff/rules/redefined-while-unused"
+  },
+  {
+    "cell": null,
+    "code": "F811",
+    "end_location": {
+      "column": 86,
+      "row": 109
+    },
+    "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3162-resync\\tldw_tui\\Tests\\Chat\\test_archive_recovery_coordinator.py",
+    "fix": null,
+    "location": {
+      "column": 71,
+      "row": 109
+    },
+    "message": "Redefinition of unused `recovery_stores` from line 9",
+    "noqa_row": 109,
+    "url": "https://docs.astral.sh/ruff/rules/redefined-while-unused"
+  },
+  {
+    "cell": null,
+    "code": "F811",
+    "end_location": {
+      "column": 20,
+      "row": 137
+    },
+    "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3162-resync\\tldw_tui\\Tests\\Chat\\test_archive_recovery_coordinator.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 137
+    },
+    "message": "Redefinition of unused `recovery_stores` from line 9",
+    "noqa_row": 137,
+    "url": "https://docs.astral.sh/ruff/rules/redefined-while-unused"
+  },
+  {
+    "cell": null,
+    "code": "F811",
+    "end_location": {
+      "column": 75,
+      "row": 201
+    },
+    "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3162-resync\\tldw_tui\\Tests\\Chat\\test_archive_recovery_coordinator.py",
+    "fix": null,
+    "location": {
+      "column": 60,
+      "row": 201
+    },
+    "message": "Redefinition of unused `recovery_stores` from line 9",
+    "noqa_row": 201,
+    "url": "https://docs.astral.sh/ruff/rules/redefined-while-unused"
+  },
+  {
+    "cell": null,
+    "code": "F811",
+    "end_location": {
+      "column": 82,
+      "row": 229
+    },
+    "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3162-resync\\tldw_tui\\Tests\\Chat\\test_archive_recovery_coordinator.py",
+    "fix": null,
+    "location": {
+      "column": 67,
+      "row": 229
+    },
+    "message": "Redefinition of unused `recovery_stores` from line 9",
+    "noqa_row": 229,
+    "url": "https://docs.astral.sh/ruff/rules/redefined-while-unused"
+  },
+  {
+    "cell": null,
+    "code": "F811",
+    "end_location": {
+      "column": 20,
+      "row": 249
+    },
+    "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3162-resync\\tldw_tui\\Tests\\Chat\\test_archive_recovery_coordinator.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 249
+    },
+    "message": "Redefinition of unused `recovery_stores` from line 9",
+    "noqa_row": 249,
+    "url": "https://docs.astral.sh/ruff/rules/redefined-while-unused"
+  },
+  {
+    "cell": null,
+    "code": "F811",
+    "end_location": {
+      "column": 20,
+      "row": 274
+    },
+    "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3162-resync\\tldw_tui\\Tests\\Chat\\test_archive_recovery_coordinator.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 274
+    },
+    "message": "Redefinition of unused `recovery_stores` from line 9",
+    "noqa_row": 274,
+    "url": "https://docs.astral.sh/ruff/rules/redefined-while-unused"
+  },
+  {
+    "cell": null,
+    "code": "F811",
+    "end_location": {
+      "column": 20,
+      "row": 292
+    },
+    "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3162-resync\\tldw_tui\\Tests\\Chat\\test_archive_recovery_coordinator.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 292
+    },
+    "message": "Redefinition of unused `recovery_stores` from line 9",
+    "noqa_row": 292,
+    "url": "https://docs.astral.sh/ruff/rules/redefined-while-unused"
+  },
+  {
+    "cell": null,
+    "code": "F811",
+    "end_location": {
+      "column": 20,
+      "row": 340
+    },
+    "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3162-resync\\tldw_tui\\Tests\\Chat\\test_archive_recovery_coordinator.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 340
+    },
+    "message": "Redefinition of unused `recovery_stores` from line 9",
+    "noqa_row": 340,
+    "url": "https://docs.astral.sh/ruff/rules/redefined-while-unused"
+  },
+  {
+    "cell": null,
+    "code": "F811",
+    "end_location": {
+      "column": 75,
+      "row": 356
+    },
+    "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3162-resync\\tldw_tui\\Tests\\Chat\\test_archive_recovery_coordinator.py",
+    "fix": null,
+    "location": {
+      "column": 60,
+      "row": 356
+    },
+    "message": "Redefinition of unused `recovery_stores` from line 9",
+    "noqa_row": 356,
+    "url": "https://docs.astral.sh/ruff/rules/redefined-while-unused"
+  },
+  {
+    "cell": null,
+    "code": "F811",
+    "end_location": {
+      "column": 81,
+      "row": 370
+    },
+    "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3162-resync\\tldw_tui\\Tests\\Chat\\test_archive_recovery_coordinator.py",
+    "fix": null,
+    "location": {
+      "column": 66,
+      "row": 370
+    },
+    "message": "Redefinition of unused `recovery_stores` from line 9",
+    "noqa_row": 370,
+    "url": "https://docs.astral.sh/ruff/rules/redefined-while-unused"
+  },
+  {
+    "cell": null,
+    "code": "F811",
+    "end_location": {
+      "column": 20,
+      "row": 395
+    },
+    "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3162-resync\\tldw_tui\\Tests\\Chat\\test_archive_recovery_coordinator.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 395
+    },
+    "message": "Redefinition of unused `recovery_stores` from line 9",
+    "noqa_row": 395,
+    "url": "https://docs.astral.sh/ruff/rules/redefined-while-unused"
+  },
+  {
+    "cell": null,
+    "code": "F811",
+    "end_location": {
+      "column": 20,
+      "row": 431
+    },
+    "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3162-resync\\tldw_tui\\Tests\\Chat\\test_archive_recovery_coordinator.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 431
+    },
+    "message": "Redefinition of unused `recovery_stores` from line 9",
+    "noqa_row": 431,
+    "url": "https://docs.astral.sh/ruff/rules/redefined-while-unused"
+  },
+  {
+    "cell": null,
+    "code": "F811",
+    "end_location": {
+      "column": 20,
+      "row": 507
+    },
+    "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3162-resync\\tldw_tui\\Tests\\Chat\\test_archive_recovery_coordinator.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 507
+    },
+    "message": "Redefinition of unused `recovery_stores` from line 9",
+    "noqa_row": 507,
+    "url": "https://docs.astral.sh/ruff/rules/redefined-while-unused"
+  },
+  {
+    "cell": null,
+    "code": "F811",
+    "end_location": {
+      "column": 20,
+      "row": 583
+    },
+    "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3162-resync\\tldw_tui\\Tests\\Chat\\test_archive_recovery_coordinator.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 583
+    },
+    "message": "Redefinition of unused `recovery_stores` from line 9",
+    "noqa_row": 583,
+    "url": "https://docs.astral.sh/ruff/rules/redefined-while-unused"
+  }
+]

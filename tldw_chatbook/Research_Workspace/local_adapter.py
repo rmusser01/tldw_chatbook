@@ -652,9 +652,8 @@ class LocalResearchWorkspaceAdapter:
             owner_proof=receipt.owner_proof,
             user_id=self._notes_user_id,
         )
-        if (
-            str(row.get("id") or "") != receipt.canonical_note_id
-            or (receipt.state != "projection_committed" and not has_proof)
+        if str(row.get("id") or "") != receipt.canonical_note_id or (
+            receipt.state != "projection_committed" and not has_proof
         ):
             await asyncio.to_thread(
                 self._service.record_quick_note_failure,
@@ -748,7 +747,9 @@ class LocalResearchWorkspaceAdapter:
                 )
                 raise ResearchNoteConflictError(ref, receipt.canonical_note_id) from exc
             if type(deleted) is not bool:
-                raise CharactersRAGDBError("Local Notes returned an invalid delete result")
+                raise CharactersRAGDBError(
+                    "Local Notes returned an invalid delete result"
+                )
             row = await self._load_local_note_row(notes, receipt.canonical_note_id)
             if row is not None:
                 raise CharactersRAGDBError("Local Notes delete did not settle")
@@ -878,9 +879,7 @@ class LocalResearchWorkspaceAdapter:
                 ref,
                 membership,
                 detail,
-                selected=(
-                    membership.item_id in desired_ids
-                ),
+                selected=(membership.item_id in desired_ids),
                 position=page_offset + index,
             )
             for index, (membership, detail) in enumerate(zip(memberships, details))
@@ -987,9 +986,7 @@ class LocalResearchWorkspaceAdapter:
             updated_at=now,
         )
         try:
-            operation = await asyncio.to_thread(
-                self._operation_store.create, operation
-            )
+            operation = await asyncio.to_thread(self._operation_store.create, operation)
         except SourceOperationConflictError:
             existing = await asyncio.to_thread(
                 self._operation_store.get_by_idempotency_key, idempotency_key
@@ -1083,9 +1080,9 @@ class LocalResearchWorkspaceAdapter:
             mode=MediaReadingBackend.LOCAL,
             media_id=membership.item_id,
         )
-        text = str(
-            detail.get("content") or detail.get("transcription") or ""
-        )[:max_chars]
+        text = str(detail.get("content") or detail.get("transcription") or "")[
+            :max_chars
+        ]
         return ResearchSourcePreview(
             ref=ref,
             source_id=source_id,
@@ -1128,9 +1125,7 @@ class LocalResearchWorkspaceAdapter:
             )
         else:
             page = await self.list_sources(ref, limit=100, offset=0)
-            rows = tuple(
-                (row.source_id, row.catalog_item_id) for row in page.items
-            )
+            rows = tuple((row.source_id, row.catalog_item_id) for row in page.items)
         readiness: list[SourceReadiness] = []
         for source_id, catalog_item_id in rows:
             detail = await self._require_media_scope().get_media_detail(
@@ -1163,9 +1158,7 @@ class LocalResearchWorkspaceAdapter:
             raise ValueError("source_ids must be a unique bounded list")
         membership_groups = await asyncio.gather(
             *(
-                asyncio.to_thread(
-                    self._service.get_item_memberships, "media", item_id
-                )
+                asyncio.to_thread(self._service.get_item_memberships, "media", item_id)
                 for item_id in desired
             )
         )
@@ -1182,9 +1175,7 @@ class LocalResearchWorkspaceAdapter:
             self._service.set_workspace_scope,
             ref.workspace_id,
             RagScope(
-                items=tuple(
-                    ScopeItem("media", item_id) for item_id in desired
-                ),
+                items=tuple(ScopeItem("media", item_id) for item_id in desired),
                 updated_at=self._now_factory(),
                 empty_is_scoped=True,
             ),
@@ -1431,9 +1422,7 @@ class LocalResearchWorkspaceAdapter:
     @staticmethod
     def _summary(record: WorkspaceRecord) -> ResearchWorkspaceSummary:
         return ResearchWorkspaceSummary(
-            ref=QualifiedWorkspaceRef(
-                WorkspaceDataSource.LOCAL, record.workspace_id
-            ),
+            ref=QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, record.workspace_id),
             name=record.name,
             description=record.description,
             archived=record.archived,

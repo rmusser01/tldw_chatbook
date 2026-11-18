@@ -8,7 +8,6 @@ from textual import on
 from textual.events import DescendantFocus, Key
 from textual.widgets import Input, Select
 
-from ...Library.library_shell_state import LIBRARY_ROW_INGEST_MEDIA
 from ..workbench_focus import WorkbenchPaneTarget
 from .library_adaptive_reader_shell import (
     AdaptiveReaderShellResized,
@@ -16,6 +15,7 @@ from .library_adaptive_reader_shell import (
     PaneToggleRequested,
 )
 from .library_artifacts_widgets import ArtifactItems, ArtifactWork
+from .library_rail import LIBRARY_RAIL_FOCUS_TARGET
 
 if TYPE_CHECKING:
     from ...UI.Library_Modules.library_artifacts_controller import (
@@ -25,6 +25,18 @@ if TYPE_CHECKING:
 
 
 class LibraryArtifactsReaderShell(LibraryAdaptiveReaderShell):
+    @property
+    def hide_zero_width_work(self) -> bool:  # type: ignore[override]
+        """Hide the zero-width reader only while there is nothing to reveal.
+
+        TASK-38981: focusing a zero-width reader control reveals the reader
+        (``reveal_focused_reader``, F6), so with an artifact selected it stays
+        displayed. TASK-39062: with none selected, ``focus_reader`` reveals
+        nothing, and Tab from the list walked controls painted at -1 to -21
+        cells; then the reader hides like every other destination's.
+        """
+        return self.controller.selected is None
+
     def __init__(
         self, library: LibraryRail, controller: LibraryArtifactsController
     ) -> None:
@@ -43,15 +55,7 @@ class LibraryArtifactsReaderShell(LibraryAdaptiveReaderShell):
     def workbench_focus_targets(self) -> tuple[WorkbenchPaneTarget, ...]:
         """Cycle Library, Items and reader, using grips for collapsed panes."""
         targets = (
-            WorkbenchPaneTarget(
-                "library-rail",
-                (
-                    "library-search-input",
-                    f"library-row-{LIBRARY_ROW_INGEST_MEDIA}",
-                    "library-rail-explore-all",
-                    "library-rail-collapse",
-                ),
-            )
+            LIBRARY_RAIL_FOCUS_TARGET
             if self.library.display
             else WorkbenchPaneTarget(
                 "library-artifacts-library-grip", ("library-artifacts-library-grip",)
@@ -72,14 +76,18 @@ class LibraryArtifactsReaderShell(LibraryAdaptiveReaderShell):
 
     @on(DescendantFocus)
     def reveal_focused_reader(self, event: DescendantFocus) -> None:
-        if (
-            event.widget.id == "library-artifacts-body"
-            and self.app.focused is event.widget
-            and (
+        widget = event.widget
+        if self.app.focused is not widget:
+            return
+        if widget.id == "library-artifacts-body":
+            if (
                 not self.controller.reader_open
                 or self.controller.layout.priority_pane is not None
-            )
-        ):
+            ):
+                self.controller.focus_reader(request_focus=False)
+        elif self.work in widget.ancestors and self.controller.layout.reader_width == 0:
+            # TASK-38981 re-review: Tab also reaches the zero-width reader's own
+            # controls (Back, Preview, Details); landing on one reveals it too.
             self.controller.focus_reader(request_focus=False)
 
     def on_mount(self) -> None:
@@ -105,6 +113,14 @@ class LibraryArtifactsReaderShell(LibraryAdaptiveReaderShell):
                 return
             event.stop()
             event.prevent_default()
+            if self.controller.demo_consent is not None:
+                # TASK-34000.23 review 1: the open consent block owns Escape
+                # (dismissal only; nothing is armed). This handler stops the
+                # key before the screen's gated binding would see it, so the
+                # dismissal is dispatched here and the binding stays the
+                # advertised, `check_action`-gated description of it.
+                self.controller.action("demo-cancel")
+                return
             self.controller.focus_items()
         elif event.key == "/" and not isinstance(self.app.focused, Input):
             event.stop()
@@ -114,3 +130,8 @@ class LibraryArtifactsReaderShell(LibraryAdaptiveReaderShell):
     def sync(self) -> None:
         self.items.sync()
         self.work.sync()
+        # TASK-39062: a selection change can flip ``hide_zero_width_work``, so
+        # re-apply the layout (in place; it only moves focus out of a pane it
+        # hides, or back into one it shows when the list is closed).
+        if self._applied_layout is not None:
+            self.sync_layout(self._applied_layout)

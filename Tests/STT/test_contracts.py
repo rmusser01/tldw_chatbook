@@ -854,7 +854,8 @@ def test_result_rejects_wrong_contract_types(
 _FAILURE_CASES = (
     (
         TranscriptionFailureCode.MODEL_NOT_INSTALLED,
-        "The selected speech-to-text model is not installed.",
+        "The selected speech-to-text model files are not installed. "
+        "Install or select the matching model and precision, then retry.",
         False,
     ),
     (
@@ -869,7 +870,9 @@ _FAILURE_CASES = (
     ),
     (
         TranscriptionFailureCode.PROVIDER_UNAVAILABLE,
-        "The selected speech-to-text provider is unavailable.",
+        "The selected speech-to-text provider is unavailable. "
+        "Check its runtime package in Chatbook's Python environment, "
+        "restart Chatbook, then retry.",
         True,
     ),
     (

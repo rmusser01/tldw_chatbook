@@ -10,12 +10,12 @@ import json
 import os
 import time
 from typing import Any, Generator, Union, Dict, Optional, List
+from urllib.parse import urlsplit
 
 import requests
-from requests.adapters import HTTPAdapter
 from urllib3 import Retry
 
-from tldw_chatbook.Chat.Chat_Deps import (
+from tldw_chatbook.Provider_Contract import (
     ChatProviderError,
     ChatBadRequestError,
     ChatConfigurationError,
@@ -24,9 +24,13 @@ from tldw_chatbook.Chat.console_provider_support import (
     build_local_thinking_payload_fields,
 )
 import logging
-from tldw_chatbook.config import get_runtime_config_snapshot, load_settings
+from tldw_chatbook.config import (
+    get_runtime_config_snapshot,
+    load_settings,
+    resolve_provider_api_key,
+)
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
-from tldw_chatbook.Utils.egress import create_default_session
+from tldw_chatbook.Utils.egress import create_pooled_default_session
 from tldw_chatbook.Utils.sensitive_llm_logging import (
     is_sensitive_llm_request,
     llm_content_byte_count,
@@ -104,6 +108,37 @@ def _extract_text_from_message_content(
     return "\n".join(text_parts).strip()
 
 
+def _refuse_a_refused_endpoint(
+    display_name: str, endpoint: object, contract_key: str = "custom", provider: str | None = None
+) -> None:
+    """Refuse an endpoint the provider endpoint contract refuses (TASK-41131).
+
+    Console checks the endpoint it sends to; every other ``chat_api_call``
+    caller reached an adapter that read its own table unchecked. Each local
+    and custom adapter calls this on the URL it is about to use, whatever
+    the caller pinned or the config held, before any session or request.
+
+    Args:
+        display_name: The adapter's name, for the message.
+        endpoint: The URL the adapter is about to use.
+        contract_key: The contract's reading; "custom" is the generic one,
+            which every OpenAI-compatible local adapter shares.
+        provider: The error's provider; ``display_name`` when None.
+
+    Raises:
+        ChatConfigurationError: Status-less (nothing was sent), with the
+            contract's reason, which names no part of the value.
+    """
+    from ..Provider_Contract.provider_endpoint_contract import endpoint_refusal
+
+    if refusal := endpoint_refusal(contract_key, endpoint):
+        raise ChatConfigurationError(
+            provider=provider or display_name,
+            message=f"{display_name} API URL: {refusal}",
+            status_code=None,
+        )
+
+
 # Most local LLMs with OpenAI-compatible endpoints (like LM Studio, Jan.ai, many Ollama setups)
 # can use a generic handler.
 @_provider_recovery.unqualified
@@ -137,11 +172,13 @@ def _chat_with_openai_compatible_local_server(
     thinking_budget_tokens: Optional[int] = None,
     thinking_wire_key: Optional[str] = None,
     provider_name: str = "Local OpenAI-Compatible Server",
+    provider_key: str | None = None,
     timeout: int = 120,
     api_retries: int = 1,
     api_retry_delay: int = 1,
     chat_template_kwargs: dict[str, Any] | None = None,
 ):
+    _refuse_a_refused_endpoint(provider_name, api_base_url, provider=provider_key)
     start_time = time.time()
     logged_api_base = safe_llm_url_host(api_base_url)
     logging.debug(
@@ -230,7 +267,7 @@ def _chat_with_openai_compatible_local_server(
     if user_identifier is not None:
         payload["user"] = user_identifier
 
-    # ADR-066: merge the provider-specific thinking-control wire fields
+    # ADR-311: merge the provider-specific thinking-control wire fields
     # (chat_template_kwargs / reasoning_budget_tokens / reasoning_effort)
     # selected by the caller's execution key.
     if thinking_wire_key and (
@@ -273,16 +310,26 @@ def _chat_with_openai_compatible_local_server(
             f"streaming={bool(streaming)}"
         )
     else:
+        # TASK-38609: the previous double-brace f-string logged the literal
+        # template text, never the payload. This is a local-engine request
+        # body -- the credential travels in the Authorization header, never
+        # in the payload (verified), so the non-message fields are safe to
+        # interpolate; user content stays excluded by the comprehension.
+        non_message_payload = {
+            k: v for k, v in payload.items() if k != "messages"
+        }
         logging.debug(
             f"{provider_name} Payload details (excluding messages): "
-            f"{{k: v for k, v in payload.items() if k != 'messages'}}"
+            f"{non_message_payload}"
         )
 
     try:
-        session = create_default_session()
         # Configure retries
         retry_strategy = Retry(
             total=llm_retry_count(api_retries),
+            # TASK-34100.5 review (B-F1): a read timeout means the server is
+            # still working on this prompt; re-sending makes it start over.
+            read=0,
             backoff_factor=api_retry_delay,
             status_forcelist=[
                 429,
@@ -293,9 +340,38 @@ def _chat_with_openai_compatible_local_server(
             ],  # Retry on these HTTP status codes
             allowed_methods=["POST"],  # Important: Retry POST requests
         )
-        adapter = HTTPAdapter(max_retries=retry_strategy)
-        session.mount("http://", adapter)
-        session.mount("https://", adapter)
+        from tldw_chatbook.Chat.stream_stall_watchdog import (
+            self_hosted_read_timeout,
+        )
+        from tldw_chatbook.LLM_Calls.provider_sessions import (
+            get_session,
+            trust_setting_fragment,
+        )
+
+        # The first-token watchdog, not this read timeout, ends a cold wait.
+        timeout = self_hosted_read_timeout(timeout)
+        # ADR-222 (TASK-38609): one registry session per
+        # (provider, endpoint, retry budget, TLS trust) per thread, replacing
+        # a fresh create_pooled_default_session() per call that sat outside
+        # the registry and was never closed. The retry adapter is baked by
+        # the factory, so its config-derived values (total, backoff) are key
+        # fragments -- a settings change yields a new key and session, not a
+        # stale cached adapter. The factory closure resolves this module's
+        # create_pooled_default_session global at call time so the existing
+        # test seam keeps working. Close semantics are unchanged: the
+        # streaming generator closes the per-call RESPONSE (response.close()
+        # in its finally) and never closes the session, so the registry can
+        # own the session for both paths safely (documented per the item-2
+        # ambiguity resolution: registry-owned sessions for BOTH streaming
+        # and non-streaming).
+        session = get_session(
+            f"local:{provider_name}:{full_api_url}:{trust_setting_fragment()}:"
+            f"retry={retry_strategy.total}:{retry_strategy.backoff_factor}",
+            lambda: create_pooled_default_session(
+                mount_retry=retry_strategy,
+                mount_prefixes=("http://", "https://"),
+            ),
+        )
 
         if streaming:
             # Add a bit more timeout for the initial connection for streaming
@@ -307,6 +383,8 @@ def _chat_with_openai_compatible_local_server(
                 timeout=timeout + 60,
             )
             response.raise_for_status()
+            # SSE is UTF-8; Requests otherwise defaults charset-less text to Latin-1.
+            response.encoding = "utf-8"
             logging.debug(f"{provider_name}: Streaming response received.")
 
             # Log streaming success metrics
@@ -332,9 +410,27 @@ def _chat_with_openai_compatible_local_server(
 
             def stream_generator():
                 try:
-                    for line in response.iter_lines(decode_unicode=True):
-                        if line and line.strip():
-                            yield line + "\n\n"  # Pass through raw SSE line
+                    if response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() == "application/json":
+                        # Some local servers ignore stream=true. Preserve that
+                        # completed generation (including tools and usage) in
+                        # the same SSE envelope consumed by all local callers.
+                        yield f"data: {json.dumps(response.json())}\n\n"
+                    else:
+                        # TASK-38589: iterate BYTES and decode UTF-8 explicitly.
+                        # ``decode_unicode=True`` makes ``requests`` decode with
+                        # the response header's charset -- ISO-8859-1 when a
+                        # local llama.cpp/vLLM/ollama endpoint declares
+                        # ``text/event-stream`` WITHOUT ``charset=utf-8`` (common)
+                        # -- silently mojibake-ing every non-ASCII character.
+                        for raw_line in response.iter_lines():
+                            line = (
+                                raw_line.decode("utf-8")
+                                if isinstance(raw_line, bytes)
+                                else str(raw_line)
+                            )
+                            # Return control even for keep-alives so Stop owns
+                            # closing the response; invisible chunks stay empty.
+                            yield line + "\n\n" if line.startswith("data:") else ""
                 except requests.exceptions.ChunkedEncodingError as e_chunked:
                     logging.error(
                         f"{provider_name}: ChunkedEncodingError during stream: {e_chunked}",
@@ -585,7 +681,7 @@ def chat_with_local_llm(
         stop: Stop sequence(s).
         response_format: Optional response format constraint (e.g. JSON).
         reasoning_effort: Thinking level for reasoning-capable models,
-            composed into the request per ADR-066 (verbatim where the
+            composed into the request per ADR-311 (verbatim where the
             target consumes it, dropped where a strict chat template
             would reject it).
         thinking_budget_tokens: Max thinking tokens; sent as the
@@ -594,7 +690,7 @@ def chat_with_local_llm(
         api_base_url: Request-pinned endpoint override; provider config
             is the fallback.
         provider_name: Provider key for dynamic config lookup; also
-            drives ADR-066 thinking wire composition.
+            drives ADR-311 thinking wire composition.
         chat_template_kwargs: Reviewed template options selected by the caller.
 
     Returns:
@@ -701,6 +797,7 @@ def chat_with_local_llm(
         chat_template_kwargs=chat_template_kwargs,
         # Same pre-existing dict-.capitalize() crash as chat_with_custom_openai.
         provider_name="Local-LLM",
+        provider_key="local-llm",
         timeout=timeout,
         api_retries=api_retries,
         api_retry_delay=api_retry_delay,
@@ -749,7 +846,7 @@ def chat_with_llama(
     tool_choice: str | dict[str, Any] | None = None,
     api_key_resolved: bool | None = None,
 ):
-    """Chat with a llama.cpp server (llama_cpp/local_llamacpp/local_llamafile).
+    """Chat with a llama.cpp, Strata or PolyStrata compatible server.
 
     Args:
         input_data: OpenAI-format chat messages to send.
@@ -763,7 +860,7 @@ def chat_with_llama(
         stop: Stop sequence(s).
         response_format: Optional response format constraint (e.g. JSON).
         reasoning_effort: Thinking level for reasoning-capable models,
-            composed into the request per ADR-066 (verbatim where the
+            composed into the request per ADR-311 (verbatim where the
             target consumes it, dropped where a strict chat template
             would reject it).
         thinking_budget_tokens: Max thinking tokens; sent as the
@@ -772,7 +869,7 @@ def chat_with_llama(
         api_base_url: Request-pinned endpoint override; provider config
             is the fallback.
         provider_name: Provider key for dynamic config lookup; also
-            drives ADR-066 thinking wire composition.
+            drives ADR-311 thinking wire composition.
         chat_template_kwargs: Reviewed template options selected by the caller.
         api_key_resolved: Whether the caller made the final credential decision,
             including an explicitly keyless endpoint.
@@ -790,7 +887,14 @@ def chat_with_llama(
     llama_cpp_config_key_in_api_settings = (
         provider_name if provider_name else "llama_cpp"
     )
-    provider_display_name = "Llama.cpp"
+    from tldw_chatbook.provider_registry import RECORDS_BY_KEY
+
+    record = RECORDS_BY_KEY.get(llama_cpp_config_key_in_api_settings)
+    provider_display_name = (
+        record.display_name
+        if record and record.key in {"strata", "polystrata"}
+        else "Llama.cpp"
+    )
 
     api_settings_table = get_runtime_config_snapshot().values.get(
         "api_settings", {}
@@ -812,9 +916,39 @@ def chat_with_llama(
     from ..Chat.console_provider_gateway import normalize_llamacpp_base_url
 
     api_base_url = normalize_llamacpp_base_url(api_base_url)
-    current_api_key = (
-        api_key if api_key_resolved else api_key or llama_config.get("api_key")
+    if urlsplit(api_base_url).scheme not in {"http", "https"}:
+        # TASK-39151: the normalizer reads only a loopback spelling typed
+        # without a scheme as http://, so a remote one, or any other scheme,
+        # is refused here before anything is sent, not left for requests to
+        # fail as a network error that echoes the URL. The value is never
+        # named: it can carry user info.
+        raise ChatConfigurationError(
+            provider=llama_cpp_config_key_in_api_settings,
+            message=(
+                f"{provider_display_name} API URL must start with http:// or "
+                "https:// (only localhost, 127.0.0.1 and [::1] may leave it out)."
+            ),
+            status_code=None,
+        )
+    # TASK-40300: the normalizer no longer drops a query or fragment into an
+    # accepted URL, so the endpoint contract refuses such a value here (and a
+    # zone id, ``-bad.corp``, ``127.1`` or an IDN) with its own reason.
+    _refuse_a_refused_endpoint(
+        provider_display_name,
+        api_base_url,
+        "llama_cpp",
+        provider=llama_cpp_config_key_in_api_settings,
     )
+    if api_key_resolved or api_key:
+        current_api_key = api_key
+    elif record and record.key in {"strata", "polystrata"}:
+        from tldw_chatbook.Chat.provider_readiness import resolve_provider_credential
+
+        current_api_key = resolve_provider_credential(
+            record.key, llama_config, environ=os.environ
+        )[0]
+    else:
+        current_api_key = resolve_provider_api_key(llama_config.get("api_key"))
     current_model = model or llama_config.get("model")
     if (
         not current_model
@@ -917,7 +1051,8 @@ def chat_with_llama(
         reasoning_effort=reasoning_effort,
         thinking_budget_tokens=thinking_budget_tokens,
         thinking_wire_key=provider_name or "llama_cpp",
-        provider_name="Llama.cpp",
+        provider_name=provider_display_name,
+        provider_key=llama_cpp_config_key_in_api_settings,
         timeout=timeout,
         api_retries=api_retries,
         api_retry_delay=api_retry_delay,
@@ -967,7 +1102,11 @@ def chat_with_kobold(
             provider="koboldcpp",  # Consistent with the key used for cfg
             message="KoboldCpp API URL (api_url) is required and could not be determined from arguments or configuration.",
         )
-    current_api_key = api_key or cfg.get("api_key")
+    # TASK-41131: KoboldAI's native send posts to this URL itself.
+    _refuse_a_refused_endpoint(
+        "KoboldCpp", current_api_base_url, "koboldcpp", provider="koboldcpp"
+    )
+    current_api_key = api_key or resolve_provider_api_key(cfg.get("api_key"))
     current_model = model or cfg.get("model")
     if not current_model:
         logging.info(
@@ -1090,20 +1229,53 @@ def chat_with_kobold(
     )
 
     try:
-        session = create_default_session()
         retry_strategy = Retry(
             total=llm_retry_count(api_retries),
             backoff_factor=api_retry_delay,
             status_forcelist=[429, 500, 502, 503, 504],
             allowed_methods=["POST"],
         )
-        adapter = HTTPAdapter(max_retries=retry_strategy)
-        session.mount("http://", adapter)
-        session.mount("https://", adapter)
-
-        response = session.post(
-            current_api_base_url, headers=headers, json=payload, timeout=timeout
+        session = create_pooled_default_session(
+            mount_retry=retry_strategy,
+            mount_prefixes=("http://", "https://"),
         )
+
+        # TASK-19862: refuse redirects rather than follow them. This POST
+        # carries the API key in the custom ``X-Api-Key`` header, which
+        # ``requests`` does NOT strip across a cross-origin hop (only
+        # ``Authorization``/``Cookie``) -- and the destination URL is
+        # user-configured, so a redirecting endpoint is reachable by
+        # ordinary misconfiguration. Worse, on a 302/303 ``requests``
+        # converts this POST to a GET before re-issuing to whatever host
+        # ``Location`` names. A KoboldAI generation endpoint has no
+        # legitimate redirect, so one is refused loudly below instead.
+        response = session.post(
+            current_api_base_url,
+            headers=headers,
+            json=payload,
+            timeout=timeout,
+            allow_redirects=False,
+        )
+        # Every 3xx, not just ``response.is_redirect`` (which needs a
+        # ``Location`` header and one of 301/302/303/307/308): a 300/304
+        # or a Location-less 3xx would otherwise pass ``raise_for_status``
+        # and have its body parsed as a generation.
+        if 300 <= response.status_code < 400:
+            # Close the refused response so its connection is not leaked,
+            # then fail loudly WITHOUT echoing the attacker-controlled
+            # ``Location`` value (TASK-19321/19552/19557 exception rule).
+            redirect_status = response.status_code
+            response.close()
+            raise ChatProviderError(
+                provider="kobold",
+                message=(
+                    "KoboldAI (Native) endpoint answered the generate "
+                    f"request with a redirect (HTTP {redirect_status}); "
+                    "refusing to follow it because the request carries "
+                    "the API key. Check the configured KoboldAI API URL."
+                ),
+                status_code=redirect_status,
+            )
         response.raise_for_status()
         response_data = response.json()
 
@@ -1277,7 +1449,7 @@ def chat_with_oobabooga(
             provider="ooba_api",
             message="Ooba API URL (api_url) is required and could not be determined from arguments or configuration.",
         )
-    current_api_key = api_key or cfg.get("api_key")
+    current_api_key = api_key or resolve_provider_api_key(cfg.get("api_key"))
     current_model = model or cfg.get("model")
     if not current_model:
         raise ChatConfigurationError(
@@ -1352,6 +1524,7 @@ def chat_with_oobabooga(
         user_identifier=current_user_identifier,
         # tools, tool_choice, logprobs, top_logprobs might be supported by some ooba setups
         provider_name="Oobabooga (OpenAI Extension)",
+        provider_key="oobabooga",
         timeout=timeout,
         api_retries=api_retries,
         api_retry_delay=api_retry_delay,
@@ -1394,7 +1567,7 @@ def chat_with_tabbyapi(
             provider="tabbyapi",
             message="Tabby_API API URL (api_url) is required and could not be determined from arguments or configuration.",
         )
-    current_api_key = api_key or cfg.get("api_key")
+    current_api_key = api_key or resolve_provider_api_key(cfg.get("api_key"))
     current_model = model or cfg.get("model")
     if not current_model:
         raise ChatConfigurationError(
@@ -1445,6 +1618,7 @@ def chat_with_tabbyapi(
         seed=current_seed,
         stop=current_stop,
         provider_name="TabbyAPI",
+        provider_key="tabbyapi",
         timeout=timeout,
         api_retries=api_retries,
         api_retry_delay=api_retry_delay,
@@ -1509,7 +1683,7 @@ def chat_with_vllm(
         stop: Stop sequence(s).
         response_format: Optional response format constraint (e.g. JSON).
         reasoning_effort: Thinking level for reasoning-capable models,
-            composed into the request per ADR-066 (verbatim where the
+            composed into the request per ADR-311 (verbatim where the
             target consumes it, dropped where a strict chat template
             would reject it).
         thinking_budget_tokens: Max thinking tokens; sent as the
@@ -1518,7 +1692,7 @@ def chat_with_vllm(
         api_base_url: Request-pinned endpoint override; provider config
             is the fallback.
         provider_name: Provider key for dynamic config lookup; also
-            drives ADR-066 thinking wire composition.
+            drives ADR-311 thinking wire composition.
         chat_template_kwargs: Reviewed template options selected by the caller.
         api_key_resolved: Whether the caller made the final credential decision,
             including an explicitly keyless endpoint.
@@ -1543,7 +1717,11 @@ def chat_with_vllm(
             provider=vllm_config_key,
             message="vLLM API URL (api_url) is required and could not be determined from arguments or configuration.",
         )
-    current_api_key = api_key if api_key_resolved else api_key or cfg.get("api_key")
+    current_api_key = (
+        api_key
+        if api_key_resolved
+        else api_key or resolve_provider_api_key(cfg.get("api_key"))
+    )
     current_model = model or cfg.get("model")
     if not current_model:
         raise ChatConfigurationError(
@@ -1632,6 +1810,7 @@ def chat_with_vllm(
         thinking_budget_tokens=thinking_budget_tokens,
         thinking_wire_key=provider_name or "vllm",
         provider_name="vLLM",
+        provider_key=vllm_config_key,
         timeout=timeout,
         api_retries=api_retries,
         api_retry_delay=api_retry_delay,
@@ -1679,7 +1858,7 @@ def chat_with_aphrodite(
             provider="aphrodite",
             message="Aphrodite API URL (api_url) is required and could not be determined from arguments or configuration.",
         )
-    current_api_key = api_key or cfg.get("api_key")
+    current_api_key = api_key or resolve_provider_api_key(cfg.get("api_key"))
     current_model = model or cfg.get("model")
     if not current_model:
         raise ChatConfigurationError(
@@ -1756,6 +1935,7 @@ def chat_with_aphrodite(
         logprobs=current_logprobs,
         user_identifier=current_user_identifier,
         provider_name="Aphrodite Engine",
+        provider_key="aphrodite",
         timeout=timeout,
         api_retries=api_retries,
         api_retry_delay=api_retry_delay,
@@ -1820,7 +2000,11 @@ def chat_with_ollama(
 
     # API Key: function argument takes precedence, then config.
     # For Ollama, cfg.get('api_key') will likely be None as it's not standard.
-    current_api_key = api_key if api_key_resolved else api_key or cfg.get("api_key")
+    current_api_key = (
+        api_key
+        if api_key_resolved
+        else api_key or resolve_provider_api_key(cfg.get("api_key"))
+    )
 
     # Model: function argument takes precedence, then config.
     # config.py's CONFIG_TOML_CONTENT provides a default for [api_settings.ollama].model
@@ -1964,6 +2148,7 @@ def chat_with_ollama(
         # logprobs, top_logprobs not in Ollama's map, pass if supported
         # tools, tool_choice not in Ollama's map, pass if supported by Ollama's OpenAI endpoint
         provider_name="Ollama",  # For logging within _chat_with_openai_compatible_local_server
+        provider_key=ollama_config_key,
         timeout=timeout,
         api_retries=api_retries,
         api_retry_delay=api_retry_delay,
@@ -2017,7 +2202,7 @@ def chat_with_custom_openai(
         stop: Stop sequence(s).
         response_format: Optional response format constraint (e.g. JSON).
         reasoning_effort: Thinking level for reasoning-capable models,
-            composed into the request per ADR-066 (verbatim where the
+            composed into the request per ADR-311 (verbatim where the
             target consumes it, dropped where a strict chat template
             would reject it).
         thinking_budget_tokens: Max thinking tokens; sent as the
@@ -2155,6 +2340,7 @@ def chat_with_custom_openai(
         # AttributeError on EVERY call, making this provider unusable
         # (pre-existing; surfaced by the task-243 native-tools live gate).
         provider_name="Custom OpenAI",
+        provider_key="custom-openai-api",
         timeout=timeout,
         api_retries=api_retries,
         api_retry_delay=api_retry_delay,
@@ -2206,7 +2392,7 @@ def chat_with_custom_openai_2(
         stop: Stop sequence(s).
         response_format: Optional response format constraint (e.g. JSON).
         reasoning_effort: Thinking level for reasoning-capable models,
-            composed into the request per ADR-066 (verbatim where the
+            composed into the request per ADR-311 (verbatim where the
             target consumes it, dropped where a strict chat template
             would reject it).
         thinking_budget_tokens: Max thinking tokens; sent as the
@@ -2223,14 +2409,30 @@ def chat_with_custom_openai_2(
     loaded_config_data = load_settings()
     cfg_section = "custom_openai_api_2"
     cfg = loaded_config_data.get(cfg_section, {})
+    # TASK-41145 (owner decision 2026-11-16): the slot's endpoint is where
+    # Settings, first-run setup and Make default write it. The fallback is the
+    # legacy ``[API] custom_openai2_api_ip``, which ``load_settings`` exposes
+    # as ``custom_openai_api_2.api_ip`` (an explicit one is also carried into
+    # the slot's api_url when that is unset: config's merge, ruling 2026-11-17).
+    api_settings = loaded_config_data.get("api_settings")
+    slot = api_settings.get("custom_2") if isinstance(api_settings, dict) else None
+    slot_url = slot.get("api_url") if isinstance(slot, dict) else None
 
-    api_base_url = api_base_url or cfg.get("api_ip")
+    api_base_url = api_base_url or slot_url or cfg.get("api_ip")
     if not api_base_url:
         raise ChatConfigurationError(
-            provider=cfg_section, message=f"{cfg_section} API URL (api_ip) required."
+            provider=cfg_section,
+            message=(
+                "Custom OpenAI API 2 API URL is required: set "
+                "[api_settings.custom_2] api_url."
+            ),
         )
 
-    current_api_key = api_key if api_key_resolved else api_key or cfg.get("api_key")
+    current_api_key = (
+        api_key
+        if api_key_resolved
+        else api_key or resolve_provider_api_key(cfg.get("api_key"))
+    )
     if not current_api_key and not api_key_resolved:
         raise ChatConfigurationError(
             provider=cfg_section, message=f"{cfg_section} API Key required."
@@ -2338,7 +2540,8 @@ def chat_with_custom_openai_2(
         reasoning_effort=reasoning_effort,
         thinking_budget_tokens=thinking_budget_tokens,
         thinking_wire_key="custom-openai-api-2",
-        provider_name=cfg_section.capitalize(),
+        provider_name="Custom OpenAI API 2",
+        provider_key="custom-openai-api-2",
         timeout=timeout,
         api_retries=api_retries,
         api_retry_delay=api_retry_delay,
@@ -2498,7 +2701,8 @@ def chat_with_mlx_lm(
         reasoning_effort=reasoning_effort,
         thinking_budget_tokens=thinking_budget_tokens,
         thinking_wire_key=provider_name or "local_mlx_lm",
-        provider_name=provider_name,
+        provider_name=provider_display_name,
+        provider_key=mlx_config_key,
         timeout=timeout,
         api_retries=api_retries,
         api_retry_delay=api_retry_delay,

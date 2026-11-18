@@ -1,0 +1,37 @@
+{
+  "scope": "Required approval regression enrollment only; no functional or physical qualification",
+  "base_revision": "f1a321060e7ab5b67887960d272b17ac1c65cac6",
+  "hash_basis": "SHA256 UTF-8 text with CRLF normalized to LF",
+  "files_SHA256": {
+    ".github/workflows/derived-artifacts.yml": "5cd029e8e3e677819c62a986c2a416dc06ace8bdb0c8f2f9ffb1dd5081f37324",
+    "Tests/CI/test_ci_queue_pressure_contract.py": "136d7890fc7af0b1e5bab39ab24d11afee628c2e78a8fe8ee529e3c7f2d86e8e",
+    "Tests/CI/test_console_approval_critical_gate.py": "8f44788f9209561cf7592efbecee1742c16da46408fe699cb9a9bd58b2fa1997"
+  },
+  "targets": {
+    "FAST_prior": 169,
+    "FAST_final": 175,
+    "ADMISSION_prior": 42,
+    "ADMISSION_final": 45,
+    "only_literal_workflow_appends": 9,
+    "all_prior_ordered_prefixes_retained": true
+  },
+  "results": {
+    "missing_membership_RED": {
+      "failed": 1
+    },
+    "comment_parser_RED": {
+      "failed": 2,
+      "passed": 3
+    },
+    "final_critical": {
+      "passed": 6
+    },
+    "final_queue": {
+      "passed": 119
+    },
+    "independent_source_review": "CLEAR"
+  },
+  "limits_flags_dependencies_jobs_unchanged": true,
+  "physical_qualified_samples": 0,
+  "private_proof_SHA256": "f3068e67a4d7f0363c92f9c05b642184994952b2029d6c3d0a71c116891f44b2"
+}

@@ -146,7 +146,7 @@ async def main():
  app.app_config.setdefault('first_run',{})['setup_completed']=True
  release=Event()
  async with app.run_test(size=(100,36)) as pilot:
-  await pilot.press('f9');await pilot.pause()
+  await pilot.press(SHELL_DESTINATION_SHORTCUTS['settings']);await pilot.pause()
   app.screen.query_one('#settings-backup-restore',Button).focus()
   await pilot.press('enter');await pilot.pause()
   screen=app.screen
@@ -330,7 +330,7 @@ async def drive(pilot):
  app=pilot.app
  async with asyncio.timeout(20):
   while not app._ui_ready:await asyncio.sleep(.03)
- await pilot.press('f9');await pilot.pause()
+ await pilot.press(SHELL_DESTINATION_SHORTCUTS['settings']);await pilot.pause()
  app.screen.query_one('#settings-backup-restore',Button).focus()
  await pilot.press('enter');await pilot.pause()
  await pilot.click('#backup-open-inspect')

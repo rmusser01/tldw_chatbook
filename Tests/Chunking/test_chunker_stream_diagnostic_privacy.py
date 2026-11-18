@@ -29,7 +29,9 @@ def _capture(level: str):
 
 
 class TestStreamDiagnosticsOmitUserPaths:
-    def test_stream_processing_info_identifies_the_file_without_its_path(self, tmp_path):
+    def test_stream_processing_info_identifies_the_file_without_its_path(
+        self, tmp_path
+    ):
         """The per-file INFO record keeps size + a stable handle, not the path."""
         secret_name = "medical-records-2026.txt"
         file_path = tmp_path / secret_name
@@ -55,11 +57,12 @@ class TestStreamDiagnosticsOmitUserPaths:
         # The record still identifies the file (stable handle) and its size.
         expected_ref = _expected_path_ref(file_path)
         assert any(
-            f"path_sha256={expected_ref}" in m and "bytes)" in m
-            for m in stream_records
+            f"path_sha256={expected_ref}" in m and "bytes)" in m for m in stream_records
         ), f"the stable handle and byte size must survive redaction: {stream_records}"
 
-    def test_decode_failure_diagnostic_omits_path_and_raw_exception_text(self, tmp_path):
+    def test_decode_failure_diagnostic_omits_path_and_raw_exception_text(
+        self, tmp_path
+    ):
         """A UnicodeDecodeError's own text carries byte context from the file.
 
         The ERROR record keeps the failure class, codec, and byte offset; the
@@ -123,6 +126,5 @@ class TestStreamDiagnosticsOmitUserPaths:
             f"the user directory name must not appear in any record: {messages}"
         )
         assert any(
-            "IsADirectoryError" in m or "PermissionError" in m
-            for m in failure_records
+            "IsADirectoryError" in m or "PermissionError" in m for m in failure_records
         ), f"the exception class must survive redaction: {failure_records}"

@@ -1,0 +1,22 @@
+{
+  "head": "fd922602dfa9711476da79e171ce0ead93eeab97",
+  "command": [
+    "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-m",
+    "Tests.windows_private_fixture_runner",
+    "Tests/UI/test_console_workspace_reconciliation_preparation.py",
+    "Tests/UI/test_console_return_acknowledgement.py",
+    "Tests/Backup_Recovery/test_console_config_sync_lifetime.py",
+    "Tests/UI/test_console_full_config_preparation.py",
+    "-v",
+    "--tb=short",
+    "--timeout=90",
+    "-p",
+    "no:cacheprovider"
+  ],
+  "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-integration-905aab411fbb",
+  "exit_code": 0,
+  "seconds": 375.0929999999935
+}

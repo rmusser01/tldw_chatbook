@@ -1,0 +1,21 @@
+{
+  "server_health": {
+    "status": 200,
+    "body": {
+      "status": "ok"
+    }
+  },
+  "server_idle_not_verified": "slots endpoint returns404",
+  "native_pty_exits": {
+    "display_routing_restart": 0,
+    "persona_prompt_blocked": 0,
+    "policy_only_followup_blocked": 0
+  },
+  "normal_profile_unchanged": true,
+  "global_requests_used": 17,
+  "requests_remaining_of_20": 3,
+  "wire_observer_gap_disclosed": true,
+  "capture_off_used": false,
+  "restored_any_fixture": false,
+  "source_head": "20f3f3e24b5c9ba5a58f6793af1cad0ad76034ce"
+}

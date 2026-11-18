@@ -322,39 +322,57 @@ class NotesOrganizationRepository:
         if folder is None:
             return False
         folder_id = str(folder["id"])
-        if cursor.execute(
-            "SELECT 1 FROM note_folders WHERE parent_id = ? LIMIT 1", (folder_id,)
-        ).fetchone() is not None:
+        if (
+            cursor.execute(
+                "SELECT 1 FROM note_folders WHERE parent_id = ? LIMIT 1", (folder_id,)
+            ).fetchone()
+            is not None
+        ):
             return False
-        if cursor.execute(
-            "SELECT 1 FROM note_folder_memberships WHERE folder_id = ? LIMIT 1",
-            (folder_id,),
-        ).fetchone() is not None:
+        if (
+            cursor.execute(
+                "SELECT 1 FROM note_folder_memberships WHERE folder_id = ? LIMIT 1",
+                (folder_id,),
+            ).fetchone()
+            is not None
+        ):
             return False
-        if cursor.execute(
-            "SELECT 1 FROM note_folder_sync_suppressions WHERE folder_sync_id = ? LIMIT 1",
-            (local_sync_id,),
-        ).fetchone() is not None:
+        if (
+            cursor.execute(
+                "SELECT 1 FROM note_folder_sync_suppressions WHERE folder_sync_id = ? LIMIT 1",
+                (local_sync_id,),
+            ).fetchone()
+            is not None
+        ):
             return False
-        if cursor.execute(
-            "SELECT 1 FROM notes_organization_heads WHERE server_profile_id = ? "
-            "AND dataset_id = ? AND object_id = ? LIMIT 1",
-            (self.server_profile_id, dataset_id, local_sync_id),
-        ).fetchone() is not None:
+        if (
+            cursor.execute(
+                "SELECT 1 FROM notes_organization_heads WHERE server_profile_id = ? "
+                "AND dataset_id = ? AND object_id = ? LIMIT 1",
+                (self.server_profile_id, dataset_id, local_sync_id),
+            ).fetchone()
+            is not None
+        ):
             return False
-        if cursor.execute(
-            "SELECT 1 FROM notes_organization_adoption_reviews WHERE "
-            "server_profile_id = ? AND dataset_id = ? AND (local_object_id = ? "
-            "OR remote_object_id = ?) LIMIT 1",
-            (self.server_profile_id, dataset_id, folder_id, local_sync_id),
-        ).fetchone() is not None:
+        if (
+            cursor.execute(
+                "SELECT 1 FROM notes_organization_adoption_reviews WHERE "
+                "server_profile_id = ? AND dataset_id = ? AND (local_object_id = ? "
+                "OR remote_object_id = ?) LIMIT 1",
+                (self.server_profile_id, dataset_id, folder_id, local_sync_id),
+            ).fetchone()
+            is not None
+        ):
             return False
-        if cursor.execute(
-            "SELECT 1 FROM note_organization_receipts WHERE "
-            "requested_folder_sync_id = ? OR requested_folder_name = 'Agent_Lessons' "
-            "COLLATE BINARY LIMIT 1",
-            (local_sync_id,),
-        ).fetchone() is not None:
+        if (
+            cursor.execute(
+                "SELECT 1 FROM note_organization_receipts WHERE "
+                "requested_folder_sync_id = ? OR requested_folder_name = 'Agent_Lessons' "
+                "COLLATE BINARY LIMIT 1",
+                (local_sync_id,),
+            ).fetchone()
+            is not None
+        ):
             return False
 
         intents = cursor.execute(

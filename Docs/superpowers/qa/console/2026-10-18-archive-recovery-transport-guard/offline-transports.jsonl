@@ -1,0 +1,26 @@
+{"attempt": 18, "event": "request", "max_tokens": null, "request_sha256": "32d779c93aa5faf998d109270e300eb7354f4edab5edd72ff634c8036c06e717", "retry_total": 0, "role_counts": {"user": 1}, "stream": true, "tool_names": [], "transport": "httpx_async"}
+{"attempt": 18, "content_type": "text/event-stream", "event": "http", "status": 200}
+{"attempt": 18, "body_bytes": 117, "content_bytes": 2, "event": "response_observation", "finish_reasons": ["stop"], "invalid_json": 0, "observation_truncated": false, "reasoning_bytes": 7, "sse_done": true, "tool_names": []}
+{"attempt": 19, "event": "request", "max_tokens": null, "request_sha256": "bd2624bbeb068a4f241b1f705cb169a056c2e8b91b2f9fe9d89bf457dd66a00f", "retry_total": 0, "role_counts": {}, "stream": false, "tool_names": [], "transport": "httpx_async"}
+{"attempt": 19, "content_type": "application/json", "event": "http", "status": 200}
+{"attempt": 19, "body_bytes": 95, "content_bytes": 2, "event": "response_observation", "finish_reasons": ["stop"], "invalid_json": 0, "observation_truncated": false, "reasoning_bytes": 7, "sse_done": false, "tool_names": []}
+{"event": "denied_route", "inference": true, "local_endpoint": false, "method": "POST", "retry_total": 0, "transport": "httpx_async"}
+{"event": "denied_route", "inference": false, "local_endpoint": true, "method": "POST", "retry_total": 0, "transport": "httpx_async"}
+{"attempt": 20, "event": "request", "max_tokens": null, "request_sha256": "17ab4fcf25a81b49c54627d018aff5454cbb923afaae53d384283a92b155e701", "retry_total": 0, "role_counts": {}, "stream": true, "tool_names": [], "transport": "httpx_async"}
+{"attempt": 20, "event": "transport_exception", "exception_type": "ReadError"}
+{"attempt": 21, "event": "request", "max_tokens": null, "request_sha256": "e87500f80318d5fd2ccb719497febc9eb1ebff0d9a295f04fdcef5acef8a912f", "retry_total": 0, "role_counts": {}, "stream": false, "tool_names": [], "transport": "httpx_async"}
+{"attempt": 21, "content_type": "application/json", "event": "http", "status": 200}
+{"attempt": 21, "body_bytes": 95, "content_bytes": 2, "event": "response_observation", "finish_reasons": ["stop"], "invalid_json": 0, "observation_truncated": false, "reasoning_bytes": 7, "sse_done": false, "tool_names": []}
+{"attempt": 22, "event": "request", "max_tokens": null, "request_sha256": "cf8db77a15bbcc48ba1b0836d18c5875053b7f036993b5ef66d2f1ec8150dd3a", "retry_total": 0, "role_counts": {}, "stream": true, "tool_names": [], "transport": "httpx_sync"}
+{"attempt": 22, "content_type": "text/event-stream", "event": "http", "status": 200}
+{"attempt": 22, "body_bytes": 117, "content_bytes": 2, "event": "response_observation", "finish_reasons": ["stop"], "invalid_json": 0, "observation_truncated": false, "reasoning_bytes": 7, "sse_done": true, "tool_names": []}
+{"attempt": 23, "event": "request", "max_tokens": null, "request_sha256": "b3766caec14bebcd2e0683077121550f1692262332cc246d4faa84b11fab8900", "retry_total": 0, "role_counts": {}, "stream": true, "tool_names": [], "transport": "requests"}
+{"attempt": 23, "content_type": "text/event-stream", "event": "http", "status": 200}
+{"attempt": 23, "body_bytes": 117, "content_bytes": 2, "event": "response_observation", "finish_reasons": ["stop"], "invalid_json": 0, "observation_truncated": false, "reasoning_bytes": 7, "sse_done": true, "tool_names": []}
+{"attempt": 24, "event": "request", "max_tokens": null, "request_sha256": "190911ede25b39497132762d2365fc4cdebc0f0aebde761e585abd6e5fe10c58", "retry_total": 0, "role_counts": {}, "stream": false, "tool_names": [], "transport": "requests"}
+{"attempt": 24, "content_type": "application/json", "event": "http", "status": 200}
+{"attempt": 24, "body_bytes": 95, "content_bytes": 2, "event": "response_observation", "finish_reasons": ["stop"], "invalid_json": 0, "observation_truncated": false, "reasoning_bytes": 7, "sse_done": false, "tool_names": []}
+{"consumed": 24, "event": "denied_cap", "transport": "httpx_async"}
+{"event": "denied_route", "inference": true, "local_endpoint": true, "method": "POST", "retry_total": 1, "transport": "requests"}
+{"event": "denied_route", "inference": true, "local_endpoint": true, "method": "POST", "retry_total": 1, "transport": "httpx_async"}
+{"consumed": 24, "event": "denied_cap", "transport": "requests"}

@@ -1,0 +1,11 @@
+{
+  "hooks": {
+    "preToolUse": [
+      {
+        "command": "python3 ./guard.py",
+        "failClosed": true
+      }
+    ]
+  },
+  "version": 1
+}

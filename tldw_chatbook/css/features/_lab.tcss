@@ -495,7 +495,7 @@ RemoteView.-narrow #remote-variant-sort {
 }
 
 .audio-cpp-diagnostics-lines:focus {
-    outline: heavy $ds-action-focus;
+    outline: heavy $ds-active-fg;
     background: $ds-focus-bg;
     color: $ds-text-primary;
     scrollbar-color-active: $ds-action-focus;

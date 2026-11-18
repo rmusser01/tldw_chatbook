@@ -94,9 +94,7 @@ def test_every_forwarded_field_is_one_the_server_declares(source):
     kwargs = build_server_ingest_kwargs(source, options=options)
 
     undeclared = sorted(
-        name
-        for name in kwargs
-        if name not in declared and name not in _NOT_FORM_FIELDS
+        name for name in kwargs if name not in declared and name not in _NOT_FORM_FIELDS
     )
     assert not undeclared, (
         f"{source} would send form fields the server does not declare, so they "

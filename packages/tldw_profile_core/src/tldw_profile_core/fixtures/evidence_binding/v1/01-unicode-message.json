@@ -1,0 +1,26 @@
+{
+  "case": "owner_version_unicode_message",
+  "source_text": "Hi 👋 — café",
+  "data": {
+    "authority_id": "synthetic-authority-01",
+    "authority_kind": "local_profile",
+    "binding_id": "synthetic-binding-01",
+    "captured_at": "2026-09-26T16:00:00.000Z",
+    "component_version": 1,
+    "governance_scope_id": "synthetic-scope-01",
+    "offset_unit": "unicode_codepoint",
+    "representation_id": "message_content_text_v1",
+    "representation_sha256": "bdd355f021e0095bbd9ce9da729cfd0b9556b01bc01c5b59461ebc4e12e55bef",
+    "source_container_id": "synthetic-conversation-01",
+    "source_kind": "conversation_message",
+    "source_object_id": "synthetic-message-01",
+    "source_role": "direct_user_message",
+    "source_version_id": "synthetic-revision-01",
+    "span_end": 11,
+    "span_sha256": "850f7dc43910ff890f8879c0ed26fe697c93a067ad93a7d50f466a7028a9bf4e",
+    "span_start": 7,
+    "version_kind": "owner_immutable"
+  },
+  "canonical_utf8": "{\"authority_id\":\"synthetic-authority-01\",\"authority_kind\":\"local_profile\",\"binding_id\":\"synthetic-binding-01\",\"captured_at\":\"2026-09-26T16:00:00.000Z\",\"component_version\":1,\"governance_scope_id\":\"synthetic-scope-01\",\"offset_unit\":\"unicode_codepoint\",\"representation_id\":\"message_content_text_v1\",\"representation_sha256\":\"bdd355f021e0095bbd9ce9da729cfd0b9556b01bc01c5b59461ebc4e12e55bef\",\"source_container_id\":\"synthetic-conversation-01\",\"source_kind\":\"conversation_message\",\"source_object_id\":\"synthetic-message-01\",\"source_role\":\"direct_user_message\",\"source_version_id\":\"synthetic-revision-01\",\"span_end\":11,\"span_sha256\":\"850f7dc43910ff890f8879c0ed26fe697c93a067ad93a7d50f466a7028a9bf4e\",\"span_start\":7,\"version_kind\":\"owner_immutable\"}",
+  "binding_sha256": "dae4dd8a13189b7bf86559f7adaab2d6992fe3040a1d255b2c212dc7b15801fb"
+}

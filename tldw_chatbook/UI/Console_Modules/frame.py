@@ -10,9 +10,11 @@ its top/bottom separators, Context owns its right divider, Inspect owns its
 left divider, and the transcript owns no frame edge.
 """
 
+from itertools import chain
 from typing import Any
 
 from textual.css.query import QueryError
+from textual.message_pump import NoActiveAppError
 from textual.widgets import Button
 
 #: Canonical home of the Console shell frame color/border constants (moved
@@ -82,6 +84,75 @@ def frame_console_region(
     return widget
 
 
+def _set_class_restyling_only(
+    region: Any, class_name: str, on: bool, reached: list[Any]
+) -> None:
+    """Toggle ``class_name`` on ``region``, restyling only it and ``reached``.
+
+    A plain ``set_class`` makes Textual restyle the region's whole subtree.
+    Each caller passes every node a rule naming its class can style (each
+    bound pinned by a test), so restyling only those is exact.
+    """
+    region.set_class(on, class_name, update=False)
+    try:
+        region.app.stylesheet.update_nodes([region, *reached], animate=True)
+    except NoActiveAppError:
+        pass
+
+
+#: The transcript focus cue; one rule paints it, on the title row.
+TRANSCRIPT_REGION_FOCUSED = "console-transcript-region-focused"
+
+
+def _paint_transcript_region_focus(region: Any, focused: bool) -> None:
+    """Toggle the transcript focus cue without restyling every row.
+
+    The class sits on the region so its one rule reaches the title row, but
+    the region holds every transcript row and a class change restyles its
+    whole subtree: 29-37 s per focus change at 3,000 rows (TASK-33628.5.1).
+    Only the region and the title can match a rule naming the class (pinned
+    by ``Tests/UI/test_console_long_chat_bounds.py``), so only they restyle.
+    """
+    if region.has_class(TRANSCRIPT_REGION_FOCUSED) == focused:
+        return
+    reached: list[Any] = []
+    try:
+        reached.append(region.query_one("#console-transcript-title"))
+    except QueryError:
+        pass
+    _set_class_restyling_only(region, TRANSCRIPT_REGION_FOCUSED, focused, reached)
+
+
+#: The edge focus cue on the four edge-owned regions. Its rules style only
+#: the region's own divider and the region's collapse/open control.
+EDGE_REGION_FOCUSED = "console-edge-region-focused"
+
+
+def _paint_edge_region_focus(
+    framed: Any, focused_within: bool, focus_control: Any | None
+) -> None:
+    """Toggle a rail's edge focus cue without restyling the rail's subtree.
+
+    A plain ``set_class`` makes Textual restyle the region's whole subtree:
+    every node in the Inspect rail (about 160) or the Context rail (about
+    140, conversation browser included). Live, that held the UI loop a
+    median 47 ms on each Inspect-rail open and 62 ms on each close, up to
+    293 ms in one callback at load 12-16 (TASK-33620.15.1.4). Only the
+    region and its control can match a rule naming the class (pinned by
+    ``Tests/UI/test_console_edge_focus_restyle_scope.py``), so only they
+    restyle.
+    """
+    if framed.has_class(EDGE_REGION_FOCUSED) != focused_within:
+        _set_class_restyling_only(
+            framed,
+            EDGE_REGION_FOCUSED,
+            focused_within,
+            [] if focus_control is None else [focus_control],
+        )
+    if focus_control is not None:
+        focus_control.styles.text_style = "bold underline" if focused_within else "none"
+
+
 def sync_console_focus_paint(screen: Any, focused: Any | None) -> None:
     """Paint dimension-stable focus cues on the Console-owned rail edges."""
 
@@ -90,9 +161,9 @@ def sync_console_focus_paint(screen: Any, focused: Any | None) -> None:
     except QueryError:
         pass
     else:
-        transcript_region.set_class(
+        _paint_transcript_region_focus(
+            transcript_region,
             screen._is_descendant_or_self(focused, transcript_region),
-            "console-transcript-region-focused",
         )
     for region_id, accent_edge, control_id in (
         ("console-left-rail", "right", "console-context-rail-collapse"),
@@ -105,12 +176,132 @@ def sync_console_focus_paint(screen: Any, focused: Any | None) -> None:
         except QueryError:
             continue
         focused_within = screen._is_descendant_or_self(focused, framed)
-        framed.set_class(focused_within, "console-edge-region-focused")
         try:
             focus_control = framed.query_one(f"#{control_id}", Button)
         except QueryError:
             focus_control = None
-        if focus_control is not None:
-            focus_control.styles.text_style = (
-                "bold underline" if focused_within else "none"
+        _paint_edge_region_focus(framed, focused_within, focus_control)
+
+
+def _app_style_inputs(app: Any) -> tuple:
+    return frozenset(app.classes), app.pseudo_classes
+
+
+def note_suspend_style_inputs(screen: Any) -> None:
+    """Record the App's classes and pseudo-classes as the screen leaves (TASK-38950)."""
+    screen._console_suspend_style_inputs = _app_style_inputs(screen.app)
+
+
+def skip_unchanged_resume_restyle(screen: Any, event: Any) -> None:
+    """Spare a return Textual's whole-screen restyle when no style input moved.
+
+    TASK-38950: ``Screen._on_screen_resume`` restyles every node when its
+    ``ScreenResume`` asks, and ``switch_screen`` always asks: 538-554 of the
+    Console's 555 nodes on each return, 55-58 ms of CPU at load 9. A node's own
+    class or pseudo-class change restyles it at once, current screen or not.
+    What a covered screen misses is a reparse of the rules (a theme change, a
+    sheet another screen loaded) and a change to the App node's classes or
+    pseudo-classes, which restyle only the screens on top. So the flag is
+    cleared only when the rules are the very list the last full restyle used
+    and the App's classes and pseudo-classes are the ones it used and the ones
+    the screen left with. This runs before Textual's handler (the dispatch
+    walks the most derived class first), which still does all its other work.
+
+    Every ``pop_screen`` posts ``refresh_styles=False`` and Textual restyles
+    nothing. If the App's classes or pseudo-classes moved while the screen was
+    covered, its nodes may hold the old ones, so the next return restyles.
+    """
+    app = screen.app
+    if not event.refresh_styles:
+        if _app_style_inputs(app) != getattr(
+            screen, "_console_suspend_style_inputs", None
+        ):
+            screen._console_resume_style_inputs = None
+        return
+    inputs = (app.stylesheet.rules, *_app_style_inputs(app))
+    styled = getattr(screen, "_console_resume_style_inputs", None)
+    if (
+        styled is not None
+        and styled[0] is inputs[0]
+        and styled[1:]
+        == inputs[1:]
+        == getattr(screen, "_console_suspend_style_inputs", None)
+    ):
+        event.refresh_styles = False
+    screen._console_resume_style_inputs = inputs
+
+
+#: Style rules a widget's rendered style reads from its ancestors as well as
+#: itself (Textual 8.2.8 ``Widget.get_visual_style`` / ``DOMNode.rich_style``
+#: walk the ancestors for these). A child caches that style keyed on its OWN
+#: pseudo classes and clears it only when it is itself restyled, so a rule
+#: setting one of these on a node needs the node's subtree restyled too.
+ANCESTOR_READ_RULES = frozenset(
+    {
+        "auto_color",
+        "color",
+        "background",
+        "background_tint",
+        "text_style",
+        "opacity",
+        "text_opacity",
+        "tint",
+        "link_color",
+        "auto_link_color",
+        "link_background",
+        "link_style",
+        "link_color_hover",
+        "auto_link_color_hover",
+        "link_background_hover",
+        "link_style_hover",
+    }
+)
+
+
+def apply_scoped_breakpoints(
+    node: Any, breakpoints: list[tuple[int, str]], height: int
+) -> None:
+    """Set ``node``'s breakpoint class, restyling only what its rules style.
+
+    TASK-38950: Textual's ``Screen._on_resize`` flips a breakpoint class with a
+    whole-screen restyle, on the Console's first layout and at every height
+    change across 24/25 rows. A rule naming the class can style only the nodes
+    its target selector names (the key Textual's ``rules_map`` matches nodes
+    by); their subtrees are restyled too only when the rule sets a property
+    descendants read from them (``ANCESTOR_READ_RULES``, TASK-39132). Same
+    class choice as ``Screen._get_breakpoint_classes``; an empty name means
+    no class at or above its threshold (the shell's ``-console-compact``).
+    """
+    wanted = dict.fromkeys((name for _, name in breakpoints if name), False)
+    for threshold, name in sorted(breakpoints, reverse=True):
+        if height >= threshold:
+            if name:
+                wanted[name] = True
+            break
+    if all(node.has_class(name) == on for name, on in wanted.items()):
+        return
+    node.update_classes(wanted, update=False)
+    stylesheet = node.app.stylesheet
+    rules = stylesheet.rules
+    cached = getattr(node, "_console_breakpoint_names", None)
+    if cached is not None and cached[0] is rules and cached[1] == frozenset(wanted):
+        names, deep = cached[2:]
+    else:  # One scan per parsed sheet: 5,843 selector strings cost 139 ms at load 86.
+        names, deep = set(), set()
+        for rule in rules:
+            selectors = rule.selectors
+            if any(f".{name}" in selectors for name in wanted):
+                names |= rule.selector_names
+                if ANCESTOR_READ_RULES & rule.styles.get_rules().keys():
+                    deep |= rule.selector_names
+        node._console_breakpoint_names = (rules, frozenset(wanted), names, deep)
+    targets = [n for n in node.walk_children(with_self=True) if n._selector_names & names]
+    stylesheet.update_nodes(
+        dict.fromkeys(
+            chain.from_iterable(
+                n.walk_children(with_self=True) if n._selector_names & deep else (n,)
+                for n in targets
             )
+        ),
+        animate=False,
+    )

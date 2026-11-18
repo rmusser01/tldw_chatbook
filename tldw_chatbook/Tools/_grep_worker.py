@@ -79,9 +79,7 @@ def _apply_cpu_limit() -> None:
         # generous. The soft limit -- the one that actually triggers
         # SIGXCPU -- is the smaller of our desired cap and that hard
         # limit, since setrlimit rejects soft > hard.
-        new_hard = (
-            _CPU_LIMIT_SECONDS + 5 if hard == resource.RLIM_INFINITY else hard
-        )
+        new_hard = _CPU_LIMIT_SECONDS + 5 if hard == resource.RLIM_INFINITY else hard
         new_soft = min(_CPU_LIMIT_SECONDS, new_hard)
         resource.setrlimit(resource.RLIMIT_CPU, (new_soft, new_hard))
     except (ValueError, OSError):

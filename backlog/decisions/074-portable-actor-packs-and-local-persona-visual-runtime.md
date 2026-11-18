@@ -11,7 +11,7 @@ Related Tasks:
 [TASK-19058](../tasks/task-19058%20-%20Export-self-contained-Actor-Packs.md)
 [TASK-19059](../tasks/task-19059%20-%20Import-review-and-activate-Actor-Packs.md)
 Related Spec: [Actor Pack, Persona Buddy, and Streaming Emote Programme Design](../../Docs/superpowers/specs/2026-08-20-actor-pack-persona-buddy-and-emote-programme-design.md)
-Related Decision: [ADR-067](067-bundled-samira-visual-identity-pack.md)
+Related Decision: [ADR-312](312-bundled-samira-visual-identity-pack.md)
 Supersedes: N/A
 
 ## Decision
@@ -60,6 +60,15 @@ matrix:
 - old JSON + new SQLite, `committed` + new JSON + old SQLite, any other unexpected
   digest or revision, or any intent/store-state contradiction is quarantined without
   a destructive guess and requires explicit recovery.
+
+  *Note 2026-11-16 (TASK-41114, owner decision "Clear the interrupted import
+  (Recommended)"):* the explicit recovery is one Personas notice, **Keep my current
+  personas and clear the interrupted import**. It deletes only the quarantined intent
+  rows under ChaChaNotes admission (a backup or restore pause refuses it and changes
+  nothing); Persona JSON and the identity registry stay exactly as they are, and new
+  persona Actor Pack creation works again. A refused import, and a refused persona
+  Actor Pack creation, name the stuck import and this action (and show the notice)
+  instead of the generic failure.
 
 Because the SQLite rows and committed status change atomically, `prepared` + new
 SQLite is impossible under normal operation and is treated as a contradiction. Intent
@@ -133,7 +142,7 @@ in existing display-summary strings was rejected because those strings truncate 
 do not bind attribution to image content. Expanding the native visual schema was
 rejected because a portable notice carrier need not alter rendering contracts.
 
-ADR-067 established Shared Visual Identity as an immutable expression runtime and
+ADR-312 established Shared Visual Identity as an immutable expression runtime and
 kept Persona Visual Packs separate. The programme now needs a local Persona operational
 runtime, an app-wide Buddy, and a portable actor format without weakening that boundary
 or confusing local database identity with portable identity.
@@ -148,7 +157,7 @@ until review, validation, and activation all succeed.
 
 | Alternative | Why rejected |
 | --- | --- |
-| Merge Shared Visual Identity and Persona Visual | Expressions and operational states have different semantics, actors, bindings, fallbacks, and runtime inputs. One schema would erase the server compatibility boundary established by ADR-067. |
+| Merge Shared Visual Identity and Persona Visual | Expressions and operational states have different semantics, actors, bindings, fallbacks, and runtime inputs. One schema would erase the server compatibility boundary established by ADR-312. |
 | Thin or reference-only Actor Packs | They are not portable, can expose private paths or remote dependencies, and cannot produce deterministic offline import. |
 | Mutate server-backed Personas in place | Chatbook does not own server Persona authority or a server write contract; Save Local Copy creates the required local ownership boundary. |
 | Migrate all Persona authority to SQLite as part of Actor Packs | This is unrelated, high-risk scope and would change existing Persona ownership before portability requires it. |
@@ -190,7 +199,7 @@ See [the design](../../Docs/superpowers/specs/2026-09-04-task-21123-buddy-overla
 ## Links
 
 - [Approved programme design](../../Docs/superpowers/specs/2026-08-20-actor-pack-persona-buddy-and-emote-programme-design.md)
-- [ADR-067: Bundle Samira through a local Visual Identity bridge](067-bundled-samira-visual-identity-pack.md)
+- [ADR-312: Bundle Samira through a local Visual Identity bridge](312-bundled-samira-visual-identity-pack.md)
 - [TASK-19053: Add local Persona Visual pack foundation](../tasks/task-19053%20-%20Add-local-Persona-Visual-pack-foundation.md)
 - [TASK-19054: Author and import Persona Visual packs](../tasks/task-19054%20-%20Author-and-import-Persona-Visual-packs.md)
 - [TASK-19055: Add opt-in app-wide floating Persona Buddy](../tasks/task-19055%20-%20Add-opt-in-app-wide-floating-Persona-Buddy.md)

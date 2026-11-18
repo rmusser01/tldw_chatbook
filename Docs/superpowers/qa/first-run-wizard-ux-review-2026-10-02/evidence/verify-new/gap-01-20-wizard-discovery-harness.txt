@@ -1,0 +1,55 @@
+# vn4 code-level harness (isolated HOME=/private/tmp/claude-501/-Users-macbook-dev-Documents-GitHub-tldw-chatbook/4793f8c9-d9e8-41fa-8341-3383fec2f274/scratchpad/home_harness, no app launch, no tracked file edits)
+# Each cloud provider: endpoints resolved with the wizard's own first_run_setup_state._resolve_first_run_provider_endpoints(p, '', cfg),
+# staged exactly as FirstRunSetupWizard._first_run_discovery_staged_settings does (discovery_endpoint = chat URL), random fake key, then
+# LocalLLMProviderCatalogService.discover_models(use_shared_cache=False). Columns: provider status error_kind category model_count engine_driven
+ROW anthropic error missing_credentials unauthorized 0 False
+ROW arcee error invalid_provider_settings None 0 True
+ROW azure error invalid_provider_settings None 0 True
+ROW baseten error invalid_provider_settings None 0 True
+ROW byteplus error invalid_provider_settings None 0 True
+ROW cerebras error invalid_provider_settings None 0 True
+ROW cloudflare error invalid_provider_settings None 0 True
+ROW cohere error missing_credentials unauthorized 0 False
+ROW commandcode error invalid_provider_settings None 0 True
+ROW databricks error invalid_provider_settings None 0 True
+ROW deepinfra error invalid_provider_settings None 0 True
+ROW deepseek error missing_credentials unauthorized 0 False
+ROW fireworks error invalid_provider_settings None 0 True
+ROW gmi error invalid_provider_settings None 0 True
+ROW google unsupported unsupported_endpoint http_status 0 False
+ROW groq error missing_credentials unauthorized 0 False
+ROW huggingface success None None 134 False
+ROW kilo error invalid_provider_settings None 0 True
+ROW meta error invalid_provider_settings None 0 True
+ROW mimo error invalid_provider_settings None 0 True
+ROW minimax error invalid_provider_settings None 0 True
+ROW mistral error missing_endpoint None 0 False
+ROW moonshot error missing_credentials unauthorized 0 False
+ROW nebius error invalid_provider_settings None 0 True
+ROW nous error invalid_provider_settings None 0 True
+ROW novita error invalid_provider_settings None 0 True
+ROW nvidia error invalid_provider_settings None 0 True
+ROW ollama_cloud error invalid_provider_settings None 0 True
+ROW openai error missing_credentials unauthorized 0 False
+ROW opencode_zen error invalid_provider_settings None 0 True
+ROW openrouter success None None 466 False
+ROW qianfan error invalid_provider_settings None 0 True
+ROW qwencloud error missing_credentials unauthorized 0 False
+ROW sambanova error invalid_provider_settings None 0 True
+ROW siliconflow error invalid_provider_settings None 0 True
+ROW stepfun error invalid_provider_settings None 0 True
+ROW together error invalid_provider_settings None 0 True
+ROW tokenhub error invalid_provider_settings None 0 True
+ROW upstage error invalid_provider_settings None 0 True
+ROW venice error invalid_provider_settings None 0 True
+ROW vercel error invalid_provider_settings None 0 True
+ROW wandb error invalid_provider_settings None 0 True
+ROW zai unsupported unsupported_endpoint None 0 False
+ROW zenmux error invalid_provider_settings None 0 True
+
+# Control: same service, same fake key, but the BASE url (not the chat URL) staged:
+openrouter   status=success models=466 err_kind=None cat=None msg=
+nvidia       status=success models=81 err_kind=None cat=None msg=
+novita       status=success models=121 err_kind=None cat=None msg=
+huggingface  status=success models=134 err_kind=None cat=None msg=
+groq         status=error models=0 err_kind=missing_credentials cat=unauthorized msg=The models endpoint rejected the configured credentials.

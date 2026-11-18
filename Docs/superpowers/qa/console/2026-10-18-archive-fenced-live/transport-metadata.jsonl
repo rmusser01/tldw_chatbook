@@ -1,0 +1,55 @@
+{"event": "readonly_transport", "path": "/health", "transport": "httpx_async"}
+{"event": "denied_route", "inference": false, "local_endpoint": true, "method": "GET", "retry_total": 0, "transport": "httpx_async"}
+{"event": "readonly_transport", "path": "/health", "transport": "httpx_async"}
+{"event": "readonly_transport", "path": "/props", "transport": "httpx_async"}
+{"attempt": 18, "event": "request", "max_tokens": 4096, "request_sha256": "2a1a7f92efe44001057eba2c91399c18c598b32655ecf0aee7be367d92d13441", "retry_total": 0, "role_counts": {"system": 1, "user": 1}, "stream": true, "tool_names": [], "transport": "httpx_async"}
+{"attempt": 18, "content_type": "text/event-stream", "event": "http", "status": 200}
+{"attempt": 18, "body_bytes": 29025, "content_bytes": 86, "event": "response_observation", "finish_reasons": ["stop"], "invalid_json": 0, "observation_truncated": false, "reasoning_bytes": 442, "sse_done": true, "tool_names": []}
+{"attempt": 19, "event": "request", "max_tokens": 4096, "request_sha256": "6594df0607c04ddff90ad39408f089f01532a8b1e788edc4649ed62c99371d13", "retry_total": 0, "role_counts": {"assistant": 1, "system": 1, "user": 2}, "stream": true, "tool_names": [], "transport": "httpx_async"}
+{"attempt": 19, "content_type": "text/event-stream", "event": "http", "status": 200}
+{"attempt": 19, "body_bytes": 67412, "content_bytes": 685, "event": "response_observation", "finish_reasons": ["stop"], "invalid_json": 0, "observation_truncated": false, "reasoning_bytes": 330, "sse_done": true, "tool_names": []}
+{"event": "readonly_transport", "path": "/health", "transport": "httpx_async"}
+{"event": "readonly_transport", "path": "/props", "transport": "httpx_async"}
+{"attempt": 20, "event": "request", "max_tokens": 4096, "request_sha256": "618e50498716f276e3b2d87a505140b902504bff93dbe6eae78f30433ee8d843", "retry_total": 0, "role_counts": {"assistant": 1, "system": 1, "user": 2}, "stream": true, "tool_names": [], "transport": "httpx_async"}
+{"attempt": 20, "content_type": "text/event-stream", "event": "http", "status": 200}
+{"attempt": 20, "body_bytes": 51100, "content_bytes": 124, "event": "response_observation", "finish_reasons": ["stop"], "invalid_json": 0, "observation_truncated": false, "reasoning_bytes": 821, "sse_done": true, "tool_names": []}
+{"attempt": 21, "event": "request", "max_tokens": 4096, "request_sha256": "704dcb7e9334a79cb44c2816c6ab5c3b3962076b112b4791a59ea3efb685dc96", "retry_total": 0, "role_counts": {"assistant": 2, "system": 1, "user": 3}, "stream": true, "tool_names": [], "transport": "httpx_async"}
+{"attempt": 21, "content_type": "text/event-stream", "event": "http", "status": 200}
+{"attempt": 21, "body_bytes": 20099, "content_bytes": 181, "event": "response_observation", "finish_reasons": ["stop"], "invalid_json": 0, "observation_truncated": false, "reasoning_bytes": 163, "sse_done": true, "tool_names": []}
+{"attempt": 22, "event": "request", "max_tokens": 4096, "request_sha256": "f367d16b7c16eeabf6e2d82c0a9393ecedb92aef0a6014d802e48d7062675dc4", "retry_total": 0, "role_counts": {"assistant": 2, "system": 1, "user": 4}, "stream": true, "tool_names": [], "transport": "httpx_async"}
+{"attempt": 22, "content_type": "text/event-stream", "event": "http", "status": 200}
+{"attempt": 22, "body_bytes": 92191, "content_bytes": 623, "event": "response_observation", "finish_reasons": ["stop"], "invalid_json": 0, "observation_truncated": false, "reasoning_bytes": 1167, "sse_done": true, "tool_names": []}
+{"event": "readonly_transport", "path": "/health", "transport": "httpx_sync"}
+{"event": "readonly_transport", "path": "/health", "transport": "httpx_async"}
+{"event": "readonly_transport", "path": "/props", "transport": "httpx_async"}
+{"attempt": 23, "event": "request", "max_tokens": 4096, "request_sha256": "2a1a7f92efe44001057eba2c91399c18c598b32655ecf0aee7be367d92d13441", "retry_total": 0, "role_counts": {"system": 1, "user": 1}, "stream": true, "tool_names": [], "transport": "httpx_async"}
+{"attempt": 23, "content_type": "text/event-stream", "event": "http", "status": 200}
+{"attempt": 23, "body_bytes": 50901, "content_bytes": 138, "event": "response_observation", "finish_reasons": ["stop"], "invalid_json": 0, "observation_truncated": false, "reasoning_bytes": 758, "sse_done": true, "tool_names": []}
+{"attempt": 24, "event": "request", "max_tokens": 4096, "request_sha256": "54606ab11e8dbce09678a2bc865b919acfc7392a2fa97f2b2187ca4236190325", "retry_total": 0, "role_counts": {"assistant": 1, "system": 1, "user": 2}, "stream": true, "tool_names": [], "transport": "httpx_async"}
+{"attempt": 24, "content_type": "text/event-stream", "event": "http", "status": 200}
+{"attempt": 24, "body_bytes": 117380, "content_bytes": 960, "event": "response_observation", "finish_reasons": ["stop"], "invalid_json": 0, "observation_truncated": false, "reasoning_bytes": 845, "sse_done": true, "tool_names": []}
+{"event": "readonly_transport", "path": "/health", "transport": "httpx_async"}
+{"event": "readonly_transport", "path": "/props", "transport": "httpx_async"}
+{"attempt": 25, "event": "request", "max_tokens": 4096, "request_sha256": "986379103aad9fd8f888c66dec03d3805887636ad19719369f81de2bc48a4439", "retry_total": 0, "role_counts": {"assistant": 1, "system": 1, "user": 2}, "stream": true, "tool_names": [], "transport": "httpx_async"}
+{"attempt": 25, "content_type": "text/event-stream", "event": "http", "status": 200}
+{"attempt": 25, "body_bytes": 65949, "content_bytes": 149, "event": "response_observation", "finish_reasons": ["stop"], "invalid_json": 0, "observation_truncated": false, "reasoning_bytes": 995, "sse_done": true, "tool_names": []}
+{"attempt": 26, "event": "request", "max_tokens": 4096, "request_sha256": "4a6f9c8f92a2e175fc54a500f27cd85c671b16dd92ccfde7d03f11c45ff7b446", "retry_total": 0, "role_counts": {"assistant": 2, "system": 1, "user": 3}, "stream": true, "tool_names": [], "transport": "httpx_async"}
+{"attempt": 26, "content_type": "text/event-stream", "event": "http", "status": 200}
+{"attempt": 26, "body_bytes": 25954, "content_bytes": 230, "event": "response_observation", "finish_reasons": ["stop"], "invalid_json": 0, "observation_truncated": false, "reasoning_bytes": 251, "sse_done": true, "tool_names": []}
+{"event": "readonly_transport", "path": "/health", "transport": "httpx_async"}
+{"event": "readonly_transport", "path": "/props", "transport": "httpx_async"}
+{"attempt": 27, "event": "request", "max_tokens": 4096, "request_sha256": "2a1a7f92efe44001057eba2c91399c18c598b32655ecf0aee7be367d92d13441", "retry_total": 0, "role_counts": {"system": 1, "user": 1}, "stream": true, "tool_names": [], "transport": "httpx_async"}
+{"attempt": 27, "content_type": "text/event-stream", "event": "http", "status": 200}
+{"attempt": 27, "body_bytes": 38366, "content_bytes": 99, "event": "response_observation", "finish_reasons": ["stop"], "invalid_json": 0, "observation_truncated": false, "reasoning_bytes": 604, "sse_done": true, "tool_names": []}
+{"attempt": 28, "event": "request", "max_tokens": 4096, "request_sha256": "406b3b55b73849caf7bdeecd50615b589c3c87ad86705364788dc300194c07cb", "retry_total": 0, "role_counts": {"assistant": 1, "system": 1, "user": 2}, "stream": true, "tool_names": [], "transport": "httpx_async"}
+{"attempt": 28, "content_type": "text/event-stream", "event": "http", "status": 200}
+{"attempt": 28, "body_bytes": 70035, "content_bytes": 745, "event": "response_observation", "finish_reasons": ["stop"], "invalid_json": 0, "observation_truncated": false, "reasoning_bytes": 411, "sse_done": true, "tool_names": []}
+{"event": "readonly_transport", "path": "/health", "transport": "httpx_async"}
+{"event": "readonly_transport", "path": "/props", "transport": "httpx_async"}
+{"attempt": 29, "event": "request", "max_tokens": 4096, "request_sha256": "e6b79efd02ac151ba65447b4ef37956241608efa9c7ad8c81f5e53c582e95830", "retry_total": 0, "role_counts": {"assistant": 1, "system": 1, "user": 2}, "stream": true, "tool_names": [], "transport": "httpx_async"}
+{"attempt": 29, "content_type": "text/event-stream", "event": "http", "status": 200}
+{"attempt": 29, "body_bytes": 52647, "content_bytes": 149, "event": "response_observation", "finish_reasons": ["stop"], "invalid_json": 0, "observation_truncated": false, "reasoning_bytes": 599, "sse_done": true, "tool_names": []}
+{"attempt": 30, "event": "request", "max_tokens": 4096, "request_sha256": "db56c38667608ccd8c6616b25bbf1552d02f81ee510047a6168a8c40a464e8d3", "retry_total": 0, "role_counts": {"assistant": 2, "system": 1, "user": 3}, "stream": true, "tool_names": [], "transport": "httpx_async"}
+{"attempt": 30, "content_type": "text/event-stream", "event": "http", "status": 200}
+{"attempt": 30, "body_bytes": 18189, "content_bytes": 151, "event": "response_observation", "finish_reasons": ["stop"], "invalid_json": 0, "observation_truncated": false, "reasoning_bytes": 188, "sse_done": true, "tool_names": []}
+{"event": "readonly_transport", "path": "/health", "transport": "httpx_sync"}

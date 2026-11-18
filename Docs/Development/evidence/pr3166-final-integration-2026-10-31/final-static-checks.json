@@ -1,0 +1,28 @@
+[
+  {
+    "command": [
+      "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+      "-X",
+      "utf8",
+      "-m",
+      "ruff",
+      "check",
+      "--no-cache",
+      "Tests/UI/test_console_tab_publication_read_barrier.py"
+    ],
+    "exit_code": 0,
+    "stdout": "All checks passed!\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+      "-X",
+      "utf8",
+      "scripts/check_ui_pr_gate_census.py"
+    ],
+    "exit_code": 0,
+    "stdout": "OK: 1177 Tests/UI entries in the PR gate (floor 1177); every listed path exists.\n",
+    "stderr": ""
+  }
+]

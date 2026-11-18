@@ -1,0 +1,24 @@
+{
+  "command": [
+    "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-m",
+    "pytest",
+    "Tests/Workspaces/test_project_index_service.py::test_history_keeps_live_retired_supervisor_until_cancelled_close_joins",
+    "Tests/Workspaces/test_project_index_service.py::test_completed_refresh_history_is_bounded",
+    "Tests/Workspaces/test_project_index_service.py::test_shutdown_retains_lifetime_through_native_db_closure_and_repeated_cancel",
+    "Tests/Workspaces/test_project_index_service.py::test_failed_supervisor_dispatch_waits_for_started_writer_retirement",
+    "Tests/Workspaces/test_project_index_service.py::test_incremental_refresh_retires_deleted_and_renamed_membership",
+    "-q",
+    "--tb=short",
+    "--show-capture=no",
+    "--no-showlocals"
+  ],
+  "cwd": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui",
+  "source_sha256": {
+    "tldw_chatbook/Workspaces/project_index/service.py": "d0943ea7236310fd7ab6d585118d43f769f578198dcdd9e777941fb92ed7ed82",
+    "Tests/Workspaces/test_project_index_service.py": "a8e6f9fb0df7a26f5db3bce6508c9c97f841bce5a3042d2a18308bb5339e96f4"
+  },
+  "started_unix": 1792646483.1111379,
+  "exit_code": 1,
+  "elapsed_seconds": 311.3738136291504
+}

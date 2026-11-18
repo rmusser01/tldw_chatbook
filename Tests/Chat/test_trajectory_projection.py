@@ -216,7 +216,9 @@ def test_turn_starts_at_each_user_record() -> None:
         TrajRow("u2", turn_id="t2", seq=3, event_kind="user"),
         TrajRow("a2", turn_id="t2", seq=4, event_kind="assistant"),
     ]
-    snapshot = derive_trajectory(rows, {}, traj_rows, [], [], active_leaf_message_id=leaf)
+    snapshot = derive_trajectory(
+        rows, {}, traj_rows, [], [], active_leaf_message_id=leaf
+    )
     assert [t.turn_id for t in snapshot.turns] == ["t1", "t2"]
     assert record_kinds(snapshot) == [
         ["user", "assistant"],
@@ -245,7 +247,9 @@ def test_tool_records_nest_under_owning_assistant_at_depth_one() -> None:
             "a1", turn_id="t1", seq=4, event_kind="tool_result", payload_json=payload
         ),
     ]
-    snapshot = derive_trajectory(rows, {}, traj_rows, [], [], active_leaf_message_id=leaf)
+    snapshot = derive_trajectory(
+        rows, {}, traj_rows, [], [], active_leaf_message_id=leaf
+    )
     (turn,) = snapshot.turns
     assert [(r.kind, r.depth) for r in turn.records] == [
         ("user", 0),
@@ -266,12 +270,38 @@ def test_tool_records_ordered_by_seq_under_owner() -> None:
     traj_rows = [
         TrajRow("u1", turn_id="t1", seq=1, event_kind="user"),
         TrajRow("a1", turn_id="t1", seq=2, event_kind="assistant"),
-        TrajRow("a1", turn_id="t1", seq=6, event_kind="tool_result", payload_json='{"result": "b"}'),
-        TrajRow("a1", turn_id="t1", seq=5, event_kind="tool_call", payload_json='{"result": "b"}'),
-        TrajRow("a1", turn_id="t1", seq=3, event_kind="tool_call", payload_json='{"result": "a"}'),
-        TrajRow("a1", turn_id="t1", seq=4, event_kind="tool_result", payload_json='{"result": "a"}'),
+        TrajRow(
+            "a1",
+            turn_id="t1",
+            seq=6,
+            event_kind="tool_result",
+            payload_json='{"result": "b"}',
+        ),
+        TrajRow(
+            "a1",
+            turn_id="t1",
+            seq=5,
+            event_kind="tool_call",
+            payload_json='{"result": "b"}',
+        ),
+        TrajRow(
+            "a1",
+            turn_id="t1",
+            seq=3,
+            event_kind="tool_call",
+            payload_json='{"result": "a"}',
+        ),
+        TrajRow(
+            "a1",
+            turn_id="t1",
+            seq=4,
+            event_kind="tool_result",
+            payload_json='{"result": "a"}',
+        ),
     ]
-    snapshot = derive_trajectory(rows, {}, traj_rows, [], [], active_leaf_message_id=leaf)
+    snapshot = derive_trajectory(
+        rows, {}, traj_rows, [], [], active_leaf_message_id=leaf
+    )
     (turn,) = snapshot.turns
     tool_records = [r for r in turn.records if r.depth == 1]
     assert [(r.kind, r.payload["result"]) for r in tool_records] == [
@@ -285,17 +315,36 @@ def test_tool_records_ordered_by_seq_under_owner() -> None:
 def test_orphaned_tool_rows_are_dropped() -> None:
     # Tool rows keyed on an assistant that was soft-deleted must vanish.
     rows, leaf = linear_chain(
-        ("u1", "user"), ("a1", "assistant", ), ("u2", "user")
+        ("u1", "user"),
+        (
+            "a1",
+            "assistant",
+        ),
+        ("u2", "user"),
     )
     rows[1]["deleted"] = True
     traj_rows = [
         TrajRow("u1", turn_id="t1", seq=1, event_kind="user"),
         TrajRow("a1", turn_id="t1", seq=2, event_kind="assistant"),
-        TrajRow("a1", turn_id="t1", seq=3, event_kind="tool_call", payload_json='{"result": "x"}'),
-        TrajRow("a1", turn_id="t1", seq=4, event_kind="tool_result", payload_json='{"result": "x"}'),
+        TrajRow(
+            "a1",
+            turn_id="t1",
+            seq=3,
+            event_kind="tool_call",
+            payload_json='{"result": "x"}',
+        ),
+        TrajRow(
+            "a1",
+            turn_id="t1",
+            seq=4,
+            event_kind="tool_result",
+            payload_json='{"result": "x"}',
+        ),
         TrajRow("u2", turn_id="t2", seq=5, event_kind="user"),
     ]
-    snapshot = derive_trajectory(rows, {}, traj_rows, [], [], active_leaf_message_id=leaf)
+    snapshot = derive_trajectory(
+        rows, {}, traj_rows, [], [], active_leaf_message_id=leaf
+    )
     kinds = [r.kind for t in snapshot.turns for r in t.records]
     assert kinds == ["user", "user"]  # no assistant, no tool rows
 
@@ -311,7 +360,9 @@ def test_null_timing_renders_none_fields() -> None:
         TrajRow("u1", turn_id="t1", seq=1, event_kind="user"),
         TrajRow("a1", turn_id="t1", seq=2, event_kind="assistant"),  # all timing NULL
     ]
-    snapshot = derive_trajectory(rows, {}, traj_rows, [], [], active_leaf_message_id=leaf)
+    snapshot = derive_trajectory(
+        rows, {}, traj_rows, [], [], active_leaf_message_id=leaf
+    )
     assistant = snapshot.turns[0].records[1]
     assert assistant.step_started_at is None
     assert assistant.first_token_at is None
@@ -343,9 +394,15 @@ def test_tool_append_time_timing_surfaces_as_is() -> None:
             completed_at=99.5,  # append-time zero duration
         ),
     ]
-    snapshot = derive_trajectory(rows, {}, traj_rows, [], [], active_leaf_message_id=leaf)
+    snapshot = derive_trajectory(
+        rows, {}, traj_rows, [], [], active_leaf_message_id=leaf
+    )
     records = snapshot.turns[0].records
-    assert (records[1].step_started_at, records[1].first_token_at, records[1].completed_at) == (
+    assert (
+        records[1].step_started_at,
+        records[1].first_token_at,
+        records[1].completed_at,
+    ) == (
         11.0,
         12.0,
         13.0,
@@ -375,7 +432,9 @@ def test_seq_breaks_timestamp_ties() -> None:
         TrajRow("a1", turn_id="t1", seq=5, event_kind="assistant"),
         TrajRow("a2", turn_id="t1", seq=4, event_kind="assistant"),
     ]
-    snapshot = derive_trajectory(rows, {}, traj_rows, [], [], active_leaf_message_id="a2")
+    snapshot = derive_trajectory(
+        rows, {}, traj_rows, [], [], active_leaf_message_id="a2"
+    )
     ids = [r.message_id for r in snapshot.turns[0].records]
     assert ids == ["u1", "a2", "a1"]
 
@@ -385,9 +444,17 @@ def test_records_carry_running_ledger_seq() -> None:
     traj_rows = [
         TrajRow("u1", turn_id="t1", seq=1, event_kind="user"),
         TrajRow("a1", turn_id="t1", seq=2, event_kind="assistant"),
-        TrajRow("a1", turn_id="t1", seq=3, event_kind="tool_call", payload_json='{"result": "x"}'),
+        TrajRow(
+            "a1",
+            turn_id="t1",
+            seq=3,
+            event_kind="tool_call",
+            payload_json='{"result": "x"}',
+        ),
     ]
-    snapshot = derive_trajectory(rows, {}, traj_rows, [], [], active_leaf_message_id=leaf)
+    snapshot = derive_trajectory(
+        rows, {}, traj_rows, [], [], active_leaf_message_id=leaf
+    )
     records = [r for t in snapshot.turns for r in t.records]
     assert [r.seq for r in records] == [1, 2, 3]
 
@@ -410,7 +477,9 @@ def test_soft_deleted_messages_excluded_but_chain_traversed_through() -> None:
         TrajRow("u2", turn_id="t2", seq=3, event_kind="user"),
         TrajRow("a2", turn_id="t2", seq=4, event_kind="assistant"),
     ]
-    snapshot = derive_trajectory(rows, {}, traj_rows, [], [], active_leaf_message_id=leaf)
+    snapshot = derive_trajectory(
+        rows, {}, traj_rows, [], [], active_leaf_message_id=leaf
+    )
     ids = [r.message_id for t in snapshot.turns for r in t.records]
     assert ids == ["u1", "u2", "a2"]
 
@@ -432,7 +501,9 @@ def test_mid_chain_gap_in_inputs_renders_all_not_partial_path() -> None:
         TrajRow("u2", turn_id="t2", seq=3, event_kind="user"),
         TrajRow("a2", turn_id="t2", seq=4, event_kind="assistant"),
     ]
-    snapshot = derive_trajectory(rows, {}, traj_rows, [], [], active_leaf_message_id=leaf)
+    snapshot = derive_trajectory(
+        rows, {}, traj_rows, [], [], active_leaf_message_id=leaf
+    )
     # Render-all: u1 still appears (a partial-path walk would drop it).
     ids = [r.message_id for t in snapshot.turns for r in t.records]
     assert ids == ["u1", "u2", "a2"]
@@ -442,8 +513,20 @@ def test_off_path_tree_siblings_surface_as_variants_not_rows() -> None:
     # u1 has two assistant children: a1 (active) and a1b (superseded fork).
     rows = [
         msg("u1", "user", ts="2026-08-14 10:00:00"),
-        msg("a1", "assistant", content="active reply", ts="2026-08-14 10:00:01", parent="u1"),
-        msg("a1b", "assistant", content="superseded fork", ts="2026-08-14 10:00:02", parent="u1"),
+        msg(
+            "a1",
+            "assistant",
+            content="active reply",
+            ts="2026-08-14 10:00:01",
+            parent="u1",
+        ),
+        msg(
+            "a1b",
+            "assistant",
+            content="superseded fork",
+            ts="2026-08-14 10:00:02",
+            parent="u1",
+        ),
         msg("u2", "user", ts="2026-08-14 10:00:03", parent="a1"),
     ]
     traj_rows = [
@@ -451,7 +534,9 @@ def test_off_path_tree_siblings_surface_as_variants_not_rows() -> None:
         TrajRow("a1", turn_id="t1", seq=2, event_kind="assistant"),
         TrajRow("u2", turn_id="t2", seq=3, event_kind="user"),
     ]
-    snapshot = derive_trajectory(rows, {}, traj_rows, [], [], active_leaf_message_id="u2")
+    snapshot = derive_trajectory(
+        rows, {}, traj_rows, [], [], active_leaf_message_id="u2"
+    )
     ids = [r.message_id for t in snapshot.turns for r in t.records]
     assert ids == ["u1", "a1", "u2"]  # a1b is NOT a row
     a1_record = snapshot.turns[0].records[1]
@@ -471,7 +556,9 @@ def test_none_leaf_renders_all_undeleted_messages() -> None:
         TrajRow("a1", turn_id="t1", seq=2, event_kind="assistant"),
         TrajRow("a1b", turn_id="t1b", seq=3, event_kind="assistant"),
     ]
-    snapshot = derive_trajectory(rows, {}, traj_rows, [], [], active_leaf_message_id=None)
+    snapshot = derive_trajectory(
+        rows, {}, traj_rows, [], [], active_leaf_message_id=None
+    )
     ids = [r.message_id for t in snapshot.turns for r in t.records]
     assert ids == ["u1", "a1", "a1b"]
 
@@ -572,7 +659,9 @@ def test_usage_by_id_attaches_to_records() -> None:
         TrajRow("u1", turn_id="t1", seq=1, event_kind="user"),
         TrajRow("a1", turn_id="t1", seq=2, event_kind="assistant"),
     ]
-    usage = ProviderUsage(uncached_input=7, cache_read=3, output=5, provider="anthropic")
+    usage = ProviderUsage(
+        uncached_input=7, cache_read=3, output=5, provider="anthropic"
+    )
     snapshot = derive_trajectory(
         rows, {"a1": usage}, traj_rows, [], [], active_leaf_message_id=leaf
     )
@@ -585,7 +674,9 @@ def test_content_preview_single_line_capped_at_120() -> None:
     rows, leaf = linear_chain(("u1", "user"))
     rows[0]["content"] = "line one\nline two " + "x" * 300
     traj_rows = [TrajRow("u1", turn_id="t1", seq=1, event_kind="user")]
-    snapshot = derive_trajectory(rows, {}, traj_rows, [], [], active_leaf_message_id=leaf)
+    snapshot = derive_trajectory(
+        rows, {}, traj_rows, [], [], active_leaf_message_id=leaf
+    )
     preview = snapshot.turns[0].records[0].content_preview
     assert "\n" not in preview
     assert len(preview) == 120
@@ -601,11 +692,35 @@ def test_legacy_grouping_by_timestamp_adjacency() -> None:
     # Same-calendar-second reply joins the preceding user message's turn;
     # the later reply (next second) still joins the open turn.
     rows = [
-        msg("a1", "assistant", content="fast reply", ts="2026-08-14 10:00:01", parent="u1"),
+        msg(
+            "a1",
+            "assistant",
+            content="fast reply",
+            ts="2026-08-14 10:00:01",
+            parent="u1",
+        ),
         msg("u1", "user", content="question", ts="2026-08-14 10:00:01"),
-        msg("a1b", "assistant", content="slow followup", ts="2026-08-14 10:00:07", parent="a1"),
-        msg("u2", "user", content="next question", ts="2026-08-14 10:00:20", parent="a1b"),
-        msg("a2", "assistant", content="answer two", ts="2026-08-14 10:00:22", parent="u2"),
+        msg(
+            "a1b",
+            "assistant",
+            content="slow followup",
+            ts="2026-08-14 10:00:07",
+            parent="a1",
+        ),
+        msg(
+            "u2",
+            "user",
+            content="next question",
+            ts="2026-08-14 10:00:20",
+            parent="a1b",
+        ),
+        msg(
+            "a2",
+            "assistant",
+            content="answer two",
+            ts="2026-08-14 10:00:22",
+            parent="u2",
+        ),
     ]
     snapshot = derive_trajectory(rows, {}, [], [], [], active_leaf_message_id="a2")
     assert [t.turn_id for t in snapshot.turns] == ["u1", "u2"]
@@ -636,7 +751,9 @@ def test_legacy_messages_take_usage_and_variants() -> None:
     rows = [
         msg("u1", "user", ts="2026-08-14 10:00:00"),
         msg("a1", "assistant", content="kept", ts="2026-08-14 10:00:01", parent="u1"),
-        msg("a1b", "assistant", content="dropped", ts="2026-08-14 10:00:02", parent="u1"),
+        msg(
+            "a1b", "assistant", content="dropped", ts="2026-08-14 10:00:02", parent="u1"
+        ),
     ]
     usage = ProviderUsage(output=4)
     snapshot = derive_trajectory(
@@ -654,9 +771,27 @@ def test_legacy_messages_take_usage_and_variants() -> None:
 
 def test_console_chat_message_inputs_group_by_turn_id() -> None:
     messages = [
-        ConsoleChatMessage(role="user", content="hello", id="m1", turn_id="tA", persisted_message_id="p1"),
-        ConsoleChatMessage(role="assistant", content="hi", id="m2", turn_id="tA", persisted_message_id="p2"),
-        ConsoleChatMessage(role="user", content="again", id="m3", turn_id="tB", persisted_message_id="p3"),
+        ConsoleChatMessage(
+            role="user",
+            content="hello",
+            id="m1",
+            turn_id="tA",
+            persisted_message_id="p1",
+        ),
+        ConsoleChatMessage(
+            role="assistant",
+            content="hi",
+            id="m2",
+            turn_id="tA",
+            persisted_message_id="p2",
+        ),
+        ConsoleChatMessage(
+            role="user",
+            content="again",
+            id="m3",
+            turn_id="tB",
+            persisted_message_id="p3",
+        ),
     ]
     usage = ProviderUsage(output=9)
     snapshot = derive_trajectory(
@@ -703,7 +838,9 @@ def test_feedback_records_nest_under_their_anchor_without_displacing_it() -> Non
     own assistant row -- losing the assistant's timing and turn attribution.
     It has to nest, the way tool rows do."""
     rows, leaf = linear_chain(("u1", "user"), ("a1", "assistant"))
-    payload = '{"action": "request-changes", "quote": "the patch", "comment": "use a CM"}'
+    payload = (
+        '{"action": "request-changes", "quote": "the patch", "comment": "use a CM"}'
+    )
     traj_rows = [
         TrajRow("u1", turn_id="t1", seq=1, event_kind="user"),
         TrajRow(
@@ -718,7 +855,9 @@ def test_feedback_records_nest_under_their_anchor_without_displacing_it() -> Non
             "a1", turn_id="t1", seq=3, event_kind="user_feedback", payload_json=payload
         ),
     ]
-    snapshot = derive_trajectory(rows, {}, traj_rows, [], [], active_leaf_message_id=leaf)
+    snapshot = derive_trajectory(
+        rows, {}, traj_rows, [], [], active_leaf_message_id=leaf
+    )
     (turn,) = snapshot.turns
     assert [(r.kind, r.depth) for r in turn.records] == [
         ("user", 0),
@@ -751,7 +890,9 @@ def test_feedback_preview_without_a_comment_shows_the_quote() -> None:
             payload_json='{"action": "lgm", "quote": "ship it"}',
         ),
     ]
-    snapshot = derive_trajectory(rows, {}, traj_rows, [], [], active_leaf_message_id=leaf)
+    snapshot = derive_trajectory(
+        rows, {}, traj_rows, [], [], active_leaf_message_id=leaf
+    )
     (turn,) = snapshot.turns
     assert turn.records[-1].content_preview == "LGTM: ship it"
 
@@ -778,9 +919,13 @@ def test_multiple_feedback_events_on_one_message_all_survive_in_seq_order() -> N
             payload_json='{"action": "comment", "quote": "q", "comment": "first"}',
         ),
     ]
-    snapshot = derive_trajectory(rows, {}, traj_rows, [], [], active_leaf_message_id=leaf)
+    snapshot = derive_trajectory(
+        rows, {}, traj_rows, [], [], active_leaf_message_id=leaf
+    )
     (turn,) = snapshot.turns
-    assert [r.payload["comment"] for r in turn.records if r.kind == "user_feedback"] == [
+    assert [
+        r.payload["comment"] for r in turn.records if r.kind == "user_feedback"
+    ] == [
         "first",
         "second",
     ]

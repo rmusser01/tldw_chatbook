@@ -10,6 +10,7 @@ presented it as Library-grounded.
 These pins cover the three states and, most importantly, that a total failure
 is not answerable.
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -197,8 +198,12 @@ class TestUserVisibleNotice:
         class FakeNotesBackend:
             async def search_notes(self, **_k):
                 return [
-                    {"id": 1, "title": "t", "content": "c",
-                     "last_modified": "2026-01-01"}
+                    {
+                        "id": 1,
+                        "title": "t",
+                        "content": "c",
+                        "last_modified": "2026-01-01",
+                    }
                 ]
 
         app = SimpleNamespace(

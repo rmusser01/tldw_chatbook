@@ -58,7 +58,9 @@ async def test_source_acceptance_returns_the_database_winner_without_reexecution
     assert first["run_id"] == second["run_id"]
     assert first["_claim_acquired"] is True
     assert second["_claim_acquired"] is False
-    assert db.conn.execute("SELECT COUNT(*) FROM local_watchlist_runs").fetchone()[0] == 1
+    assert (
+        db.conn.execute("SELECT COUNT(*) FROM local_watchlist_runs").fetchone()[0] == 1
+    )
 
 
 @pytest.mark.asyncio
@@ -151,9 +153,7 @@ async def test_duplicate_coordinator_submission_reuses_one_task_and_receipt(tmp_
 
     assert first["run_id"] == second["run_id"]
     assert calls == 1
-    assert coordinator.active_receipt_ids == (
-        f"local:watchlist_run:{first['run_id']}",
-    )
+    assert coordinator.active_receipt_ids == (f"local:watchlist_run:{first['run_id']}",)
 
     release.set()
     await coordinator.wait_idle(timeout=2)

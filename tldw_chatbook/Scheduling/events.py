@@ -10,15 +10,6 @@ from ..Widgets.detail_value_row import DetailValueRow
 from .models import ReminderTask
 
 
-class ReminderFormSubmitted(Message):
-    """Posted when the reminder create/edit form is saved."""
-
-    def __init__(self, form_data: dict[str, Any], task_id: str | None = None) -> None:
-        super().__init__()
-        self.form_data = form_data
-        self.task_id = task_id
-
-
 class DeleteTaskRequested(Message):
     """Posted when the user confirms deletion of a scheduled task."""
 

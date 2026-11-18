@@ -334,3 +334,16 @@ class TestCanonicalDirectory:
         with pytest.raises(ValueError) as error:
             validate_canonical_directory(value)
         assert "private-token" not in str(error.value)
+
+
+def test_validate_path_simple_still_refuses_an_unexpanded_tilde() -> None:
+    """TASK-34000.20 AC#4 / TASK-32927: expansion is the CALLER's job.
+
+    The Library pre-check now expands ``~`` itself (``ingest_preflight.
+    expand_user_path``); this pins that the validator's own guard did not
+    move, so every other caller still refuses an unexpanded ``~/``.
+    """
+    from tldw_chatbook.Utils.path_validation import validate_path_simple
+
+    with pytest.raises(ValueError, match="dangerous pattern: ~/"):
+        validate_path_simple("~/Documents/x.txt")

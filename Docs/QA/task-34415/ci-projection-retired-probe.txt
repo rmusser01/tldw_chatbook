@@ -1,0 +1,63 @@
+"""Run the original geometry node after its real startup timer has retired."""
+
+import asyncio
+import time
+import weakref
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def completed_startup_projection(request, monkeypatch):
+    from Tests.private_profile import is_private_profile_child
+
+    if not is_private_profile_child(request):
+        return
+
+    from Tests.UI import test_console_mcp_approval as helpers
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    original_ready = helpers._wait_for_production_console_ready
+    original_sync = ChatScreen.sync_task_resume_state
+    original_timer = ChatScreen.set_timer
+    timers = []
+    projections = []
+
+    def sync(screen):
+        result = original_sync(screen)
+        projections.append(result)
+        return result
+
+    def set_timer(screen, delay, callback=None, **kwargs):
+        timer = original_timer(screen, delay, callback, **kwargs)
+        if (
+            getattr(callback, "__self__", None) is screen
+            and getattr(callback, "__func__", None) is sync
+        ):
+            timers.append(weakref.ref(timer))
+        return timer
+
+    async def ready_after_retirement(app, pilot):
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            if timers and projections and all(timer() is None for timer in timers):
+                break
+            await asyncio.sleep(0.01)
+        else:
+            raise AssertionError("Real startup projection did not retire")
+        assert all(projections)
+        assert isinstance(app.screen, ChatScreen)
+        assert app.screen._console_attach_reconciled
+        print(
+            "PR3034 probe: real projection succeeded;"
+            f" {len(timers)} startup timer(s) naturally retired;"
+            f" {len(projections)} real projection(s)",
+            flush=True,
+        )
+        return await original_ready(app, pilot)
+
+    monkeypatch.setattr(ChatScreen, "sync_task_resume_state", sync)
+    monkeypatch.setattr(ChatScreen, "set_timer", set_timer)
+    monkeypatch.setattr(
+        helpers, "_wait_for_production_console_ready", ready_after_retirement
+    )

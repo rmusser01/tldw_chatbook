@@ -10,6 +10,7 @@ widgets to build and query successfully. The worker-thread generate path is
 exercised directly (off the Textual event loop, like the real `@work(thread=True)`
 callable is) with `run_generation` monkeypatched, so no backend is required.
 """
+
 from __future__ import annotations
 
 import pytest

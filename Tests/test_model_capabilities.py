@@ -569,6 +569,27 @@ def test_provider_lookup_is_case_insensitive():
     )
 
 
+
+def test_add_model_capability_refreshes_cached_is_vision_capable():
+    """TASK-38609: add_model_capability must clear the is_vision_capable lru.
+
+    The audit verified live that seeding the cache (query -> False) and then
+    adding a vision capability kept serving False until clear_cache ran,
+    because only _capability_cache was invalidated, not the @lru_cache on
+    is_vision_capable.
+    """
+    caps = ModelCapabilities({})
+    provider, model = "AnyProvider", "late-added-vision-model"
+
+    # Seed the lru_cache with the pre-add answer.
+    assert caps.is_vision_capable(provider, model) is False
+
+    caps.add_model_capability(model, {"vision": True})
+
+    # The cached answer must refresh immediately, not after clear_cache.
+    assert caps.is_vision_capable(provider, model) is True
+
+
 #
 # End of test_model_capabilities.py
 #######################################################################################################################

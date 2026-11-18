@@ -13,8 +13,8 @@ Console was suspended -- must still refresh. A dedupe that suppressed that
 would be a correctness regression wearing a performance badge.
 
 Spy shape mirrors ``test_console_agent_fleet_sync_coalescing.py``: the CLASS
-method is patched before the screen is pushed, so the counters observe the
-real first mount rather than a replayed one.
+method is patched before the app is built, so the counters observe the app's
+own first Console mount rather than a replayed one.
 """
 
 from __future__ import annotations
@@ -26,7 +26,9 @@ from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Console_Modules.skill import ConsoleSkillController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
-pytestmark = pytest.mark.asyncio
+# TASK-40323: `_build_test_app` loads config (`build_test_app_config` ->
+# `load_settings`), which the per-test sandbox refuses with RecoveryRequired.
+pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 
 
 @pytest.fixture()
@@ -38,35 +40,77 @@ def visit_spy(monkeypatch):
     two screens' visits and could not tell "one each" from "two on one".
     """
     counts: dict[str, dict[int, int]] = {"skills": {}, "task_resume": {}}
+    pushing: dict[int, int] = {}
 
     real_skills = ConsoleSkillController._refresh_console_skill_candidates
     real_sync = ChatScreen.sync_task_resume_state
+    real_set = ChatScreen.set_task_resume_state
 
     async def counting_skills(self):
         counts["skills"][id(self)] = counts["skills"].get(id(self), 0) + 1
         return await real_skills(self)
 
     def counting_sync(self):
-        counts["task_resume"][id(self)] = counts["task_resume"].get(id(self), 0) + 1
+        # TASK-41139: a state push (a question or decision remount through
+        # set_task_resume_state, 524de00360 / 11150b849d) renders its own new
+        # state; only a bare sync is the per-visit refresh this file pins.
+        if not pushing.get(id(self)):
+            counts["task_resume"][id(self)] = (
+                counts["task_resume"].get(id(self), 0) + 1
+            )
         return real_sync(self)
+
+    def pushing_set(self, task_state):
+        pushing[id(self)] = pushing.get(id(self), 0) + 1
+        try:
+            return real_set(self, task_state)
+        finally:
+            pushing[id(self)] -= 1
 
     monkeypatch.setattr(
         ConsoleSkillController, "_refresh_console_skill_candidates", counting_skills
     )
     monkeypatch.setattr(ChatScreen, "sync_task_resume_state", counting_sync)
+    monkeypatch.setattr(ChatScreen, "set_task_resume_state", pushing_set)
     return counts
+
+
+async def _settled(pilot, done) -> None:
+    """Wait for ``done`` (loaded hosts take seconds), then 0.5 s for repeats."""
+    for _ in range(1200):
+        if done():
+            break
+        await pilot.pause(0.05)
+    for _ in range(10):
+        await pilot.pause(0.05)
+
+
+async def _first_console_visit(app, pilot, visit_spy) -> ChatScreen:
+    """The app's own first Console visit, settled.
+
+    TASK-41139: a ChatScreen the test pushes can land under the app's own
+    initial Console on a loaded host, so it is never the visited screen.
+    """
+
+    def visited() -> bool:
+        screen = app.screen
+        return (
+            isinstance(screen, ChatScreen)
+            and screen._console_attach_reconciled
+            and id(screen._skill) in visit_spy["skills"]
+            and id(screen) in visit_spy["task_resume"]
+        )
+
+    await _settled(pilot, visited)
+    assert visited(), "Console never finished its first visit"
+    return app.screen
 
 
 async def test_console_first_visit_refreshes_skills_and_task_resume_once(visit_spy):
     """AC#3: the mount and its own ScreenResume collapse into ONE of each."""
     app = _build_test_app()
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        screen = ChatScreen(app)
-        await app.push_screen(screen)
-        # Long enough for on_mount's 0.05s task-resume timer to fire.
-        for _ in range(10):
-            await pilot.pause(0.05)
+        screen = await _first_console_visit(app, pilot, visit_spy)
 
         skill_count = visit_spy["skills"][id(screen._skill)]
         task_resume_count = visit_spy["task_resume"][id(screen)]
@@ -83,11 +127,7 @@ async def test_console_later_resume_still_refreshes(visit_spy):
     """The dedupe is per-visit, not permanent: a real suspend/resume refreshes."""
     app = _build_test_app()
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        screen = ChatScreen(app)
-        await app.push_screen(screen)
-        for _ in range(10):
-            await pilot.pause(0.05)
+        screen = await _first_console_visit(app, pilot, visit_spy)
         baseline_skills = visit_spy["skills"][id(screen._skill)]
         baseline_sync = visit_spy["task_resume"][id(screen)]
 
@@ -97,8 +137,11 @@ async def test_console_later_resume_still_refreshes(visit_spy):
         # at once in the test harness, so a pop does not reliably re-activate
         # THIS instance -- and the message is the seam under test either way.
         screen.post_message(events.ScreenResume())
-        for _ in range(10):
-            await pilot.pause(0.05)
+        await _settled(
+            pilot,
+            lambda: visit_spy["skills"][id(screen._skill)] > baseline_skills
+            and visit_spy["task_resume"][id(screen)] > baseline_sync,
+        )
 
         assert visit_spy["skills"][id(screen._skill)] == baseline_skills + 1, (
             "Returning to Console must re-read the skill catalog: a skill may "

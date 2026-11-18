@@ -123,7 +123,9 @@ class TestDayBucket:
         dt = datetime(2026, 8, 7, 1, 30, tzinfo=timezone.utc)
         local_date = dt.astimezone().date()
         today = NOW.astimezone().date()
-        expected = "Today" if local_date == today else (
-            "Yesterday" if local_date == today - timedelta(days=1) else "other"
+        expected = (
+            "Today"
+            if local_date == today
+            else ("Yesterday" if local_date == today - timedelta(days=1) else "other")
         )
         assert day_bucket(dt, now=NOW) == expected

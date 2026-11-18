@@ -13,6 +13,7 @@ No model, no index, no `EvalRuntime`: `run_eval` resolves the seam class
 through the module attribute, so substituting it is enough to drive every
 branch of `_extract_rows` and the aggregation rules around it.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -278,9 +279,7 @@ class _ScopeRecordingSeam:
             return {
                 "results": [_MEDIA_ROW],
                 "runtime_backend": "rag-hybrid",
-                "diagnostics": {
-                    LIBRARY_RAG_ROUTE_NOTES_KEY: [SCOPED_ROUTE_NOTE]
-                },
+                "diagnostics": {LIBRARY_RAG_ROUTE_NOTES_KEY: [SCOPED_ROUTE_NOTE]},
             }
         return {"results": [_NOTE_ROW, _MEDIA_ROW], "runtime_backend": "rag-hybrid"}
 
@@ -297,7 +296,9 @@ def scoped_report(monkeypatch):
 def test_a_scoped_query_reaches_the_seam_as_a_real_effective_scope(scoped_report):
     """Not a slug list, not a source-type filter: the production scope object,
     with the runtime's own ids, exactly as `EffectiveScope` requires."""
-    scoped_calls = [scope for query, scope in _ScopeRecordingSeam.calls if query == SCOPED]
+    scoped_calls = [
+        scope for query, scope in _ScopeRecordingSeam.calls if query == SCOPED
+    ]
     assert scoped_calls, "the scoped query never reached the seam"
     for scope in scoped_calls:
         assert isinstance(scope, EffectiveScope)
@@ -359,7 +360,9 @@ def test_the_executed_route_is_recorded_per_scoped_query(scoped_report):
         assert outcome.to_dict()["route_notes"] == [SCOPED_ROUTE_NOTE]
 
     # A query that carried no disclosure records none, rather than "".
-    keyword = next(q for q in scoped_report.modes["hybrid"].queries if q.query_id == HIT)
+    keyword = next(
+        q for q in scoped_report.modes["hybrid"].queries if q.query_id == HIT
+    )
     assert keyword.route_notes == ()
 
 

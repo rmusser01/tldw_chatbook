@@ -22,9 +22,9 @@ from tldw_chatbook.Chat.local_server_discovery import (
     UnsupportedModelResponseEncoding,
     read_bounded_model_response,
 )
-from tldw_chatbook.Chat.provider_endpoint_contract import resolve_provider_endpoint
-from tldw_chatbook.Chat.sampling_params import validate_sampling_params
-from tldw_chatbook.Chat.thinking_blocks import ThinkingEnvelopeValidationError
+from tldw_chatbook.Provider_Contract.provider_endpoint_contract import resolve_provider_endpoint
+from tldw_chatbook.Provider_Contract.sampling_params import validate_sampling_params
+from tldw_chatbook.Provider_Contract.thinking_blocks import ThinkingEnvelopeValidationError
 from tldw_chatbook.Utils.sensitive_llm_logging import sensitive_llm_request
 
 _SAMPLING_KEYS = frozenset({"temperature", "top_p", "top_k", "min_p", "seed"})

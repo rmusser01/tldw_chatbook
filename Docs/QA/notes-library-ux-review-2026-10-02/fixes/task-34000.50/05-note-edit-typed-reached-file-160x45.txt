@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌──────────────────────────────────────────────────────────────┐  N  Saved 14:06 · Next: Keep editing; changes save automatically.                      │
+│   a  │ Library notes · Ready                                        │  o      ‹ Notes      quotes                                                            │
+│   v  │ Notes (1)                                                    │  t                                                                                     │
+│      │ These notes live in the Library's own database — for notes   │  e                                                                                     │
+│      │ that live in a folder on disk, switch to Folder files. To    │  s   In a synced folder · /…quotes.md · file written 2026-10-08 14:06                  │
+│      │ copy or keep a folder synced, choose Add from files.         │     S                                                                                  │
+│      │                                                              │              Edit           Preview            Info               Save         Use in  │
+│      │ Filter                                                       │                                                                                        │
+│      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     Title                                                                              │
+│      │ ▊ Filter notes… (Enter)                                    ▎ │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     ▊ quotes                                                                         ▎ │
+│      │                                                              │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │    New     Sort: Newest     Select                           │                                                                                        │
+│ ---> │    Add from files…     Export     Manage sync folders        │     Keywords                                                                           │
+│      │ Folders & placement                                          │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │    New folder     Add to folder     ○ Move note              │     ▊ Comma-separated keywords                                                       ▎ │
+│      │    ○ Remove placement                                        │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │                                                              │                                                                                        │
+│      │                                                              │<--- Body                                                                               │
+│      │  ▸ Agent_Lessons                                             │     ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ │
+│      │  ▾ VSync  ⇄ Sync managed                                     │     ┃ > The best time to plant a tree was 20 years ago.                              ┃ │
+│      │    quotes · now                                              │     ┃                                                                                ┃ │
+│      │                                                              │     ┃ > Writing is thinking.                                                         ┃ │
+│ ---> │                                                              │     ┃ from the vault                                                                 ┃ │
+│      │                                                              │     ┃  typed                                                                         ┃ │
+│      │                                                              │     ┃                                                                                ┃ │
+│      │                                                              │     ┃                                                                                ┃ │
+│      │                                                              │     ┃                                                                                ┃ │
+│      │                                                              │     ┃                                                                                ┃ │
+│      │                                                              │     ┃                                                                                ┃ │
+│      │                                                              │     ┃                                                                                ┃ │
+│      │                                                              │     ┃                                                                                ┃ │
+│      │                                                              │     ┃                                                                                ┃ │
+│      │                                                              │     ┃                                                                                ┃ │
+│      │                                                              │     ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ │
+│      │                                                              │                                                                                        │
+│      └──────────────────────────────────────────────────────────────┘                                                                        20 words · 5:7  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  esc back to notes | ctrl+end end of note | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

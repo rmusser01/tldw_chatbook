@@ -1,0 +1,20 @@
+{
+  "initial_non_escalated_ps_exit": 1,
+  "initial_output": "zsh: operation not permitted: ps",
+  "escalated_argv": [
+    "ps",
+    "-axo",
+    "pid,ppid,comm"
+  ],
+  "escalated_exit": 0,
+  "recorded_runner_pids": [
+    91625,
+    404,
+    4667,
+    6540,
+    7831
+  ],
+  "recorded_runner_pids_still_present": [],
+  "git_gc_or_pack_objects_comms": [],
+  "no_process_kill_or_GC_cleanup_performed": true
+}

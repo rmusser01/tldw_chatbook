@@ -1,0 +1,45 @@
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                             │ Conversation | Describe a lantern scene.                                                                              │
+                  Context ◂  │   Describe a lantern…  ✕    New tab     Temporary                                                                     │
+   Terminal                  │                                                                                                                       │
+ ──────────────────────────  │  ▊                                                                                                                    │
+ Workspaces             ▸    │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+ ──────────────────────────  │   User                                                                                                                │
+ Conversations          ▾    │   A queued second scene.                                                                                              │
+     Archive this chat       │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+      Archived chats         │  ▊ Assistant                                                                                                          │
+     Search all chats…       │  ▊                                                                                                                    │
+   Describe a lantern        │  ▊  (mock reply) You said: "Use at most three sentences.                                                              │
+   scene.                    │  ▊                                                                                                                    │
+                             │  ▊  Describe a scene as literal SVG text. Keep {{scene}} unchanged.                                                ▅  │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │  ▊                                                                                                                    │
+  ▊  Filter      ▎           │  ▊  A queued second scene.". Staying in character as You are a capable assistant with optional tools. Answer          │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │  ▊  dire. The wind shifts, a lantern flickers, and the story moves forward one beat.                                  │
+                             │  ▊                                                                                                                    │
+   New conversation          │  ▊                                                                                                                    │◂ Inspect
+  Chats                 ▾    │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+    Today                    │   User                                                                                                                │
+   Describe a lanter…  💬    │   Retry original scene.                                                                                               │
+                             │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+ ──────────────────────────  │  ▊ Assistant  Failed                                                                                                  │
+ Character · No chats   ▸    │  ▊                                                                                                                    │
+ ──────────────────────────  │  ▊  Response failed.                                                                                                  │
+ Model                  ▸    │  ▊                                                                                                                    │
+ ──────────────────────────  │  ▊                                                                                                                    │
+ Agent                  ▸    │  ▊   Copy  Edit  Fork  Retry with original mix-ins  More…                                                             │
+ ──────────────────────────  │  ▊                                                                                                                    │
+ Details                ▸    │  ▊  Guide: j/k select · c Copy · e Edit · r Retry · Esc clear · Fork unavailable — This partial response has no       │
+                             │  ▊  content to fork. Fork from the User message "Retry original scene." instead.                                      │
+                             │  ▊                                                                                                                    │
+                             │  ▊                                                                                                                    │
+                             │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+                             │   System                                                                                                              │
+                             │   Agent run failed: Provider error from OpenAI: provider unavailable. Status: 504.                                    │
+                             │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │  failed
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Provider: OpenAI · Model: gpt-4.1-mini · System Prompt: off · Assistant: General · Sources: 0 · Tools: 5 ready · Approvals: 0 pending · Context 0% · Curre◀ ▶
+
+│  Composer ▾  Menu  Ask, command, or paste task...                                  Send disabled: type a message       Send         Dictate
+
+  Ctrl+P palette | Ctrl+Q quit

@@ -1,0 +1,299 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+F                                                                        [100%]
+================================== FAILURES ===================================
+______ test_failed_start_history_race_retires_unrecorded_production_pin _______
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:508: in runtest
+    super().runtest()
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:773: in inner
+    _loop.run_until_complete(task)
+C:\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+Tests\private_profile.py:405: in wrapped
+    pytest.fail(
+E   Failed: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-22-keyword-dev-integration\native-temp-rebase\pytest-of-GDesktop-1\pytest-6\test_failed_start_history_race0\private-profile-process\pytest.log
+E   --- child failure: AssertionError: ([RuntimeError('dictionary changed size during iteration')], False, 0)
+E   assert [RuntimeError...g iteration')] == [ValueError('...art_failure')]
+E     
+E     At index 0 diff: RuntimeError('dictionary changed size during iteration') != ValueError('synthetic_start_failure')
+E     Use -v to get more diff
+E   tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-22-keyw...of-GDesktop-1/pytest-6/test_failed_start_history_race0/private-profile-process/pytest/test_failed_start_history_race0')
+E   request = <FixtureRequest for <Coroutine test_failed_start_history_race_retires_unrecorded_production_pin>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001ED1692C380>
+E   
+E       @private_profile_test
+E       async def test_failed_start_history_race_retires_unrecorded_production_pin(
+E           tmp_path, request, monkeypatch
+E       ):
+E           from types import SimpleNamespace
+E           from tldw_chatbook.Backup_Recovery import storage_admission as storage
+E           from tldw_chatbook.Backup_Recovery.participants import _retire_current_thread_caches
+E           from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+E           from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+E           from tldw_chatbook.Workspaces.project_index.runtime import (
+E               get_project_index_service,
+E               project_index_key,
+E               close_project_index_service,
+E           )
+E       
+E           root = tmp_path / "project"
+E           root.mkdir()
+E           registry = LocalWorkspaceRegistryService(WorkspaceDB(tmp_path / "registry.db"))
+E           registry.create_workspace(workspace_id="race-ws", name="Race")
+E           binding = registry.add_folder_binding("race-ws", root)
+E           app = SimpleNamespace(workspace_registry_service=registry)
+E           service = get_project_index_service(app)
+E           key = project_index_key(app, "race-ws", binding.binding_id, root)
+E           entered, attempted, mutated = (threading.Event() for _ in range(3))
+E           errors, pins, close_calls = [], [], []
+E           failure = ValueError("synthetic_start_failure")
+E           pause = failing = pruning = None
+E       
+E           class CoordinatedHistory(dict):
+E               def values(self):
+E                   iterator = iter(super().values())
+E                   for run in iterator:
+E                       yield run
+E                       if threading.current_thread().name == "failed-index-start":
+E                           entered.set()
+E                           assert attempted.wait(10)
+E                           # With a protected lookup, pruning waits until iteration ends.
+E                           mutated.wait(0.2)
+E       
+E           try:
+E               initial = service.status(key)
+E               enabled = service.enable(key, POLICY, expected_scope=initial.scope)
+E               job = service.refresh(
+E                   key,
+E                   expected_scope=enabled.scope,
+E                   expected_job_revision=enabled.job_revision,
+E               )
+E               old_run = service._runs[job]
+E               await asyncio.to_thread(old_run.supervisor.join, 15)
+E               assert old_run.native_retired and not old_run.supervisor.is_alive()
+E               ready = service.status(key)
+E               service._runs = CoordinatedHistory(service._runs)
+E               retain = service._retain
+E       
+E               def retain_counted(selected):
+E                   pin = retain(selected)
+E                   pins.append(pin)
+E                   close = pin.close
+E       
+E                   def counted_close():
+E                       close_calls.append(pin)
+E                       unlocked = threading.Event()
+E       
+E                       def acquire_lock():
+E                           with service._lock:
+E                               unlocked.set()
+E       
+E                       observer = threading.Thread(target=acquire_lock)
+E                       observer.start()
+E                       observer.join(5)
+E                       assert unlocked.is_set(), "native pin close held the service lock"
+E                       close()
+E       
+E                   monkeypatch.setattr(pin, "close", counted_close)
+E                   return pin
+E       
+E               def fail_start(*args):
+E                   raise failure
+E       
+E               def fail_refresh():
+E                   try:
+E                       service.refresh(
+E                           key,
+E                           expected_scope=ready.scope,
+E                           expected_job_revision=ready.job_revision,
+E                       )
+E                   except BaseException as error:
+E                       errors.append(error)
+E       
+E               def prune_retired_history():
+E                   assert entered.wait(10)
+E                   attempted.set()
+E                   with service._lock:
+E                       assert service._runs.pop(job) is old_run
+E                       mutated.set()
+E       
+E               monkeypatch.setattr(service, "_retain", retain_counted)
+E               monkeypatch.setattr(service, "_start_pinned", fail_start)
+E               pruning = threading.Thread(target=prune_retired_history)
+E               failing = threading.Thread(target=fail_refresh, name="failed-index-start")
+E               pruning.start()
+E               failing.start()
+E               await asyncio.to_thread(failing.join, 15)
+E               await asyncio.to_thread(pruning.join, 15)
+E               assert not failing.is_alive() and not pruning.is_alive()
+E               assert entered.is_set() and attempted.is_set() and mutated.is_set()
+E               assert len(pins) == 1
+E   >           assert errors == [failure], (errors, pins[0].closed, len(close_calls))
+E   E           AssertionError: ([RuntimeError('dictionary changed size during iteration')], False, 0)
+E   E           assert [RuntimeError...g iteration')] == [ValueError('...art_failure')]
+E   E             
+E   E             At index 0 diff: RuntimeError('dictionary changed size during iteration') != ValueError('synthetic_start_failure')
+E   E             Use -v to get more diff
+E   
+E   Tests\Workspaces\test_project_index_service.py:1810: AssertionError
+E   --- child log tail ---
+E   C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+E   The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+E   
+E     warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+E   F                                                                        [100%]
+E   ================================== FAILURES ===================================
+E   ______ test_failed_start_history_race_retires_unrecorded_production_pin _______
+E   
+E   tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-22-keyw...of-GDesktop-1/pytest-6/test_failed_start_history_race0/private-profile-process/pytest/test_failed_start_history_race0')
+E   request = <FixtureRequest for <Coroutine test_failed_start_history_race_retires_unrecorded_production_pin>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001ED1692C380>
+E   
+E       @private_profile_test
+E       async def test_failed_start_history_race_retires_unrecorded_production_pin(
+E           tmp_path, request, monkeypatch
+E       ):
+E           from types import SimpleNamespace
+E           from tldw_chatbook.Backup_Recovery import storage_admission as storage
+E           from tldw_chatbook.Backup_Recovery.participants import _retire_current_thread_caches
+E           from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+E           from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+E           from tldw_chatbook.Workspaces.project_index.runtime import (
+E               get_project_index_service,
+E               project_index_key,
+E               close_project_index_service,
+E           )
+E       
+E           root = tmp_path / "project"
+E           root.mkdir()
+E           registry = LocalWorkspaceRegistryService(WorkspaceDB(tmp_path / "registry.db"))
+E           registry.create_workspace(workspace_id="race-ws", name="Race")
+E           binding = registry.add_folder_binding("race-ws", root)
+E           app = SimpleNamespace(workspace_registry_service=registry)
+E           service = get_project_index_service(app)
+E           key = project_index_key(app, "race-ws", binding.binding_id, root)
+E           entered, attempted, mutated = (threading.Event() for _ in range(3))
+E           errors, pins, close_calls = [], [], []
+E           failure = ValueError("synthetic_start_failure")
+E           pause = failing = pruning = None
+E       
+E           class CoordinatedHistory(dict):
+E               def values(self):
+E                   iterator = iter(super().values())
+E                   for run in iterator:
+E                       yield run
+E                       if threading.current_thread().name == "failed-index-start":
+E                           entered.set()
+E                           assert attempted.wait(10)
+E                           # With a protected lookup, pruning waits until iteration ends.
+E                           mutated.wait(0.2)
+E       
+E           try:
+E               initial = service.status(key)
+E               enabled = service.enable(key, POLICY, expected_scope=initial.scope)
+E               job = service.refresh(
+E                   key,
+E                   expected_scope=enabled.scope,
+E                   expected_job_revision=enabled.job_revision,
+E               )
+E               old_run = service._runs[job]
+E               await asyncio.to_thread(old_run.supervisor.join, 15)
+E               assert old_run.native_retired and not old_run.supervisor.is_alive()
+E               ready = service.status(key)
+E               service._runs = CoordinatedHistory(service._runs)
+E               retain = service._retain
+E       
+E               def retain_counted(selected):
+E                   pin = retain(selected)
+E                   pins.append(pin)
+E                   close = pin.close
+E       
+E                   def counted_close():
+E                       close_calls.append(pin)
+E                       unlocked = threading.Event()
+E       
+E                       def acquire_lock():
+E                           with service._lock:
+E                               unlocked.set()
+E       
+E                       observer = threading.Thread(target=acquire_lock)
+E                       observer.start()
+E                       observer.join(5)
+E                       assert unlocked.is_set(), "native pin close held the service lock"
+E                       close()
+E       
+E                   monkeypatch.setattr(pin, "close", counted_close)
+E                   return pin
+E       
+E               def fail_start(*args):
+E                   raise failure
+E       
+E               def fail_refresh():
+E                   try:
+E                       service.refresh(
+E                           key,
+E                           expected_scope=ready.scope,
+E                           expected_job_revision=ready.job_revision,
+E                       )
+E                   except BaseException as error:
+E                       errors.append(error)
+E       
+E               def prune_retired_history():
+E                   assert entered.wait(10)
+E                   attempted.set()
+E                   with service._lock:
+E                       assert service._runs.pop(job) is old_run
+E                       mutated.set()
+E       
+E               monkeypatch.setattr(service, "_retain", retain_counted)
+E               monkeypatch.setattr(service, "_start_pinned", fail_start)
+E               pruning = threading.Thread(target=prune_retired_history)
+E               failing = threading.Thread(target=fail_refresh, name="failed-index-start")
+E               pruning.start()
+E               failing.start()
+E               await asyncio.to_thread(failing.join, 15)
+E               await asyncio.to_thread(pruning.join, 15)
+E               assert not failing.is_alive() and not pruning.is_alive()
+E               assert entered.is_set() and attempted.is_set() and mutated.is_set()
+E               assert len(pins) == 1
+E   >           assert errors == [failure], (errors, pins[0].closed, len(close_calls))
+E   E           AssertionError: ([RuntimeError('dictionary changed size during iteration')], False, 0)
+E   E           assert [RuntimeError...g iteration')] == [ValueError('...art_failure')]
+E   E             
+E   E             At index 0 diff: RuntimeError('dictionary changed size during iteration') != ValueError('synthetic_start_failure')
+E   E             Use -v to get more diff
+E   
+E   Tests\Workspaces\test_project_index_service.py:1810: AssertionError
+E   ---------------------------- Captured stderr setup ----------------------------
+E   2026-10-21 23:02:55.534 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - \u2705 huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.\n2026-10-21 23:02:55.653 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available\n2026-10-21 23:02:55.654 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice\n2026-10-21 23:02:55.654 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E   ---------------------------- Captured stderr call -----------------------------
+E   2026-10-21 23:02:56.653 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - WorkspaceDB initialized with path: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-22-keyword-dev-integration\native-temp-rebase\pytest-of-GDesktop-1\pytest-6\test_failed_start_history_race0\private-profile-process\pytest\test_failed_start_history_race0\registry.db [Client: default]
+E   ============================== warnings summary ===============================
+E   Tests/Workspaces/test_project_index_service.py::test_failed_start_history_race_retires_unrecorded_production_pin
+E     C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+E       warn(
+E   
+E   -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+E   - generated xml file: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-22-keyword-dev-integration\native-temp-rebase\pytest-of-GDesktop-1\pytest-6\test_failed_start_history_race0\private-profile-process\pytest.xml -
+E   ============================ slowest 25 durations =============================
+E   19.26s call     Tests/Workspaces/test_project_index_service.py::test_failed_start_history_race_retires_unrecorded_production_pin
+E   
+E   (2 durations < 1s hidden.  Use -vv to show these durations.)
+E   =========================== short test summary info ===========================
+E   FAILED Tests/Workspaces/test_project_index_service.py::test_failed_start_history_race_retires_unrecorded_production_pin
+E   1 failed, 1 warning in 20.34s
+============================== warnings summary ===============================
+Tests/Workspaces/test_project_index_service.py::test_failed_start_history_race_retires_unrecorded_production_pin
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+23.97s call     Tests/Workspaces/test_project_index_service.py::test_failed_start_history_race_retires_unrecorded_production_pin
+
+(2 durations < 1s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ===========================
+FAILED Tests/Workspaces/test_project_index_service.py::test_failed_start_history_race_retires_unrecorded_production_pin
+1 failed, 1 warning in 25.21s

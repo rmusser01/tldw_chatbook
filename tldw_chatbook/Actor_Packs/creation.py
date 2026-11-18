@@ -286,9 +286,7 @@ class ActorPackCreationService:
 
     def _require_no_transaction(self) -> None:
         connection = self.database.get_connection()
-        if connection.in_transaction or getattr(
-            self.database._local, "transaction_depth", 0
-        ):
+        if connection.in_transaction or self.database.managed_transaction_depth():
             raise ActorPackCreationError("actor_pack_creation_failed")
 
     @classmethod

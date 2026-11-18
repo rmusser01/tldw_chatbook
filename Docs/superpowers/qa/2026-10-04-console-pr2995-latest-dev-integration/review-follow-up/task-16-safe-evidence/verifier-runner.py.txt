@@ -1,0 +1,100 @@
+import ast, collections, hashlib, json, os, pathlib, subprocess, sys, time, xml.etree.ElementTree as ET
+WT=pathlib.Path('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook');os.chdir(WT)
+P=WT/'.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge';E=P/'task-16-safe-evidence';E.mkdir(exist_ok=True)
+PYTHON='/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python'
+S=json.loads((P/'task-16-latest-dev-preflight-selection.json').read_text());START='6cd44c72ffef6d19fca21eab3a05bdcade7c1811'
+sha=lambda b:hashlib.sha256(b).hexdigest()
+def save(name,obj): (E/(name+'.json')).write_text(json.dumps(obj,indent=2,sort_keys=True)+'\n')
+def git(*args):return subprocess.check_output(['git',*args])
+def capture(name,argv,env=None,hashpaths=()):
+ h={p:sha((WT/p).read_bytes()) for p in hashpaths if (WT/p).is_file()}
+ save(name+'-argv',{'argv':argv,'cwd':str(WT),'HEAD':git('rev-parse','HEAD').decode().strip(),'source_sha256':h,'environment_overrides':env or {}})
+ t=time.monotonic();merged=os.environ.copy();merged.update(env or {})
+ proc=subprocess.run(argv,cwd=WT,env=merged,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+ (E/(name+'.stdout')).write_bytes(proc.stdout);(E/(name+'.stderr')).write_bytes(proc.stderr);(E/(name+'.log')).write_bytes(proc.stdout+proc.stderr)
+ result={'exit':proc.returncode,'elapsed_seconds':time.monotonic()-t,'closed_process':True}
+ save(name+'-result',result);print(name,result,flush=True);return proc
+
+def private_carry():
+ rows={}
+ for name in ['task-14-safe-evidence-manifest.json','task-15-safe-evidence-manifest.json','task-15-fix1-safe-evidence-manifest.json']:
+  m=json.loads((P/name).read_text());errors=[]
+  for rel,pin in m['files'].items():
+   b=(P/rel).read_bytes();actual={'sha256':sha(b),'bytes':len(b)}
+   if actual != pin:errors.append(rel)
+   rows[rel]=actual
+  assert not errors,(name,errors)
+ for name in ['task-14-safe-evidence-manifest.json','task-15-safe-evidence-manifest.json','task-15-fix1-safe-evidence-manifest.json','task-15-safe-evidence-manifest-before-I1.json','task-15-report-before-I1.md','task-15-brief-before-I1.md','task-14-root-handoff-verification.json','task-15-root-handoff-verification.json','task-15-fix1-root-handoff-verification.json']:
+  b=(P/name).read_bytes();rows[name]={'sha256':sha(b),'bytes':len(b)}
+ return rows
+
+def qa_rows(ref):
+ paths=git('diff','--name-only',S['base'],S['preflight_head']).decode().splitlines();paths=[x for x in paths if x.startswith('Docs/superpowers/qa/')]
+ tree={}
+ for entry in git('ls-tree','-rz',ref).split(b'\0'):
+  if entry:
+   meta,path=entry.split(b'\t',1);tree[path.decode()]=meta.decode().split()[2]
+ batch=subprocess.run(['git','cat-file','--batch'],input=''.join(tree[p]+'\n' for p in paths).encode(),stdout=subprocess.PIPE,check=True).stdout
+ pos=0;rows=[]
+ for p in paths:
+  end=batch.index(b'\n',pos);header=batch[pos:end].decode().split();size=int(header[2]);blob=header[0];start=end+1;b=batch[start:start+size];pos=start+size+1
+  rows.append({'path':p,'git_blob':blob,'sha256':sha(b)})
+ digest=sha(json.dumps(rows,sort_keys=True,separators=(',',':')).encode())
+ assert len(rows)==1983 and digest==S['qa_carry']['sorted_path_blob_sha256_rows_digest'],(len(rows),digest)
+ return rows,digest
+
+mode=sys.argv[1]
+if mode=='prepare':
+ assert git('rev-parse','HEAD').decode().strip()==START
+ assert not git('status','--porcelain')
+ paths=git('ls-files','-z').decode().split('\0');rows={p:{'sha256':sha((WT/p).read_bytes()),'bytes':(WT/p).stat().st_size} for p in paths if p and (WT/p).is_file()}
+ for row in S['protected_feature_sources']:assert rows[row['path']]['sha256']==row['expected_sha256'],row['path']
+ save('before-tracked',{'HEAD':START,'files':rows});save('before-private-carry',{'files':private_carry()})
+ qa,digest=qa_rows('HEAD');save('before-qa-carry',{'rows':qa,'digest':digest})
+ zips=[(p,r) for p,r in rows.items() if p.endswith('.zip') and r['sha256']=='acecbdfb6ddbafe6df679c39f9f137f2bfb49a1f87b62556e1345021f8384c84'];assert len(zips)==1,zips
+ save('before-original-zip',{'path':zips[0][0],**zips[0][1],'entries_carried':2118})
+ reference=S['formatting_carry']['reference_red_paths'];incoming=[x['path'] for x in S['source_exceptions'] if x['path'].endswith('.py') and (WT/x['path']).exists()]
+ paths=sorted(set(reference+incoming))
+ capture('before-fatal-ruff',[PYTHON,'-m','ruff','check','--select','E9,F63,F7,F82',*paths],hashpaths=paths)
+ capture('before-format-check',[PYTHON,'-m','ruff','format','--check','--diff',*paths],hashpaths=paths)
+ print('snapshots',len(rows),'QA',len(qa),'private',len(private_carry()))
+elif mode=='rebase':
+ ref='refs/recovery/pr2995-task16-6cd44c72';assert git('rev-parse','HEAD').decode().strip()==START
+ capture('pin-recovery',['git','update-ref',ref,START])
+ bundle='/private/tmp/pr2995-task16-recovery-6cd44c72.bundle'
+ r=capture('recovery-bundle',['git','bundle','create',bundle,ref,'^'+S['base']]);assert r.returncode==0
+ r=capture('recovery-bundle-verify',['git','bundle','verify',bundle]);assert r.returncode==0
+ b=pathlib.Path(bundle).read_bytes();save('recovery-pin',{'ref':ref,'HEAD':START,'bundle':bundle,'bytes':len(b),'sha256':sha(b),'excluded_ancestor':S['base']})
+ r=capture('rebase',['git','rebase',S['selected_dev']]);
+ if r.returncode:
+  capture('rebase-conflict',['git','diff','--cc']);capture('rebase-status',['git','status','--porcelain=v2']);sys.exit(r.returncode)
+elif mode=='verify':
+ before=json.loads((E/'before-tracked.json').read_text())['files'];exceptions={x['path']:x for x in S['source_exceptions']};errors=[];actual={}
+ for p,pin in before.items():
+  b=(WT/p).read_bytes();row={'sha256':sha(b),'bytes':len(b)};actual[p]=row
+  expected=exceptions[p]['expected_after_sha256'] if p in exceptions else pin['sha256']
+  if row['sha256']!=expected:errors.append(p)
+ for p,r in exceptions.items():
+  actual[p]={'sha256':sha((WT/p).read_bytes()),'bytes':(WT/p).stat().st_size}
+  if actual[p]['sha256']!=r['expected_after_sha256']:errors.append(p)
+ assert not errors,errors
+ for r in S['protected_feature_sources']:assert actual[r['path']]['sha256']==r['expected_sha256']
+ private=private_carry();assert private==json.loads((E/'before-private-carry.json').read_text())['files']
+ qa,digest=qa_rows('HEAD');save('after-qa-carry',{'rows':qa,'digest':digest})
+ incoming_paths=git('diff','--name-only',S['base'],S['selected_dev']).decode().splitlines();assert set(incoming_paths)==set(exceptions)
+ assert int(git('rev-list','--count',S['base']+'..'+S['selected_dev']))==25
+ assert subprocess.run(['git','merge-base','--is-ancestor',S['selected_dev'],'HEAD']).returncode==0
+ save('source-union-and-carry',{'HEAD':git('rev-parse','HEAD').decode().strip(),'before_HEAD':START,'incoming_dev':S['selected_dev'],'incoming_commits':25,'incoming_paths':49,'exact_dev_paths':47,'compositions':S['merge_probes'],'protected_feature_paths':132,'unowned_existing_paths_exact':len(before)-sum(p in exceptions for p in before),'files':actual,'private_manifest_and_snapshot_pins':len(private),'qa_digest':digest,'qa_paths':1983,'original_zip':json.loads((E/'before-original-zip.json').read_text())})
+ print('exact source union verified',len(actual),'private pins',len(private),flush=True)
+elif mode=='run':
+ group=sys.argv[2];nodes=S['test_groups'][group];paths=sorted(set(n.split('::')[0] for n in nodes)|set(x['path'] for x in S['source_exceptions'] if x['path'].endswith('.py')))
+ env={'PYTHONPATH':str(WT)}
+ argv=[PYTHON,'-m','pytest','-q','-p','no:randomly','--basetemp=/private/tmp/pr2995-task16/'+group,*nodes,'--junitxml='+str(E/(group+'.xml'))]
+ r=capture(group,argv,env,paths)
+ if (E/(group+'.xml')).exists():
+  root=ET.parse(E/(group+'.xml')).getroot();cases=[]
+  for c in root.iter('testcase'):
+   outcome=next((n.tag for n in c if n.tag in ['failure','error','skipped']),'passed');cases.append({'classname':c.get('classname'),'name':c.get('name'),'time':c.get('time'),'outcome':outcome})
+  save(group+'-cases',{'actual_cases':len(cases),'outcomes':dict(collections.Counter(x['outcome'] for x in cases)),'cases':cases})
+  print('actual cases',len(cases),collections.Counter(x['outcome'] for x in cases),flush=True)
+ sys.exit(r.returncode)

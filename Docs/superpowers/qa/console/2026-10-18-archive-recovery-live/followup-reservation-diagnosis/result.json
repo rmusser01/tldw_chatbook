@@ -1,0 +1,83 @@
+{
+  "actual_factory_boundary": {
+    "message": "completed_tool_turn_revision",
+    "traceback": "Traceback (most recent call last):\n  File \"/private/tmp/archive-recovery-followup-reservation-diagnosis-20261018/probe.py\", line 90, in <module>\n    factory(prepared,SimpleNamespace(api_key=None),ConsoleRequestRoute.AGENT_FIRST)\n  File \"/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_trace_runtime.py\", line 622, in __call__\n    self.service.prepare_current_surface_delta(\n  File \"/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_trace_service.py\", line 2696, in prepare_current_surface_delta\n    self._validate_completed_tool_turn(\n  File \"/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_trace_service.py\", line 3549, in _validate_completed_tool_turn\n    raise ValueError(\"completed_tool_turn_revision\")\nValueError: completed_tool_turn_revision\n",
+    "type": "ValueError"
+  },
+  "actual_inputs_unchanged": true,
+  "copy_calls_before_after": [
+    2,
+    2
+  ],
+  "detached_nonthinking_projection": {
+    "built": true,
+    "content_equals_saved": true,
+    "keys": [
+      "content",
+      "role"
+    ]
+  },
+  "limits": "Actual factory on private SQLite backup, no gateway/transport. Ordinary canonical history values preserve saved text/revision IDs; detached thinking-free control is a projector-only comparison, not a native send or full service success. Actual live prepared follow-up payload/exception traceback was not retained. No archive metadata is added to reconstructed current user; this qualifies an independent pre-existing response-link guard and does not claim a byte-for-byte live successor replay.",
+  "matches_source20f": true,
+  "network_attempts": [],
+  "observed_value_errors": [
+    {
+      "exception_type": "ValueError",
+      "function": "_validate_completed_tool_turn",
+      "line": 3549,
+      "message": "completed_tool_turn_revision"
+    },
+    {
+      "exception_type": "ValueError",
+      "function": "prepare_current_surface_delta",
+      "line": 2696,
+      "message": "completed_tool_turn_revision"
+    },
+    {
+      "exception_type": "ValueError",
+      "function": "__call__",
+      "line": 622,
+      "message": "completed_tool_turn_revision"
+    }
+  ],
+  "prior_response_evidence": {
+    "profile": {
+      "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0",
+      "protocol": "chat_completions",
+      "provider": "llama_cpp",
+      "source_format": "start_anchored_think",
+      "thinking_round_trip_version": 1,
+      "thinking_stream_disposition": "displayable",
+      "version": 1
+    },
+    "saved_blocks": [
+      {
+        "round_ordinal": 0,
+        "source_format": "reasoning_content:tool_call",
+        "status": "complete"
+      },
+      {
+        "round_ordinal": 1,
+        "source_format": "reasoning_content",
+        "status": "complete"
+      }
+    ],
+    "terminal_call_sequence": 1,
+    "terminal_link": "TraceResponseLinkRecord(response_link_id='5e5d1bf3-bff2-4fb1-954b-ff211e4b1915', call_id='5e7da41b-75b6-4ad4-a7d1-7808d81190cd', link_kind='artifact', semantic_revision_id=None, artifact_id='9dc40355-2695-4218-a69f-97f370a534b3', verification_outcome='sanitized_artifact')"
+  },
+  "source_sha256": {
+    "tldw_chatbook/Chat/console_semantic_revision.py": "cfe8112dc29f1801c9c7b6120918e6bd0aafd58a4fc91f6c1f8be9be06fe1c54",
+    "tldw_chatbook/Chat/console_trace_runtime.py": "117ab373bd490cdea7de58b619767d64b0dac5d8f02cd7297e0b5817204a21d4",
+    "tldw_chatbook/Chat/console_trace_service.py": "2e769ebbbb4e7b5917e4a8e84f47e3b0c38ce87033444c202eaeca298b6b213e",
+    "tldw_chatbook/Chat/console_trace_settlement.py": "a53fc7ecdafa9b18a3d7b6039b778b7562d9827e723bb2dac9a6c92e62936f72"
+  },
+  "terminal_only_detached_projection": {
+    "message": "response_thinking_source_mismatch",
+    "type": "ValueError"
+  },
+  "terminal_saved_projection": {
+    "message": "response_thinking_source_mismatch",
+    "traceback": "Traceback (most recent call last):\n  File \"/private/tmp/archive-recovery-followup-reservation-diagnosis-20261018/probe.py\", line 63, in <module>\n    project_semantic_revision_provider_message(cur,revision_id=assistant.revision_id,expected_conversation_id=owner.conversation_id,response_call=terminal)\n  File \"/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_semantic_revision.py\", line 105, in project_semantic_revision_provider_message\n    return _project_revision_response_envelope(\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_semantic_revision.py\", line 194, in _project_revision_response_envelope\n    raise ValueError(\"response_thinking_source_mismatch\")\nValueError: response_thinking_source_mismatch\n",
+    "type": "ValueError"
+  }
+}

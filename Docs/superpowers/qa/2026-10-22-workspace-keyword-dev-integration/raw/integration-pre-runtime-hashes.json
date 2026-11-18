@@ -1,0 +1,7 @@
+{
+  "tldw_chatbook/Workspaces/project_index/service.py": "d0943ea7236310fd7ab6d585118d43f769f578198dcdd9e777941fb92ed7ed82",
+  "Tests/Workspaces/test_project_index_service.py": "4089b955152ddf45b718e0df302d4e919b4890712c0f6faabc280b0f5f488e6c",
+  "tldw_chatbook/DB/Workspace_Project_Index_DB.py": "2f5516cc05746296d563e92afb6fa9d6eb324e991f9b742455c0c6081292ea1a",
+  "Tests/DB/test_workspace_project_index_db.py": "1bcdc71b2bc92839a8ff711d7e9aae873c168ad1e8e5d87c0cd941c1b7921260",
+  "tldw_chatbook/DB/Workspace_DB.py": "ee1ffab98e0026f7137dbb2a7cc2b51562bf15c998c725b55a9d257ee2480485"
+}

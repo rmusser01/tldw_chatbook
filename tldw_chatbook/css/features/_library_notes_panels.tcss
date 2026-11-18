@@ -1,0 +1,186 @@
+/* Library Notes panels: the workbench's row wrappers, New note, and lasting sync
+   (roots, status, review and history rows). Carved verbatim from the tail of
+   _library_panels.tcss on 2026-10-20 (ADR-161 spec 3.5's 2,000-line ceiling,
+   TASK-24451: "split the sheet by vocabulary"); it is listed directly after
+   that sheet in CSS_MODULES and the library split, so cascade order is
+   unchanged. */
+/* Presentation-only row wrappers keep the established wide stacked
+   workbench. Compact rules below switch only these wrappers to rows. */
+#library-notes-filter-row,
+#library-notes-status-row,
+#library-note-heading,
+#library-note-title-row,
+#library-note-keywords-row,
+#library-note-context-keywords-row,
+#library-notes-create-heading {
+    layout: vertical;
+    height: auto;
+    min-height: $ds-size-0;
+}
+
+#library-notes-create-viewport {
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+/* TASK-19010: lasting Notes sync inherits the retained Neon Workbench canvas.
+   Authority/status and the nearest valid action stay fixed; setup, review, and
+   recovery effects share one bounded scroll owner at the 60x20 floor. */
+.library-notes-lasting-sync-canvas {
+    width: $ds-width-full;
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
+    padding: $ds-space-0 $ds-space-1;
+    overflow: hidden;
+}
+
+#notes-sync-authority,
+#notes-sync-roots-authority,
+.library-notes-lasting-status {
+    width: $ds-width-full;
+    height: auto;
+    min-height: $ds-size-1;
+    max-height: $ds-size-2;
+    text-wrap: wrap;
+    text-overflow: clip;
+}
+
+.library-notes-sync-review-row,
+.library-notes-sync-root-row,
+.library-notes-sync-root-actions {
+    width: $ds-width-full;
+    height: auto;
+    min-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+}
+
+.library-notes-sync-attention-actions {
+    width: $ds-width-full;
+    height: auto;
+    min-height: $ds-size-1;
+}
+
+/* TASK-32625: safe review rows have no body requiring a trailing gap.
+   Both class tokens stay in the same Library-owned split as the base row. */
+.library-notes-sync-review-row.library-notes-sync-review-plain {
+    margin: $ds-space-0;
+}
+
+.library-notes-sync-conflict-choices,
+.library-notes-sync-comparison,
+.library-notes-sync-receipt,
+.library-notes-sync-history-row {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: auto;
+    min-height: $ds-size-1;
+    overflow: hidden;
+}
+
+.library-notes-sync-comparison,
+.library-notes-sync-receipt,
+.library-notes-sync-history-row {
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    background: $surface-darken-1;
+}
+
+.notes-sync-conflict-view,
+.library-notes-sync-attention-actions > .notes-sync-conflict-choice {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+}
+
+.library-notes-sync-root-status {
+    color: $text-muted;
+}
+
+.library-notes-sync-root-actions > Button {
+    width: $ds-width-full;
+}
+
+.library-notes-sync-attention-actions > Button {
+    width: $ds-width-full;
+}
+
+
+/* TASK-34000.10 (review N-07): a validation veto marks the field itself. The
+   vetoed field carries `library-note-field-invalid` (an error outline, the
+   `-ingest-option-invalid` precedent) and the Static directly under it shows
+   the coordinator's own reason; the hint is display-gated from Python (an
+   empty Static still takes its row), so the sheet only shapes and colours it.
+   Every selector token is Library-prefixed (ADR-097): the splitter moves
+   these rules onto the Library screen's lazily-loaded sheet, off the boot
+   bundle. The focused-field accent is also `tall`, so the outline keeps the
+   field's size; the error tier is the readable one (task-2230, a11y). */
+.library-note-field-hint {
+    height: auto;
+    color: $ds-status-error-readable;
+    padding: $ds-space-0 $ds-space-1;
+}
+
+#library-note-title.library-note-field-invalid,
+#library-note-keywords.library-note-field-invalid,
+#library-note-context-keywords.library-note-field-invalid,
+#library-note-body.library-note-field-invalid {
+    border: tall $ds-status-error-readable;
+}
+
+/* Compact (under 120 columns): the editor Inputs are borderless there
+   (`#library-shell-grid.library-notes-compact #library-note-title { border:
+   none }`, specificity (2,1,0), which beats the outline rule above), so the
+   mark is the field's text itself in the readable error colour, bold. Fix
+   round 1 (I-3); pinned by the painted cells at 80x24. */
+#library-shell-grid.library-notes-compact #library-note-title.library-note-field-invalid,
+#library-shell-grid.library-notes-compact #library-note-keywords.library-note-field-invalid,
+#library-shell-grid.library-notes-compact #library-note-context-keywords.library-note-field-invalid {
+    color: $ds-status-error-readable;
+    text-style: bold;
+}
+
+/* Compact (under 120 columns): the hint takes exactly one row while a veto
+   stands, so the body gives up one row and no more. Measured at the 60x20
+   floor: the wrapped reason took two rows and the body fell from five to
+   two. The status row above still carries the whole reason (its own compact
+   rule wraps it over two rows), so the clipped tail here loses nothing. */
+#library-shell-grid.library-notes-compact .library-note-field-hint {
+    height: $ds-size-1;
+    max-height: $ds-size-1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+/* TASK-34000.11 (AC#1): the `[[` note-link picker. A screen-owned overlay
+   (`overlay: screen` + offset set in code, the Console popup's technique)
+   that sits under the body's caret row in insert mode and at the top of the
+   Preview region in follow mode; it never takes focus. Width and height are
+   measured from the rows in code (`ds-runtime`); the sheet owns the bounds
+   and the chrome. `display: none` here AND in code, so a bare test app is
+   right without the bundle. */
+.library-note-link-picker {
+    display: none;
+    width: $ds-width-auto;
+    min-width: $ds-size-30;
+    max-width: $ds-size-70;
+    height: $ds-height-auto;
+    max-height: $ds-size-10;
+    border: round $ds-focus-accent;
+    background: $ds-surface-panel;
+    padding: $ds-space-0;
+}
+
+/* Textual's default OptionList chrome (tall border + padding) costs two
+   rows that an eight-row picker cannot spare; the picker carries the border. */
+.library-note-link-picker OptionList {
+    height: $ds-height-auto;
+    border: none;
+    padding: $ds-space-0;
+    background: $ds-surface-panel;
+    /* One row per title: a title wider than the picker is cut with an
+       ellipsis, never wrapped (live, the seed's very long title took two
+       rows and pushed the eighth row out of view). */
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}

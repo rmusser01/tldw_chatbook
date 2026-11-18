@@ -14,12 +14,12 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 from textual import events, on
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.containers import VerticalScroll
 from textual.widgets import Button, Input, Static
 
 import tldw_chatbook.UI.Console_Modules.session as session_module
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 
 from tldw_chatbook.Character_Chat.visual_identity import (
     SAMIRA_EXPRESSION_KEYS,
@@ -733,7 +733,9 @@ def _workspace_state() -> ConsoleWorkspaceContextState:
     )
 
 
-class RailHarness(App[None]):
+class RailHarness(ConsolidatedCSSApp[None]):
+    CSS_PATH = str(BUNDLED_STYLESHEET)
+
     def __init__(self, manual_label: str | None) -> None:
         super().__init__()
         self._manual_label = manual_label
@@ -741,7 +743,7 @@ class RailHarness(App[None]):
 
     def compose(self) -> ComposeResult:
         yield ConsoleLeftRail(
-            rail_state=ConsoleRailState(True, False, True, False),
+            rail_state=ConsoleRailState(True, False, True, False, character_open=True),
             workspace_context_state=_workspace_state(),
             settings_summary_state=ConsoleSettingsSummaryState(
                 model_row="Model: test",

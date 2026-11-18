@@ -1,0 +1,1106 @@
+﻿2026-10-04T03:30:19.5335832Z Current runner version: '2.337.0'
+2026-10-04T03:30:19.5369908Z ##[group]Runner Image Provisioner
+2026-10-04T03:30:19.5371183Z Hosted Compute Agent
+2026-10-04T03:30:19.5372419Z Version: 20260901.588
+2026-10-04T03:30:19.5373680Z Commit: f88ec8081b781fac6c440065ac7ff9e710ce3d0b
+2026-10-04T03:30:19.5374855Z Build Date: 2026-09-01T19:56:44Z
+2026-10-04T03:30:19.5376131Z Worker ID: {fb697c26-6eaa-4e75-ae62-61b15ebf1c42}
+2026-10-04T03:30:19.5377321Z Azure Region: eastus
+2026-10-04T03:30:19.5378242Z ##[endgroup]
+2026-10-04T03:30:19.5381148Z ##[group]Operating System
+2026-10-04T03:30:19.5382472Z Ubuntu
+2026-10-04T03:30:19.5383387Z 24.04.5
+2026-10-04T03:30:19.5384196Z LTS
+2026-10-04T03:30:19.5385034Z ##[endgroup]
+2026-10-04T03:30:19.5386081Z ##[group]Runner Image
+2026-10-04T03:30:19.5387020Z Image: ubuntu-24.04
+2026-10-04T03:30:19.5388019Z Version: 20260927.320.1
+2026-10-04T03:30:19.5390112Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260927.320/images/ubuntu/Ubuntu2404-Readme.md
+2026-10-04T03:30:19.5393193Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260927.320
+2026-10-04T03:30:19.5394877Z ##[endgroup]
+2026-10-04T03:30:19.5396779Z ##[group]GITHUB_TOKEN Permissions
+2026-10-04T03:30:19.5399346Z Contents: read
+2026-10-04T03:30:19.5400499Z Metadata: read
+2026-10-04T03:30:19.5401490Z ##[endgroup]
+2026-10-04T03:30:19.5405120Z Secret source: Actions
+2026-10-04T03:30:19.5406576Z Cache mode: write
+2026-10-04T03:30:19.5407973Z Prepare workflow directory
+2026-10-04T03:30:19.5882585Z Prepare all required actions
+2026-10-04T03:30:19.5952946Z Getting action download info
+2026-10-04T03:30:19.7882829Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+2026-10-04T03:30:19.9033353Z Download action repository 'actions/setup-python@v5' (SHA:a26af69be951a213d495a4c3e4e4022e16d87065)
+2026-10-04T03:30:20.0867004Z Complete job name: PR Fast Lane
+2026-10-04T03:30:20.1700303Z ##[group]Run actions/checkout@v4
+2026-10-04T03:30:20.1701240Z with:
+2026-10-04T03:30:20.1701710Z   repository: rmusser01/tldw_chatbook
+2026-10-04T03:30:20.1705861Z   token: ***
+2026-10-04T03:30:20.1706316Z   ssh-strict: true
+2026-10-04T03:30:20.1706770Z   ssh-user: git
+2026-10-04T03:30:20.1707245Z   persist-credentials: true
+2026-10-04T03:30:20.1707745Z   clean: true
+2026-10-04T03:30:20.1708209Z   sparse-checkout-cone-mode: true
+2026-10-04T03:30:20.1708752Z   fetch-depth: 1
+2026-10-04T03:30:20.1709208Z   fetch-tags: false
+2026-10-04T03:30:20.1709672Z   show-progress: true
+2026-10-04T03:30:20.1710137Z   lfs: false
+2026-10-04T03:30:20.1710562Z   submodules: false
+2026-10-04T03:30:20.1711026Z   set-safe-directory: true
+2026-10-04T03:30:20.1711554Z   allow-unsafe-pr-checkout: false
+2026-10-04T03:30:20.1712591Z ##[endgroup]
+2026-10-04T03:30:20.2704598Z Syncing repository: rmusser01/tldw_chatbook
+2026-10-04T03:30:20.2706386Z ##[group]Getting Git version info
+2026-10-04T03:30:20.2707261Z Working directory is '/home/runner/work/tldw_chatbook/tldw_chatbook'
+2026-10-04T03:30:20.2708345Z [command]/usr/bin/git version
+2026-10-04T03:30:20.2843809Z git version 2.55.0
+2026-10-04T03:30:20.2865139Z ##[endgroup]
+2026-10-04T03:30:20.2879384Z Temporarily overriding HOME='/home/runner/work/_temp/49cb87fa-38e4-44da-af8d-a882e746a787' before making global git config changes
+2026-10-04T03:30:20.2880843Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-04T03:30:20.2885216Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/tldw_chatbook/tldw_chatbook
+2026-10-04T03:30:20.2937484Z Deleting the contents of '/home/runner/work/tldw_chatbook/tldw_chatbook'
+2026-10-04T03:30:20.2941684Z ##[group]Initializing the repository
+2026-10-04T03:30:20.2946255Z [command]/usr/bin/git init /home/runner/work/tldw_chatbook/tldw_chatbook
+2026-10-04T03:30:20.3073862Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-10-04T03:30:20.3075542Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-10-04T03:30:20.3077416Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-10-04T03:30:20.3078869Z hint: call:
+2026-10-04T03:30:20.3079511Z hint:
+2026-10-04T03:30:20.3080049Z hint: 	git config --global init.defaultBranch <name>
+2026-10-04T03:30:20.3080674Z hint:
+2026-10-04T03:30:20.3081265Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-10-04T03:30:20.3082500Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-10-04T03:30:20.3083380Z hint:
+2026-10-04T03:30:20.3083807Z hint: 	git branch -m <name>
+2026-10-04T03:30:20.3084399Z hint:
+2026-10-04T03:30:20.3085140Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-10-04T03:30:20.3086240Z Initialized empty Git repository in /home/runner/work/tldw_chatbook/tldw_chatbook/.git/
+2026-10-04T03:30:20.3089719Z [command]/usr/bin/git remote add origin https://github.com/rmusser01/tldw_chatbook
+2026-10-04T03:30:20.3140102Z ##[endgroup]
+2026-10-04T03:30:20.3140914Z ##[group]Disabling automatic garbage collection
+2026-10-04T03:30:20.3144298Z [command]/usr/bin/git config --local gc.auto 0
+2026-10-04T03:30:20.3173812Z ##[endgroup]
+2026-10-04T03:30:20.3174543Z ##[group]Setting up auth
+2026-10-04T03:30:20.3181134Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-04T03:30:20.3212984Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-04T03:30:20.3571534Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-04T03:30:20.3605823Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-04T03:30:20.3825500Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-04T03:30:20.3856902Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-04T03:30:20.4081726Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-10-04T03:30:20.4118718Z ##[endgroup]
+2026-10-04T03:30:20.4119649Z ##[group]Fetching the repository
+2026-10-04T03:30:20.4128171Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +112298c452082b71c9a21572e7982f5bfd6bc9c9:refs/remotes/pull/2995/merge
+2026-10-04T03:30:32.1777093Z From https://github.com/rmusser01/tldw_chatbook
+2026-10-04T03:30:32.1778941Z  * [new ref]           112298c452082b71c9a21572e7982f5bfd6bc9c9 -> pull/2995/merge
+2026-10-04T03:30:32.1783724Z ##[endgroup]
+2026-10-04T03:30:32.1785213Z ##[group]Determining the checkout info
+2026-10-04T03:30:32.1786960Z ##[endgroup]
+2026-10-04T03:30:32.1792212Z [command]/usr/bin/git sparse-checkout disable
+2026-10-04T03:30:32.1876600Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-10-04T03:30:32.1902881Z ##[group]Checking out the ref
+2026-10-04T03:30:32.1906734Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/2995/merge
+2026-10-04T03:30:33.2286815Z Updating files:  30% (8966/29187)
+2026-10-04T03:30:33.2479081Z Updating files:  31% (9048/29187)
+2026-10-04T03:30:33.2645798Z Updating files:  32% (9340/29187)
+2026-10-04T03:30:33.2813328Z Updating files:  33% (9632/29187)
+2026-10-04T03:30:33.3005281Z Updating files:  34% (9924/29187)
+2026-10-04T03:30:33.3193326Z Updating files:  35% (10216/29187)
+2026-10-04T03:30:33.3899001Z Updating files:  36% (10508/29187)
+2026-10-04T03:30:33.5384407Z Updating files:  37% (10800/29187)
+2026-10-04T03:30:33.5521579Z Updating files:  38% (11092/29187)
+2026-10-04T03:30:33.5645156Z Updating files:  39% (11383/29187)
+2026-10-04T03:30:33.6588153Z Updating files:  40% (11675/29187)
+2026-10-04T03:30:33.7723011Z Updating files:  41% (11967/29187)
+2026-10-04T03:30:33.8339240Z Updating files:  42% (12259/29187)
+2026-10-04T03:30:33.8846075Z Updating files:  43% (12551/29187)
+2026-10-04T03:30:33.9195029Z Updating files:  44% (12843/29187)
+2026-10-04T03:30:33.9654490Z Updating files:  45% (13135/29187)
+2026-10-04T03:30:33.9926866Z Updating files:  46% (13427/29187)
+2026-10-04T03:30:34.0216620Z Updating files:  47% (13718/29187)
+2026-10-04T03:30:34.0693383Z Updating files:  48% (14010/29187)
+2026-10-04T03:30:34.1009870Z Updating files:  49% (14302/29187)
+2026-10-04T03:30:34.1329458Z Updating files:  50% (14594/29187)
+2026-10-04T03:30:34.1533902Z Updating files:  51% (14886/29187)
+2026-10-04T03:30:34.1819536Z Updating files:  52% (15178/29187)
+2026-10-04T03:30:34.2156708Z Updating files:  53% (15470/29187)
+2026-10-04T03:30:34.2176588Z Updating files:  54% (15761/29187)
+2026-10-04T03:30:34.2447952Z Updating files:  54% (15769/29187)
+2026-10-04T03:30:34.2749886Z Updating files:  55% (16053/29187)
+2026-10-04T03:30:34.3076084Z Updating files:  56% (16345/29187)
+2026-10-04T03:30:34.3385445Z Updating files:  57% (16637/29187)
+2026-10-04T03:30:34.3767640Z Updating files:  58% (16929/29187)
+2026-10-04T03:30:34.4171929Z Updating files:  59% (17221/29187)
+2026-10-04T03:30:34.4524072Z Updating files:  60% (17513/29187)
+2026-10-04T03:30:34.4799200Z Updating files:  61% (17805/29187)
+2026-10-04T03:30:34.5037553Z Updating files:  62% (18096/29187)
+2026-10-04T03:30:34.5259507Z Updating files:  63% (18388/29187)
+2026-10-04T03:30:34.5586087Z Updating files:  64% (18680/29187)
+2026-10-04T03:30:34.5768165Z Updating files:  65% (18972/29187)
+2026-10-04T03:30:34.5951240Z Updating files:  66% (19264/29187)
+2026-10-04T03:30:34.6155501Z Updating files:  67% (19556/29187)
+2026-10-04T03:30:34.6351387Z Updating files:  68% (19848/29187)
+2026-10-04T03:30:34.6548802Z Updating files:  69% (20140/29187)
+2026-10-04T03:30:34.6729775Z Updating files:  70% (20431/29187)
+2026-10-04T03:30:34.6912097Z Updating files:  71% (20723/29187)
+2026-10-04T03:30:34.7081110Z Updating files:  72% (21015/29187)
+2026-10-04T03:30:34.7267943Z Updating files:  73% (21307/29187)
+2026-10-04T03:30:34.7453174Z Updating files:  74% (21599/29187)
+2026-10-04T03:30:34.7629280Z Updating files:  75% (21891/29187)
+2026-10-04T03:30:34.7792209Z Updating files:  76% (22183/29187)
+2026-10-04T03:30:34.7973086Z Updating files:  77% (22474/29187)
+2026-10-04T03:30:34.8148630Z Updating files:  78% (22766/29187)
+2026-10-04T03:30:34.8314630Z Updating files:  79% (23058/29187)
+2026-10-04T03:30:34.8494754Z Updating files:  80% (23350/29187)
+2026-10-04T03:30:34.8712642Z Updating files:  81% (23642/29187)
+2026-10-04T03:30:34.8871593Z Updating files:  82% (23934/29187)
+2026-10-04T03:30:34.9308667Z Updating files:  83% (24226/29187)
+2026-10-04T03:30:34.9614938Z Updating files:  84% (24518/29187)
+2026-10-04T03:30:34.9823646Z Updating files:  85% (24809/29187)
+2026-10-04T03:30:35.0015250Z Updating files:  86% (25101/29187)
+2026-10-04T03:30:35.0192594Z Updating files:  87% (25393/29187)
+2026-10-04T03:30:35.0609269Z Updating files:  88% (25685/29187)
+2026-10-04T03:30:35.0985696Z Updating files:  89% (25977/29187)
+2026-10-04T03:30:35.1461269Z Updating files:  90% (26269/29187)
+2026-10-04T03:30:35.1795898Z Updating files:  91% (26561/29187)
+2026-10-04T03:30:35.2105471Z Updating files:  92% (26853/29187)
+2026-10-04T03:30:35.2179190Z Updating files:  93% (27144/29187)
+2026-10-04T03:30:35.2439954Z Updating files:  93% (27198/29187)
+2026-10-04T03:30:35.2779736Z Updating files:  94% (27436/29187)
+2026-10-04T03:30:35.3188001Z Updating files:  95% (27728/29187)
+2026-10-04T03:30:35.3717215Z Updating files:  96% (28020/29187)
+2026-10-04T03:30:35.3981724Z Updating files:  97% (28312/29187)
+2026-10-04T03:30:35.4335964Z Updating files:  98% (28604/29187)
+2026-10-04T03:30:35.4961754Z Updating files:  99% (28896/29187)
+2026-10-04T03:30:35.4962971Z Updating files: 100% (29187/29187)
+2026-10-04T03:30:35.4963949Z Updating files: 100% (29187/29187), done.
+2026-10-04T03:30:35.5250824Z Note: switching to 'refs/remotes/pull/2995/merge'.
+2026-10-04T03:30:35.5252085Z 
+2026-10-04T03:30:35.5252544Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-10-04T03:30:35.5253667Z changes and commit them, and you can discard any commits you make in this
+2026-10-04T03:30:35.5254705Z state without impacting any branches by switching back to a branch.
+2026-10-04T03:30:35.5255308Z 
+2026-10-04T03:30:35.5255707Z If you want to create a new branch to retain commits you create, you may
+2026-10-04T03:30:35.5256501Z do so (now or later) by using -c with the switch command. Example:
+2026-10-04T03:30:35.5256925Z 
+2026-10-04T03:30:35.5257102Z   git switch -c <new-branch-name>
+2026-10-04T03:30:35.5257390Z 
+2026-10-04T03:30:35.5257549Z Or undo this operation with:
+2026-10-04T03:30:35.5257820Z 
+2026-10-04T03:30:35.5257956Z   git switch -
+2026-10-04T03:30:35.5258156Z 
+2026-10-04T03:30:35.5258519Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-10-04T03:30:35.5258965Z 
+2026-10-04T03:30:35.5259321Z HEAD is now at 112298c4 Merge 7a15e3e9b4998dba8d8726bbdb722ff60a3df83d into 81c7c94f486491d6fde09584710dc3a3172225a0
+2026-10-04T03:30:35.5352262Z ##[endgroup]
+2026-10-04T03:30:35.5392028Z [command]/usr/bin/git log -1 --format=%H
+2026-10-04T03:30:35.5414595Z 112298c452082b71c9a21572e7982f5bfd6bc9c9
+2026-10-04T03:30:35.5762470Z ##[group]Run actions/setup-python@v5
+2026-10-04T03:30:35.5762774Z with:
+2026-10-04T03:30:35.5762983Z   python-version: 3.12
+2026-10-04T03:30:35.5763204Z   cache: pip
+2026-10-04T03:30:35.5763404Z   check-latest: false
+2026-10-04T03:30:35.5765774Z   token: ***
+2026-10-04T03:30:35.5765997Z   update-environment: true
+2026-10-04T03:30:35.5766246Z   allow-prereleases: false
+2026-10-04T03:30:35.5766481Z   freethreaded: false
+2026-10-04T03:30:35.5766692Z ##[endgroup]
+2026-10-04T03:30:35.7092068Z ##[group]Installed versions
+2026-10-04T03:30:35.7185170Z (node:2368) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-10-04T03:30:35.7186446Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-10-04T03:30:35.7187230Z Successfully set up CPython (3.12.14)
+2026-10-04T03:30:35.7188084Z ##[endgroup]
+2026-10-04T03:30:37.7819586Z [command]/opt/hostedtoolcache/Python/3.12.14/x64/bin/pip cache dir
+2026-10-04T03:30:38.1287651Z /home/runner/.cache/pip
+2026-10-04T03:30:38.2085194Z Cache hit for: setup-python-Linux-x64-24.04-Ubuntu-python-3.12.14-pip-af4c5cd3be89ff21fa32ea929b288395945ebee23c59a397e2dfcabdfe464089
+2026-10-04T03:30:38.2187910Z (node:2368) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+2026-10-04T03:30:39.2430976Z Received 264241152 of 3484503135 (7.6%), 251.2 MBs/sec
+2026-10-04T03:30:40.2431467Z Received 528482304 of 3484503135 (15.2%), 251.6 MBs/sec
+2026-10-04T03:30:41.2462872Z Received 796917760 of 3484503135 (22.9%), 252.9 MBs/sec
+2026-10-04T03:30:42.2453188Z Received 1056964608 of 3484503135 (30.3%), 251.6 MBs/sec
+2026-10-04T03:30:43.2533043Z Received 1342177280 of 3484503135 (38.5%), 255.4 MBs/sec
+2026-10-04T03:30:44.2621772Z Received 1623195648 of 3484503135 (46.6%), 257.1 MBs/sec
+2026-10-04T03:30:45.2624695Z Received 1879048192 of 3484503135 (53.9%), 255.2 MBs/sec
+2026-10-04T03:30:46.2637688Z Received 2147483648 of 3484503135 (61.6%), 255.3 MBs/sec
+2026-10-04T03:30:47.2693295Z Received 2394947584 of 3484503135 (68.7%), 252.9 MBs/sec
+2026-10-04T03:30:48.2704311Z Received 2659188736 of 3484503135 (76.3%), 252.8 MBs/sec
+2026-10-04T03:30:49.2812981Z Received 2902458368 of 3484503135 (83.3%), 250.7 MBs/sec
+2026-10-04T03:30:50.2906645Z Received 3158310912 of 3484503135 (90.6%), 249.9 MBs/sec
+2026-10-04T03:30:51.3005501Z Received 3439329280 of 3484503135 (98.7%), 251.1 MBs/sec
+2026-10-04T03:30:51.4317021Z Received 3484503135 of 3484503135 (100.0%), 251.9 MBs/sec
+2026-10-04T03:30:51.4318359Z Cache Size: ~3323 MB (3484503135 B)
+2026-10-04T03:30:51.4450659Z [command]/usr/bin/tar -xf /home/runner/work/_temp/3bbbfa1d-cd51-4c4c-9e15-023c2e7a652a/cache.tzst -P -C /home/runner/work/tldw_chatbook/tldw_chatbook --use-compress-program unzstd
+2026-10-04T03:30:58.1564399Z Cache restored successfully
+2026-10-04T03:30:58.8533763Z Cache restored from key: setup-python-Linux-x64-24.04-Ubuntu-python-3.12.14-pip-af4c5cd3be89ff21fa32ea929b288395945ebee23c59a397e2dfcabdfe464089
+2026-10-04T03:30:58.8809659Z ##[group]Run python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging
+2026-10-04T03:30:58.8810368Z [36;1mpython -m pip install -e . pytest pytest-asyncio pytest-timeout packaging[0m
+2026-10-04T03:30:59.2155792Z shell: /usr/bin/bash -e {0}
+2026-10-04T03:30:59.2156120Z env:
+2026-10-04T03:30:59.2156454Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.14/x64
+2026-10-04T03:30:59.2157047Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.14/x64/lib/pkgconfig
+2026-10-04T03:30:59.2157583Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+2026-10-04T03:30:59.2158061Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+2026-10-04T03:30:59.2158544Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+2026-10-04T03:30:59.2158994Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.14/x64/lib
+2026-10-04T03:30:59.2159374Z ##[endgroup]
+2026-10-04T03:30:59.9076777Z Obtaining file:///home/runner/work/tldw_chatbook/tldw_chatbook
+2026-10-04T03:30:59.9118774Z   Installing build dependencies: started
+2026-10-04T03:31:00.5097263Z   Installing build dependencies: finished with status 'done'
+2026-10-04T03:31:00.5103912Z   Checking if build backend supports build_editable: started
+2026-10-04T03:31:00.8189905Z   Checking if build backend supports build_editable: finished with status 'done'
+2026-10-04T03:31:00.8199113Z   Getting requirements to build editable: started
+2026-10-04T03:31:01.3681584Z   Getting requirements to build editable: finished with status 'done'
+2026-10-04T03:31:01.3691307Z   Preparing editable metadata (pyproject.toml): started
+2026-10-04T03:31:01.7677655Z   Preparing editable metadata (pyproject.toml): finished with status 'done'
+2026-10-04T03:31:01.8925226Z Collecting pytest
+2026-10-04T03:31:01.8938345Z   Using cached pytest-9.1.1-py3-none-any.whl.metadata (7.6 kB)
+2026-10-04T03:31:01.9276875Z Collecting pytest-asyncio
+2026-10-04T03:31:01.9289412Z   Using cached pytest_asyncio-1.4.0-py3-none-any.whl.metadata (4.1 kB)
+2026-10-04T03:31:01.9391629Z Collecting pytest-timeout
+2026-10-04T03:31:01.9403874Z   Using cached pytest_timeout-2.4.0-py3-none-any.whl.metadata (20 kB)
+2026-10-04T03:31:01.9548444Z Collecting packaging
+2026-10-04T03:31:01.9560138Z   Using cached packaging-26.3-py3-none-any.whl.metadata (3.5 kB)
+2026-10-04T03:31:01.9845017Z Collecting chardet<6,>=3.0.2 (from tldw_chatbook==0.2.3)
+2026-10-04T03:31:01.9857253Z   Using cached chardet-5.2.0-py3-none-any.whl.metadata (3.4 kB)
+2026-10-04T03:31:02.0024336Z Collecting httpx (from tldw_chatbook==0.2.3)
+2026-10-04T03:31:02.0036113Z   Using cached httpx-0.28.1-py3-none-any.whl.metadata (7.1 kB)
+2026-10-04T03:31:02.0235105Z Collecting loguru (from tldw_chatbook==0.2.3)
+2026-10-04T03:31:02.0246962Z   Using cached loguru-0.7.3-py3-none-any.whl.metadata (22 kB)
+2026-10-04T03:31:02.0564857Z Collecting textual==8.2.8 (from tldw_chatbook==0.2.3)
+2026-10-04T03:31:02.0576397Z   Using cached textual-8.2.8-py3-none-any.whl.metadata (9.1 kB)
+2026-10-04T03:31:02.0705941Z Collecting textual-diff-view==0.1.5 (from tldw_chatbook==0.2.3)
+2026-10-04T03:31:02.0717565Z   Using cached textual_diff_view-0.1.5-py3-none-any.whl.metadata (48 kB)
+2026-10-04T03:31:02.1052631Z Collecting requests (from tldw_chatbook==0.2.3)
+2026-10-04T03:31:02.1065059Z   Using cached requests-2.34.2-py3-none-any.whl.metadata (4.8 kB)
+2026-10-04T03:31:02.1367626Z Collecting rich (from tldw_chatbook==0.2.3)
+2026-10-04T03:31:02.1379799Z   Using cached rich-15.0.0-py3-none-any.whl.metadata (18 kB)
+2026-10-04T03:31:02.1481527Z Collecting pyte==0.8.2 (from tldw_chatbook==0.2.3)
+2026-10-04T03:31:02.1493895Z   Using cached pyte-0.8.2-py3-none-any.whl.metadata (3.0 kB)
+2026-10-04T03:31:02.5210505Z Collecting regex==2026.4.4 (from tldw_chatbook==0.2.3)
+2026-10-04T03:31:02.5224801Z   Using cached regex-2026.4.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (40 kB)
+2026-10-04T03:31:02.5392074Z Collecting wcwidth<1,>=0.2.14 (from tldw_chatbook==0.2.3)
+2026-10-04T03:31:02.5930977Z   Downloading wcwidth-0.9.1-cp310-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (23 kB)
+2026-10-04T03:31:02.6097722Z Collecting rich-pixels>=3.0.0 (from tldw_chatbook==0.2.3)
+2026-10-04T03:31:02.6110711Z   Using cached rich_pixels-3.0.1-py3-none-any.whl.metadata (2.2 kB)
+2026-10-04T03:31:02.7800878Z Collecting pillow>=10.4 (from tldw_chatbook==0.2.3)
+2026-10-04T03:31:02.7814666Z   Using cached pillow-12.3.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (9.1 kB)
+2026-10-04T03:31:02.8152628Z Collecting PyYAML (from tldw_chatbook==0.2.3)
+2026-10-04T03:31:02.8166036Z   Using cached pyyaml-6.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (2.4 kB)
+2026-10-04T03:31:02.9112857Z Collecting pydantic<3,>=2.4 (from tldw_chatbook==0.2.3)
+2026-10-04T03:31:02.9126350Z   Using cached pydantic-2.13.5-py3-none-any.whl.metadata (110 kB)
+2026-10-04T03:31:02.9339716Z Collecting jsonschema<5,>=4.26 (from tldw_chatbook==0.2.3)
+2026-10-04T03:31:02.9351642Z   Using cached jsonschema-4.26.0-py3-none-any.whl.metadata (7.6 kB)
+2026-10-04T03:31:02.9539804Z Collecting referencing<1,>=0.37 (from tldw_chatbook==0.2.3)
+2026-10-04T03:31:02.9551427Z   Using cached referencing-0.37.0-py3-none-any.whl.metadata (2.8 kB)
+2026-10-04T03:31:02.9654995Z Collecting rfc8785==0.1.4 (from tldw_chatbook==0.2.3)
+2026-10-04T03:31:02.9666634Z   Using cached rfc8785-0.1.4-py3-none-any.whl.metadata (3.4 kB)
+2026-10-04T03:31:03.1399526Z Collecting cryptography (from tldw_chatbook==0.2.3)
+2026-10-04T03:31:03.1440860Z   Downloading cryptography-50.0.2-cp311-abi3-manylinux_2_34_x86_64.whl.metadata (4.4 kB)
+2026-10-04T03:31:03.1580929Z Collecting portalocker==3.2.0 (from tldw_chatbook==0.2.3)
+2026-10-04T03:31:03.1592943Z   Using cached portalocker-3.2.0-py3-none-any.whl.metadata (8.7 kB)
+2026-10-04T03:31:03.2194632Z Collecting psutil (from tldw_chatbook==0.2.3)
+2026-10-04T03:31:03.2208651Z   Using cached psutil-7.2.2-cp36-abi3-manylinux2010_x86_64.manylinux_2_12_x86_64.manylinux_2_28_x86_64.whl.metadata (22 kB)
+2026-10-04T03:31:03.2325442Z Collecting toml (from tldw_chatbook==0.2.3)
+2026-10-04T03:31:03.2338421Z   Using cached toml-0.10.2-py2.py3-none-any.whl.metadata (7.1 kB)
+2026-10-04T03:31:03.2430414Z Collecting pyperclip (from tldw_chatbook==0.2.3)
+2026-10-04T03:31:03.2442319Z   Using cached pyperclip-1.11.0-py3-none-any.whl.metadata (2.4 kB)
+2026-10-04T03:31:03.2568108Z Collecting emoji (from tldw_chatbook==0.2.3)
+2026-10-04T03:31:03.2613268Z   Downloading emoji-2.16.0-py3-none-any.whl.metadata (5.7 kB)
+2026-10-04T03:31:03.2753199Z Collecting jinja2 (from tldw_chatbook==0.2.3)
+2026-10-04T03:31:03.2764950Z   Using cached jinja2-3.1.6-py3-none-any.whl.metadata (2.9 kB)
+2026-10-04T03:31:03.3454873Z Collecting pycryptodomex (from tldw_chatbook==0.2.3)
+2026-10-04T03:31:03.3468435Z   Using cached pycryptodomex-3.23.0-cp37-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (3.4 kB)
+2026-10-04T03:31:03.3719157Z Collecting keyring (from tldw_chatbook==0.2.3)
+2026-10-04T03:31:03.3732675Z   Using cached keyring-25.7.0-py3-none-any.whl.metadata (21 kB)
+2026-10-04T03:31:03.3878522Z Collecting markdownify (from tldw_chatbook==0.2.3)
+2026-10-04T03:31:03.3890739Z   Using cached markdownify-1.2.3-py3-none-any.whl.metadata (9.9 kB)
+2026-10-04T03:31:03.3993380Z Collecting aiofiles (from tldw_chatbook==0.2.3)
+2026-10-04T03:31:03.4005322Z   Using cached aiofiles-25.1.0-py3-none-any.whl.metadata (6.3 kB)
+2026-10-04T03:31:03.4153797Z Collecting croniter>=1.4.0 (from tldw_chatbook==0.2.3)
+2026-10-04T03:31:03.4166173Z   Using cached croniter-6.2.4-py3-none-any.whl.metadata (23 kB)
+2026-10-04T03:31:03.4302188Z Collecting textual-image (from tldw_chatbook==0.2.3)
+2026-10-04T03:31:03.4343868Z   Downloading textual_image-0.14.1-py3-none-any.whl.metadata (14 kB)
+2026-10-04T03:31:03.4695047Z Collecting tiktoken==0.14.0 (from tldw_chatbook==0.2.3)
+2026-10-04T03:31:03.4707313Z   Using cached tiktoken-0.14.0-cp312-cp312-manylinux_2_28_x86_64.whl.metadata (6.7 kB)
+2026-10-04T03:31:03.4796193Z Collecting defusedxml (from tldw_chatbook==0.2.3)
+2026-10-04T03:31:03.4808240Z   Using cached defusedxml-0.7.1-py2.py3-none-any.whl.metadata (32 kB)
+2026-10-04T03:31:03.4911204Z Collecting html5lib<2,>=1.1 (from tldw_chatbook==0.2.3)
+2026-10-04T03:31:03.4923614Z   Using cached html5lib-1.1-py2.py3-none-any.whl.metadata (16 kB)
+2026-10-04T03:31:03.5050929Z Collecting tinycss2<2,>=1.4 (from tldw_chatbook==0.2.3)
+2026-10-04T03:31:03.5063343Z   Using cached tinycss2-1.5.1-py3-none-any.whl.metadata (3.0 kB)
+2026-10-04T03:31:03.9884518Z Collecting aiohttp<4,>=3.9 (from tldw_chatbook==0.2.3)
+2026-10-04T03:31:03.9899059Z   Using cached aiohttp-3.14.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (8.3 kB)
+2026-10-04T03:31:04.0662738Z Collecting sherpa-onnx<2,>=1.13 (from tldw_chatbook==0.2.3)
+2026-10-04T03:31:04.0710195Z   Downloading sherpa_onnx-1.13.8-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (53 kB)
+2026-10-04T03:31:04.2999967Z Collecting numpy (from tldw_chatbook==0.2.3)
+2026-10-04T03:31:04.3050769Z   Downloading numpy-2.5.3-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (6.6 kB)
+2026-10-04T03:31:05.2541019Z Collecting markdown-it-py>=2.1.0 (from markdown-it-py[linkify]>=2.1.0->textual==8.2.8->tldw_chatbook==0.2.3)
+2026-10-04T03:31:05.2554219Z   Using cached markdown_it_py-4.2.0-py3-none-any.whl.metadata (7.4 kB)
+2026-10-04T03:31:05.5069704Z Collecting mdit-py-plugins (from textual==8.2.8->tldw_chatbook==0.2.3)
+2026-10-04T03:31:05.5083997Z   Using cached mdit_py_plugins-0.6.1-py3-none-any.whl.metadata (2.9 kB)
+2026-10-04T03:31:05.8175764Z Collecting platformdirs<5,>=3.6.0 (from textual==8.2.8->tldw_chatbook==0.2.3)
+2026-10-04T03:31:05.8208965Z   Downloading platformdirs-4.12.3-py3-none-any.whl.metadata (5.5 kB)
+2026-10-04T03:31:05.9104077Z Collecting pygments<3.0.0,>=2.19.2 (from textual==8.2.8->tldw_chatbook==0.2.3)
+2026-10-04T03:31:05.9116461Z   Using cached pygments-2.21.0-py3-none-any.whl.metadata (2.5 kB)
+2026-10-04T03:31:05.9273897Z Collecting typing-extensions<5.0.0,>=4.4.0 (from textual==8.2.8->tldw_chatbook==0.2.3)
+2026-10-04T03:31:05.9286138Z   Using cached typing_extensions-4.16.0-py3-none-any.whl.metadata (3.3 kB)
+2026-10-04T03:31:05.9428908Z Collecting aiohappyeyeballs>=2.5.0 (from aiohttp<4,>=3.9->tldw_chatbook==0.2.3)
+2026-10-04T03:31:05.9441228Z   Using cached aiohappyeyeballs-2.7.1-py3-none-any.whl.metadata (5.9 kB)
+2026-10-04T03:31:05.9521506Z Collecting aiosignal>=1.4.0 (from aiohttp<4,>=3.9->tldw_chatbook==0.2.3)
+2026-10-04T03:31:05.9534441Z   Using cached aiosignal-1.4.0-py3-none-any.whl.metadata (3.7 kB)
+2026-10-04T03:31:05.9646710Z Collecting attrs>=17.3.0 (from aiohttp<4,>=3.9->tldw_chatbook==0.2.3)
+2026-10-04T03:31:05.9658801Z   Using cached attrs-26.1.0-py3-none-any.whl.metadata (8.8 kB)
+2026-10-04T03:31:06.0217837Z Collecting frozenlist>=1.1.1 (from aiohttp<4,>=3.9->tldw_chatbook==0.2.3)
+2026-10-04T03:31:06.0231707Z   Using cached frozenlist-1.8.0-cp312-cp312-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl.metadata (20 kB)
+2026-10-04T03:31:06.2529477Z Collecting multidict<7.0,>=4.5 (from aiohttp<4,>=3.9->tldw_chatbook==0.2.3)
+2026-10-04T03:31:06.2569635Z   Downloading multidict-6.9.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (5.3 kB)
+2026-10-04T03:31:06.3223380Z Collecting propcache>=0.2.0 (from aiohttp<4,>=3.9->tldw_chatbook==0.2.3)
+2026-10-04T03:31:06.3273592Z   Downloading propcache-0.5.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (25 kB)
+2026-10-04T03:31:06.6056820Z Collecting yarl<2.0,>=1.17.0 (from aiohttp<4,>=3.9->tldw_chatbook==0.2.3)
+2026-10-04T03:31:06.6103266Z   Downloading yarl-1.25.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (111 kB)
+2026-10-04T03:31:06.6314136Z Collecting six>=1.9 (from html5lib<2,>=1.1->tldw_chatbook==0.2.3)
+2026-10-04T03:31:06.6326026Z   Using cached six-1.17.0-py2.py3-none-any.whl.metadata (1.7 kB)
+2026-10-04T03:31:06.6409657Z Collecting webencodings (from html5lib<2,>=1.1->tldw_chatbook==0.2.3)
+2026-10-04T03:31:06.6420877Z   Using cached webencodings-0.6.1-py3-none-any.whl.metadata (3.4 kB)
+2026-10-04T03:31:06.6543982Z Collecting jsonschema-specifications>=2023.03.6 (from jsonschema<5,>=4.26->tldw_chatbook==0.2.3)
+2026-10-04T03:31:06.6555474Z   Using cached jsonschema_specifications-2025.9.1-py3-none-any.whl.metadata (2.9 kB)
+2026-10-04T03:31:06.8870161Z Collecting rpds-py>=0.25.0 (from jsonschema<5,>=4.26->tldw_chatbook==0.2.3)
+2026-10-04T03:31:06.8884403Z   Using cached rpds_py-2026.6.3-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (4.1 kB)
+2026-10-04T03:31:06.8993971Z Collecting annotated-types>=0.6.0 (from pydantic<3,>=2.4->tldw_chatbook==0.2.3)
+2026-10-04T03:31:06.9005772Z   Using cached annotated_types-0.8.0-py3-none-any.whl.metadata (15 kB)
+2026-10-04T03:31:07.5541427Z Collecting pydantic-core==2.46.5 (from pydantic<3,>=2.4->tldw_chatbook==0.2.3)
+2026-10-04T03:31:07.5555338Z   Using cached pydantic_core-2.46.5-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (6.6 kB)
+2026-10-04T03:31:07.5652150Z Collecting typing-inspection>=0.4.2 (from pydantic<3,>=2.4->tldw_chatbook==0.2.3)
+2026-10-04T03:31:07.5664094Z   Using cached typing_inspection-0.4.4-py3-none-any.whl.metadata (2.6 kB)
+2026-10-04T03:31:07.5925202Z Collecting sherpa-onnx-core==1.13.8 (from sherpa-onnx<2,>=1.13->tldw_chatbook==0.2.3)
+2026-10-04T03:31:07.5959154Z   Downloading sherpa_onnx_core-1.13.8-py3-none-manylinux2014_x86_64.whl.metadata (628 bytes)
+2026-10-04T03:31:07.6130986Z Collecting idna>=2.0 (from yarl<2.0,>=1.17.0->aiohttp<4,>=3.9->tldw_chatbook==0.2.3)
+2026-10-04T03:31:07.6166870Z   Downloading idna-3.20-py3-none-any.whl.metadata (7.2 kB)
+2026-10-04T03:31:07.6318695Z Collecting iniconfig>=1.0.1 (from pytest)
+2026-10-04T03:31:07.6330578Z   Using cached iniconfig-2.3.0-py3-none-any.whl.metadata (2.5 kB)
+2026-10-04T03:31:07.6442649Z Collecting pluggy<2,>=1.5 (from pytest)
+2026-10-04T03:31:07.6455143Z   Using cached pluggy-1.6.0-py3-none-any.whl.metadata (4.8 kB)
+2026-10-04T03:31:07.6682893Z Collecting python-dateutil (from croniter>=1.4.0->tldw_chatbook==0.2.3)
+2026-10-04T03:31:07.6695413Z   Using cached python_dateutil-2.9.0.post0-py2.py3-none-any.whl.metadata (8.4 kB)
+2026-10-04T03:31:07.6823350Z Collecting mdurl~=0.1 (from markdown-it-py>=2.1.0->markdown-it-py[linkify]>=2.1.0->textual==8.2.8->tldw_chatbook==0.2.3)
+2026-10-04T03:31:07.6835767Z   Using cached mdurl-0.1.2-py3-none-any.whl.metadata (1.6 kB)
+2026-10-04T03:31:07.6943897Z Collecting linkify-it-py<3,>=1 (from markdown-it-py[linkify]>=2.1.0->textual==8.2.8->tldw_chatbook==0.2.3)
+2026-10-04T03:31:07.6956343Z   Using cached linkify_it_py-2.2.0-py3-none-any.whl.metadata (8.6 kB)
+2026-10-04T03:31:07.8030752Z Collecting cffi>=2.0.0 (from cryptography->tldw_chatbook==0.2.3)
+2026-10-04T03:31:07.8045395Z   Using cached cffi-2.1.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (2.5 kB)
+2026-10-04T03:31:07.8138669Z Collecting pycparser (from cffi>=2.0.0->cryptography->tldw_chatbook==0.2.3)
+2026-10-04T03:31:07.8150772Z   Using cached pycparser-3.0-py3-none-any.whl.metadata (8.2 kB)
+2026-10-04T03:31:07.8325602Z Collecting anyio (from httpx->tldw_chatbook==0.2.3)
+2026-10-04T03:31:07.8338087Z   Using cached anyio-4.15.1-py3-none-any.whl.metadata (4.7 kB)
+2026-10-04T03:31:07.8496260Z Collecting certifi (from httpx->tldw_chatbook==0.2.3)
+2026-10-04T03:31:07.8508640Z   Using cached certifi-2026.7.22-py3-none-any.whl.metadata (2.5 kB)
+2026-10-04T03:31:07.8650401Z Collecting httpcore==1.* (from httpx->tldw_chatbook==0.2.3)
+2026-10-04T03:31:07.8664097Z   Using cached httpcore-1.0.9-py3-none-any.whl.metadata (21 kB)
+2026-10-04T03:31:07.8765426Z Collecting h11>=0.16 (from httpcore==1.*->httpx->tldw_chatbook==0.2.3)
+2026-10-04T03:31:07.8777782Z   Using cached h11-0.16.0-py3-none-any.whl.metadata (8.3 kB)
+2026-10-04T03:31:07.9333529Z Collecting MarkupSafe>=2.0 (from jinja2->tldw_chatbook==0.2.3)
+2026-10-04T03:31:07.9372037Z   Downloading markupsafe-3.0.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (2.7 kB)
+2026-10-04T03:31:07.9489862Z Collecting SecretStorage>=3.2 (from keyring->tldw_chatbook==0.2.3)
+2026-10-04T03:31:07.9502527Z   Using cached secretstorage-3.5.0-py3-none-any.whl.metadata (4.0 kB)
+2026-10-04T03:31:07.9590872Z Collecting jeepney>=0.4.2 (from keyring->tldw_chatbook==0.2.3)
+2026-10-04T03:31:07.9603285Z   Using cached jeepney-0.9.0-py3-none-any.whl.metadata (1.2 kB)
+2026-10-04T03:31:07.9696945Z Collecting jaraco.classes (from keyring->tldw_chatbook==0.2.3)
+2026-10-04T03:31:07.9710394Z   Using cached jaraco.classes-3.4.0-py3-none-any.whl.metadata (2.6 kB)
+2026-10-04T03:31:07.9845486Z Collecting jaraco.functools (from keyring->tldw_chatbook==0.2.3)
+2026-10-04T03:31:07.9857051Z   Using cached jaraco_functools-4.6.0-py3-none-any.whl.metadata (2.9 kB)
+2026-10-04T03:31:07.9964307Z Collecting jaraco.context (from keyring->tldw_chatbook==0.2.3)
+2026-10-04T03:31:07.9976240Z   Using cached jaraco_context-6.1.2-py3-none-any.whl.metadata (4.2 kB)
+2026-10-04T03:31:08.0273644Z Collecting more-itertools (from jaraco.classes->keyring->tldw_chatbook==0.2.3)
+2026-10-04T03:31:08.0285696Z   Using cached more_itertools-11.1.0-py3-none-any.whl.metadata (41 kB)
+2026-10-04T03:31:08.0465786Z Collecting beautifulsoup4<5,>=4.9 (from markdownify->tldw_chatbook==0.2.3)
+2026-10-04T03:31:08.0477656Z   Using cached beautifulsoup4-4.15.0-py3-none-any.whl.metadata (3.8 kB)
+2026-10-04T03:31:08.0646947Z Collecting soupsieve>=1.6.1 (from beautifulsoup4<5,>=4.9->markdownify->tldw_chatbook==0.2.3)
+2026-10-04T03:31:08.0681408Z   Downloading soupsieve-2.10-py3-none-any.whl.metadata (4.4 kB)
+2026-10-04T03:31:08.1947376Z Collecting charset_normalizer<4,>=2 (from requests->tldw_chatbook==0.2.3)
+2026-10-04T03:31:08.1984070Z   Downloading charset_normalizer-3.5.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (46 kB)
+2026-10-04T03:31:08.2744657Z Collecting urllib3<3,>=1.26 (from requests->tldw_chatbook==0.2.3)
+2026-10-04T03:31:08.2783086Z   Downloading urllib3-2.8.0-py3-none-any.whl.metadata (7.4 kB)
+2026-10-04T03:31:08.2958274Z Using cached portalocker-3.2.0-py3-none-any.whl (22 kB)
+2026-10-04T03:31:08.2969808Z Using cached pyte-0.8.2-py3-none-any.whl (31 kB)
+2026-10-04T03:31:08.2981632Z Using cached regex-2026.4.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (801 kB)
+2026-10-04T03:31:08.2995819Z Using cached rfc8785-0.1.4-py3-none-any.whl (9.2 kB)
+2026-10-04T03:31:08.3008344Z Using cached textual-8.2.8-py3-none-any.whl (731 kB)
+2026-10-04T03:31:08.3021339Z Using cached textual_diff_view-0.1.5-py3-none-any.whl (25 kB)
+2026-10-04T03:31:08.3033100Z Using cached tiktoken-0.14.0-cp312-cp312-manylinux_2_28_x86_64.whl (1.2 MB)
+2026-10-04T03:31:08.3048913Z Using cached aiohttp-3.14.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (1.8 MB)
+2026-10-04T03:31:08.3065978Z Using cached chardet-5.2.0-py3-none-any.whl (199 kB)
+2026-10-04T03:31:08.3077789Z Using cached html5lib-1.1-py2.py3-none-any.whl (112 kB)
+2026-10-04T03:31:08.3089244Z Using cached jsonschema-4.26.0-py3-none-any.whl (90 kB)
+2026-10-04T03:31:08.3185205Z Downloading multidict-6.9.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (336 kB)
+2026-10-04T03:31:08.3267207Z Downloading platformdirs-4.12.3-py3-none-any.whl (32 kB)
+2026-10-04T03:31:08.3296079Z Using cached pydantic-2.13.5-py3-none-any.whl (472 kB)
+2026-10-04T03:31:08.3309157Z Using cached pydantic_core-2.46.5-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (2.1 MB)
+2026-10-04T03:31:08.3328076Z Using cached pygments-2.21.0-py3-none-any.whl (1.3 MB)
+2026-10-04T03:31:08.3343925Z Using cached referencing-0.37.0-py3-none-any.whl (26 kB)
+2026-10-04T03:31:08.3413029Z Downloading sherpa_onnx-1.13.8-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (4.4 MB)
+2026-10-04T03:31:08.3864936Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 4.4/4.4 MB 99.5 MB/s  0:00:00
+2026-10-04T03:31:08.3983112Z Downloading sherpa_onnx_core-1.13.8-py3-none-manylinux2014_x86_64.whl (10.6 MB)
+2026-10-04T03:31:08.4936676Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 10.6/10.6 MB 112.1 MB/s  0:00:00
+2026-10-04T03:31:08.4950418Z Using cached tinycss2-1.5.1-py3-none-any.whl (28 kB)
+2026-10-04T03:31:08.4963020Z Using cached typing_extensions-4.16.0-py3-none-any.whl (45 kB)
+2026-10-04T03:31:08.5012984Z Downloading wcwidth-0.9.1-cp310-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (768 kB)
+2026-10-04T03:31:08.5069095Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 768.4/768.4 kB 159.5 MB/s  0:00:00
+2026-10-04T03:31:08.5104448Z Downloading yarl-1.25.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (117 kB)
+2026-10-04T03:31:08.5135288Z Using cached pytest-9.1.1-py3-none-any.whl (386 kB)
+2026-10-04T03:31:08.5148141Z Using cached pluggy-1.6.0-py3-none-any.whl (20 kB)
+2026-10-04T03:31:08.5159601Z Using cached pytest_asyncio-1.4.0-py3-none-any.whl (16 kB)
+2026-10-04T03:31:08.5170822Z Using cached pytest_timeout-2.4.0-py3-none-any.whl (14 kB)
+2026-10-04T03:31:08.5182313Z Using cached packaging-26.3-py3-none-any.whl (129 kB)
+2026-10-04T03:31:08.5195643Z Using cached aiohappyeyeballs-2.7.1-py3-none-any.whl (15 kB)
+2026-10-04T03:31:08.5206176Z Using cached aiosignal-1.4.0-py3-none-any.whl (7.5 kB)
+2026-10-04T03:31:08.5217745Z Using cached annotated_types-0.8.0-py3-none-any.whl (13 kB)
+2026-10-04T03:31:08.5229352Z Using cached attrs-26.1.0-py3-none-any.whl (67 kB)
+2026-10-04T03:31:08.5240946Z Using cached croniter-6.2.4-py3-none-any.whl (46 kB)
+2026-10-04T03:31:08.5252948Z Using cached frozenlist-1.8.0-cp312-cp312-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl (242 kB)
+2026-10-04T03:31:08.5288029Z Downloading idna-3.20-py3-none-any.whl (69 kB)
+2026-10-04T03:31:08.5318825Z Using cached iniconfig-2.3.0-py3-none-any.whl (7.5 kB)
+2026-10-04T03:31:08.5330552Z Using cached jsonschema_specifications-2025.9.1-py3-none-any.whl (18 kB)
+2026-10-04T03:31:08.5341838Z Using cached markdown_it_py-4.2.0-py3-none-any.whl (91 kB)
+2026-10-04T03:31:08.5354472Z Using cached mdurl-0.1.2-py3-none-any.whl (10.0 kB)
+2026-10-04T03:31:08.5365624Z Using cached linkify_it_py-2.2.0-py3-none-any.whl (21 kB)
+2026-10-04T03:31:08.5377524Z Using cached pillow-12.3.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (6.9 MB)
+2026-10-04T03:31:08.5436858Z Downloading propcache-0.5.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (250 kB)
+2026-10-04T03:31:08.5472248Z Using cached rich-15.0.0-py3-none-any.whl (310 kB)
+2026-10-04T03:31:08.5484833Z Using cached rich_pixels-3.0.1-py3-none-any.whl (6.0 kB)
+2026-10-04T03:31:08.5496509Z Using cached rpds_py-2026.6.3-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (366 kB)
+2026-10-04T03:31:08.5509547Z Using cached six-1.17.0-py2.py3-none-any.whl (11 kB)
+2026-10-04T03:31:08.5520940Z Using cached typing_inspection-0.4.4-py3-none-any.whl (14 kB)
+2026-10-04T03:31:08.5532397Z Using cached webencodings-0.6.1-py3-none-any.whl (8.7 kB)
+2026-10-04T03:31:08.5543749Z Using cached aiofiles-25.1.0-py3-none-any.whl (14 kB)
+2026-10-04T03:31:08.5585460Z Downloading cryptography-50.0.2-cp311-abi3-manylinux_2_34_x86_64.whl (4.8 MB)
+2026-10-04T03:31:08.5769544Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 4.8/4.8 MB 293.1 MB/s  0:00:00
+2026-10-04T03:31:08.5783556Z Using cached cffi-2.1.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (221 kB)
+2026-10-04T03:31:08.5795969Z Using cached defusedxml-0.7.1-py2.py3-none-any.whl (25 kB)
+2026-10-04T03:31:08.5841297Z Downloading emoji-2.16.0-py3-none-any.whl (610 kB)
+2026-10-04T03:31:08.5890515Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 610.9/610.9 kB 126.0 MB/s  0:00:00
+2026-10-04T03:31:08.5902460Z Using cached httpx-0.28.1-py3-none-any.whl (73 kB)
+2026-10-04T03:31:08.5916961Z Using cached httpcore-1.0.9-py3-none-any.whl (78 kB)
+2026-10-04T03:31:08.5929581Z Using cached h11-0.16.0-py3-none-any.whl (37 kB)
+2026-10-04T03:31:08.5941761Z Using cached anyio-4.15.1-py3-none-any.whl (132 kB)
+2026-10-04T03:31:08.5954823Z Using cached certifi-2026.7.22-py3-none-any.whl (136 kB)
+2026-10-04T03:31:08.5967080Z Using cached jinja2-3.1.6-py3-none-any.whl (134 kB)
+2026-10-04T03:31:08.6005005Z Downloading markupsafe-3.0.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (22 kB)
+2026-10-04T03:31:08.6034173Z Using cached keyring-25.7.0-py3-none-any.whl (39 kB)
+2026-10-04T03:31:08.6045976Z Using cached jeepney-0.9.0-py3-none-any.whl (49 kB)
+2026-10-04T03:31:08.6057965Z Using cached secretstorage-3.5.0-py3-none-any.whl (15 kB)
+2026-10-04T03:31:08.6069879Z Using cached jaraco.classes-3.4.0-py3-none-any.whl (6.8 kB)
+2026-10-04T03:31:08.6081855Z Using cached jaraco_context-6.1.2-py3-none-any.whl (7.9 kB)
+2026-10-04T03:31:08.6094007Z Using cached jaraco_functools-4.6.0-py3-none-any.whl (11 kB)
+2026-10-04T03:31:08.6106222Z Using cached loguru-0.7.3-py3-none-any.whl (61 kB)
+2026-10-04T03:31:08.6118135Z Using cached markdownify-1.2.3-py3-none-any.whl (15 kB)
+2026-10-04T03:31:08.6129948Z Using cached beautifulsoup4-4.15.0-py3-none-any.whl (109 kB)
+2026-10-04T03:31:08.6165597Z Downloading soupsieve-2.10-py3-none-any.whl (38 kB)
+2026-10-04T03:31:08.6195958Z Using cached mdit_py_plugins-0.6.1-py3-none-any.whl (66 kB)
+2026-10-04T03:31:08.6207839Z Using cached more_itertools-11.1.0-py3-none-any.whl (72 kB)
+2026-10-04T03:31:08.6328378Z Downloading numpy-2.5.3-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (16.7 MB)
+2026-10-04T03:31:08.6935492Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 16.7/16.7 MB 283.7 MB/s  0:00:00
+2026-10-04T03:31:08.6950036Z Using cached psutil-7.2.2-cp36-abi3-manylinux2010_x86_64.manylinux_2_12_x86_64.manylinux_2_28_x86_64.whl (155 kB)
+2026-10-04T03:31:08.6962298Z Using cached pycparser-3.0-py3-none-any.whl (48 kB)
+2026-10-04T03:31:08.6975743Z Using cached pycryptodomex-3.23.0-cp37-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (2.3 MB)
+2026-10-04T03:31:08.6995427Z Using cached pyperclip-1.11.0-py3-none-any.whl (11 kB)
+2026-10-04T03:31:08.7007364Z Using cached python_dateutil-2.9.0.post0-py2.py3-none-any.whl (229 kB)
+2026-10-04T03:31:08.7020313Z Using cached pyyaml-6.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (807 kB)
+2026-10-04T03:31:08.7034960Z Using cached requests-2.34.2-py3-none-any.whl (73 kB)
+2026-10-04T03:31:08.7071976Z Downloading charset_normalizer-3.5.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (257 kB)
+2026-10-04T03:31:08.7129737Z Downloading urllib3-2.8.0-py3-none-any.whl (135 kB)
+2026-10-04T03:31:08.7195885Z Downloading textual_image-0.14.1-py3-none-any.whl (183 kB)
+2026-10-04T03:31:08.7228252Z Using cached toml-0.10.2-py2.py3-none-any.whl (16 kB)
+2026-10-04T03:31:08.9843705Z Building wheels for collected packages: tldw_chatbook
+2026-10-04T03:31:08.9852292Z   Building editable for tldw_chatbook (pyproject.toml): started
+2026-10-04T03:31:09.5796226Z   Building editable for tldw_chatbook (pyproject.toml): finished with status 'done'
+2026-10-04T03:31:09.5813108Z   Created wheel for tldw_chatbook: filename=tldw_chatbook-0.2.3-0.editable-py3-none-any.whl size=29080 sha256=ab1b31f724848665ba031bda8459bdb1010723e4886d0fdec93eaf014a57cdfc
+2026-10-04T03:31:09.5814265Z   Stored in directory: /tmp/pip-ephem-wheel-cache-5cap9kdu/wheels/24/4b/39/86b9fd25be7c432a62d8b220df51cdb18f8f5b9d989fcea420
+2026-10-04T03:31:09.5864859Z Successfully built tldw_chatbook
+2026-10-04T03:31:09.7440000Z Installing collected packages: sherpa-onnx-core, pyperclip, webencodings, wcwidth, urllib3, typing-extensions, toml, soupsieve, six, sherpa-onnx, rpds-py, rfc8785, regex, PyYAML, pygments, pycryptodomex, pycparser, psutil, propcache, portalocker, pluggy, platformdirs, pillow, packaging, numpy, multidict, more-itertools, mdurl, MarkupSafe, loguru, linkify-it-py, jeepney, jaraco.context, iniconfig, idna, h11, frozenlist, emoji, defusedxml, charset_normalizer, chardet, certifi, attrs, annotated-types, aiohappyeyeballs, aiofiles, yarl, typing-inspection, tinycss2, requests, referencing, python-dateutil, pytest, pyte, pydantic-core, markdown-it-py, jinja2, jaraco.functools, jaraco.classes, httpcore, html5lib, cffi, beautifulsoup4, anyio, aiosignal, tiktoken, rich, pytest-timeout, pytest-asyncio, pydantic, mdit-py-plugins, markdownify, jsonschema-specifications, httpx, cryptography, croniter, aiohttp, textual-image, textual, SecretStorage, rich-pixels, jsonschema, textual-diff-view, keyring, tldw_chatbook
+2026-10-04T03:31:17.8438852Z 
+2026-10-04T03:31:17.8510314Z Successfully installed MarkupSafe-3.0.4 PyYAML-6.0.3 SecretStorage-3.5.0 aiofiles-25.1.0 aiohappyeyeballs-2.7.1 aiohttp-3.14.3 aiosignal-1.4.0 annotated-types-0.8.0 anyio-4.15.1 attrs-26.1.0 beautifulsoup4-4.15.0 certifi-2026.7.22 cffi-2.1.1 chardet-5.2.0 charset_normalizer-3.5.2 croniter-6.2.4 cryptography-50.0.2 defusedxml-0.7.1 emoji-2.16.0 frozenlist-1.8.0 h11-0.16.0 html5lib-1.1 httpcore-1.0.9 httpx-0.28.1 idna-3.20 iniconfig-2.3.0 jaraco.classes-3.4.0 jaraco.context-6.1.2 jaraco.functools-4.6.0 jeepney-0.9.0 jinja2-3.1.6 jsonschema-4.26.0 jsonschema-specifications-2025.9.1 keyring-25.7.0 linkify-it-py-2.2.0 loguru-0.7.3 markdown-it-py-4.2.0 markdownify-1.2.3 mdit-py-plugins-0.6.1 mdurl-0.1.2 more-itertools-11.1.0 multidict-6.9.1 numpy-2.5.3 packaging-26.3 pillow-12.3.0 platformdirs-4.12.3 pluggy-1.6.0 portalocker-3.2.0 propcache-0.5.4 psutil-7.2.2 pycparser-3.0 pycryptodomex-3.23.0 pydantic-2.13.5 pydantic-core-2.46.5 pygments-2.21.0 pyperclip-1.11.0 pyte-0.8.2 pytest-9.1.1 pytest-asyncio-1.4.0 pytest-timeout-2.4.0 python-dateutil-2.9.0.post0 referencing-0.37.0 regex-2026.4.4 requests-2.34.2 rfc8785-0.1.4 rich-15.0.0 rich-pixels-3.0.1 rpds-py-2026.6.3 sherpa-onnx-1.13.8 sherpa-onnx-core-1.13.8 six-1.17.0 soupsieve-2.10 textual-8.2.8 textual-diff-view-0.1.5 textual-image-0.14.1 tiktoken-0.14.0 tinycss2-1.5.1 tldw_chatbook-0.2.3 toml-0.10.2 typing-extensions-4.16.0 typing-inspection-0.4.4 urllib3-2.8.0 wcwidth-0.9.1 webencodings-0.6.1 yarl-1.25.1
+2026-10-04T03:31:18.0923406Z ##[group]Run pytest \
+2026-10-04T03:31:18.0923715Z [36;1mpytest \[0m
+2026-10-04T03:31:18.0923927Z [36;1m  Tests/CI \[0m
+2026-10-04T03:31:18.0924158Z [36;1m  Tests/test_smoke.py \[0m
+2026-10-04T03:31:18.0924464Z [36;1m  Tests/Agents/test_execution_capacity.py \[0m
+2026-10-04T03:31:18.0924814Z [36;1m  Tests/Agents/test_fleet_messages.py \[0m
+2026-10-04T03:31:18.0925147Z [36;1m  Tests/Agents/test_session_todo_store.py \[0m
+2026-10-04T03:31:18.0925517Z [36;1m  Tests/DB/test_agent_orchestration_dev_migration.py \[0m
+2026-10-04T03:31:18.0925904Z [36;1m  Tests/DB/test_agent_run_budget_accounting.py \[0m
+2026-10-04T03:31:18.0926269Z [36;1m  Tests/DB/test_automatic_work_budget.py \[0m
+2026-10-04T03:31:18.0926609Z [36;1m  Tests/DB/test_automatic_runtime_owner.py \[0m
+2026-10-04T03:31:18.0926961Z [36;1m  Tests/DB/test_automatic_wake_attempts.py \[0m
+2026-10-04T03:31:18.0927318Z [36;1m  Tests/Model_Artifacts/test_operation_leases.py \[0m
+2026-10-04T03:31:18.0927764Z [36;1m  Tests/Model_Artifacts/test_operation_leases_process.py \[0m
+2026-10-04T03:31:18.0928148Z [36;1m  Tests/UI/test_mcp_workbench.py \[0m
+2026-10-04T03:31:18.0928454Z [36;1m  Tests/UI/test_mcp_tools_mode.py \[0m
+2026-10-04T03:31:18.0928784Z [36;1m  Tests/Widgets/test_detach_safe_text_area.py \[0m
+2026-10-04T03:31:18.0929259Z [36;1m  Tests/Architecture/test_console_controllers_define_their_self_attributes.py \[0m
+2026-10-04T03:31:18.0929723Z [36;1m  --timeout=180 \[0m
+2026-10-04T03:31:18.0929967Z [36;1m  --tb=short[0m
+2026-10-04T03:31:18.0994806Z shell: /usr/bin/bash -e {0}
+2026-10-04T03:31:18.0995068Z env:
+2026-10-04T03:31:18.0995344Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.14/x64
+2026-10-04T03:31:18.0995794Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.14/x64/lib/pkgconfig
+2026-10-04T03:31:18.0996401Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+2026-10-04T03:31:18.0996801Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+2026-10-04T03:31:18.0997202Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+2026-10-04T03:31:18.0997599Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.14/x64/lib
+2026-10-04T03:31:18.0997935Z ##[endgroup]
+2026-10-04T03:31:27.1267912Z ============================= test session starts ==============================
+2026-10-04T03:31:27.1268871Z platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+2026-10-04T03:31:27.1269757Z rootdir: /home/runner/work/tldw_chatbook/tldw_chatbook
+2026-10-04T03:31:27.1270484Z configfile: pyproject.toml
+2026-10-04T03:31:27.1271220Z plugins: asyncio-1.4.0, timeout-2.4.0, platformdirs-4.12.3, anyio-4.15.1
+2026-10-04T03:31:27.1273161Z asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+2026-10-04T03:31:27.1274312Z timeout: 180.0s
+2026-10-04T03:31:27.1274783Z timeout method: signal
+2026-10-04T03:31:27.1275258Z timeout func_only: False
+2026-10-04T03:31:27.1275738Z collected 1189 items
+2026-10-04T03:31:27.1276022Z 
+2026-10-04T03:31:27.9962200Z Tests/CI/test_backlog_task_id_uniqueness.py ...                          [  0%]
+2026-10-04T03:31:28.0603159Z Tests/CI/test_canvas_mermaid_asset_checker.py ...............            [  1%]
+2026-10-04T03:31:28.5049341Z Tests/CI/test_ci_queue_pressure_contract.py ..................           [  3%]
+2026-10-04T03:31:28.6672774Z Tests/CI/test_derived_artifacts_workflow.py ...........                  [  3%]
+2026-10-04T03:31:28.8101220Z Tests/CI/test_github_actions_test_workflow.py ...................        [  5%]
+2026-10-04T03:31:28.8499779Z Tests/CI/test_task19637_platform_evidence.py ....                        [  5%]
+2026-10-04T03:31:28.9012146Z Tests/CI/test_task2062_1_gguf_import_evidence.py ....                    [  6%]
+2026-10-04T03:31:29.1593346Z Tests/CI/test_task2062_2_gguf_source_evidence.py .....                   [  6%]
+2026-10-04T03:31:29.6597388Z Tests/CI/test_task31942_macos_concurrency_evidence.py ...............    [  7%]
+2026-10-04T03:31:31.1110979Z Tests/CI/test_task598_external_parakeet_evidence.py .................... [  9%]
+2026-10-04T03:31:31.3434256Z ................................                                         [ 12%]
+2026-10-04T03:31:31.5496804Z Tests/CI/test_task601_process_tree_evidence.py ......................... [ 14%]
+2026-10-04T03:31:32.2843453Z ................................................................         [ 19%]
+2026-10-04T03:31:32.5103883Z Tests/CI/test_task602_platform_evidence.py ............................. [ 22%]
+2026-10-04T03:31:32.8470292Z .......................................                                  [ 25%]
+2026-10-04T03:31:33.0474168Z Tests/CI/test_task603_dictation_evidence.py ............................ [ 27%]
+2026-10-04T03:31:33.4278084Z .........................                                                [ 29%]
+2026-10-04T03:31:33.4383281Z Tests/CI/test_textual_runtime_contract.py ..                             [ 30%]
+2026-10-04T03:31:33.4759440Z Tests/CI/test_ui_pr_gate_census_checker.py ........                      [ 30%]
+2026-10-04T03:31:57.1754287Z Tests/test_smoke.py ................                                     [ 32%]
+2026-10-04T03:31:57.4855659Z Tests/Agents/test_execution_capacity.py .......................          [ 34%]
+2026-10-04T03:31:57.7725849Z Tests/Agents/test_fleet_messages.py .................................... [ 37%]
+2026-10-04T03:31:57.8737205Z .....                                                                    [ 37%]
+2026-10-04T03:31:58.1502429Z Tests/Agents/test_session_todo_store.py ................................ [ 40%]
+2026-10-04T03:31:58.5776741Z ........................................................................ [ 46%]
+2026-10-04T03:32:00.0310379Z ........................................................................ [ 52%]
+2026-10-04T03:32:00.3336527Z .........                                                                [ 53%]
+2026-10-04T03:32:01.8840443Z Tests/DB/test_agent_orchestration_dev_migration.py ....                  [ 53%]
+2026-10-04T03:32:04.0625618Z Tests/DB/test_agent_run_budget_accounting.py ...............             [ 54%]
+2026-10-04T03:32:09.7648471Z Tests/DB/test_automatic_work_budget.py ................................. [ 57%]
+2026-10-04T03:32:09.7676290Z                                                                          [ 57%]
+2026-10-04T03:32:11.7057829Z Tests/DB/test_automatic_runtime_owner.py .........                       [ 58%]
+2026-10-04T03:32:15.0962751Z Tests/DB/test_automatic_wake_attempts.py .................               [ 59%]
+2026-10-04T03:32:15.5864145Z Tests/Model_Artifacts/test_operation_leases.py ......................... [ 61%]
+2026-10-04T03:32:15.9610018Z .........................                                                [ 63%]
+2026-10-04T03:32:19.0683040Z Tests/Model_Artifacts/test_operation_leases_process.py ......            [ 64%]
+2026-10-04T03:33:18.7456793Z Tests/UI/test_mcp_workbench.py ......................................... [ 67%]
+2026-10-04T03:35:02.4067402Z ........................................................................ [ 73%]
+2026-10-04T03:36:38.0500617Z ........................................................................ [ 79%]
+2026-10-04T03:38:36.0561548Z ........................................................................ [ 85%]
+2026-10-04T03:40:38.5309409Z ........................................................................ [ 92%]
+2026-10-04T03:41:25.3404027Z .....................                                                    [ 93%]
+2026-10-04T03:41:51.3301404Z Tests/UI/test_mcp_tools_mode.py ........................................ [ 97%]
+2026-10-04T03:42:06.9325056Z ..................                                                       [ 98%]
+2026-10-04T03:42:08.4439558Z Tests/Widgets/test_detach_safe_text_area.py ...                          [ 98%]
+2026-10-04T03:42:09.2590692Z Tests/Architecture/test_console_controllers_define_their_self_attributes.py . [ 98%]
+2026-10-04T03:42:10.1992924Z s...........                                                             [100%]
+2026-10-04T03:42:10.1995191Z 
+2026-10-04T03:42:10.1995562Z ============================= slowest 25 durations =============================
+2026-10-04T03:42:10.1997451Z 8.54s call     Tests/test_smoke.py::TestUIComponents::test_app_initialization
+2026-10-04T03:42:10.1998796Z 7.26s call     Tests/UI/test_mcp_workbench.py::test_tools_mode_local_controls_round_trip_master_and_workspace
+2026-10-04T03:42:10.2000098Z 5.87s call     Tests/UI/test_mcp_workbench.py::test_tools_mode_rejects_non_directory_workspace_root
+2026-10-04T03:42:10.2001378Z 5.82s call     Tests/UI/test_mcp_workbench.py::test_tools_mode_workspace_root_uses_shared_path_validator
+2026-10-04T03:42:10.2003064Z 4.48s call     Tests/UI/test_mcp_workbench.py::test_goto_permission_row_is_the_single_shared_implementation_for_all_three_triggers
+2026-10-04T03:42:10.2004489Z 3.31s call     Tests/UI/test_mcp_workbench.py::test_tool_gate_checkbox_toggle_saves_setting_and_reloads_catalog
+2026-10-04T03:42:10.2005762Z 3.13s call     Tests/UI/test_mcp_workbench.py::test_test_tool_preview_unmount_and_remount_revokes_old_nonce
+2026-10-04T03:42:10.2007013Z 2.93s call     Tests/UI/test_mcp_workbench.py::test_test_tool_blocked_change_button_jumps_to_permissions_row
+2026-10-04T03:42:10.2008434Z 2.61s call     Tests/UI/test_mcp_workbench.py::test_test_tool_rapid_reopen_cleans_cancelled_mint_without_stale_update
+2026-10-04T03:42:10.2009808Z 2.59s call     Tests/UI/test_mcp_workbench.py::test_workbench_at_100x30_keeps_server_master_switch_reachable
+2026-10-04T03:42:10.2011148Z 2.58s call     Tests/UI/test_mcp_workbench.py::test_mutations_panel_cancel_clears_selection_and_does_not_reopen_on_resync
+2026-10-04T03:42:10.2012721Z 2.54s call     Tests/test_smoke.py::TestDatabaseSmoke::test_media_database_initialization
+2026-10-04T03:42:10.2013916Z 2.51s call     Tests/UI/test_mcp_workbench.py::test_test_tool_active_watcher_polling_is_bounded_and_stops_on_unmount
+2026-10-04T03:42:10.2015397Z 2.49s call     Tests/UI/test_mcp_workbench.py::test_slow_tool_result_does_not_render_under_a_different_selected_tool
+2026-10-04T03:42:10.2016168Z 2.47s call     Tests/test_smoke.py::TestRAGFunctionality::test_rag_service_initialization
+2026-10-04T03:42:10.2016710Z 2.43s call     Tests/test_smoke.py::TestConfiguration::test_paths_exist
+2026-10-04T03:42:10.2017185Z 2.38s call     Tests/test_smoke.py::TestConfiguration::test_config_loading
+2026-10-04T03:42:10.2017679Z 2.38s call     Tests/test_smoke.py::TestRAGFunctionality::test_chunking_service
+2026-10-04T03:42:10.2018284Z 2.37s call     Tests/UI/test_mcp_workbench.py::test_test_tool_never_started_outcome_omits_success_decision_note
+2026-10-04T03:42:10.2018984Z 2.35s call     Tests/UI/test_mcp_workbench.py::test_test_tool_run_redacts_secret_in_error_shaped_result_note
+2026-10-04T03:42:10.2019620Z 2.30s call     Tests/UI/test_mcp_workbench.py::test_test_tool_run_redacts_secret_shaped_result
+2026-10-04T03:42:10.2020262Z 2.29s call     Tests/UI/test_mcp_workbench.py::test_double_activation_of_a_gate_row_never_writes_an_mcp_key
+2026-10-04T03:42:10.2021020Z 2.29s call     Tests/UI/test_mcp_workbench.py::test_test_tool_execution_failure_redacts_secrets_paths_and_bounds_text[failure0]
+2026-10-04T03:42:10.2022035Z 2.28s call     Tests/UI/test_mcp_workbench.py::test_test_tool_preview_source_switch_revokes_nonce_while_mounted
+2026-10-04T03:42:10.2022819Z 2.26s call     Tests/UI/test_mcp_workbench.py::test_test_tool_run_bare_permission_error_from_tool_body_renders_failed_not_blocked
+2026-10-04T03:42:10.2023429Z =========================== short test summary info ============================
+2026-10-04T03:42:10.2024077Z SKIPPED [1] Tests/Architecture/test_console_controllers_define_their_self_attributes.py:202: got empty parameter set for (key)
+2026-10-04T03:42:10.2024719Z ================= 1188 passed, 1 skipped in 647.71s (0:10:47) ==================
+2026-10-04T03:42:12.2717667Z ##[group]Run pytest \
+2026-10-04T03:42:12.2717964Z [36;1mpytest \[0m
+2026-10-04T03:42:12.2718238Z [36;1m  Tests/UI/test_console_runtime_ownership.py \[0m
+2026-10-04T03:42:12.2718623Z [36;1m  Tests/Chat/test_console_viewless_hooks.py \[0m
+2026-10-04T03:42:12.2719012Z [36;1m  Tests/Agents/test_install_skill_runtime_tool.py \[0m
+2026-10-04T03:42:12.2719421Z [36;1m  Tests/Chat/test_console_chat_create_integration.py \[0m
+2026-10-04T03:42:12.2719800Z [36;1m  --timeout=300 \[0m
+2026-10-04T03:42:12.2720054Z [36;1m  --tb=short[0m
+2026-10-04T03:42:12.2782443Z shell: /usr/bin/bash -e {0}
+2026-10-04T03:42:12.2782704Z env:
+2026-10-04T03:42:12.2782980Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.14/x64
+2026-10-04T03:42:12.2783466Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.14/x64/lib/pkgconfig
+2026-10-04T03:42:12.2783921Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+2026-10-04T03:42:12.2784361Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+2026-10-04T03:42:12.2784780Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+2026-10-04T03:42:12.2785187Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.14/x64/lib
+2026-10-04T03:42:12.2785526Z ##[endgroup]
+2026-10-04T03:42:26.2730961Z ============================= test session starts ==============================
+2026-10-04T03:42:26.2732081Z platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+2026-10-04T03:42:26.2732855Z rootdir: /home/runner/work/tldw_chatbook/tldw_chatbook
+2026-10-04T03:42:26.2733468Z configfile: pyproject.toml
+2026-10-04T03:42:26.2734138Z plugins: asyncio-1.4.0, timeout-2.4.0, platformdirs-4.12.3, anyio-4.15.1
+2026-10-04T03:42:26.2735352Z asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+2026-10-04T03:42:26.2736316Z timeout: 300.0s
+2026-10-04T03:42:26.2736704Z timeout method: signal
+2026-10-04T03:42:26.2737101Z timeout func_only: False
+2026-10-04T03:42:26.2737489Z collected 147 items
+2026-10-04T03:42:26.2738139Z 
+2026-10-04T03:43:12.0950277Z Tests/UI/test_console_runtime_ownership.py ............................. [ 19%]
+2026-10-04T03:43:34.4405978Z ..............x..........--- _setup_logging START (from Logging_Config.py) ---
+2026-10-04T03:43:34.4406547Z Loguru: All pre-existing sinks removed.
+2026-10-04T03:43:34.4407077Z Loguru: Configured to forward its messages to standard Python logging system.
+2026-10-04T03:43:47.4619502Z F--- _setup_logging START (from Logging_Config.py) ---
+2026-10-04T03:43:47.4620150Z Loguru: All pre-existing sinks removed.
+2026-10-04T03:43:47.4620846Z Loguru: Configured to forward its messages to standard Python logging system.
+2026-10-04T03:43:59.9080827Z .--- _setup_logging START (from Logging_Config.py) ---
+2026-10-04T03:43:59.9081465Z Loguru: All pre-existing sinks removed.
+2026-10-04T03:43:59.9082494Z Loguru: Configured to forward its messages to standard Python logging system.
+2026-10-04T03:44:11.6136363Z .--- _setup_logging START (from Logging_Config.py) ---
+2026-10-04T03:44:11.6137451Z Loguru: All pre-existing sinks removed.
+2026-10-04T03:44:11.6138301Z Loguru: Configured to forward its messages to standard Python logging system.
+2026-10-04T03:44:25.6392766Z F--- _setup_logging START (from Logging_Config.py) ---
+2026-10-04T03:44:25.6393625Z Loguru: All pre-existing sinks removed.
+2026-10-04T03:44:25.6394524Z Loguru: Configured to forward its messages to standard Python logging system.
+2026-10-04T03:44:29.1509297Z F.--- _setup_logging START (from Logging_Config.py) ---
+2026-10-04T03:44:29.1509753Z Loguru: All pre-existing sinks removed.
+2026-10-04T03:44:29.1510232Z Loguru: Configured to forward its messages to standard Python logging system.
+2026-10-04T03:44:50.1639056Z ..........--- _setup_logging START (from Logging_Config.py) ---
+2026-10-04T03:44:50.1639558Z Loguru: All pre-existing sinks removed.
+2026-10-04T03:44:50.1639982Z Loguru: Configured to forward its messages to standard Python logging system.
+2026-10-04T03:45:06.7284209Z .--- _setup_logging START (from Logging_Config.py) ---
+2026-10-04T03:45:06.7284852Z Loguru: All pre-existing sinks removed.
+2026-10-04T03:45:06.7285459Z Loguru: Configured to forward its messages to standard Python logging system.
+2026-10-04T03:45:23.5936304Z .--- _setup_logging START (from Logging_Config.py) ---
+2026-10-04T03:45:23.5937235Z Loguru: All pre-existing sinks removed.
+2026-10-04T03:45:23.5938274Z Loguru: Configured to forward its messages to standard Python logging system.
+2026-10-04T03:46:42.7782877Z .--- _setup_logging START (from Logging_Config.py) ---
+2026-10-04T03:46:42.7783642Z Loguru: All pre-existing sinks removed.
+2026-10-04T03:46:42.7784331Z Loguru: Configured to forward its messages to standard Python logging system.
+2026-10-04T03:47:03.8186538Z F--- _setup_logging START (from Logging_Config.py) ---
+2026-10-04T03:47:03.8187284Z Loguru: All pre-existing sinks removed.
+2026-10-04T03:47:03.8187971Z Loguru: Configured to forward its messages to standard Python logging system.
+2026-10-04T03:47:24.7778395Z .--- _setup_logging START (from Logging_Config.py) ---
+2026-10-04T03:47:24.7779060Z Loguru: All pre-existing sinks removed.
+2026-10-04T03:47:24.7779667Z Loguru: Configured to forward its messages to standard Python logging system.
+2026-10-04T03:47:44.1397735Z .--- _setup_logging START (from Logging_Config.py) ---
+2026-10-04T03:47:44.1398265Z Loguru: All pre-existing sinks removed.
+2026-10-04T03:47:44.1398708Z Loguru: Configured to forward its messages to standard Python logging system.
+2026-10-04T03:48:04.5587298Z .--- _setup_logging START (from Logging_Config.py) ---
+2026-10-04T03:48:04.5587800Z Loguru: All pre-existing sinks removed.
+2026-10-04T03:48:04.5588325Z Loguru: Configured to forward its messages to standard Python logging system.
+2026-10-04T03:48:26.4162276Z .--- _setup_logging START (from Logging_Config.py) ---
+2026-10-04T03:48:26.4162936Z Loguru: All pre-existing sinks removed.
+2026-10-04T03:48:26.4163555Z Loguru: Configured to forward its messages to standard Python logging system.
+2026-10-04T03:48:28.0170936Z .                       [ 53%]
+2026-10-04T03:49:08.6804041Z Tests/Chat/test_console_viewless_hooks.py ..................             [ 65%]
+2026-10-04T03:49:10.8183408Z Tests/Agents/test_install_skill_runtime_tool.py ......                   [ 70%]
+2026-10-04T03:49:48.4722732Z Tests/Chat/test_console_chat_create_integration.py ..................... [ 84%]
+2026-10-04T03:50:35.5101645Z .......................                                                  [100%]
+2026-10-04T03:50:35.5102586Z 
+2026-10-04T03:50:35.5102934Z =================================== FAILURES ===================================
+2026-10-04T03:50:35.5103752Z _________________ test_second_console_visit_reuses_the_runtime _________________
+2026-10-04T03:50:35.5104731Z Tests/UI/test_console_runtime_ownership.py:2094: in test_second_console_visit_reuses_the_runtime
+2026-10-04T03:50:35.5105654Z     assert controller_two.notify_run_outcome is not None
+2026-10-04T03:50:35.5106218Z E   assert None is not None
+2026-10-04T03:50:35.5107251Z E    +  where None = <tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object at 0x7f2250fe8e60>.notify_run_outcome
+2026-10-04T03:50:35.5108309Z ----------------------------- Captured stderr call -----------------------------
+2026-10-04T03:50:35.5109423Z 2026-10-04 03:43:18.401 | INFO     | tldw_chatbook.app:__init__:1251 - Loaded app_config - strip_thinking_tags: True
+2026-10-04T03:50:35.5110788Z 2026-10-04 03:43:18.414 | INFO     | tldw_chatbook.app:__init__:1359 - Parallel init task 'providers_models' completed in 0.000s
+2026-10-04T03:50:35.5112341Z 2026-10-04 03:43:18.414 | INFO     | tldw_chatbook.app:__init__:1359 - Parallel init task 'prompts_service' completed in 0.000s
+2026-10-04T03:50:35.5113694Z 2026-10-04 03:43:18.414 | INFO     | tldw_chatbook.app:__init__:1359 - Parallel init task 'notes_service' completed in 0.000s
+2026-10-04T03:50:35.5114981Z 2026-10-04 03:43:18.414 | INFO     | tldw_chatbook.app:__init__:1359 - Parallel init task 'media_db' completed in 0.000s
+2026-10-04T03:50:35.5116904Z 2026-10-04 03:43:18.488 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - LibraryCollectionsDB initialized with path: /tmp/tldw-chatbook-test-v690m9uu/library_collections.sqlite [Client: tldw_cli_local_instance_v1]
+2026-10-04T03:50:35.5118412Z 2026-10-04 03:43:18.568 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - WorkspaceDB initialized with path: /tmp/tldw-chatbook-test-v690m9uu/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+2026-10-04T03:50:35.5119789Z 2026-10-04 03:43:18.665 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - SubscriptionsDB initialized with path: /tmp/tldw-chatbook-test-v690m9uu/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+2026-10-04T03:50:35.5121005Z 2026-10-04 03:43:18.669 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+2026-10-04T03:50:35.5122538Z 2026-10-04 03:43:18.669 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - EventStateRepository initialized with path: /tmp/tldw-chatbook-test-v690m9uu/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+2026-10-04T03:50:35.5123989Z 2026-10-04 03:43:18.669 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - SyncStateRepository initialized with path: /tmp/tldw-chatbook-test-v690m9uu/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+2026-10-04T03:50:35.5125211Z 2026-10-04 03:43:18.883 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:75 - Scheduling schema migrated to version 2 (missed_count column)
+2026-10-04T03:50:35.5126249Z 2026-10-04 03:43:18.952 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:62 - Scheduling schema migrated to version 3 (timeout_seconds column)
+2026-10-04T03:50:35.5127300Z 2026-10-04 03:43:19.026 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+2026-10-04T03:50:35.5128333Z 2026-10-04 03:43:19.098 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:63 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+2026-10-04T03:50:35.5129624Z 2026-10-04 03:43:19.169 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:68 - Scheduling schema migrated to version 6 (task_incidents)
+2026-10-04T03:50:35.5130700Z 2026-10-04 03:43:19.240 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+2026-10-04T03:50:35.5132164Z 2026-10-04 03:43:19.240 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - ScheduledTasksDB initialized with path: /tmp/tldw-chatbook-test-v690m9uu/scheduled_tasks.sqlite [Client: default]
+2026-10-04T03:50:35.5133220Z 2026-10-04 03:43:19.272 | DEBUG    | tldw_chatbook.app:__init__:1430 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+2026-10-04T03:50:35.5134056Z 2026-10-04 03:43:19.272 | DEBUG    | tldw_chatbook.app:__init__:1433 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+2026-10-04T03:50:35.5135146Z 2026-10-04 03:43:19.287 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /home/runner/work/tldw_chatbook/tldw_chatbook/tldw_chatbook/Evals/config/eval_config.yaml
+2026-10-04T03:50:35.5136154Z 2026-10-04 03:43:19.356 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+2026-10-04T03:50:35.5137100Z 2026-10-04 03:43:19.357 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /tmp/tldw_test_config_kzl4hb1d/home/.local/share/tldw_cli/default_user/evals.db
+2026-10-04T03:50:35.5138001Z 2026-10-04 03:43:19.357 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+2026-10-04T03:50:35.5138827Z 2026-10-04 03:43:19.376 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+2026-10-04T03:50:35.5139876Z 2026-10-04 03:43:19.376 | INFO     | tldw_chatbook.app:_init_worker_handlers:2167 - Worker handler registry initialized with all handlers
+2026-10-04T03:50:35.5140607Z 2026-10-04 03:43:19.377 | INFO     | tldw_chatbook.app:__init__:1615 - === STARTUP TIMING SUMMARY ===
+2026-10-04T03:50:35.5141238Z 2026-10-04 03:43:19.377 | INFO     | tldw_chatbook.app:__init__:1616 - Total initialization time: 1.009 seconds
+2026-10-04T03:50:35.5142122Z 2026-10-04 03:43:19.377 | INFO     | tldw_chatbook.app:__init__:1622 -   basic_init: 0.039s (3.9%)
+2026-10-04T03:50:35.5142706Z 2026-10-04 03:43:19.377 | INFO     | tldw_chatbook.app:__init__:1622 -   attribute_init: 0.000s (0.0%)
+2026-10-04T03:50:35.5143293Z 2026-10-04 03:43:19.377 | INFO     | tldw_chatbook.app:__init__:1622 -   parallel_init: 0.001s (0.1%)
+2026-10-04T03:50:35.5143933Z 2026-10-04 03:43:19.377 | INFO     | tldw_chatbook.app:__init__:1635 -     - notes_service: 0.000s (0.4% of parallel_init)
+2026-10-04T03:50:35.5144656Z 2026-10-04 03:43:19.377 | INFO     | tldw_chatbook.app:__init__:1635 -     - providers_models: 0.000s (0.2% of parallel_init)
+2026-10-04T03:50:35.5145359Z 2026-10-04 03:43:19.377 | INFO     | tldw_chatbook.app:__init__:1635 -     - media_db: 0.000s (0.2% of parallel_init)
+2026-10-04T03:50:35.5146055Z 2026-10-04 03:43:19.377 | INFO     | tldw_chatbook.app:__init__:1635 -     - prompts_service: 0.000s (0.1% of parallel_init)
+2026-10-04T03:50:35.5146686Z 2026-10-04 03:43:19.377 | INFO     | tldw_chatbook.app:__init__:1639 - ==============================
+2026-10-04T03:50:35.5147472Z 2026-10-04 03:43:19.377 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:__init__:3376 - Initializing CharactersRAGDB db_sha256=4c1aa04f91da [Client ID: ui-test]
+2026-10-04T03:50:35.5148537Z 2026-10-04 03:43:19.438 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3554 - Opened/Reopened SQLite connection db_sha256=4c1aa04f91da thread=139785955363712
+2026-10-04T03:50:35.5149588Z 2026-10-04 03:43:19.439 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 139785955363712.
+2026-10-04T03:50:35.5150759Z 2026-10-04 03:43:19.439 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:8550 - Checking DB schema 'rag_char_chat_schema'. Current version: 0. Code supports: 76
+2026-10-04T03:50:35.5152089Z 2026-10-04 03:43:19.439 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_apply_schema_v4:4437 - Applying schema Version 4 for 'rag_char_chat_schema' to DB: db_sha256=4c1aa04f91da...
+2026-10-04T03:50:35.5153144Z 2026-10-04 03:43:19.439 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5154086Z 2026-10-04 03:43:19.450 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_apply_schema_v4:4478 - [rag_char_chat_schema V4] Full schema script executed.
+2026-10-04T03:50:35.5155133Z 2026-10-04 03:43:19.450 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_apply_schema_v4:4485 - [rag_char_chat_schema V4] Schema 4 applied and version confirmed for DB: db_sha256=4c1aa04f91da.
+2026-10-04T03:50:35.5156415Z 2026-10-04 03:43:19.450 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enrich_default_assistant_card_if_bare:4749 - [task-2451] Default Assistant enrichment UPDATE affected 1 row(s) in DB: db_sha256=4c1aa04f91da.
+2026-10-04T03:50:35.5157666Z 2026-10-04 03:43:19.451 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v4_to_v5:4770 - Migrating schema from V4 to V5 for 'rag_char_chat_schema' in DB: db_sha256=4c1aa04f91da...
+2026-10-04T03:50:35.5158731Z 2026-10-04 03:43:19.451 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5160046Z 2026-10-04 03:43:19.462 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v4_to_v5:4780 - [rag_char_chat_schema V4→V5] Migration script executed.
+2026-10-04T03:50:35.5161406Z 2026-10-04 03:43:19.462 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v4_to_v5:4789 - [rag_char_chat_schema V4→V5] Migration completed successfully for DB: db_sha256=4c1aa04f91da.
+2026-10-04T03:50:35.5162911Z 2026-10-04 03:43:19.462 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v5_to_v6:4823 - Migrating schema from V5 to V6 for 'rag_char_chat_schema' in DB: db_sha256=4c1aa04f91da...
+2026-10-04T03:50:35.5163991Z 2026-10-04 03:43:19.463 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5165123Z 2026-10-04 03:43:19.464 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v5_to_v6:4831 - [rag_char_chat_schema V5→V6] Migration script executed.
+2026-10-04T03:50:35.5166317Z 2026-10-04 03:43:19.464 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v5_to_v6:4840 - [rag_char_chat_schema V5→V6] Migration completed successfully for DB: db_sha256=4c1aa04f91da.
+2026-10-04T03:50:35.5167500Z 2026-10-04 03:43:19.464 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v6_to_v7:4874 - Migrating schema from V6 to V7 for 'rag_char_chat_schema' in DB: db_sha256=4c1aa04f91da...
+2026-10-04T03:50:35.5168581Z 2026-10-04 03:43:19.465 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5169651Z 2026-10-04 03:43:19.466 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v6_to_v7:4882 - [rag_char_chat_schema V6→V7] Migration script executed.
+2026-10-04T03:50:35.5170851Z 2026-10-04 03:43:19.466 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v6_to_v7:4891 - [rag_char_chat_schema V6→V7] Migration completed successfully for DB: db_sha256=4c1aa04f91da.
+2026-10-04T03:50:35.5172296Z 2026-10-04 03:43:19.466 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v7_to_v8:8464 - Migrating schema from V7 to V8 for 'rag_char_chat_schema' in DB: db_sha256=4c1aa04f91da...
+2026-10-04T03:50:35.5173474Z 2026-10-04 03:43:19.467 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5174744Z 2026-10-04 03:43:19.469 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v7_to_v8:8472 - [rag_char_chat_schema V7→V8] Migration script executed.
+2026-10-04T03:50:35.5175955Z 2026-10-04 03:43:19.469 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v7_to_v8:8481 - [rag_char_chat_schema V7→V8] Migration completed successfully for DB: db_sha256=4c1aa04f91da.
+2026-10-04T03:50:35.5177167Z 2026-10-04 03:43:19.469 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v8_to_v9:4925 - Migrating schema from V8 to V9 for 'rag_char_chat_schema' in DB: db_sha256=4c1aa04f91da...
+2026-10-04T03:50:35.5178244Z 2026-10-04 03:43:19.470 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5179312Z 2026-10-04 03:43:19.473 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v8_to_v9:4933 - [rag_char_chat_schema V8→V9] Migration script executed.
+2026-10-04T03:50:35.5180516Z 2026-10-04 03:43:19.473 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v8_to_v9:4942 - [rag_char_chat_schema V8→V9] Migration completed successfully for DB: db_sha256=4c1aa04f91da.
+2026-10-04T03:50:35.5181919Z 2026-10-04 03:43:19.474 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v9_to_v10:4976 - Migrating schema from V9 to V10 for 'rag_char_chat_schema' in DB: db_sha256=4c1aa04f91da...
+2026-10-04T03:50:35.5183085Z 2026-10-04 03:43:19.474 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5184186Z 2026-10-04 03:43:19.474 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v9_to_v10:4984 - [rag_char_chat_schema V9→V10] Migration script executed.
+2026-10-04T03:50:35.5185400Z 2026-10-04 03:43:19.475 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v9_to_v10:4993 - [rag_char_chat_schema V9→V10] Migration completed successfully for DB: db_sha256=4c1aa04f91da.
+2026-10-04T03:50:35.5186778Z 2026-10-04 03:43:19.475 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v10_to_v11:5027 - Migrating schema from V10 to V11 for 'rag_char_chat_schema' in DB: db_sha256=4c1aa04f91da...
+2026-10-04T03:50:35.5187871Z 2026-10-04 03:43:19.475 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5188965Z 2026-10-04 03:43:19.479 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v10_to_v11:5035 - [rag_char_chat_schema V10→V11] Migration script executed.
+2026-10-04T03:50:35.5190201Z 2026-10-04 03:43:19.479 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v10_to_v11:5044 - [rag_char_chat_schema V10→V11] Migration completed successfully for DB: db_sha256=4c1aa04f91da.
+2026-10-04T03:50:35.5191406Z 2026-10-04 03:43:19.479 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v11_to_v12:5078 - Migrating schema from V11 to V12 for 'rag_char_chat_schema' in DB: db_sha256=4c1aa04f91da...
+2026-10-04T03:50:35.5192751Z 2026-10-04 03:43:19.479 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5193851Z 2026-10-04 03:43:19.487 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v11_to_v12:5086 - [rag_char_chat_schema V11→V12] Migration script executed.
+2026-10-04T03:50:35.5195094Z 2026-10-04 03:43:19.487 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v11_to_v12:5095 - [rag_char_chat_schema V11→V12] Migration completed successfully for DB: db_sha256=4c1aa04f91da.
+2026-10-04T03:50:35.5196304Z 2026-10-04 03:43:19.487 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v12_to_v13:5121 - Migrating schema from V12 to V13 for 'rag_char_chat_schema' in DB: db_sha256=4c1aa04f91da...
+2026-10-04T03:50:35.5197385Z 2026-10-04 03:43:19.488 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5198612Z 2026-10-04 03:43:19.513 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v12_to_v13:5129 - [rag_char_chat_schema V12→V13] Migration script executed.
+2026-10-04T03:50:35.5199858Z 2026-10-04 03:43:19.513 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v12_to_v13:5137 - [rag_char_chat_schema V12→V13] Migration completed successfully for DB: db_sha256=4c1aa04f91da.
+2026-10-04T03:50:35.5201063Z 2026-10-04 03:43:19.513 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v13_to_v14:5162 - Migrating schema from V13 to V14 for 'rag_char_chat_schema' in DB: db_sha256=4c1aa04f91da...
+2026-10-04T03:50:35.5202364Z 2026-10-04 03:43:19.514 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5203482Z 2026-10-04 03:43:19.521 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v13_to_v14:5170 - [rag_char_chat_schema V13→V14] Migration script executed.
+2026-10-04T03:50:35.5204720Z 2026-10-04 03:43:19.521 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v13_to_v14:5178 - [rag_char_chat_schema V13→V14] Migration completed successfully for DB: db_sha256=4c1aa04f91da.
+2026-10-04T03:50:35.5205943Z 2026-10-04 03:43:19.521 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v14_to_v15:5203 - Migrating schema from V14 to V15 for 'rag_char_chat_schema' in DB: db_sha256=4c1aa04f91da...
+2026-10-04T03:50:35.5207031Z 2026-10-04 03:43:19.522 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5208122Z 2026-10-04 03:43:19.523 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v14_to_v15:5211 - [rag_char_chat_schema V14→V15] Migration script executed.
+2026-10-04T03:50:35.5209479Z 2026-10-04 03:43:19.523 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v14_to_v15:5219 - [rag_char_chat_schema V14→V15] Migration completed successfully for DB: db_sha256=4c1aa04f91da.
+2026-10-04T03:50:35.5210691Z 2026-10-04 03:43:19.523 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v15_to_v16:5245 - Migrating schema from V15 to V16 for 'rag_char_chat_schema' in DB: db_sha256=4c1aa04f91da...
+2026-10-04T03:50:35.5211895Z 2026-10-04 03:43:19.524 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5212988Z 2026-10-04 03:43:19.525 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v15_to_v16:5288 - [rag_char_chat_schema V15→V16] Migration script executed.
+2026-10-04T03:50:35.5214217Z 2026-10-04 03:43:19.525 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v15_to_v16:5298 - [rag_char_chat_schema V15→V16] Migration completed successfully for DB: db_sha256=4c1aa04f91da.
+2026-10-04T03:50:35.5215417Z 2026-10-04 03:43:19.525 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v16_to_v17:5324 - Migrating schema from V16 to V17 for 'rag_char_chat_schema' in DB: db_sha256=4c1aa04f91da...
+2026-10-04T03:50:35.5216513Z 2026-10-04 03:43:19.525 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5217589Z 2026-10-04 03:43:19.525 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v16_to_v17:5332 - [rag_char_chat_schema V16→V17] Migration script executed.
+2026-10-04T03:50:35.5218816Z 2026-10-04 03:43:19.525 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v16_to_v17:5340 - [rag_char_chat_schema V16→V17] Migration completed successfully for DB: db_sha256=4c1aa04f91da.
+2026-10-04T03:50:35.5220015Z 2026-10-04 03:43:19.526 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v17_to_v18:5368 - Migrating schema from V17 to V18 for 'rag_char_chat_schema' in DB: db_sha256=4c1aa04f91da...
+2026-10-04T03:50:35.5221097Z 2026-10-04 03:43:19.526 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5222531Z 2026-10-04 03:43:19.529 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v17_to_v18:5376 - [rag_char_chat_schema V17→V18] Migration script executed.
+2026-10-04T03:50:35.5223766Z 2026-10-04 03:43:19.529 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v17_to_v18:5384 - [rag_char_chat_schema V17→V18] Migration completed successfully for DB: db_sha256=4c1aa04f91da.
+2026-10-04T03:50:35.5224959Z 2026-10-04 03:43:19.529 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v18_to_v19:8414 - Migrating schema from V18 to V19 for 'rag_char_chat_schema' in DB: db_sha256=4c1aa04f91da...
+2026-10-04T03:50:35.5226038Z 2026-10-04 03:43:19.530 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5227126Z 2026-10-04 03:43:19.530 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v18_to_v19:8422 - [rag_char_chat_schema V18→V19] Migration script executed.
+2026-10-04T03:50:35.5228358Z 2026-10-04 03:43:19.530 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v18_to_v19:8430 - [rag_char_chat_schema V18→V19] Migration completed successfully for DB: db_sha256=4c1aa04f91da.
+2026-10-04T03:50:35.5229559Z 2026-10-04 03:43:19.531 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v19_to_v20:5412 - Migrating schema from V19 to V20 for 'rag_char_chat_schema' in DB: db_sha256=4c1aa04f91da...
+2026-10-04T03:50:35.5230644Z 2026-10-04 03:43:19.531 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5231900Z 2026-10-04 03:43:19.534 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v19_to_v20:5431 - [rag_char_chat_schema V19→V20] Migration script executed.
+2026-10-04T03:50:35.5233316Z 2026-10-04 03:43:19.534 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v19_to_v20:5439 - [rag_char_chat_schema V19→V20] Migration completed successfully for DB: db_sha256=4c1aa04f91da.
+2026-10-04T03:50:35.5234537Z 2026-10-04 03:43:19.534 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v20_to_v21:5467 - Migrating schema from V20 to V21 for 'rag_char_chat_schema' in DB: db_sha256=4c1aa04f91da...
+2026-10-04T03:50:35.5235623Z 2026-10-04 03:43:19.535 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5236702Z 2026-10-04 03:43:19.536 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v20_to_v21:5488 - [rag_char_chat_schema V20→V21] Migration script executed.
+2026-10-04T03:50:35.5237937Z 2026-10-04 03:43:19.536 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v20_to_v21:5496 - [rag_char_chat_schema V20→V21] Migration completed successfully for DB: db_sha256=4c1aa04f91da.
+2026-10-04T03:50:35.5239146Z 2026-10-04 03:43:19.536 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v21_to_v22:5518 - Migrating schema from V21 to V22 for 'rag_char_chat_schema' in DB: db_sha256=4c1aa04f91da...
+2026-10-04T03:50:35.5240235Z 2026-10-04 03:43:19.536 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5241320Z 2026-10-04 03:43:19.537 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v21_to_v22:5536 - [rag_char_chat_schema V21→V22] Migration script executed.
+2026-10-04T03:50:35.5242684Z 2026-10-04 03:43:19.537 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v21_to_v22:5542 - [rag_char_chat_schema V21→V22] Migration completed successfully for DB: db_sha256=4c1aa04f91da.
+2026-10-04T03:50:35.5243889Z 2026-10-04 03:43:19.537 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v22_to_v23:5564 - Migrating schema from V22 to V23 for 'rag_char_chat_schema' in DB: db_sha256=4c1aa04f91da...
+2026-10-04T03:50:35.5244989Z 2026-10-04 03:43:19.538 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5246207Z 2026-10-04 03:43:19.538 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v22_to_v23:5572 - [rag_char_chat_schema V22→V23] Migration script executed.
+2026-10-04T03:50:35.5247441Z 2026-10-04 03:43:19.538 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v22_to_v23:5578 - [rag_char_chat_schema V22→V23] Migration completed successfully for DB: db_sha256=4c1aa04f91da.
+2026-10-04T03:50:35.5248643Z 2026-10-04 03:43:19.538 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v23_to_v24:5601 - Migrating schema from V23 to V24 for 'rag_char_chat_schema' in DB: db_sha256=4c1aa04f91da...
+2026-10-04T03:50:35.5249717Z 2026-10-04 03:43:19.539 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5250796Z 2026-10-04 03:43:19.541 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v23_to_v24:5619 - [rag_char_chat_schema V23→V24] Migration script executed.
+2026-10-04T03:50:35.5252165Z 2026-10-04 03:43:19.541 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v23_to_v24:5625 - [rag_char_chat_schema V23→V24] Migration completed successfully for DB: db_sha256=4c1aa04f91da.
+2026-10-04T03:50:35.5253368Z 2026-10-04 03:43:19.541 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v24_to_v25:5648 - Migrating schema from V24 to V25 for 'rag_char_chat_schema' in DB: db_sha256=4c1aa04f91da...
+2026-10-04T03:50:35.5254453Z 2026-10-04 03:43:19.541 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5255543Z 2026-10-04 03:43:19.542 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v24_to_v25:5656 - [rag_char_chat_schema V24→V25] Migration script executed.
+2026-10-04T03:50:35.5256882Z 2026-10-04 03:43:19.542 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v24_to_v25:5662 - [rag_char_chat_schema V24→V25] Migration completed successfully for DB: db_sha256=4c1aa04f91da.
+2026-10-04T03:50:35.5258090Z 2026-10-04 03:43:19.542 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v25_to_v26:5686 - Migrating schema from V25 to V26 for 'rag_char_chat_schema' in DB: db_sha256=4c1aa04f91da...
+2026-10-04T03:50:35.5259179Z 2026-10-04 03:43:19.542 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5260274Z 2026-10-04 03:43:19.547 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v25_to_v26:5708 - [rag_char_chat_schema V25→V26] Migration script executed.
+2026-10-04T03:50:35.5261496Z 2026-10-04 03:43:19.547 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v25_to_v26:5714 - [rag_char_chat_schema V25→V26] Migration completed successfully for DB: db_sha256=4c1aa04f91da.
+2026-10-04T03:50:35.5262834Z 2026-10-04 03:43:19.547 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5263822Z 2026-10-04 03:43:19.552 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5264830Z 2026-10-04 03:43:19.552 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 3 on thread 139785955363712.
+2026-10-04T03:50:35.5265907Z 2026-10-04 03:43:19.555 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v28_to_v29:5901 - Migrating schema from V28 to V29 for 'rag_char_chat_schema' in DB: db_sha256=4c1aa04f91da...
+2026-10-04T03:50:35.5267032Z 2026-10-04 03:43:19.556 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5268148Z 2026-10-04 03:43:19.556 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v28_to_v29:5909 - [rag_char_chat_schema V28→V29] Migration script executed.
+2026-10-04T03:50:35.5269526Z 2026-10-04 03:43:19.556 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v28_to_v29:5917 - [rag_char_chat_schema V28→V29] Migration completed successfully for DB: db_sha256=4c1aa04f91da.
+2026-10-04T03:50:35.5270733Z 2026-10-04 03:43:19.556 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v29_to_v30:5944 - Migrating schema from V29 to V30 for 'rag_char_chat_schema' in DB: db_sha256=4c1aa04f91da...
+2026-10-04T03:50:35.5272038Z 2026-10-04 03:43:19.557 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5273127Z 2026-10-04 03:43:19.559 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v29_to_v30:5970 - [rag_char_chat_schema V29→V30] Migration script executed.
+2026-10-04T03:50:35.5274357Z 2026-10-04 03:43:19.560 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v29_to_v30:5994 - [rag_char_chat_schema V29→V30] Migration completed successfully for DB: db_sha256=4c1aa04f91da.
+2026-10-04T03:50:35.5275572Z 2026-10-04 03:43:19.560 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v30_to_v31:6021 - Migrating schema from V30 to V31 for 'rag_char_chat_schema' in DB: db_sha256=4c1aa04f91da...
+2026-10-04T03:50:35.5276654Z 2026-10-04 03:43:19.560 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5277730Z 2026-10-04 03:43:19.563 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v30_to_v31:6047 - [rag_char_chat_schema V30→V31] Migration script executed.
+2026-10-04T03:50:35.5278976Z 2026-10-04 03:43:19.563 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v30_to_v31:6071 - [rag_char_chat_schema V30→V31] Migration completed successfully for DB: db_sha256=4c1aa04f91da.
+2026-10-04T03:50:35.5280301Z 2026-10-04 03:43:19.563 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v31_to_v32:6104 - Migrating schema from V31 to V32 for 'rag_char_chat_schema' in DB: db_sha256=4c1aa04f91da...
+2026-10-04T03:50:35.5281590Z 2026-10-04 03:43:19.564 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enrich_default_assistant_card_if_bare:4749 - [task-2451] Default Assistant enrichment UPDATE affected 0 row(s) in DB: db_sha256=4c1aa04f91da.
+2026-10-04T03:50:35.5283254Z 2026-10-04 03:43:19.564 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v31_to_v32:6130 - [rag_char_chat_schema V31→V32] Migration completed successfully for DB: db_sha256=4c1aa04f91da.
+2026-10-04T03:50:35.5284368Z 2026-10-04 03:43:19.564 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5285353Z 2026-10-04 03:43:19.566 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5286343Z 2026-10-04 03:43:19.569 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5287337Z 2026-10-04 03:43:19.571 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5288311Z 2026-10-04 03:43:19.573 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5289289Z 2026-10-04 03:43:19.577 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5290265Z 2026-10-04 03:43:19.578 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5291240Z 2026-10-04 03:43:19.580 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5292350Z 2026-10-04 03:43:19.581 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5293574Z 2026-10-04 03:43:19.582 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v41_to_v42:6450 - Migrating schema from V41 to V42 for 'rag_char_chat_schema' in DB: db_sha256=4c1aa04f91da...
+2026-10-04T03:50:35.5295043Z 2026-10-04 03:43:19.584 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v41_to_v42:6514 - [rag_char_chat_schema V41→V42] conversations.console_project_context_json already present; applying the version bump only.
+2026-10-04T03:50:35.5296368Z 2026-10-04 03:43:19.584 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v42_to_v43:6564 - Migrating schema from V42 to V43 for 'rag_char_chat_schema' in DB: db_sha256=4c1aa04f91da...
+2026-10-04T03:50:35.5297462Z 2026-10-04 03:43:19.584 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5298711Z 2026-10-04 03:43:19.586 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v42_to_v43:6703 - [rag_char_chat_schema V42→V43] Migration completed successfully for DB: db_sha256=4c1aa04f91da.
+2026-10-04T03:50:35.5299914Z 2026-10-04 03:43:19.586 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v43_to_v44:6733 - Migrating schema from V43 to V44 for 'rag_char_chat_schema' in DB: db_sha256=4c1aa04f91da...
+2026-10-04T03:50:35.5300992Z 2026-10-04 03:43:19.586 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5302487Z 2026-10-04 03:43:19.595 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v43_to_v44:6773 - [rag_char_chat_schema V43→V44] Migration completed successfully for DB: db_sha256=4c1aa04f91da.
+2026-10-04T03:50:35.5303777Z 2026-10-04 03:43:19.595 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v44_to_v45:6842 - Actor Pack schema migration started: chachanotes_v44_to_v45
+2026-10-04T03:50:35.5304781Z 2026-10-04 03:43:19.596 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5305778Z 2026-10-04 03:43:19.597 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v44_to_v45:6875 - Actor Pack schema migration completed: chachanotes_v44_to_v45
+2026-10-04T03:50:35.5306868Z 2026-10-04 03:43:19.597 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v45_to_v46:6919 - Migrating schema from V45 to V46 for 'rag_char_chat_schema' in DB: db_sha256=4c1aa04f91da...
+2026-10-04T03:50:35.5307963Z 2026-10-04 03:43:19.598 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5309413Z 2026-10-04 03:43:19.603 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v45_to_v46:6965 - [rag_char_chat_schema V45→V46] Migration completed successfully for DB: db_sha256=4c1aa04f91da. Purged 0 unreachable sync_log row(s) of 1.
+2026-10-04T03:50:35.5310797Z 2026-10-04 03:43:19.603 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v46_to_v47:7007 - Migrating schema from V46 to V47 for 'rag_char_chat_schema' in DB: db_sha256=4c1aa04f91da...
+2026-10-04T03:50:35.5312093Z 2026-10-04 03:43:19.603 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5313355Z 2026-10-04 03:43:19.604 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v46_to_v47:7042 - [rag_char_chat_schema V46→V47] Migration completed successfully for DB: db_sha256=4c1aa04f91da.
+2026-10-04T03:50:35.5314458Z 2026-10-04 03:43:19.605 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5315546Z 2026-10-04 03:43:19.610 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v48_to_v49:7198 - Migrating schema from V48 to V49 for 'rag_char_chat_schema' in DB: db_sha256=4c1aa04f91da...
+2026-10-04T03:50:35.5316767Z 2026-10-04 03:43:19.610 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5318016Z 2026-10-04 03:43:19.611 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v48_to_v49:7233 - [rag_char_chat_schema V48→V49] Migration completed successfully for DB: db_sha256=4c1aa04f91da.
+2026-10-04T03:50:35.5319214Z 2026-10-04 03:43:19.611 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v49_to_v50:7281 - Migrating schema from V49 to V50 for 'rag_char_chat_schema' in DB: db_sha256=4c1aa04f91da...
+2026-10-04T03:50:35.5320305Z 2026-10-04 03:43:19.612 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5321541Z 2026-10-04 03:43:19.612 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v49_to_v50:7315 - [rag_char_chat_schema V49→V50] Migration completed successfully for DB: db_sha256=4c1aa04f91da.
+2026-10-04T03:50:35.5322784Z 2026-10-04 03:43:19.612 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5323788Z 2026-10-04 03:43:19.617 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5324871Z 2026-10-04 03:43:19.626 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v52_to_v53:7440 - Migrating schema from V52 to V53 for 'rag_char_chat_schema' in DB: db_sha256=4c1aa04f91da...
+2026-10-04T03:50:35.5325960Z 2026-10-04 03:43:19.627 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5327472Z 2026-10-04 03:43:19.627 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v52_to_v53:7505 - [rag_char_chat_schema V52→V53] Migration completed for DB: db_sha256=4c1aa04f91da (examined 0, compacted 0, skipped 0 unreadable).
+2026-10-04T03:50:35.5328723Z 2026-10-04 03:43:19.627 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5329711Z 2026-10-04 03:43:19.631 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5330680Z 2026-10-04 03:43:19.633 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5331658Z 2026-10-04 03:43:19.650 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5332779Z 2026-10-04 03:43:19.653 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5333759Z 2026-10-04 03:43:19.670 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5334741Z 2026-10-04 03:43:19.672 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5335720Z 2026-10-04 03:43:19.673 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5336699Z 2026-10-04 03:43:19.674 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5337688Z 2026-10-04 03:43:19.693 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5338669Z 2026-10-04 03:43:19.700 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5339772Z 2026-10-04 03:43:19.720 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5340749Z 2026-10-04 03:43:19.721 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5341961Z 2026-10-04 03:43:19.727 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 3 on thread 139785955363712.
+2026-10-04T03:50:35.5342968Z 2026-10-04 03:43:19.727 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 3 on thread 139785955363712.
+2026-10-04T03:50:35.5343959Z 2026-10-04 03:43:19.728 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5344938Z 2026-10-04 03:43:19.732 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5345914Z 2026-10-04 03:43:19.755 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5346895Z 2026-10-04 03:43:19.757 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5347867Z 2026-10-04 03:43:19.759 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5348841Z 2026-10-04 03:43:19.766 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5349944Z 2026-10-04 03:43:19.781 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5350931Z 2026-10-04 03:43:19.782 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5352118Z 2026-10-04 03:43:19.788 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5353115Z 2026-10-04 03:43:19.789 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 139785955363712.
+2026-10-04T03:50:35.5354190Z 2026-10-04 03:43:19.811 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:8685 - Database schema 'rag_char_chat_schema' successfully initialized/migrated to version 76.
+2026-10-04T03:50:35.5355315Z 2026-10-04 03:43:19.814 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 139785955363712.
+2026-10-04T03:50:35.5356382Z 2026-10-04 03:43:19.814 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:__init__:3399 - CharactersRAGDB initialization completed successfully db_sha256=4c1aa04f91da
+2026-10-04T03:50:35.5357958Z 2026-10-04 03:43:19.847 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8612 - Attempting to apply literal settings mutation: sets={"('first_run',)": ['setup_completed'], "('splash_screen',)": ['enabled'], "('chat_defaults',)": ['provider', 'model'], "('api_settings', 'llama_cpp')": ['api_url', 'model']}, deletes={}
+2026-10-04T03:50:35.5359661Z 2026-10-04 03:43:19.883 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8670 - Successfully replaced settings file at /tmp/tldw_test_config_kzl4hb1d/config/config.toml
+2026-10-04T03:50:35.5360958Z 2026-10-04 03:43:19.890 | INFO     | tldw_chatbook.config:_load_settings_uncached:2134 - Determined ACTUAL_PROJECT_ROOT for general paths: /home/runner/work/tldw_chatbook/tldw_chatbook/tldw_chatbook
+2026-10-04T03:50:35.5362568Z 2026-10-04 03:43:19.890 | INFO     | tldw_chatbook.config:_load_settings_uncached:2137 - Determined APP_COMPONENT_ROOT for config files: /home/runner/work/tldw_chatbook/tldw_chatbook/tldw_chatbook
+2026-10-04T03:50:35.5363727Z 2026-10-04 03:43:19.892 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2160 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-10-04T03:50:35.5364963Z 2026-10-04 03:43:19.931 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3712 - Ensured chat dictionaries folder exists: /tmp/tldw_test_config_kzl4hb1d/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-10-04T03:50:35.5366090Z 2026-10-04 03:43:19.932 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3743 - load_settings: Configuration cached for future use
+2026-10-04T03:50:35.5367057Z 2026-10-04 03:43:19.935 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8698 - Global configuration caches invalidated and reloaded.
+2026-10-04T03:50:35.5368212Z 2026-10-04 03:43:19.948 | INFO     | tldw_chatbook.config:_load_settings_uncached:2134 - Determined ACTUAL_PROJECT_ROOT for general paths: /home/runner/work/tldw_chatbook/tldw_chatbook/tldw_chatbook
+2026-10-04T03:50:35.5369458Z 2026-10-04 03:43:19.948 | INFO     | tldw_chatbook.config:_load_settings_uncached:2137 - Determined APP_COMPONENT_ROOT for config files: /home/runner/work/tldw_chatbook/tldw_chatbook/tldw_chatbook
+2026-10-04T03:50:35.5370667Z 2026-10-04 03:43:19.953 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6847 - Attempting to load CLI config from: /tmp/tldw_test_config_kzl4hb1d/config/config.toml
+2026-10-04T03:50:35.5371986Z 2026-10-04 03:43:19.970 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6868 - Successfully loaded and merged CLI config from /tmp/tldw_test_config_kzl4hb1d/config/config.toml
+2026-10-04T03:50:35.5376037Z 2026-10-04 03:43:19.970 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6952 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'console_ssh', 'hooks', 'skills', 'tamagotchi', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', 'first_run']
+2026-10-04T03:50:35.5382339Z 2026-10-04 03:43:19.970 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6956 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'databricks', 'together', 'fireworks', 'cerebras', 'sambanova', 'nvidia', 'deepinfra', 'nebius', 'novita', 'minimax', 'mimo', 'tokenhub', 'byteplus', 'stepfun', 'vercel', 'zenmux', 'kilo', 'siliconflow', 'baseten', 'gmi', 'ollama_cloud', 'upstage', 'arcee', 'qianfan', 'nous', 'venice', 'meta', 'azure', 'wandb', 'cloudflare', 'opencode_zen', 'commandcode', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-10-04T03:50:35.5385469Z 2026-10-04 03:43:19.972 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2160 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-10-04T03:50:35.5386807Z 2026-10-04 03:43:20.009 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3712 - Ensured chat dictionaries folder exists: /tmp/tldw_test_config_kzl4hb1d/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-10-04T03:50:35.5387934Z 2026-10-04 03:43:20.009 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3743 - load_settings: Configuration cached for future use
+2026-10-04T03:50:35.5388604Z ------------------------------ Captured log call -------------------------------
+2026-10-04T03:50:35.5389085Z INFO     root:app.py:1385 App __init__: Determined initial tab value: chat
+2026-10-04T03:50:35.5389617Z WARNING  root:app.py:1492 Prompts service not initialized, self.prompts_db set to None.
+2026-10-04T03:50:35.5390262Z ERROR    root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+2026-10-04T03:50:35.5390800Z INFO     root:app.py:2277 Splash screen enabled: False
+2026-10-04T03:50:35.5391330Z INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:256 event=app_started component=app
+2026-10-04T03:50:35.5392535Z INFO     tldw_chatbook.diagnostics.dictation:persistent_diagnostics.py:256 event=speech_stack_available component=dictation model=provider-default provider=none status=degraded
+2026-10-04T03:50:35.5393443Z INFO     root:Logging_Config.py:809 --- _setup_logging START (from Logging_Config.py) ---
+2026-10-04T03:50:35.5393980Z INFO     root:Logging_Config.py:821 Loguru: All pre-existing sinks removed.
+2026-10-04T03:50:35.5394590Z INFO     root:Logging_Config.py:850 Loguru: Configured to forward its messages to standard Python logging system.
+2026-10-04T03:50:35.5395233Z ________ test_a_superseded_screen_never_detaches_the_successors_runtime ________
+2026-10-04T03:50:35.5395867Z Tests/UI/test_console_runtime_ownership.py:2252: in test_a_superseded_screen_never_detaches_the_successors_runtime
+2026-10-04T03:50:35.5396532Z     assert runtime.view is chat_two, (
+2026-10-04T03:50:35.5397057Z E   AssertionError: the outgoing screen's detach ran anyway and dropped the claim its successor had already made
+2026-10-04T03:50:35.5397652Z E   assert None is ChatScreen(classes='shell-header-normal')
+2026-10-04T03:50:35.5398187Z E    +  where None = <tldw_chatbook.Chat.console_runtime.ConsoleRuntime object at 0x7f2253c64b00>.view
+2026-10-04T03:50:35.5398750Z ----------------------------- Captured stderr call -----------------------------
+2026-10-04T03:50:35.5399313Z 2026-10-04 03:44:01 [WARNING ] root:1492 - Prompts service not initialized, self.prompts_db set to None.
+2026-10-04T03:50:35.5400023Z 2026-10-04 03:44:01 [ERROR   ] root:1513 - ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+2026-10-04T03:50:35.5400627Z ------------------------------ Captured log call -------------------------------
+2026-10-04T03:50:35.5401091Z INFO     root:app.py:1385 App __init__: Determined initial tab value: chat
+2026-10-04T03:50:35.5401619Z WARNING  root:app.py:1492 Prompts service not initialized, self.prompts_db set to None.
+2026-10-04T03:50:35.5402377Z ERROR    root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+2026-10-04T03:50:35.5402902Z INFO     root:app.py:2277 Splash screen enabled: False
+2026-10-04T03:50:35.5403428Z INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:256 event=app_started component=app
+2026-10-04T03:50:35.5404389Z INFO     tldw_chatbook.diagnostics.dictation:persistent_diagnostics.py:256 event=speech_stack_available component=dictation model=provider-default provider=none status=degraded
+2026-10-04T03:50:35.5405289Z INFO     root:Logging_Config.py:809 --- _setup_logging START (from Logging_Config.py) ---
+2026-10-04T03:50:35.5405831Z INFO     root:Logging_Config.py:821 Loguru: All pre-existing sinks removed.
+2026-10-04T03:50:35.5406452Z INFO     root:Logging_Config.py:850 Loguru: Configured to forward its messages to standard Python logging system.
+2026-10-04T03:50:35.5407083Z ________ test_opening_console_during_a_headless_delivery_arms_the_poll _________
+2026-10-04T03:50:35.5407844Z Tests/UI/test_console_runtime_ownership.py:2332: in test_opening_console_during_a_headless_delivery_arms_the_poll
+2026-10-04T03:50:35.5408447Z     assert reopened._console_transcript_sync_timer is not None, (
+2026-10-04T03:50:35.5409279Z E   AssertionError: Console opened during a wake delivery with no transcript poll armed: reconciled=False, delivering=('86202c5f-12df-4262-96e1-7df9db0f4018',), same_controller=True
+2026-10-04T03:50:35.5410033Z E   assert None is not None
+2026-10-04T03:50:35.5410446Z E    +  where None = ChatScreen(classes='shell-header-normal')._console_transcript_sync_timer
+2026-10-04T03:50:35.5410983Z ----------------------------- Captured stderr call -----------------------------
+2026-10-04T03:50:35.5411547Z 2026-10-04 03:44:13 [WARNING ] root:1492 - Prompts service not initialized, self.prompts_db set to None.
+2026-10-04T03:50:35.5412386Z 2026-10-04 03:44:13 [ERROR   ] root:1513 - ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+2026-10-04T03:50:35.5413002Z ------------------------------ Captured log call -------------------------------
+2026-10-04T03:50:35.5413461Z INFO     root:app.py:1385 App __init__: Determined initial tab value: chat
+2026-10-04T03:50:35.5413979Z WARNING  root:app.py:1492 Prompts service not initialized, self.prompts_db set to None.
+2026-10-04T03:50:35.5414608Z ERROR    root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+2026-10-04T03:50:35.5415141Z INFO     root:app.py:2277 Splash screen enabled: False
+2026-10-04T03:50:35.5415660Z INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:256 event=app_started component=app
+2026-10-04T03:50:35.5416637Z INFO     tldw_chatbook.diagnostics.dictation:persistent_diagnostics.py:256 event=speech_stack_available component=dictation model=provider-default provider=none status=degraded
+2026-10-04T03:50:35.5417692Z INFO     root:Logging_Config.py:809 --- _setup_logging START (from Logging_Config.py) ---
+2026-10-04T03:50:35.5418228Z INFO     root:Logging_Config.py:821 Loguru: All pre-existing sinks removed.
+2026-10-04T03:50:35.5418832Z INFO     root:Logging_Config.py:850 Loguru: Configured to forward its messages to standard Python logging system.
+2026-10-04T03:50:35.5419460Z _____ test_native_acceptance_consumes_only_open_target_revision[unchanged] _____
+2026-10-04T03:50:35.5420025Z /opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/asyncio/tasks.py:520: in wait_for
+2026-10-04T03:50:35.5420462Z     return await fut
+2026-10-04T03:50:35.5420669Z            ^^^^^^^^^
+2026-10-04T03:50:35.5421018Z /opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/asyncio/locks.py:212: in wait
+2026-10-04T03:50:35.5421432Z     await fut
+2026-10-04T03:50:35.5421657Z E   asyncio.exceptions.CancelledError
+2026-10-04T03:50:35.5422104Z 
+2026-10-04T03:50:35.5422297Z The above exception was the direct cause of the following exception:
+2026-10-04T03:50:35.5422907Z Tests/UI/test_console_runtime_ownership.py:3272: in test_native_acceptance_consumes_only_open_target_revision
+2026-10-04T03:50:35.5423440Z     await asyncio.wait_for(entered.wait(), 5)
+2026-10-04T03:50:35.5423884Z /opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/asyncio/tasks.py:519: in wait_for
+2026-10-04T03:50:35.5424339Z     async with timeouts.timeout(timeout):
+2026-10-04T03:50:35.5424620Z                ^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-10-04T03:50:35.5425046Z /opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/asyncio/timeouts.py:115: in __aexit__
+2026-10-04T03:50:35.5425503Z     raise TimeoutError from exc_val
+2026-10-04T03:50:35.5425759Z E   TimeoutError
+2026-10-04T03:50:35.5426064Z ----------------------------- Captured stderr call -----------------------------
+2026-10-04T03:50:35.5426617Z 2026-10-04 03:45:26 [WARNING ] root:1492 - Prompts service not initialized, self.prompts_db set to None.
+2026-10-04T03:50:35.5427344Z 2026-10-04 03:45:26 [ERROR   ] root:1513 - ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+2026-10-04T03:50:35.5429055Z 2026-10-04 03:46:39 [ERROR   ] tldw_chatbook.diagnostics.console:256 - event=console_send_stage app_version=0.2.3 attempt_id=a6dabbf3b09d4abf98dced60e3fed1a3 capture_enabled=false component=console duration_ms=63502 error_category=internal exception_type=CancelledError phase=durable_commit python_version=3.12.14 sqlite_version=3.45.1 status=failed
+2026-10-04T03:50:35.5431245Z 2026-10-04 03:46:39 [ERROR   ] tldw_chatbook.diagnostics.console:256 - event=console_send_stage app_version=0.2.3 attempt_id=a6dabbf3b09d4abf98dced60e3fed1a3 capture_enabled=false component=console duration_ms=63502 phase=controller_submit python_version=3.12.14 sqlite_version=3.45.1 status=failed
+2026-10-04T03:50:35.5432682Z ------------------------------ Captured log call -------------------------------
+2026-10-04T03:50:35.5433148Z INFO     root:app.py:1385 App __init__: Determined initial tab value: chat
+2026-10-04T03:50:35.5433674Z WARNING  root:app.py:1492 Prompts service not initialized, self.prompts_db set to None.
+2026-10-04T03:50:35.5434308Z ERROR    root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+2026-10-04T03:50:35.5434833Z INFO     root:app.py:2277 Splash screen enabled: False
+2026-10-04T03:50:35.5435354Z INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:256 event=app_started component=app
+2026-10-04T03:50:35.5436309Z INFO     tldw_chatbook.diagnostics.dictation:persistent_diagnostics.py:256 event=speech_stack_available component=dictation model=provider-default provider=none status=degraded
+2026-10-04T03:50:35.5437207Z INFO     root:Logging_Config.py:809 --- _setup_logging START (from Logging_Config.py) ---
+2026-10-04T03:50:35.5437740Z INFO     root:Logging_Config.py:821 Loguru: All pre-existing sinks removed.
+2026-10-04T03:50:35.5438349Z INFO     root:Logging_Config.py:850 Loguru: Configured to forward its messages to standard Python logging system.
+2026-10-04T03:50:35.5439029Z =============================== warnings summary ===============================
+2026-10-04T03:50:35.5439591Z Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+2026-10-04T03:50:35.5440244Z Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+2026-10-04T03:50:35.5440770Z   <unknown>:31: SyntaxWarning: invalid escape sequence '\ '
+2026-10-04T03:50:35.5441018Z 
+2026-10-04T03:50:35.5441285Z Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+2026-10-04T03:50:35.5442132Z Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+2026-10-04T03:50:35.5442651Z   <unknown>:32: SyntaxWarning: invalid escape sequence '\ '
+2026-10-04T03:50:35.5442894Z 
+2026-10-04T03:50:35.5443264Z Tests/Chat/test_console_chat_create_integration.py::test_primary_remembered_bridge_still_confirms_each_child_request
+2026-10-04T03:50:35.5444812Z   /home/runner/work/tldw_chatbook/tldw_chatbook/Tests/conftest.py:609: UserWarning: open file descriptors grew by 479 over the test session (start=16, end=495, limit=200) — possible fd leak; bisect with TLDW_TEST_GC_EVERY=1 and mark offending tests @pytest.mark.requires_cleanup
+2026-10-04T03:50:38.4956837Z     warnings.warn(message, UserWarning, stacklevel=0)
+2026-10-04T03:50:38.4957335Z 
+2026-10-04T03:50:38.4957667Z -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+2026-10-04T03:50:38.4958334Z ============================= slowest 25 durations =============================
+2026-10-04T03:50:38.4959257Z 78.14s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[unchanged]
+2026-10-04T03:50:38.4960389Z 40.53s call     Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+2026-10-04T03:50:38.4961528Z 20.39s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[switch_away]
+2026-10-04T03:50:38.4963412Z 20.04s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[caret_only]
+2026-10-04T03:50:38.4964432Z 19.83s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[selection_only]
+2026-10-04T03:50:38.4965412Z 19.06s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[same_text]
+2026-10-04T03:50:38.4966380Z 18.07s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[replacement]
+2026-10-04T03:50:38.4967256Z 16.12s call     Tests/UI/test_console_runtime_ownership.py::test_second_console_visit_reuses_the_runtime
+2026-10-04T03:50:38.4968057Z 16.04s call     Tests/UI/test_console_runtime_ownership.py::test_prepared_native_start_allows_mounted_manual_send
+2026-10-04T03:50:38.4968946Z 15.73s call     Tests/UI/test_console_runtime_ownership.py::test_accepted_agent_chat_start_has_visible_stop_in_mounted_target
+2026-10-04T03:50:38.4969871Z 13.37s call     Tests/UI/test_console_runtime_ownership.py::test_opening_console_during_a_headless_delivery_arms_the_poll
+2026-10-04T03:50:38.4970813Z 12.83s call     Tests/UI/test_console_runtime_ownership.py::test_clearing_agent_handoff_in_mounted_composer_persists_before_exit
+2026-10-04T03:50:38.4971982Z 12.64s call     Tests/UI/test_console_runtime_ownership.py::test_post_unmount_raw_refusal_restores_on_second_console_visit
+2026-10-04T03:50:38.4972989Z 11.98s call     Tests/UI/test_console_runtime_ownership.py::test_a_terminal_run_state_after_leaving_does_not_reach_the_dead_screen
+2026-10-04T03:50:38.4973822Z 11.08s call     Tests/UI/test_console_runtime_ownership.py::test_a_superseded_screen_never_detaches_the_successors_runtime
+2026-10-04T03:50:38.4974650Z 2.19s call     Tests/UI/test_console_runtime_ownership.py::test_sync_constructed_app_starts_canvas_policy_watch_in_running_lifecycle
+2026-10-04T03:50:38.4975624Z 1.79s call     Tests/Chat/test_console_viewless_hooks.py::test_a_wake_delivered_with_no_view_keeps_the_unseen_mark
+2026-10-04T03:50:38.4976435Z 1.60s teardown Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[switch_away]
+2026-10-04T03:50:38.4977254Z 1.60s call     Tests/Chat/test_console_viewless_hooks.py::test_a_delivery_started_with_no_view_re_arms_at_the_next_attach
+2026-10-04T03:50:38.4978015Z 1.59s teardown Tests/Chat/test_console_viewless_hooks.py::test_the_engine_reads_saved_config_not_the_app_cache
+2026-10-04T03:50:38.4978790Z 1.59s teardown Tests/Chat/test_console_viewless_hooks.py::test_a_wake_is_not_deferred_by_a_user_claim_once_the_view_is_gone
+2026-10-04T03:50:38.4979579Z 1.59s call     Tests/Chat/test_console_viewless_hooks.py::test_a_wake_delivered_to_the_attached_view_still_clears_the_mark
+2026-10-04T03:50:38.4980333Z 1.58s teardown Tests/Chat/test_console_viewless_hooks.py::test_same_engine_detects_saved_hooks_added_mid_session
+2026-10-04T03:50:38.4981047Z 1.56s teardown Tests/Chat/test_console_viewless_hooks.py::test_dispose_closes_previously_built_hooks
+2026-10-04T03:50:38.4981913Z 1.55s teardown Tests/Chat/test_console_viewless_hooks.py::test_a_runtime_that_never_had_a_view_answers_viewless
+2026-10-04T03:50:38.4982495Z =========================== short test summary info ============================
+2026-10-04T03:50:38.4984016Z XFAIL Tests/UI/test_console_runtime_ownership.py::test_captured_attach_timer_overlap_rearms_real_sync_worker - TASK-32873: the real sync worker now reads whole-screen owner state (library projection, staged evidence, active settings, Textual message-pump context) that a bare __new__ ChatScreen mount cannot satisfy; needs the app_factory real-mount rewrite. Tracked in the task notes.
+2026-10-04T03:50:38.4985867Z FAILED Tests/UI/test_console_runtime_ownership.py::test_second_console_visit_reuses_the_runtime - assert None is not None
+2026-10-04T03:50:38.4986733Z  +  where None = <tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object at 0x7f2250fe8e60>.notify_run_outcome
+2026-10-04T03:50:38.4988088Z FAILED Tests/UI/test_console_runtime_ownership.py::test_a_superseded_screen_never_detaches_the_successors_runtime - AssertionError: the outgoing screen's detach ran anyway and dropped the claim its successor had already made
+2026-10-04T03:50:38.4989057Z assert None is ChatScreen(classes='shell-header-normal')
+2026-10-04T03:50:38.4989578Z  +  where None = <tldw_chatbook.Chat.console_runtime.ConsoleRuntime object at 0x7f2253c64b00>.view
+2026-10-04T03:50:38.4990918Z FAILED Tests/UI/test_console_runtime_ownership.py::test_opening_console_during_a_headless_delivery_arms_the_poll - AssertionError: Console opened during a wake delivery with no transcript poll armed: reconciled=False, delivering=('86202c5f-12df-4262-96e1-7df9db0f4018',), same_controller=True
+2026-10-04T03:50:38.4992171Z assert None is not None
+2026-10-04T03:50:38.4992560Z  +  where None = ChatScreen(classes='shell-header-normal')._console_transcript_sync_timer
+2026-10-04T03:50:38.4993441Z FAILED Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[unchanged] - TimeoutError
+2026-10-04T03:50:38.4994187Z ======= 4 failed, 142 passed, 1 xfailed, 5 warnings in 500.51s (0:08:20) =======
+2026-10-04T03:50:45.4002806Z ##[error]Process completed with exit code 1.
+2026-10-04T03:50:45.4174843Z Post job cleanup.
+2026-10-04T03:50:45.5073066Z [command]/usr/bin/git version
+2026-10-04T03:50:45.5115648Z git version 2.55.0
+2026-10-04T03:50:45.5153913Z Temporarily overriding HOME='/home/runner/work/_temp/de36a1a4-5a72-4976-a3c1-cabc112cc966' before making global git config changes
+2026-10-04T03:50:45.5155303Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-04T03:50:45.5159440Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/tldw_chatbook/tldw_chatbook
+2026-10-04T03:50:45.5199867Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-04T03:50:45.5237058Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-04T03:50:45.5507613Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-04T03:50:45.5530980Z http.https://github.com/.extraheader
+2026-10-04T03:50:45.5542246Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+2026-10-04T03:50:45.5577335Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-04T03:50:45.5830487Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-04T03:50:45.5863989Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-04T03:50:45.6267058Z Cleaning up orphan processes
+2026-10-04T03:50:45.6575664Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-python@v5. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

@@ -1,0 +1,181 @@
+{
+  "scope": "Lossless export-coordinate adjustment for finite pure classifier controls; not a new live owner/presentation sample.",
+  "source_original_PNG_SHA256": "98efba78f65aef37aa781523e7cd51488074000a2e16d07c57187c2a0631b59d",
+  "export_png": "reference-fixtures/accepted-feedback-scene.png",
+  "state": {
+    "snapshot": {
+      "card_identity": [
+        "1291debb-81a7-47d8-a9d9-d466f49d3f41",
+        1
+      ],
+      "card_identity_source": "feature_feedback_identity",
+      "feature_presentation_revision": 1,
+      "phase": "approval",
+      "card_display": true,
+      "card_attached": true,
+      "information_ready": true,
+      "submitted": true,
+      "card_region": {
+        "region": [
+          31,
+          10,
+          77,
+          13
+        ],
+        "clip": [
+          31,
+          10,
+          77,
+          13
+        ],
+        "fully_visible": true
+      },
+      "controls": [
+        {
+          "id": "approval-details-open-12-0",
+          "disabled": true,
+          "display": true,
+          "focused": false,
+          "region": [
+            34,
+            18,
+            9,
+            1
+          ],
+          "clip": [
+            34,
+            14,
+            71,
+            6
+          ],
+          "fully_visible": true
+        },
+        {
+          "id": "approval-fast-approve-12-0",
+          "disabled": true,
+          "display": true,
+          "focused": false,
+          "region": [
+            34,
+            20,
+            12,
+            1
+          ],
+          "clip": [
+            34,
+            20,
+            71,
+            1
+          ],
+          "fully_visible": true
+        },
+        {
+          "id": "approval-fast-deny-12-0",
+          "disabled": true,
+          "display": true,
+          "focused": false,
+          "region": [
+            46,
+            20,
+            6,
+            1
+          ],
+          "clip": [
+            34,
+            20,
+            71,
+            1
+          ],
+          "fully_visible": true
+        },
+        {
+          "id": "approval-more-options-12",
+          "disabled": true,
+          "display": true,
+          "focused": false,
+          "region": [
+            52,
+            20,
+            14,
+            1
+          ],
+          "clip": [
+            34,
+            20,
+            71,
+            1
+          ],
+          "fully_visible": true
+        }
+      ],
+      "feedback": [
+        {
+          "sequence": 2,
+          "decision_state": "accepted",
+          "selected_scope": "approve_once",
+          "grant_state": "unknown",
+          "applied_scope": null,
+          "execution_state": "",
+          "terminal_outcome": "",
+          "confirmed_backend_start": false
+        }
+      ],
+      "theme": "textual-dark",
+      "size": [
+        120,
+        40
+      ],
+      "current": {
+        "correlation": "f65a5053cfd88a033f734cf5f1cb40d8",
+        "run_id": "9fca443f8ddb495a8fd12c8d845abadd",
+        "shape": "single"
+      },
+      "inspect_open": false
+    },
+    "native": {
+      "font": [
+        8,
+        16
+      ],
+      "columns": 120,
+      "rows": 40,
+      "geometry": {
+        "client": [
+          960,
+          640
+        ],
+        "dpi": 96,
+        "class": "ConsoleWindowClass"
+      },
+      "request_summary_cell_region": [
+        34,
+        13,
+        71,
+        1
+      ],
+      "request_summary_selector": "#approval-request-summary",
+      "feedback_title_cell_region": [
+        3,
+        2,
+        71,
+        1
+      ]
+    },
+    "server_ns": 103019784214700,
+    "observer_health": {
+      "loss": false,
+      "write_failure": false,
+      "observer_failure": false,
+      "rows": 23,
+      "bytes": 7553,
+      "enqueue_max_ns": 130600,
+      "write_max_ns": 31167400
+    },
+    "rehearsal_scope": "feature_single_120x40_closed_dark"
+  },
+  "correlation": "f65a5053cfd88a033f734cf5f1cb40d8",
+  "card_identity": [
+    "1291debb-81a7-47d8-a9d9-d466f49d3f41",
+    1
+  ]
+}

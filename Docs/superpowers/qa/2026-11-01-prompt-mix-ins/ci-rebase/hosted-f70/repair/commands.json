@@ -1,0 +1,155 @@
+[
+  {
+    "phase": "diagnostic_owner_red",
+    "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+    "env": {
+      "PYTHONPATH": "/private/tmp/mixins-f70-ui19-diagnosis",
+      "TLDW_TEST_CONFIG_ROOT": "/private/tmp/mixins-f70-ui19-diagnosis/profile"
+    },
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      "-p",
+      "owner_probe",
+      "Tests/UI/test_library_note_links_picker_and_preview.py::test_typing_two_brackets_opens_a_keyboard_picker_that_inserts_a_real_link",
+      "--basetemp=/private/tmp/mixins-f70-ui19-diagnosis/pytest-tmp",
+      "--junitxml=/private/tmp/mixins-f70-ui19-diagnosis/owner-probe.xml"
+    ],
+    "stdout_stderr": "/private/tmp/mixins-f70-ui19-diagnosis/owner-probe.log"
+  },
+  {
+    "phase": "permanent_first_red",
+    "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+    "env": {},
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      "Tests/UI/test_library_landing_recompose_publication.py",
+      "--basetemp=/private/tmp/mixins-f70-ui19-diagnosis/permanent-red-tmp",
+      "--junitxml=/private/tmp/mixins-f70-ui19-diagnosis/permanent-red.xml"
+    ],
+    "stdout_stderr": "/private/tmp/mixins-f70-ui19-diagnosis/permanent-red.log"
+  },
+  {
+    "phase": "permanent_intermediate_red",
+    "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+    "env": {},
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      "Tests/UI/test_library_landing_recompose_publication.py",
+      "--basetemp=/private/tmp/mixins-f70-ui19-diagnosis/frozen-red-tmp",
+      "--junitxml=/private/tmp/mixins-f70-ui19-diagnosis/frozen-red.xml"
+    ],
+    "stdout_stderr": "/private/tmp/mixins-f70-ui19-diagnosis/frozen-red.log"
+  },
+  {
+    "phase": "permanent_final_red",
+    "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+    "env": {},
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      "Tests/UI/test_library_landing_recompose_publication.py",
+      "--basetemp=/private/tmp/mixins-f70-ui19-diagnosis/final-red-tmp",
+      "--junitxml=/private/tmp/mixins-f70-ui19-diagnosis/final-red.xml"
+    ],
+    "stdout_stderr": "/private/tmp/mixins-f70-ui19-diagnosis/final-red.log"
+  },
+  {
+    "phase": "mixed_before_doc_green",
+    "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+    "env": {},
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      "Tests/UI/test_library_landing_recompose_publication.py",
+      "Tests/UI/test_library_entry_compose_once.py::test_library_returning_landing_sync_retains_actions_focus_and_updates_copy",
+      "Tests/UI/test_library_entry_compose_once.py::test_library_landing_syncs_unknown_to_starter_without_duplicate_actions",
+      "Tests/UI/test_library_entry_compose_once.py::test_library_landing_syncs_starter_to_expanded_without_stale_recents",
+      "Tests/UI/test_library_entry_compose_once.py::test_landing_snapshot_sync_retains_actions_focus_and_updates_recents",
+      "Tests/UI/test_library_entry_compose_once.py::test_landing_deferred_recents_converge_on_latest_state",
+      "Tests/UI/test_library_entry_compose_once.py::test_stale_landing_deferred_sync_performs_zero_dom_mutation",
+      "Tests/UI/test_library_entry_compose_once.py::test_two_changed_generations_render_only_the_newer_generation",
+      "Tests/UI/test_library_entry_compose_once.py::test_queued_reconcile_supersedes_after_route_switch",
+      "Tests/UI/test_library_entry_compose_once.py::test_detached_queued_reconcile_completion_is_a_noop",
+      "Tests/UI/test_library_entry_compose_once.py::test_same_generation_new_route_receives_its_own_first_retry",
+      "Tests/UI/test_library_canvas_sync_defects.py::test_strict_failure_retry_retains_original_semantic_focus",
+      "--basetemp=/private/tmp/mixins-f70-ui19-diagnosis/frozen-green-tmp",
+      "--junitxml=/private/tmp/mixins-f70-ui19-diagnosis/frozen-green.xml"
+    ],
+    "stdout_stderr": "/private/tmp/mixins-f70-ui19-diagnosis/frozen-green.log"
+  },
+  {
+    "phase": "inherited_bootstrap_green",
+    "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+    "env": {
+      "PYTHONPATH": "/private/tmp/mixins-f70-ui19-diagnosis"
+    },
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      "-p",
+      "bootstrap_selected",
+      "Tests/UI/test_library_entry_compose_once.py::test_landing_snapshot_sync_retains_actions_focus_and_updates_recents",
+      "Tests/UI/test_library_entry_compose_once.py::test_landing_deferred_recents_converge_on_latest_state",
+      "Tests/UI/test_library_entry_compose_once.py::test_stale_landing_deferred_sync_performs_zero_dom_mutation",
+      "Tests/UI/test_library_entry_compose_once.py::test_two_changed_generations_render_only_the_newer_generation",
+      "Tests/UI/test_library_entry_compose_once.py::test_queued_reconcile_supersedes_after_route_switch",
+      "Tests/UI/test_library_entry_compose_once.py::test_detached_queued_reconcile_completion_is_a_noop",
+      "Tests/UI/test_library_entry_compose_once.py::test_same_generation_new_route_receives_its_own_first_retry",
+      "Tests/UI/test_library_canvas_sync_defects.py::test_strict_failure_retry_retains_original_semantic_focus",
+      "--basetemp=/private/tmp/mixins-f70-ui19-diagnosis/inherited-bootstrap-tmp",
+      "--junitxml=/private/tmp/mixins-f70-ui19-diagnosis/inherited-bootstrap.xml"
+    ],
+    "stdout_stderr": "/private/tmp/mixins-f70-ui19-diagnosis/inherited-bootstrap.log"
+  },
+  {
+    "phase": "ordinary_final_native_green",
+    "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+    "env": {},
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      "Tests/UI/test_library_landing_recompose_publication.py",
+      "Tests/UI/test_library_note_links_picker_and_preview.py::test_typing_two_brackets_opens_a_keyboard_picker_that_inserts_a_real_link",
+      "--basetemp=/private/tmp/mixins-f70-ui19-diagnosis/final-native-tmp",
+      "--junitxml=/private/tmp/mixins-f70-ui19-diagnosis/final-native.xml"
+    ],
+    "stdout_stderr": "/private/tmp/mixins-f70-ui19-diagnosis/final-native.log"
+  },
+  {
+    "phase": "diagnostic_owner_green",
+    "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+    "env": {
+      "PYTHONPATH": "/private/tmp/mixins-f70-ui19-diagnosis/owner-green",
+      "TLDW_TEST_CONFIG_ROOT": "/private/tmp/mixins-f70-ui19-diagnosis/owner-green/profile"
+    },
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      "-p",
+      "owner_probe",
+      "Tests/UI/test_library_note_links_picker_and_preview.py::test_typing_two_brackets_opens_a_keyboard_picker_that_inserts_a_real_link",
+      "--basetemp=/private/tmp/mixins-f70-ui19-diagnosis/owner-green/pytest-tmp",
+      "--junitxml=/private/tmp/mixins-f70-ui19-diagnosis/owner-green/owner-probe.xml"
+    ],
+    "stdout_stderr": "/private/tmp/mixins-f70-ui19-diagnosis/owner-green/owner-probe.log"
+  }
+]

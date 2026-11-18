@@ -25,7 +25,7 @@ from time import perf_counter
 
 import pytest
 from textual.selection import Selection
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input, Markdown, Static
 
 import tldw_chatbook.UI.Screens.library_screen as library_screen_module
 import tldw_chatbook.Widgets.Library.library_media_content as media_content_module
@@ -39,8 +39,18 @@ from Tests.UI.test_library_media_side_by_side import (
     _open_media_list,
 )
 from Tests.UI.test_library_shell import (
+    LIBRARY_TEST_SIZE,
+    LibraryHarness,
     LibraryProductionCSSHarness,
+    _active_library_screen,
+    _build_test_app,
+    _large_markdown_media_item,
+    _open_media_viewer,
+    _seed_conversations,
+    _submit_content_search_query,
+    _two_conversations,
     _wait_for_condition,
+    _wait_for_library_shell,
 )
 from tldw_chatbook.Widgets.Library.library_media_content import (
     LibraryMediaContentBody,
@@ -133,7 +143,9 @@ def _seed_row_document(screen, service, index: int, content: str):
 
 async def _load_row_with_document(screen, pilot, service, index: int, content: str):
     """Seed row ``index`` with ``content`` and open it from the Items list."""
-    canonical_id, backing_id, title = _seed_row_document(screen, service, index, content)
+    canonical_id, backing_id, title = _seed_row_document(
+        screen, service, index, content
+    )
     screen.query_one(f"#library-media-row-{index}", Button).press()
     await _wait_for_detail_call(service, backing_id)
     service.release(backing_id)
@@ -201,9 +213,7 @@ def _raw_static(screen) -> VirtualizedRawContent:
     through ``render_line`` instead (see ``_highlighted_words_in_raw``).
     """
     body = screen.query_one("#library-media-viewer-content", LibraryMediaContentBody)
-    return body.query_one(
-        "#library-media-viewer-content-text", VirtualizedRawContent
-    )
+    return body.query_one("#library-media-viewer-content-text", VirtualizedRawContent)
 
 
 def _status_text(screen) -> str:
@@ -295,8 +305,7 @@ async def test_match_navigation_patches_the_highlight_instead_of_rebuilding_it()
 
         second = _raw_static(screen)
         assert second is raw, (
-            "A match click rebuilt the Raw view instead of patching its "
-            "search state."
+            "A match click rebuilt the Raw view instead of patching its search state."
         )
         assert second._match_index == 1
         assert _highlighted_words_in_raw(second) == {NEEDLE}
@@ -396,7 +405,7 @@ async def test_clearing_the_search_mid_navigation_drops_every_highlight():
         assert selected == content
 
         # A stray advance after the clear is a no-op, not a crash.
-        screen._advance_library_media_content_match(1)
+        screen._media_controller._advance_library_media_content_match(1)
         await pilot.pause()
         assert _highlighted_words_in_raw(_raw_static(screen)) == set()
 
@@ -423,7 +432,7 @@ async def test_a_cleared_detail_releases_the_cached_match_list():
         assert screen._library_media_content_matches() == ()
         assert screen._media_state.content_match_memo is None
         # And a stray navigation against no open item is a no-op, not a crash.
-        screen._advance_library_media_content_match(1)
+        screen._media_controller._advance_library_media_content_match(1)
         await pilot.pause()
 
 
@@ -453,7 +462,7 @@ async def test_multi_megabyte_document_match_navigation_timings():
         with _count_document_passes() as counts:
             for _ in range(6):
                 started = perf_counter()
-                screen._advance_library_media_content_match(1)
+                screen._media_controller._advance_library_media_content_match(1)
                 per_click_ms.append((perf_counter() - started) * 1000.0)
             passes = _total(counts)
 
@@ -465,3 +474,100 @@ async def test_multi_megabyte_document_match_navigation_timings():
         assert passes == 0, (
             f"Six clicks on a multi-MB document took {passes} document pass(es)."
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile  # the Library harness's profile (TASK-39141)
+async def test_find_toggle_keeps_body_parse_and_focus(monkeypatch):
+    """TASK-40327: a Find open/close patches the bar in place.
+
+    It used to recompose the whole Reader: every child rebuilt, the 2,000-line
+    document re-parsed, and focus rescued afterwards. Counts parses and checks
+    identities instead of timing the toggle.
+    """
+    markdown_updates: list[int] = []
+    original_update = Markdown.update
+
+    def recording_update(markdown_widget: Markdown, source: str):
+        markdown_updates.append(id(markdown_widget))
+        return original_update(markdown_widget, source)
+
+    monkeypatch.setattr(Markdown, "update", recording_update)
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), media=_large_markdown_media_item())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _open_media_viewer(screen, pilot)
+        assert len(markdown_updates) == 1, markdown_updates
+        body = screen.query_one("#library-media-viewer-content", LibraryMediaContentBody)
+        markdown = screen.query_one("#library-media-viewer-content-markdown", Markdown)
+        find = screen.query_one("#library-media-reader-find", Button)
+
+        def unchanged() -> None:
+            assert screen.query_one("#library-media-viewer-content") is body
+            assert screen.query_one("#library-media-viewer-content-markdown") is markdown
+            assert screen.query_one("#library-media-reader-find") is find
+            assert len(markdown_updates) == 1, markdown_updates
+
+        # Open, search, then close with the toggle: focus stays on Find.
+        await _submit_content_search_query(screen, pilot, "budget")
+        unchanged()
+        assert body._query == "budget"
+        find.focus()
+        find.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query("#library-media-content-search-controls"),
+            message="Find did not close",
+        )
+        await pilot.pause()
+        unchanged()
+        assert screen.focused is find
+        assert body._query == "" and screen._media_state.content_query == ""
+
+        # Reopen (the gesture focuses the input), then Escape lands on Find.
+        find.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "id", None) == "library-media-content-search",
+            message="Find did not focus its input",
+        )
+        unchanged()
+        await pilot.press("escape")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.focused is find
+            and not screen.query("#library-media-content-search-controls"),
+            message=lambda: f"Escape left focus on {screen.focused!r}",
+        )
+        unchanged()
+
+        # Review r14ls-rev1: a close and a reopen handled in one loop turn,
+        # before the close's removal has run, still end with Find open and a
+        # live bar mounted (the reopen must not adopt the doomed bar).
+        find.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(screen.query("#library-media-content-search")),
+            message="Find did not open",
+        )
+
+        def bar_matches_state() -> bool:
+            bars = [
+                bar
+                for bar in screen.query("#library-media-content-search-controls")
+                if not bar._pruning
+            ]
+            return screen._media_state.find_open and len(bars) == 1
+
+        screen._toggle_library_media_find()
+        screen._toggle_library_media_find()
+        await _wait_for_condition(
+            pilot, bar_matches_state, message="Reopened Find has no live bar"
+        )
+        for _ in range(10):
+            await pilot.pause()
+        assert bar_matches_state()

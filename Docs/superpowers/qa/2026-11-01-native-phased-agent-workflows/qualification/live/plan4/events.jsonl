@@ -1,0 +1,6 @@
+{"event": "ready", "label": "whole-mounted-chat", "pid": 19387, "time": 1793849539.5557811}
+{"conversation": "fdcd71f3-02e0-4055-bf87-04144643c3b9", "event": "chat", "pid": 19387, "session": "396a1fe6-e651-40ca-bfab-f90f376f4ff5", "time": 1793849539.660615}
+{"event": "ready", "label": "named-chat-tab", "pid": 19387, "time": 1793849540.188577}
+{"base": "http://127.0.0.1:8010", "event": "native-provider", "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0", "pid": 19387, "provider": "llama_cpp", "ready": true, "time": 1793849540.2097542}
+{"disabled": true, "display": true, "event": "hit-refused", "pid": 19387, "region": [116, 52, 14, 1], "screen": "ChatScreen", "selector": "#console-send-message", "stack": ["Screen", "ChatScreen"], "time": 1793849552.224125, "visible": true}
+{"event": "creators-returned", "pid": 19387, "time": 1793849552.43496}

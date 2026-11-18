@@ -1,0 +1,942 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+.......FF                                                                [100%]
+================================== FAILURES ===================================
+_________ test_filter_follows_a_class_added_to_an_ancestor_at_runtime _________
+
+self = <Coroutine test_filter_follows_a_class_added_to_an_ancestor_at_runtime>
+
+    def runtest(self) -> None:
+        self.obj = wrap_in_sync(
+            # https://github.com/pytest-dev/pytest-asyncio/issues/596
+            self.obj,  # type: ignore[has-type]
+        )
+>       super().runtest()
+
+.venv\Lib\site-packages\pytest_asyncio\plugin.py:508:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\Lib\site-packages\pytest_asyncio\plugin.py:773: in inner
+    _loop.run_until_complete(task)
+C:\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x000001830D681340>, 'request': <FixtureRequest for <Coroutine test_filter_follows_a_class_added_to_an_ancestor_at_runtime>>}
+request = <FixtureRequest for <Coroutine test_filter_follows_a_class_added_to_an_ancestor_at_runtime>>
+work = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-73/test_filter_follows_a_class_ad0/private-profile-process')
+profile = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-73/test_filter_follows_a_class_ad0/private-profile-process/profile')
+environment = {'ALLUSERSPROFILE': 'C:\\ProgramData', 'APPDATA': 'C:\\Users\\GDesktop-1\\AppData\\Roaming', 'ASL.LOG': 'Destination=file', 'BROWSER_USE_ACCESS_VERIFYING_IDENTITY': 'MCowBQYDK2VwAyEAlPodGAzT9UdUsYiOefp6jqTO3XDhrC0HsIisJZxfekk=', ...}
+name = 'PYTEST_ADDOPTS', marker = None, timeout = 120.0, armed = 0.0
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        global _awaiting
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            # pytest-timeout's signal method, where there is one (not Windows).
+            own_timeout = (
+                signal.getsignal(signal.SIGALRM) if hasattr(signal, "SIGALRM") else None
+            )
+            if _STACKS_PATH and callable(own_timeout):
+
+                def note_then_time_out(signum, frame):
+                    __tracebackhide__ = True
+                    with contextlib.suppress(Exception):
+                        _note_stacks(_STACKS_PATH, "when its own timeout fired")
+                    own_timeout(signum, frame)
+
+                # pytest-timeout resets SIGALRM itself when the test ends.
+                signal.signal(signal.SIGALRM, note_then_time_out)
+            result = function(*args, **kwargs)
+            if not inspect.isawaitable(result):
+                return result
+            _awaiting = result
+            try:
+                return await result
+            finally:
+                _awaiting = None
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER",
+            "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT",
+            "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        # The signal method arms ITIMER_REAL for this test: what is left of it
+        # is the real budget, setup already having spent some.
+        armed = (
+            signal.getitimer(signal.ITIMER_REAL)[0]
+            if hasattr(signal, "getitimer")
+            else 0.0
+        )
+        child_timeout, wait = _child_deadlines(
+            min(armed or timeout, timeout),
+            # A test with no timeout of its own leaves any armed timer alone.
+            _extend_own_alarm(armed) if timeout > 0 else 0.0,
+        )
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        stacks = work / "stacks.txt"
+        environment[_CHILD_STACKS] = str(stacks)
+        coverage_plugin = request.config.pluginmanager.getplugin("_cov")
+        coverage_controller = getattr(coverage_plugin, "cov_controller", None)
+        coverage_args = []
+        coverage_file = work / ".coverage"
+        if coverage_controller is not None:
+            # Keep each child's data private; the parent retains its report gate.
+            environment["COVERAGE_FILE"] = str(coverage_file)
+            for name in tuple(environment):
+                if name.startswith("COV_CORE_"):
+                    environment.pop(name)
+            coverage_args = [
+                "-p",
+                "pytest_cov.plugin",
+                "--cov-report=",
+                "--cov-fail-under=0",
+            ]
+            sources = coverage_controller.cov_source
+            coverage_args += (
+                [f"--cov={source}" for source in sources] if sources else ["--cov"]
+            )
+            config_file = coverage_controller.cov.config.config_file
+            if config_file:
+                coverage_args += [f"--cov-config={config_file}"]
+            if coverage_controller.cov.config.branch:
+                coverage_args += ["--cov-branch"]
+            if coverage_plugin.options.cov_context:
+                coverage_args += [
+                    f"--cov-context={coverage_plugin.options.cov_context}"
+                ]
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable,
+                "-m",
+                "pytest",
+                request.node.nodeid,
+                "-p",
+                "pytest_asyncio.plugin",
+                "-p",
+                "pytest_timeout",
+                "-q",
+                f"--timeout={child_timeout}",
+                f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                *coverage_args,
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                exited = await _exited_within(process, wait)
+                asked = not exited and hasattr(signal, "SIGUSR1")
+                if asked:
+                    # Past its own limit and still running (a teardown or an
+                    # exit that cannot finish): ask where before ending it.
+                    # Half the reserve for its dump leaves half for the kill
+                    # and this report, before the parent's own limit.
+                    with contextlib.suppress(ProcessLookupError):
+                        process.send_signal(signal.SIGUSR1)
+                    await _exited_within(process, _PARENT_RESERVE_SECONDS / 2)
+            finally:
+                killed = process.returncode is None
+                if killed:
+                    process.kill()
+                    await process.wait()
+        if coverage_controller is not None and coverage_file.is_file():
+            # pytest-cov combines parallel files for serial and xdist reports.
+            parent_file = Path(
+                coverage_controller.topdir, coverage_controller.cov.config.data_file
+            ).resolve()
+            with NamedTemporaryFile(
+                prefix=parent_file.name + ".", dir=parent_file.parent, delete=False
+            ) as output:
+                output.write(coverage_file.read_bytes())
+        if process.returncode:
+            if exited:
+                ending = ""
+            elif killed:
+                ending = f"(killed: still running after {wait:.0f}s"
+                ending += "; asked for its stacks first)\n" if asked else ")\n"
+            elif (
+                asked
+                and process.returncode == -signal.SIGUSR1
+                and _child_finished(report)
+            ):
+                # Its session had ended and interpreter shutdown had already
+                # put the handler back to the default (TASK-35027).
+                ending = (
+                    f"(still running after {wait:.0f}s; its test had ended "
+                    "and it was exiting when the ask for its stacks ended it)\n"
+                )
+            elif asked and process.returncode == -signal.SIGUSR1:
+                # No handler yet (still starting up, or the module imported
+                # off the main thread): the signal's default action ended it.
+                ending = (
+                    f"(still running after {wait:.0f}s; ended by the ask for "
+                    "its stacks before it could answer)\n"
+                )
+            elif asked:
+                ending = (
+                    f"(still running after {wait:.0f}s; asked for its stacks, "
+                    "it then exited by itself)\n"
+                )
+            else:
+                # Exited by itself just as the wait ended, before any ask
+                # (and always so where there is no SIGUSR1, e.g. Windows).
+                ending = f"(exited by itself just after the {wait:.0f}s wait ended)\n"
+            dumps = (
+                stacks.read_text(encoding="utf-8", errors="replace")
+                if stacks.is_file()
+                else ""
+            )
+>           pytest.fail(
+                f"{log}\n"
+                + ending
+                + f"{_child_failure_report(report)}\n"
+                + (f"--- child stacks at its deadline ---\n{dumps}" if dumps else "")
+                + "--- child log tail ---\n"
+                # A kill can land between two writes of one character.
+                + log.read_text(encoding="utf-8", errors="replace")[-16000:]
+            )
+E           Failed: C:\Users\GDesktop-1\.tmp-windows-settings-tests\pytest-of-GDesktop-1\pytest-73\test_filter_follows_a_class_ad0\private-profile-process\pytest.log
+E           --- child error: failed on teardown with "ExceptionGroup: errors while tearing down <Coroutine test_filter_follows_a_class_added_to_an_ancestor_at_runtime> (2 sub-exceptions)"
+E           + Exception Group Traceback (most recent call last):
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 341, in from_call
+E             |     result: TResult | None = func()
+E             |                              ^^^^^^
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 242, in <lambda>
+E             |     lambda: runtest_hook(item=item, **kwds), when=when, reraise=reraise
+E             |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_hooks.py", line 512, in __call__
+E             |     return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+E             |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_manager.py", line 120, in _hookexec
+E             |     return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+E             |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 167, in _multicall
+E             |     raise exception
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 139, in _multicall
+E             |     teardown.throw(exception)
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 53, in run_old_style_hookwrapper
+E             |     return result.get_result()
+E             |            ^^^^^^^^^^^^^^^^^^^
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_result.py", line 103, in get_result
+E             |     raise exc.with_traceback(tb)
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 38, in run_old_style_hookwrapper
+E             |     res = yield
+E             |           ^^^^^
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 139, in _multicall
+E             |     teardown.throw(exception)
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\threadexception.py", line 97, in pytest_runtest_teardown
+E             |     yield from thread_exception_runtest_hook()
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\threadexception.py", line 68, in thread_exception_runtest_hook
+E             |     yield
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 139, in _multicall
+E             |     teardown.throw(exception)
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\unraisableexception.py", line 100, in pytest_runtest_teardown
+E             |     yield from unraisable_exception_runtest_hook()
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\unraisableexception.py", line 70, in unraisable_exception_runtest_hook
+E             |     yield
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 139, in _multicall
+E             |     teardown.throw(exception)
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\logging.py", line 853, in pytest_runtest_teardown
+E             |     yield from self._runtest_for(item, "teardown")
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\logging.py", line 829, in _runtest_for
+E             |     yield
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 139, in _multicall
+E             |     teardown.throw(exception)
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\capture.py", line 903, in pytest_runtest_teardown
+E             |     return (yield)
+E             |             ^^^^^
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 121, in _multicall
+E             |     res = hook_impl.function(*args)
+E             |           ^^^^^^^^^^^^^^^^^^^^^^^^^
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 189, in pytest_runtest_teardown
+E             |     item.session._setupstate.teardown_exact(nextitem)
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 557, in teardown_exact
+E             |     raise exceptions[0]
+E             | ExceptionGroup: errors while tearing down <Coroutine test_filter_follows_a_class_added_to_an_ancestor_at_runtime> (2 sub-exceptions)
+E             +-+---------------- 1 ----------------
+E               | Traceback (most recent call last):
+E               |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 546, in teardown_exact
+E               |     fin()
+E               |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\fixtures.py", line 1032, in finish
+E               |     raise exceptions[0]
+E               |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\fixtures.py", line 1021, in finish
+E               |     fin()
+E               |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\fixtures.py", line 907, in _teardown_yield_fixture
+E               |     next(it)
+E               |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\Tests\conftest.py", line 1770, in isolate_test_environment
+E               |     raise RuntimeError(
+E               | RuntimeError: Native app workers remain uncertain; config retirement refused
+E               +---------------- 2 ----------------
+E               | Traceback (most recent call last):
+E               |   File "C:\Python312\Lib\asyncio\base_events.py", line 605, in shutdown_default_executor
+E               |     await future
+E               | asyncio.exceptions.CancelledError
+E               |
+E               | The above exception was the direct cause of the following exception:
+E               |
+E               | Traceback (most recent call last):
+E               |   File "C:\Python312\Lib\asyncio\base_events.py", line 604, in shutdown_default_executor
+E               |     async with timeouts.timeout(timeout):
+E               |                ^^^^^^^^^^^^^^^^^^^^^^^^^
+E               |   File "C:\Python312\Lib\asyncio\timeouts.py", line 115, in __aexit__
+E               |     raise TimeoutError from exc_val
+E               | TimeoutError
+E               |
+E               | During handling of the above exception, another exception occurred:
+E               |
+E               | Traceback (most recent call last):
+E               |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 546, in teardown_exact
+E               |     fin()
+E               |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\fixtures.py", line 1032, in finish
+E               |     raise exceptions[0]
+E               |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\fixtures.py", line 1021, in finish
+E               |     fin()
+E               |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py", line 339, in finalizer
+E               |     event_loop.run_until_complete(task)
+E               |   File "C:\Python312\Lib\asyncio\base_events.py", line 691, in run_until_complete
+E               |     return future.result()
+E               |            ^^^^^^^^^^^^^^^
+E               |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py", line 330, in async_finalizer
+E               |     await gen_obj.__anext__()  # type: ignore[union-attr]
+E               |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+E               |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\Tests\conftest.py", line 485, in retire_test_app_owners
+E               |     await asyncio.get_running_loop().shutdown_default_executor(
+E               |   File "C:\Python312\Lib\asyncio\base_events.py", line 607, in shutdown_default_executor
+E               |     warnings.warn("The executor did not finishing joining "
+E               | RuntimeWarning: The executor did not finishing joining its threads within 3.0 seconds.
+E               +------------------------------------
+E           --- child log tail ---
+E           top-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\fixtures.py", line 907, in _teardown_yield_fixture
+E               |     next(it)
+E               |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\Tests\conftest.py", line 1770, in isolate_test_environment
+E               |     raise RuntimeError(
+E               | RuntimeError: Native app workers remain uncertain; config retirement refused
+E               +---------------- 2 ----------------
+E               | Traceback (most recent call last):
+E               |   File "C:\Python312\Lib\asyncio\base_events.py", line 605, in shutdown_default_executor
+E               |     await future
+E               | asyncio.exceptions.CancelledError
+E               |
+E               | The above exception was the direct cause of the following exception:
+E               |
+E               | Traceback (most recent call last):
+E               |   File "C:\Python312\Lib\asyncio\base_events.py", line 604, in shutdown_default_executor
+E               |     async with timeouts.timeout(timeout):
+E               |                ^^^^^^^^^^^^^^^^^^^^^^^^^
+E               |   File "C:\Python312\Lib\asyncio\timeouts.py", line 115, in __aexit__
+E               |     raise TimeoutError from exc_val
+E               | TimeoutError
+E               |
+E               | During handling of the above exception, another exception occurred:
+E               |
+E               | Traceback (most recent call last):
+E               |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 546, in teardown_exact
+E               |     fin()
+E               |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\fixtures.py", line 1032, in finish
+E               |     raise exceptions[0]
+E               |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\fixtures.py", line 1021, in finish
+E               |     fin()
+E               |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py", line 339, in finalizer
+E               |     event_loop.run_until_complete(task)
+E               |   File "C:\Python312\Lib\asyncio\base_events.py", line 691, in run_until_complete
+E               |     return future.result()
+E               |            ^^^^^^^^^^^^^^^
+E               |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py", line 330, in async_finalizer
+E               |     await gen_obj.__anext__()  # type: ignore[union-attr]
+E               |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+E               |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\Tests\conftest.py", line 485, in retire_test_app_owners
+E               |     await asyncio.get_running_loop().shutdown_default_executor(
+E               |   File "C:\Python312\Lib\asyncio\base_events.py", line 607, in shutdown_default_executor
+E               |     warnings.warn("The executor did not finishing joining "
+E               | RuntimeWarning: The executor did not finishing joining its threads within 3.0 seconds.
+E               +------------------------------------
+E           ---------------------------- Captured stderr setup ----------------------------
+E           2026-10-19 10:41:14.200 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - \u2705 huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.\n2026-10-19 10:41:14.332 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available\n2026-10-19 10:41:14.333 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice\n2026-10-19 10:41:14.334 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ---------------------------- Captured stderr call -----------------------------
+E           2026-10-19 10:41:16.072 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           2026-10-19 10:41:17.176 | INFO     | tldw_chatbook.config:_load_settings_uncached:2301 - Determined ACTUAL_PROJECT_ROOT for general paths: C:\Users\GDesktop-1\Working\Github\tldw_tui\tldw_chatbook
+E           2026-10-19 10:41:17.176 | INFO     | tldw_chatbook.config:_load_settings_uncached:2304 - Determined APP_COMPONENT_ROOT for config files: C:\Users\GDesktop-1\Working\Github\tldw_tui\tldw_chatbook
+E           2026-10-19 10:41:17.195 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7062 - Attempting to load CLI config from: C:\Users\GDesktop-1\.tmp-windows-settings-tests\pytest-of-GDesktop-1\pytest-73\test_filter_follows_a_class_ad0\private-profile-process\profile\config\config.toml
+E           2026-10-19 10:41:17.224 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7083 - Successfully loaded and merged CLI config from C:\Users\GDesktop-1\.tmp-windows-settings-tests\pytest-of-GDesktop-1\pytest-73\test_filter_follows_a_class_ad0\private-profile-process\profile\config\config.toml
+E           2026-10-19 10:41:17.224 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7167 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'console_ssh', 'hooks', 'skills', 'tamagotchi', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'session_summary', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'sync', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', 'first_run']
+E           2026-10-19 10:41:17.224 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7171 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'databricks', 'together', 'fireworks', 'cerebras', 'sambanova', 'nvidia', 'deepinfra', 'nebius', 'novita', 'minimax', 'mimo', 'tokenhub', 'byteplus', 'stepfun', 'vercel', 'zenmux', 'kilo', 'siliconflow', 'baseten', 'gmi', 'ollama_cloud', 'upstage', 'arcee', 'qianfan', 'nous', 'venice', 'meta', 'azure', 'wandb', 'cloudflare', 'opencode_zen', 'commandcode', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+E           2026-10-19 10:41:17.229 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2327 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E           2026-10-19 10:41:17.755 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3887 - Ensured chat dictionaries folder exists: C:\Users\GDesktop-1\.tmp-windows-settings-tests\pytest-of-GDesktop-1\pytest-73\test_filter_follows_a_class_ad0\private-profile-process\profile\home\.local\share\tldw_cli\default_user\chat_dicts
+E           2026-10-19 10:41:17.756 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3918 - load_settings: Configuration cached for future use
+E           2026-10-19 10:41:18.258 | INFO     | tldw_chatbook.app:__init__:1281 - Loaded app_config - strip_thinking_tags: True
+E           2026-10-19 10:41:18.689 | INFO     | tldw_chatbook.app:__init__:1389 - Parallel init task 'prompts_service' completed in 0.000s
+E           2026-10-19 10:41:18.689 | INFO     | tldw_chatbook.app:__init__:1389 - Parallel init task 'notes_service' completed in 0.000s
+E           2026-10-19 10:41:18.690 | INFO     | tldw_chatbook.app:__init__:1389 - Parallel init task 'providers_models' completed in 0.000s
+E           2026-10-19 10:41:18.690 | INFO     | tldw_chatbook.app:__init__:1389 - Parallel init task 'media_db' completed in 0.000s
+E           2026-10-19 10:41:18.835 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - LibraryCollectionsDB initialized with path: C:\Users\GDesktop-1\.tmp-windows-settings-tests\tldw-chatbook-test-ilfil4wp\library_collections.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-10-19 10:41:19.441 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - WorkspaceDB initialized with path: C:\Users\GDesktop-1\.tmp-windows-settings-tests\tldw-chatbook-test-ilfil4wp\workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-10-19 10:41:20.551 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - SubscriptionsDB initialized with path: C:\Users\GDesktop-1\.tmp-windows-settings-tests\tldw-chatbook-test-ilfil4wp\subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-10-19 10:41:20.870 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E           2026-10-19 10:41:20.872 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - EventStateRepository initialized with path: C:\Users\GDesktop-1\.tmp-windows-settings-tests\tldw-chatbook-test-ilfil4wp\tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-10-19 10:41:20.872 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - SyncStateRepository initialized with path: C:\Users\GDesktop-1\.tmp-windows-settings-tests\tldw-chatbook-test-ilfil4wp\tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-10-19 10:41:21.189 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:73 - Scheduling schema migrated to version 2 (missed_count column)
+E           2026-10-19 10:41:21.276 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:58 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E           2026-10-19 10:41:21.370 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E           2026-10-19 10:41:21.561 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:63 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E           2026-10-19 10:41:21.660 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:68 - Scheduling schema migrated to version 6 (task_incidents)
+E           2026-10-19 10:41:21.810 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E           2026-10-19 10:41:21.810 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - ScheduledTasksDB initialized with path: C:\Users\GDesktop-1\.tmp-windows-settings-tests\tldw-chatbook-test-ilfil4wp\scheduled_tasks.sqlite [Client: default]
+E           2026-10-19 10:41:22.708 | DEBUG    | tldw_chatbook.app:__init__:1460 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E           2026-10-19 10:41:22.708 | DEBUG    | tldw_chatbook.app:__init__:1463 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E           2026-10-19 10:41:22.791 | DEBUG    | tldw_chatbook.Evals.config_loader:_load_config:115 - Loaded evaluation configuration from C:\Users\GDesktop-1\.tmp-windows-settings-tests\pytest-of-GDesktop-1\pytest-73\test_filter_follows_a_class_ad0\private-profile-process\profile\config\eval_overrides.yaml
+E           2026-10-19 10:41:23.080 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:614 - Created EvalsDB schema version 7
+E           2026-10-19 10:41:23.080 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:242 - EvalsDB initialized with path: C:\Users\GDesktop-1\.tmp-windows-settings-tests\pytest-of-GDesktop-1\pytest-73\test_filter_follows_a_class_ad0\private-profile-process\profile\home\.local\share\tldw_cli\default_user\evals.db
+E           2026-10-19 10:41:23.080 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E           2026-10-19 10:41:23.723 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E           2026-10-19 10:41:23.723 | INFO     | tldw_chatbook.app:_init_worker_handlers:2211 - Worker handler registry initialized with all handlers
+E           2026-10-19 10:41:23.723 | INFO     | tldw_chatbook.app:__init__:1653 - === STARTUP TIMING SUMMARY ===
+E           2026-10-19 10:41:23.723 | INFO     | tldw_chatbook.app:__init__:1654 - Total initialization time: 5.753 seconds
+E           2026-10-19 10:41:23.723 | INFO     | tldw_chatbook.app:__init__:1660 -   basic_init: 0.705s (12.2%)
+E           2026-10-19 10:41:23.724 | INFO     | tldw_chatbook.app:__init__:1660 -   attribute_init: 0.000s (0.0%)
+E           2026-10-19 10:41:23.724 | INFO     | tldw_chatbook.app:__init__:1660 -   parallel_init: 0.001s (0.0%)
+E           2026-10-19 10:41:23.724 | INFO     | tldw_chatbook.app:__init__:1673 -     - notes_service: 0.000s (0.3% of parallel_init)
+E           2026-10-19 10:41:23.724 | INFO     | tldw_chatbook.app:__init__:1673 -     - providers_models: 0.000s (0.2% of parallel_init)
+E           2026-10-19 10:41:23.724 | INFO     | tldw_chatbook.app:__init__:1673 -     - media_db: 0.000s (0.2% of parallel_init)
+E           2026-10-19 10:41:23.724 | INFO     | tldw_chatbook.app:__init__:1673 -     - prompts_service: 0.000s (0.1% of parallel_init)
+E           2026-10-19 10:41:23.724 | INFO     | tldw_chatbook.app:__init__:1677 - ==============================
+E           2026-10-19 10:41:24.568 | DEBUG    | tldw_chatbook.app:on_mount:3350 - Notes-sync start gate: no configuration evidence; runtime not constructed this boot.
+E           ------------------------------ Captured log call ------------------------------
+E           INFO     root:app.py:1415 App __init__: Determined initial tab value: chat
+E           WARNING  root:app.py:1522 Prompts service not initialized, self.prompts_db set to None.
+E           ERROR    root:app.py:1543 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E           INFO     root:app.py:2320 Splash screen enabled: False
+E           INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:275 event=app_started component=app
+E           INFO     root:Logging_Config.py:809 --- _setup_logging START (from Logging_Config.py) ---
+E           INFO     root:Logging_Config.py:821 Loguru: All pre-existing sinks removed.
+E           INFO     root:Logging_Config.py:850 Loguru: Configured to forward its messages to standard Python logging system.
+E           ---------------------------- Captured log teardown ----------------------------
+E           INFO     tldw_chatbook.Character_Chat.Character_Chat_Lib:Logging_Config.py:651 Character-card image metadata decoded successfully.
+E           INFO     tldw_chatbook.Character_Chat.Character_Chat_Lib:Logging_Config.py:651 Character-card image metadata decoded successfully.
+E           ============================== warnings summary ===============================
+E           Tests/Performance/test_textual_css_fastpath.py::test_filter_follows_a_class_added_to_an_ancestor_at_runtime
+E             C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+E               warn(
+E
+E           Tests/Performance/test_textual_css_fastpath.py::test_filter_follows_a_class_added_to_an_ancestor_at_runtime
+E             C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydub\utils.py:14: DeprecationWarning: 'audioop' is deprecated and slated for removal in Python 3.13
+E               import audioop
+E
+E           -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+E           - generated xml file: C:\Users\GDesktop-1\.tmp-windows-settings-tests\pytest-of-GDesktop-1\pytest-73\test_filter_follows_a_class_ad0\private-profile-process\pytest.xml -
+E           ============================ slowest 25 durations =============================
+E           29.06s call     Tests/Performance/test_textual_css_fastpath.py::test_filter_follows_a_class_added_to_an_ancestor_at_runtime
+E           3.01s teardown Tests/Performance/test_textual_css_fastpath.py::test_filter_follows_a_class_added_to_an_ancestor_at_runtime
+E
+E           (1 durations < 1s hidden.  Use -vv to show these durations.)
+E           =========================== short test summary info ===========================
+E           ERROR Tests/Performance/test_textual_css_fastpath.py::test_filter_follows_a_class_added_to_an_ancestor_at_runtime
+E           1 passed, 2 warnings, 1 error in 33.09s
+
+Tests\private_profile.py:405: Failed
+___________ test_ancestor_scoped_bare_type_rule_count_is_a_ratchet ____________
+
+self = <Coroutine test_ancestor_scoped_bare_type_rule_count_is_a_ratchet>
+
+    def runtest(self) -> None:
+        self.obj = wrap_in_sync(
+            # https://github.com/pytest-dev/pytest-asyncio/issues/596
+            self.obj,  # type: ignore[has-type]
+        )
+>       super().runtest()
+
+.venv\Lib\site-packages\pytest_asyncio\plugin.py:508:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\Lib\site-packages\pytest_asyncio\plugin.py:773: in inner
+    _loop.run_until_complete(task)
+C:\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x000001830D7D84A0>, 'request': <FixtureRequest for <Coroutine test_ancestor_scoped_bare_type_rule_count_is_a_ratchet>>}
+request = <FixtureRequest for <Coroutine test_ancestor_scoped_bare_type_rule_count_is_a_ratchet>>
+work = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-73/test_ancestor_scoped_bare_type0/private-profile-process')
+profile = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-73/test_ancestor_scoped_bare_type0/private-profile-process/profile')
+environment = {'ALLUSERSPROFILE': 'C:\\ProgramData', 'APPDATA': 'C:\\Users\\GDesktop-1\\AppData\\Roaming', 'ASL.LOG': 'Destination=file', 'BROWSER_USE_ACCESS_VERIFYING_IDENTITY': 'MCowBQYDK2VwAyEAlPodGAzT9UdUsYiOefp6jqTO3XDhrC0HsIisJZxfekk=', ...}
+name = 'PYTEST_ADDOPTS', marker = None, timeout = 120.0, armed = 0.0
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        global _awaiting
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            # pytest-timeout's signal method, where there is one (not Windows).
+            own_timeout = (
+                signal.getsignal(signal.SIGALRM) if hasattr(signal, "SIGALRM") else None
+            )
+            if _STACKS_PATH and callable(own_timeout):
+
+                def note_then_time_out(signum, frame):
+                    __tracebackhide__ = True
+                    with contextlib.suppress(Exception):
+                        _note_stacks(_STACKS_PATH, "when its own timeout fired")
+                    own_timeout(signum, frame)
+
+                # pytest-timeout resets SIGALRM itself when the test ends.
+                signal.signal(signal.SIGALRM, note_then_time_out)
+            result = function(*args, **kwargs)
+            if not inspect.isawaitable(result):
+                return result
+            _awaiting = result
+            try:
+                return await result
+            finally:
+                _awaiting = None
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER",
+            "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT",
+            "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        # The signal method arms ITIMER_REAL for this test: what is left of it
+        # is the real budget, setup already having spent some.
+        armed = (
+            signal.getitimer(signal.ITIMER_REAL)[0]
+            if hasattr(signal, "getitimer")
+            else 0.0
+        )
+        child_timeout, wait = _child_deadlines(
+            min(armed or timeout, timeout),
+            # A test with no timeout of its own leaves any armed timer alone.
+            _extend_own_alarm(armed) if timeout > 0 else 0.0,
+        )
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        stacks = work / "stacks.txt"
+        environment[_CHILD_STACKS] = str(stacks)
+        coverage_plugin = request.config.pluginmanager.getplugin("_cov")
+        coverage_controller = getattr(coverage_plugin, "cov_controller", None)
+        coverage_args = []
+        coverage_file = work / ".coverage"
+        if coverage_controller is not None:
+            # Keep each child's data private; the parent retains its report gate.
+            environment["COVERAGE_FILE"] = str(coverage_file)
+            for name in tuple(environment):
+                if name.startswith("COV_CORE_"):
+                    environment.pop(name)
+            coverage_args = [
+                "-p",
+                "pytest_cov.plugin",
+                "--cov-report=",
+                "--cov-fail-under=0",
+            ]
+            sources = coverage_controller.cov_source
+            coverage_args += (
+                [f"--cov={source}" for source in sources] if sources else ["--cov"]
+            )
+            config_file = coverage_controller.cov.config.config_file
+            if config_file:
+                coverage_args += [f"--cov-config={config_file}"]
+            if coverage_controller.cov.config.branch:
+                coverage_args += ["--cov-branch"]
+            if coverage_plugin.options.cov_context:
+                coverage_args += [
+                    f"--cov-context={coverage_plugin.options.cov_context}"
+                ]
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable,
+                "-m",
+                "pytest",
+                request.node.nodeid,
+                "-p",
+                "pytest_asyncio.plugin",
+                "-p",
+                "pytest_timeout",
+                "-q",
+                f"--timeout={child_timeout}",
+                f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                *coverage_args,
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                exited = await _exited_within(process, wait)
+                asked = not exited and hasattr(signal, "SIGUSR1")
+                if asked:
+                    # Past its own limit and still running (a teardown or an
+                    # exit that cannot finish): ask where before ending it.
+                    # Half the reserve for its dump leaves half for the kill
+                    # and this report, before the parent's own limit.
+                    with contextlib.suppress(ProcessLookupError):
+                        process.send_signal(signal.SIGUSR1)
+                    await _exited_within(process, _PARENT_RESERVE_SECONDS / 2)
+            finally:
+                killed = process.returncode is None
+                if killed:
+                    process.kill()
+                    await process.wait()
+        if coverage_controller is not None and coverage_file.is_file():
+            # pytest-cov combines parallel files for serial and xdist reports.
+            parent_file = Path(
+                coverage_controller.topdir, coverage_controller.cov.config.data_file
+            ).resolve()
+            with NamedTemporaryFile(
+                prefix=parent_file.name + ".", dir=parent_file.parent, delete=False
+            ) as output:
+                output.write(coverage_file.read_bytes())
+        if process.returncode:
+            if exited:
+                ending = ""
+            elif killed:
+                ending = f"(killed: still running after {wait:.0f}s"
+                ending += "; asked for its stacks first)\n" if asked else ")\n"
+            elif (
+                asked
+                and process.returncode == -signal.SIGUSR1
+                and _child_finished(report)
+            ):
+                # Its session had ended and interpreter shutdown had already
+                # put the handler back to the default (TASK-35027).
+                ending = (
+                    f"(still running after {wait:.0f}s; its test had ended "
+                    "and it was exiting when the ask for its stacks ended it)\n"
+                )
+            elif asked and process.returncode == -signal.SIGUSR1:
+                # No handler yet (still starting up, or the module imported
+                # off the main thread): the signal's default action ended it.
+                ending = (
+                    f"(still running after {wait:.0f}s; ended by the ask for "
+                    "its stacks before it could answer)\n"
+                )
+            elif asked:
+                ending = (
+                    f"(still running after {wait:.0f}s; asked for its stacks, "
+                    "it then exited by itself)\n"
+                )
+            else:
+                # Exited by itself just as the wait ended, before any ask
+                # (and always so where there is no SIGUSR1, e.g. Windows).
+                ending = f"(exited by itself just after the {wait:.0f}s wait ended)\n"
+            dumps = (
+                stacks.read_text(encoding="utf-8", errors="replace")
+                if stacks.is_file()
+                else ""
+            )
+>           pytest.fail(
+                f"{log}\n"
+                + ending
+                + f"{_child_failure_report(report)}\n"
+                + (f"--- child stacks at its deadline ---\n{dumps}" if dumps else "")
+                + "--- child log tail ---\n"
+                # A kill can land between two writes of one character.
+                + log.read_text(encoding="utf-8", errors="replace")[-16000:]
+            )
+E           Failed: C:\Users\GDesktop-1\.tmp-windows-settings-tests\pytest-of-GDesktop-1\pytest-73\test_ancestor_scoped_bare_type0\private-profile-process\pytest.log
+E           --- child error: failed on teardown with "ExceptionGroup: errors while tearing down <Coroutine test_ancestor_scoped_bare_type_rule_count_is_a_ratchet> (2 sub-exceptions)"
+E           + Exception Group Traceback (most recent call last):
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 341, in from_call
+E             |     result: TResult | None = func()
+E             |                              ^^^^^^
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 242, in <lambda>
+E             |     lambda: runtest_hook(item=item, **kwds), when=when, reraise=reraise
+E             |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_hooks.py", line 512, in __call__
+E             |     return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+E             |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_manager.py", line 120, in _hookexec
+E             |     return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+E             |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 167, in _multicall
+E             |     raise exception
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 139, in _multicall
+E             |     teardown.throw(exception)
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 53, in run_old_style_hookwrapper
+E             |     return result.get_result()
+E             |            ^^^^^^^^^^^^^^^^^^^
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_result.py", line 103, in get_result
+E             |     raise exc.with_traceback(tb)
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 38, in run_old_style_hookwrapper
+E             |     res = yield
+E             |           ^^^^^
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 139, in _multicall
+E             |     teardown.throw(exception)
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\threadexception.py", line 97, in pytest_runtest_teardown
+E             |     yield from thread_exception_runtest_hook()
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\threadexception.py", line 68, in thread_exception_runtest_hook
+E             |     yield
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 139, in _multicall
+E             |     teardown.throw(exception)
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\unraisableexception.py", line 100, in pytest_runtest_teardown
+E             |     yield from unraisable_exception_runtest_hook()
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\unraisableexception.py", line 70, in unraisable_exception_runtest_hook
+E             |     yield
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 139, in _multicall
+E             |     teardown.throw(exception)
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\logging.py", line 853, in pytest_runtest_teardown
+E             |     yield from self._runtest_for(item, "teardown")
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\logging.py", line 829, in _runtest_for
+E             |     yield
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 139, in _multicall
+E             |     teardown.throw(exception)
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\capture.py", line 903, in pytest_runtest_teardown
+E             |     return (yield)
+E             |             ^^^^^
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 121, in _multicall
+E             |     res = hook_impl.function(*args)
+E             |           ^^^^^^^^^^^^^^^^^^^^^^^^^
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 189, in pytest_runtest_teardown
+E             |     item.session._setupstate.teardown_exact(nextitem)
+E             |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 557, in teardown_exact
+E             |     raise exceptions[0]
+E             | ExceptionGroup: errors while tearing down <Coroutine test_ancestor_scoped_bare_type_rule_count_is_a_ratchet> (2 sub-exceptions)
+E             +-+---------------- 1 ----------------
+E               | Traceback (most recent call last):
+E               |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 546, in teardown_exact
+E               |     fin()
+E               |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\fixtures.py", line 1032, in finish
+E               |     raise exceptions[0]
+E               |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\fixtures.py", line 1021, in finish
+E               |     fin()
+E               |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\fixtures.py", line 907, in _teardown_yield_fixture
+E               |     next(it)
+E               |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\Tests\conftest.py", line 1770, in isolate_test_environment
+E               |     raise RuntimeError(
+E               | RuntimeError: Native app workers remain uncertain; config retirement refused
+E               +---------------- 2 ----------------
+E               | Traceback (most recent call last):
+E               |   File "C:\Python312\Lib\asyncio\base_events.py", line 605, in shutdown_default_executor
+E               |     await future
+E               | asyncio.exceptions.CancelledError
+E               |
+E               | The above exception was the direct cause of the following exception:
+E               |
+E               | Traceback (most recent call last):
+E               |   File "C:\Python312\Lib\asyncio\base_events.py", line 604, in shutdown_default_executor
+E               |     async with timeouts.timeout(timeout):
+E               |                ^^^^^^^^^^^^^^^^^^^^^^^^^
+E               |   File "C:\Python312\Lib\asyncio\timeouts.py", line 115, in __aexit__
+E               |     raise TimeoutError from exc_val
+E               | TimeoutError
+E               |
+E               | During handling of the above exception, another exception occurred:
+E               |
+E               | Traceback (most recent call last):
+E               |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 546, in teardown_exact
+E               |     fin()
+E               |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\fixtures.py", line 1032, in finish
+E               |     raise exceptions[0]
+E               |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\fixtures.py", line 1021, in finish
+E               |     fin()
+E               |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py", line 339, in finalizer
+E               |     event_loop.run_until_complete(task)
+E               |   File "C:\Python312\Lib\asyncio\base_events.py", line 691, in run_until_complete
+E               |     return future.result()
+E               |            ^^^^^^^^^^^^^^^
+E               |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py", line 330, in async_finalizer
+E               |     await gen_obj.__anext__()  # type: ignore[union-attr]
+E               |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+E               |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\Tests\conftest.py", line 485, in retire_test_app_owners
+E               |     await asyncio.get_running_loop().shutdown_default_executor(
+E               |   File "C:\Python312\Lib\asyncio\base_events.py", line 607, in shutdown_default_executor
+E               |     warnings.warn("The executor did not finishing joining "
+E               | RuntimeWarning: The executor did not finishing joining its threads within 3.0 seconds.
+E               +------------------------------------
+E           --- child log tail ---
+E            |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\fixtures.py", line 907, in _teardown_yield_fixture
+E               |     next(it)
+E               |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\Tests\conftest.py", line 1770, in isolate_test_environment
+E               |     raise RuntimeError(
+E               | RuntimeError: Native app workers remain uncertain; config retirement refused
+E               +---------------- 2 ----------------
+E               | Traceback (most recent call last):
+E               |   File "C:\Python312\Lib\asyncio\base_events.py", line 605, in shutdown_default_executor
+E               |     await future
+E               | asyncio.exceptions.CancelledError
+E               |
+E               | The above exception was the direct cause of the following exception:
+E               |
+E               | Traceback (most recent call last):
+E               |   File "C:\Python312\Lib\asyncio\base_events.py", line 604, in shutdown_default_executor
+E               |     async with timeouts.timeout(timeout):
+E               |                ^^^^^^^^^^^^^^^^^^^^^^^^^
+E               |   File "C:\Python312\Lib\asyncio\timeouts.py", line 115, in __aexit__
+E               |     raise TimeoutError from exc_val
+E               | TimeoutError
+E               |
+E               | During handling of the above exception, another exception occurred:
+E               |
+E               | Traceback (most recent call last):
+E               |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 546, in teardown_exact
+E               |     fin()
+E               |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\fixtures.py", line 1032, in finish
+E               |     raise exceptions[0]
+E               |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\fixtures.py", line 1021, in finish
+E               |     fin()
+E               |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py", line 339, in finalizer
+E               |     event_loop.run_until_complete(task)
+E               |   File "C:\Python312\Lib\asyncio\base_events.py", line 691, in run_until_complete
+E               |     return future.result()
+E               |            ^^^^^^^^^^^^^^^
+E               |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py", line 330, in async_finalizer
+E               |     await gen_obj.__anext__()  # type: ignore[union-attr]
+E               |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+E               |   File "C:\Users\GDesktop-1\Working\Github\tldw_tui\Tests\conftest.py", line 485, in retire_test_app_owners
+E               |     await asyncio.get_running_loop().shutdown_default_executor(
+E               |   File "C:\Python312\Lib\asyncio\base_events.py", line 607, in shutdown_default_executor
+E               |     warnings.warn("The executor did not finishing joining "
+E               | RuntimeWarning: The executor did not finishing joining its threads within 3.0 seconds.
+E               +------------------------------------
+E           ---------------------------- Captured stderr setup ----------------------------
+E           2026-10-19 10:41:53.192 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - \u2705 huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.\n2026-10-19 10:41:53.313 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available\n2026-10-19 10:41:53.313 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice\n2026-10-19 10:41:53.314 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ---------------------------- Captured stderr call -----------------------------
+E           2026-10-19 10:41:54.432 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+E           2026-10-19 10:41:55.075 | INFO     | tldw_chatbook.config:_load_settings_uncached:2301 - Determined ACTUAL_PROJECT_ROOT for general paths: C:\Users\GDesktop-1\Working\Github\tldw_tui\tldw_chatbook
+E           2026-10-19 10:41:55.075 | INFO     | tldw_chatbook.config:_load_settings_uncached:2304 - Determined APP_COMPONENT_ROOT for config files: C:\Users\GDesktop-1\Working\Github\tldw_tui\tldw_chatbook
+E           2026-10-19 10:41:55.084 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7062 - Attempting to load CLI config from: C:\Users\GDesktop-1\.tmp-windows-settings-tests\pytest-of-GDesktop-1\pytest-73\test_ancestor_scoped_bare_type0\private-profile-process\profile\config\config.toml
+E           2026-10-19 10:41:55.097 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7083 - Successfully loaded and merged CLI config from C:\Users\GDesktop-1\.tmp-windows-settings-tests\pytest-of-GDesktop-1\pytest-73\test_ancestor_scoped_bare_type0\private-profile-process\profile\config\config.toml
+E           2026-10-19 10:41:55.097 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7167 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'console_ssh', 'hooks', 'skills', 'tamagotchi', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'session_summary', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'sync', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', 'first_run']
+E           2026-10-19 10:41:55.097 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7171 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'databricks', 'together', 'fireworks', 'cerebras', 'sambanova', 'nvidia', 'deepinfra', 'nebius', 'novita', 'minimax', 'mimo', 'tokenhub', 'byteplus', 'stepfun', 'vercel', 'zenmux', 'kilo', 'siliconflow', 'baseten', 'gmi', 'ollama_cloud', 'upstage', 'arcee', 'qianfan', 'nous', 'venice', 'meta', 'azure', 'wandb', 'cloudflare', 'opencode_zen', 'commandcode', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+E           2026-10-19 10:41:55.099 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2327 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E           2026-10-19 10:41:55.563 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3887 - Ensured chat dictionaries folder exists: C:\Users\GDesktop-1\.tmp-windows-settings-tests\pytest-of-GDesktop-1\pytest-73\test_ancestor_scoped_bare_type0\private-profile-process\profile\home\.local\share\tldw_cli\default_user\chat_dicts
+E           2026-10-19 10:41:55.564 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3918 - load_settings: Configuration cached for future use
+E           2026-10-19 10:41:56.128 | INFO     | tldw_chatbook.app:__init__:1281 - Loaded app_config - strip_thinking_tags: True
+E           2026-10-19 10:41:56.528 | INFO     | tldw_chatbook.app:__init__:1389 - Parallel init task 'prompts_service' completed in 0.000s
+E           2026-10-19 10:41:56.528 | INFO     | tldw_chatbook.app:__init__:1389 - Parallel init task 'notes_service' completed in 0.000s
+E           2026-10-19 10:41:56.528 | INFO     | tldw_chatbook.app:__init__:1389 - Parallel init task 'providers_models' completed in 0.000s
+E           2026-10-19 10:41:56.528 | INFO     | tldw_chatbook.app:__init__:1389 - Parallel init task 'media_db' completed in 0.000s
+E           2026-10-19 10:41:56.661 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - LibraryCollectionsDB initialized with path: C:\Users\GDesktop-1\.tmp-windows-settings-tests\tldw-chatbook-test-s2c_d2vu\library_collections.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-10-19 10:41:57.190 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - WorkspaceDB initialized with path: C:\Users\GDesktop-1\.tmp-windows-settings-tests\tldw-chatbook-test-s2c_d2vu\workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-10-19 10:41:58.295 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - SubscriptionsDB initialized with path: C:\Users\GDesktop-1\.tmp-windows-settings-tests\tldw-chatbook-test-s2c_d2vu\subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-10-19 10:41:58.542 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E           2026-10-19 10:41:58.544 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - EventStateRepository initialized with path: C:\Users\GDesktop-1\.tmp-windows-settings-tests\tldw-chatbook-test-s2c_d2vu\tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-10-19 10:41:58.544 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - SyncStateRepository initialized with path: C:\Users\GDesktop-1\.tmp-windows-settings-tests\tldw-chatbook-test-s2c_d2vu\tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-10-19 10:41:58.834 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:73 - Scheduling schema migrated to version 2 (missed_count column)
+E           2026-10-19 10:41:58.913 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:58 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E           2026-10-19 10:41:58.991 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E           2026-10-19 10:41:59.183 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:63 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E           2026-10-19 10:41:59.269 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:68 - Scheduling schema migrated to version 6 (task_incidents)
+E           2026-10-19 10:41:59.355 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E           2026-10-19 10:41:59.355 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - ScheduledTasksDB initialized with path: C:\Users\GDesktop-1\.tmp-windows-settings-tests\tldw-chatbook-test-s2c_d2vu\scheduled_tasks.sqlite [Client: default]
+E           2026-10-19 10:42:00.185 | DEBUG    | tldw_chatbook.app:__init__:1460 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E           2026-10-19 10:42:00.186 | DEBUG    | tldw_chatbook.app:__init__:1463 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E           2026-10-19 10:42:00.263 | DEBUG    | tldw_chatbook.Evals.config_loader:_load_config:115 - Loaded evaluation configuration from C:\Users\GDesktop-1\.tmp-windows-settings-tests\pytest-of-GDesktop-1\pytest-73\test_ancestor_scoped_bare_type0\private-profile-process\profile\config\eval_overrides.yaml
+E           2026-10-19 10:42:00.547 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:614 - Created EvalsDB schema version 7
+E           2026-10-19 10:42:00.547 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:242 - EvalsDB initialized with path: C:\Users\GDesktop-1\.tmp-windows-settings-tests\pytest-of-GDesktop-1\pytest-73\test_ancestor_scoped_bare_type0\private-profile-process\profile\home\.local\share\tldw_cli\default_user\evals.db
+E           2026-10-19 10:42:00.547 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E           2026-10-19 10:42:01.225 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E           2026-10-19 10:42:01.225 | INFO     | tldw_chatbook.app:_init_worker_handlers:2211 - Worker handler registry initialized with all handlers
+E           2026-10-19 10:42:01.226 | INFO     | tldw_chatbook.app:__init__:1653 - === STARTUP TIMING SUMMARY ===
+E           2026-10-19 10:42:01.226 | INFO     | tldw_chatbook.app:__init__:1654 - Total initialization time: 5.327 seconds
+E           2026-10-19 10:42:01.226 | INFO     | tldw_chatbook.app:__init__:1660 -   basic_init: 0.598s (11.2%)
+E           2026-10-19 10:42:01.226 | INFO     | tldw_chatbook.app:__init__:1660 -   attribute_init: 0.000s (0.0%)
+E           2026-10-19 10:42:01.226 | INFO     | tldw_chatbook.app:__init__:1660 -   parallel_init: 0.001s (0.0%)
+E           2026-10-19 10:42:01.226 | INFO     | tldw_chatbook.app:__init__:1673 -     - notes_service: 0.000s (0.7% of parallel_init)
+E           2026-10-19 10:42:01.226 | INFO     | tldw_chatbook.app:__init__:1673 -     - providers_models: 0.000s (0.3% of parallel_init)
+E           2026-10-19 10:42:01.226 | INFO     | tldw_chatbook.app:__init__:1673 -     - media_db: 0.000s (0.2% of parallel_init)
+E           2026-10-19 10:42:01.226 | INFO     | tldw_chatbook.app:__init__:1673 -     - prompts_service: 0.000s (0.2% of parallel_init)
+E           2026-10-19 10:42:01.226 | INFO     | tldw_chatbook.app:__init__:1677 - ==============================
+E           2026-10-19 10:42:02.181 | DEBUG    | tldw_chatbook.app:on_mount:3350 - Notes-sync start gate: no configuration evidence; runtime not constructed this boot.
+E           ------------------------------ Captured log call ------------------------------
+E           INFO     root:app.py:1415 App __init__: Determined initial tab value: chat
+E           WARNING  root:app.py:1522 Prompts service not initialized, self.prompts_db set to None.
+E           ERROR    root:app.py:1543 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E           INFO     root:app.py:2320 Splash screen enabled: False
+E           INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:275 event=app_started component=app
+E           INFO     root:Logging_Config.py:809 --- _setup_logging START (from Logging_Config.py) ---
+E           INFO     root:Logging_Config.py:821 Loguru: All pre-existing sinks removed.
+E           INFO     root:Logging_Config.py:850 Loguru: Configured to forward its messages to standard Python logging system.
+E           ---------------------------- Captured log teardown ----------------------------
+E           INFO     tldw_chatbook.Character_Chat.Character_Chat_Lib:Logging_Config.py:651 Character-card image metadata decoded successfully.
+E           INFO     tldw_chatbook.Character_Chat.Character_Chat_Lib:Logging_Config.py:651 Character-card image metadata decoded successfully.
+E           ============================== warnings summary ===============================
+E           Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet
+E             C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+E               warn(
+E
+E           Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet
+E             C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydub\utils.py:14: DeprecationWarning: 'audioop' is deprecated and slated for removal in Python 3.13
+E               import audioop
+E
+E           -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+E           - generated xml file: C:\Users\GDesktop-1\.tmp-windows-settings-tests\pytest-of-GDesktop-1\pytest-73\test_ancestor_scoped_bare_type0\private-profile-process\pytest.xml -
+E           ============================ slowest 25 durations =============================
+E           27.81s call     Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet
+E           3.02s teardown Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet
+E
+E           (1 durations < 1s hidden.  Use -vv to show these durations.)
+E           =========================== short test summary info ===========================
+E           ERROR Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet
+E           1 passed, 2 warnings, 1 error in 31.77s
+
+Tests\private_profile.py:405: Failed
+============================== warnings summary ===============================
+Tests/Performance/test_css_candidate_reuse.py::test_repeated_candidate_selection_does_not_rehash_rules
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+99.00s call     Tests/Performance/test_textual_css_fastpath.py::test_fastpath_computes_identical_styles_for_every_node
+38.58s call     Tests/Performance/test_textual_css_fastpath.py::test_filter_follows_a_class_added_to_an_ancestor_at_runtime
+38.13s call     Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet
+
+(22 durations < 1s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ===========================
+FAILED Tests/Performance/test_textual_css_fastpath.py::test_filter_follows_a_class_added_to_an_ancestor_at_runtime
+FAILED Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet
+2 failed, 7 passed, 1 warning in 177.26s (0:02:57)

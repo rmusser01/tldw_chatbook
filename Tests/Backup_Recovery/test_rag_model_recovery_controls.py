@@ -15,11 +15,10 @@ import sqlite3
 import threading
 from contextlib import closing
 from types import SimpleNamespace
-from rich.markup import escape
 from textual.app import App
 from textual.widgets import Button
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
-from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.RAG_Search.simplified.active_config import resolve_active_rag_config
 from tldw_chatbook.Embeddings import Embeddings_Lib as library
@@ -65,7 +64,8 @@ if mode=='rebuild':
  media=MediaDatabase(installed_config.get_media_db_path(),client_id='model-review-fixture')
  media.add_media_with_keywords(url='https://example.invalid/local',title='Local model content',media_type='document',content='local model content '*12,keywords=['local'],overwrite=True)
  instance.media_db=media
- instance.chachanotes_db=installed_config.get_chachanotes_db_lazy()
+ from tldw_chatbook.app_services import open_chachanotes_db
+ instance.chachanotes_db=open_chachanotes_db(installed_config.get_chachanotes_db_path(), client_id=installed_config.CLI_APP_CLIENT_ID, seed_builtin_content=True)
  assert instance.chachanotes_db is not None
 class Host(App):
  def notify(self,message,**kwargs):
@@ -102,7 +102,10 @@ async def main():
    return
   await wait_for(lambda:isinstance(host.screen,ConfirmationDialog) and host.screen.query('#confirm-button'))
   dialog=host.screen
-  assert escape(str(model)) in dialog.message
+  # The dialog renders its message with markup off, so the path is not escaped.
+  assert str(model) in dialog.message
+  assert 'Record the review of these exact files?' in dialog.message
+  assert str(dialog.query_one('#confirm-button',Button).label)=='Record review'
   assert witness['generation'] in dialog.message
   assert 'Files:' in dialog.message
   assert not loads
@@ -136,7 +139,11 @@ async def main():
     if worker.group.startswith('settings-local-model-'):await worker.wait()
   else:await host.workers.wait_for_complete()
   await pilot.pause()
-  assert store.allowed(witness['generation'],'models.artifacts')==(mode in ('approve','accepted-cancel','rebuild'))
+  # TASK-41301: the review records its exact-files receipt and approves no
+  # owner; Backup & Restore's model-files review approves models.artifacts.
+  receipts=list(store._generation(witness['generation']).glob('local-embedding-*.json'))
+  assert bool(receipts)==(mode in ('approve','accepted-cancel','rebuild')),receipts
+  assert not store.allowed(witness['generation'],'models.artifacts')
   unrelated_inactive()
   assert Path(entry.config).read_bytes()==before_config
   assert not loads
@@ -144,6 +151,7 @@ async def main():
   if mode not in ('approve','accepted-cancel','rebuild'):
    assert not blocked_attempts()
    return
+  store.approve(witness['generation'],'models.artifacts')  # the model-files review
   if mode=='rebuild':
    assert indexing.get_shared_rag_service() is None,'model approval enabled RAG before its own review'
    library._HuggingFaceEmbedder.__init__=original_load

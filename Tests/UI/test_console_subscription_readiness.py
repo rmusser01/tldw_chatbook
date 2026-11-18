@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from textual.widgets import Button, Static
+from textual.widgets import Button, Select, Static
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.test_console_provider_apply_defaults_flow import (
@@ -80,6 +80,21 @@ async def _wait_for_status(widget, text):
         pytest.fail(f"Expected {text!r}; rendered {str(widget.renderable)!r}")
 
 
+async def _held_reread_keeps(credential, widget, text):
+    """Wait for the lapsed snapshot's re-read, then hold it past a poll tick.
+
+    TASK-38948: while the re-read is held the widget must keep ``text`` (the
+    last observed state) and never show the never-read "Checking Claude".
+    """
+    async with asyncio.timeout(3):
+        while len(credential.readers) < 2:
+            await asyncio.sleep(0.01)
+    await asyncio.sleep(0.3)  # More than one 0.25 s credential poll.
+    rendered = str(widget.renderable)
+    assert text in rendered and "Checking Claude" not in rendered, rendered
+    assert len(credential.readers) == 2 and not credential.release.is_set()
+
+
 @pytest.mark.asyncio
 async def test_modal_refreshes_expiry_and_renews_stale_snapshot_without_edits(
     expiring_credential,
@@ -111,14 +126,14 @@ async def test_modal_refreshes_expiry_and_renews_stale_snapshot_without_edits(
         expiring_credential.release.clear()
         expiring_credential.expires_at_ms = 2000000
         expiring_credential.monotonic = subscription._KEYCHAIN_TTL_S + 1
-        await _wait_for_status(status, "Checking Claude")
-        assert len(expiring_credential.readers) == 2
+        # TASK-38948 (owner ruling 2026-11-10): the lapsed snapshot is re-read
+        # off the loop while the modal keeps its last state; it no longer
+        # flickers to "Checking Claude" for an unchanged credential.
+        await _held_reread_keeps(expiring_credential, status, "expired")
         assert all(
             reader != threading.get_ident() for reader in expiring_credential.readers
         )
-        assert not modal.query_one(
-            "#console-settings-configure-credential", Button
-        ).display
+        assert modal.query_one("#console-settings-configure-credential", Button).display
         expiring_credential.release.set()
         await _wait_for_status(status, "Ready · not tested")  # TASK-33005.3 AC#11
         assert "private-token" not in str(status.renderable)
@@ -152,7 +167,13 @@ async def test_console_send_refreshes_expiry_and_renews_stale_snapshot_without_e
         await pilot.pause(0.3)
         revision = expiring_credential.cache.revision
         status = console.query_one("#console-send-disabled-reason", Static)
+        snapshot = console._console_credential_snapshot
+        console._console_sync_maintenance_close_admission()
         expiring_credential.wall = 1002
+        console._poll_console_credential_readiness()
+        assert console._console_credential_snapshot == snapshot
+        assert not send.disabled
+        console._console_sync_maintenance_resume()
         await _wait_for_status(status, "log in with Claude Code")
         assert send.disabled
         assert expiring_credential.cache.revision == revision
@@ -160,17 +181,35 @@ async def test_console_send_refreshes_expiry_and_renews_stale_snapshot_without_e
         expiring_credential.release.clear()
         expiring_credential.expires_at_ms = 2000000
         expiring_credential.monotonic = subscription._KEYCHAIN_TTL_S + 1
-        await _wait_for_status(status, "Checking Claude")
+        # TASK-38948: the re-read keeps the last state, not "Checking Claude".
+        await _held_reread_keeps(expiring_credential, status, "log in with Claude Code")
         assert send.disabled
-        assert len(expiring_credential.readers) == 2
         assert all(
             reader != threading.get_ident() for reader in expiring_credential.readers
         )
+        snapshot = console._console_credential_snapshot
+        console._console_sync_maintenance_close_admission()
         expiring_credential.release.set()
+        async with asyncio.timeout(3):
+            while expiring_credential.cache.revision == snapshot[0]:
+                await asyncio.sleep(0.01)
+        console._poll_console_credential_readiness()
+        assert console._console_credential_snapshot == snapshot
+        assert send.disabled
+        console._console_sync_maintenance_resume()
         async with asyncio.timeout(3):
             while send.disabled:
                 await asyncio.sleep(0.01)
         assert "private-token" not in str(status.renderable)
+
+        from textual.screen import Screen
+
+        snapshot = console._console_credential_snapshot
+        host.add_mode("credential-owner-away", Screen)
+        await host.switch_mode("credential-owner-away")
+        assert console.is_attached and not console.is_current
+        console._poll_console_credential_readiness()
+        assert console._console_credential_snapshot == snapshot
 
 
 @pytest.mark.asyncio
@@ -232,7 +271,9 @@ async def test_streaming_control_responds_and_readiness_refreshes_after_slow_rea
             assert readers == [readers[0]]
             assert readers[0] != threading.get_ident()
             initial = modal._build_draft().streaming
-            modal.query_one("#console-settings-streaming", Button).press()
+            # TASK-33006.1: Streaming is an On/Off Select.
+            streaming = modal.query_one("#console-settings-streaming", Select)
+            streaming.value = "off" if streaming.value == "on" else "on"
             await pilot.pause()
             assert modal._build_draft().streaming is not initial
             assert not release.is_set()

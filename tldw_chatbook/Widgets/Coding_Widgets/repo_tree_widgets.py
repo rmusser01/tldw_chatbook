@@ -26,6 +26,73 @@ def _safe_dom_id(prefix: str, path: str) -> str:
     return f"{prefix}-{digest}"
 
 
+#: TASK-34394: the file-type filter vocabulary, hoisted out of
+#: `TreeView._matches_filters` -- it used to rebuild this dict (and all
+#: four lists) for every non-directory node on every filter keystroke.
+FILE_TYPE_MAPPINGS: Dict[str, List[str]] = {
+    "code": [
+        ".py",
+        ".js",
+        ".ts",
+        ".jsx",
+        ".tsx",
+        ".java",
+        ".cpp",
+        ".c",
+        ".h",
+        ".cs",
+        ".rb",
+        ".go",
+        ".rs",
+        ".php",
+        ".swift",
+        ".kt",
+        ".scala",
+        ".r",
+        ".m",
+        ".mm",
+        ".dart",
+        ".lua",
+        ".pl",
+        ".sh",
+        ".bash",
+    ],
+    "docs": [
+        ".md",
+        ".txt",
+        ".rst",
+        ".adoc",
+        ".tex",
+        ".doc",
+        ".docx",
+        ".pdf",
+        ".rtf",
+        ".odt",
+        ".html",
+        ".htm",
+        ".xml",
+    ],
+    "config": [
+        ".json",
+        ".yaml",
+        ".yml",
+        ".toml",
+        ".ini",
+        ".cfg",
+        ".conf",
+        ".properties",
+        ".env",
+        ".gitignore",
+        ".dockerignore",
+        ".editorconfig",
+        "Dockerfile",
+        "Makefile",
+        "package.json",
+        "tsconfig.json",
+    ],
+}
+
+
 class TreeNodeSelected(Message):
     """Message sent when a tree node is selected."""
 
@@ -120,6 +187,9 @@ class TreeNode(Widget):
         file_size = kwargs.pop("file_size", None)
         super().__init__(**kwargs)
         self.path = path
+        # TASK-34394: precomputed once at insert so the per-keystroke
+        # filter walk doesn't lowercase every path again per node.
+        self.path_lower = path.lower()
         self.node_name = (
             name  # Changed from 'name' to avoid conflict with Widget.name property
         )
@@ -132,6 +202,16 @@ class TreeNode(Widget):
         self.selected = False
         self.children_loaded = False
         self.is_loading = False
+        # Direct handle to the row checkbox, captured at mount time (B20) so
+        # selection cascades never need DOM queries.
+        self.checkbox: Optional[Checkbox] = None
+
+    def on_mount(self) -> None:
+        """Capture the row checkbox handle (B20)."""
+        try:
+            self.checkbox = self.query_one(".tree-checkbox", Checkbox)
+        except Exception:
+            self.checkbox = None
 
     def compose(self) -> ComposeResult:
         """Compose the tree node UI."""
@@ -292,6 +372,10 @@ class TreeView(VerticalScroll):
 
         super().__init__(**kwargs)
         self.nodes: Dict[str, TreeNode] = {}
+        # Direct-children index: directory path -> its direct child paths
+        # (B20). Built as nodes are created; selection cascades walk this
+        # instead of scanning every node with a prefix match.
+        self._children_by_dir: Dict[str, List[str]] = {}
         self.selection: Set[str] = set()
         self.on_selection_change = on_selection_change
         self.on_node_expanded = on_node_expanded
@@ -313,6 +397,7 @@ class TreeView(VerticalScroll):
         # Clear existing content
         await container.remove_children()
         self.nodes.clear()
+        self._children_by_dir.clear()
         self.selection.clear()
 
         if not tree_data:
@@ -360,6 +445,7 @@ class TreeView(VerticalScroll):
             )
 
             self.nodes[path] = node
+            self._register_child(parent_path, path)
             await parent_container.mount(node)
 
             # If item has children and is expanded, add them
@@ -395,6 +481,7 @@ class TreeView(VerticalScroll):
             )
 
             self.nodes[child_path] = child_node
+            self._register_child(path, child_path)
             child_nodes.append(child_node)
 
         # Insert children after the parent node
@@ -411,6 +498,27 @@ class TreeView(VerticalScroll):
         except Exception:
             pass
 
+    def _register_child(self, parent_path: str, child_path: str) -> None:
+        """Record a direct child under its directory in the child index (B20)."""
+        if not parent_path:
+            return
+        children = self._children_by_dir.setdefault(parent_path, [])
+        if child_path not in children:
+            children.append(child_path)
+
+    def _iter_descendants(self, path: str):
+        """Yield every live descendant path of a directory via the child index.
+
+        Stale entries left behind by ``collapse_node`` are skipped, matching
+        the old scan of ``self.nodes`` for the ``path + "/"`` prefix.
+        """
+        stack = list(self._children_by_dir.get(path, ()))
+        while stack:
+            child_path = stack.pop()
+            if child_path in self.nodes:
+                yield child_path
+                stack.extend(self._children_by_dir.get(child_path, ()))
+
     async def collapse_node(self, path: str) -> None:
         """Collapse a node and remove its children."""
         node = self.nodes.get(path)
@@ -418,12 +526,7 @@ class TreeView(VerticalScroll):
             return
 
         # Find all child nodes to remove
-        self.query_one("#tree-container", Container)
-        nodes_to_remove = []
-
-        for child_path, child_node in self.nodes.items():
-            if child_path.startswith(path + "/"):
-                nodes_to_remove.append(child_node)
+        nodes_to_remove = [self.nodes[p] for p in self._iter_descendants(path)]
 
         # Remove child nodes
         for child_node in nodes_to_remove:
@@ -442,30 +545,30 @@ class TreeView(VerticalScroll):
         node = self.nodes.get(path)
         if node:
             node.selected = selected
-            # Update checkbox if it exists
-            try:
-                checkbox = node.query_one(f"#select-{path}", Checkbox)
-                checkbox.value = selected
-            except Exception:
-                pass
+            # Update checkbox via the stored handle (B20: no DOM query)
+            if node.checkbox is not None:
+                with node.checkbox.prevent(Checkbox.Changed):
+                    node.checkbox.value = selected
+                if node.checkbox.parent is not None:
+                    node.checkbox.parent.set_class(selected, "tree-node-selected")
 
-        # If it's a directory, cascade to children
+        # If it's a directory, cascade to children via the child index (B20)
         if node and node.is_directory:
-            for child_path, child_node in self.nodes.items():
-                if child_path.startswith(path + "/"):
-                    child_node.selected = selected
-                    if selected:
-                        self.selection.add(child_path)
-                    else:
-                        self.selection.discard(child_path)
-                    # Update child checkbox
-                    try:
-                        child_checkbox = child_node.query_one(
-                            f"#select-{child_path}", Checkbox
+            for child_path in self._iter_descendants(path):
+                child_node = self.nodes[child_path]
+                child_node.selected = selected
+                if selected:
+                    self.selection.add(child_path)
+                else:
+                    self.selection.discard(child_path)
+                # Update child checkbox via its stored handle
+                if child_node.checkbox is not None:
+                    with child_node.checkbox.prevent(Checkbox.Changed):
+                        child_node.checkbox.value = selected
+                    if child_node.checkbox.parent is not None:
+                        child_node.checkbox.parent.set_class(
+                            selected, "tree-node-selected"
                         )
-                        child_checkbox.value = selected
-                    except Exception:
-                        pass
 
         # Update parent selection state if needed
         self._update_parent_selection_state(path)
@@ -547,12 +650,11 @@ class TreeView(VerticalScroll):
         if not parent_node or not parent_node.is_directory:
             return
 
-        # Check all children of this parent
+        # Check all children of this parent (direct children via the index)
         children_paths = [
             path
-            for path in self.nodes.keys()
-            if path.startswith(parent_path + "/")
-            and path.count("/") == parent_path.count("/") + 1
+            for path in self._children_by_dir.get(parent_path, ())
+            if path in self.nodes
         ]
 
         if not children_paths:
@@ -576,12 +678,14 @@ class TreeView(VerticalScroll):
             parent_node.selected = False
             self.selection.discard(parent_path)
 
-        # Update parent checkbox
-        try:
-            parent_checkbox = parent_node.query_one(f"#select-{parent_path}", Checkbox)
-            parent_checkbox.value = parent_node.selected
-        except Exception:
-            pass
+        # Update parent checkbox via the stored handle (B20: no DOM query)
+        if parent_node.checkbox is not None:
+            with parent_node.checkbox.prevent(Checkbox.Changed):
+                parent_node.checkbox.value = parent_node.selected
+            if parent_node.checkbox.parent is not None:
+                parent_node.checkbox.parent.set_class(
+                    parent_node.selected, "tree-node-selected"
+                )
 
         # Recursively update grandparent
         self._update_parent_selection_state(parent_path)
@@ -610,91 +714,36 @@ class TreeView(VerticalScroll):
         self._file_type_filter = file_type
         self._apply_filters()
 
-    def _matches_filters(self, node_path: str, is_directory: bool) -> bool:
-        """Check if a node matches the current filters."""
+    def _matches_filters(self, node: "TreeNode") -> bool:
+        """Check if a node matches the current filters.
+
+        TASK-34394: takes the node itself so the precomputed
+        `TreeNode.path_lower` is reused instead of re-lowercasting the
+        full path per node per keystroke.
+        """
+        node_path = node.path
+
         # Always show directories
-        if is_directory:
+        if node.is_directory:
             return True
 
         # Search filter
-        if self._search_term and self._search_term not in node_path.lower():
+        if self._search_term and self._search_term not in node.path_lower:
             return False
 
         # File type filter
         if self._file_type_filter != "all":
             file_ext = os.path.splitext(node_path)[1].lower()
 
-            # Define file type mappings
-            file_type_mappings = {
-                "code": [
-                    ".py",
-                    ".js",
-                    ".ts",
-                    ".jsx",
-                    ".tsx",
-                    ".java",
-                    ".cpp",
-                    ".c",
-                    ".h",
-                    ".cs",
-                    ".rb",
-                    ".go",
-                    ".rs",
-                    ".php",
-                    ".swift",
-                    ".kt",
-                    ".scala",
-                    ".r",
-                    ".m",
-                    ".mm",
-                    ".dart",
-                    ".lua",
-                    ".pl",
-                    ".sh",
-                    ".bash",
-                ],
-                "docs": [
-                    ".md",
-                    ".txt",
-                    ".rst",
-                    ".adoc",
-                    ".tex",
-                    ".doc",
-                    ".docx",
-                    ".pdf",
-                    ".rtf",
-                    ".odt",
-                    ".html",
-                    ".htm",
-                    ".xml",
-                ],
-                "config": [
-                    ".json",
-                    ".yaml",
-                    ".yml",
-                    ".toml",
-                    ".ini",
-                    ".cfg",
-                    ".conf",
-                    ".properties",
-                    ".env",
-                    ".gitignore",
-                    ".dockerignore",
-                    ".editorconfig",
-                    "Dockerfile",
-                    "Makefile",
-                    "package.json",
-                    "tsconfig.json",
-                ],
-            }
+            mappings = FILE_TYPE_MAPPINGS.get(self._file_type_filter, [])
 
             # Special handling for files without extensions
             basename = os.path.basename(node_path)
-            if basename in file_type_mappings.get(self._file_type_filter, []):
+            if basename in mappings:
                 return True
 
             # Check by extension
-            if file_ext not in file_type_mappings.get(self._file_type_filter, []):
+            if file_ext not in mappings:
                 return False
 
         return True
@@ -710,7 +759,7 @@ class TreeView(VerticalScroll):
         visible_parents = set()
 
         for path, node in self.nodes.items():
-            if self._matches_filters(path, node.is_directory):
+            if self._matches_filters(node):
                 node.display = True
                 # Mark all parent directories as visible
                 parent_path = path

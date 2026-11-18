@@ -2,13 +2,13 @@
 
 - Status: Accepted
 - Date: 2026-09-12
-- Amends: ADR-031 (TUI keybinding and footer-hint conventions), narrowing the
+- Amends: ADR-299 (TUI keybinding and footer-hint conventions), narrowing the
   task-32458 refinement's destination-local carve-out
 - Task: task-32500
 
 ## Context
 
-The task-32458 refinement to ADR-031 made the shell-destination hotkey layer a
+The task-32458 refinement to ADR-299 made the shell-destination hotkey layer a
 left-to-right keyboard walk (`ctrl+1`…`ctrl+9`, `ctrl+0`, then `f2` `f3` `f4`
 `f5` `f7`) and recorded one destination-local carve-out: the Roleplay mode chips
 keep `ctrl+1`–`ctrl+4` on their own screen, judged "harmless since the user is
@@ -22,7 +22,7 @@ newcomer is most likely to try them, and the user guide carries the cost: an
 exception block in the index, caveat notes on every Roleplay sub-page, and a
 published troubleshooting entry for "Ctrl+2 didn't take me to Console."
 
-ADR-031 rule 1 already reserves global keys from screens; the carve-out made
+ADR-299 rule 1 already reserves global keys from screens; the carve-out made
 the nav layer the one global layer a screen may still borrow.
 
 ## Decision
@@ -32,7 +32,7 @@ the nav layer the one global layer a screen may still borrow.
    carve-out for destination-local shadowing is withdrawn. (Modal-scoped
    bindings keep their own task-32458 treatment — a modal owns its keyboard
    while open.)
-2. **Roleplay mode switching moves to single letters** per ADR-031 rule 3
+2. **Roleplay mode switching moves to single letters** per ADR-299 rule 3
    (htop-style printable keys): `c` Characters, `p` Personas, `d` Dictionaries,
    `l` Lore, zipped positionally against `MODE_CHIP_ORDER` via a new
    `MODE_HOTKEYS` tuple so the two can never desync. `[` / `]` cycling stays.
@@ -59,5 +59,5 @@ the nav layer the one global layer a screen may still borrow.
   per-page caveats, and the "Ctrl+2 didn't take me to Console" troubleshooting
   entry are removed.
 - Roleplay users' `ctrl+1..4` muscle memory breaks once, replaced by
-  ADR-031-conformant single letters shown in the footer hint and chip tooltips.
+  ADR-299-conformant single letters shown in the footer hint and chip tooltips.
 - The footer hint changes from `ctrl+1-4 mode` to `c/p/d/l mode`.

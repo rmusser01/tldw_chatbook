@@ -1,0 +1,31 @@
+{
+  "relative_links_verified": 45,
+  "qualified_case_counts": {
+    "character-bench": [
+      5,
+      4,
+      0,
+      0
+    ],
+    "research": [
+      3,
+      0,
+      0,
+      0
+    ],
+    "notes": [
+      2,
+      1,
+      0,
+      0
+    ]
+  },
+  "tasks_rendered_by_cli": [
+    37266,
+    37267,
+    37268
+  ],
+  "source_pins_verified": 12,
+  "actual_child_reports_verified": 10,
+  "remote_only_task_link_object_exists": true
+}

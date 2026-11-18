@@ -1,0 +1,266 @@
+[
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 84,
+      "row": 14
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_console_prompt_mixins.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from __future__ import annotations\n\nimport pytest\nfrom textual.widgets import Button\n\nfrom Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp\nfrom Tests.UI.test_library_shell import _wait_for_condition\nfrom tldw_chatbook.Chat.console_chat_store import ConsoleChatStore\nfrom tldw_chatbook.Chat.console_prompt_mixin_service import ConsolePromptMixinService\nfrom tldw_chatbook.DB.Prompts_DB import PromptsDatabase\nfrom tldw_chatbook.Prompt_Management.prompt_scope_service import (\n    LocalPromptService,\n    PromptScopeService,\n)\nfrom tldw_chatbook.UI.Console_Modules.prompts import (\n    _ConsolePromptMixinsFlow,\n    _ConsolePromptSource,\n)\nfrom tldw_chatbook.Widgets.Console.console_prompts_modal import ConsolePromptsModal\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 16
+          },
+          "location": {
+            "column": 1,
+            "row": 2
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 2
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 2,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "RUF012",
+    "end_location": {
+      "column": 37,
+      "row": 36
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_console_prompt_mixins.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 36
+    },
+    "message": "Mutable default value for class attribute",
+    "name": "mutable-class-default",
+    "noqa_row": 36,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/mutable-class-default"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 39,
+      "row": 116
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_console_prompt_mixins.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "    from dataclasses import replace\n\n    from textual.widgets import Static\n",
+          "end_location": {
+            "column": 1,
+            "row": 117
+          },
+          "location": {
+            "column": 1,
+            "row": 115
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 5,
+      "row": 115
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 115,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 98,
+      "row": 131
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_console_prompt_mixins.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "        from tldw_chatbook.Widgets.Console.console_prompt_mixins_view import (\n            MixinWorkbenchIntent,\n        )\n",
+          "end_location": {
+            "column": 1,
+            "row": 132
+          },
+          "location": {
+            "column": 1,
+            "row": 131
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 9,
+      "row": 131
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 131,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 81,
+      "row": 183
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_console_prompt_mixins.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "    from dataclasses import replace\n\n    from tldw_chatbook.Chat.console_prompt_mixins import MixinSourceChangedError\n",
+          "end_location": {
+            "column": 1,
+            "row": 184
+          },
+          "location": {
+            "column": 1,
+            "row": 182
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 5,
+      "row": 182
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 182,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 94,
+      "row": 189
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_console_prompt_mixins.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "    from tldw_chatbook.Widgets.Console.console_prompt_mixins_view import (\n        MixinWorkbenchIntent,\n    )\n",
+          "end_location": {
+            "column": 1,
+            "row": 190
+          },
+          "location": {
+            "column": 1,
+            "row": 189
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 5,
+      "row": 189
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 189,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 89,
+      "row": 210
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_console_prompt_mixins.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "    from Tests.UI.app_factory import attach_chachanotes_db\n    from Tests.UI.test_console_prompts_controller import (\n        ConsoleHarness,\n        _configure_native_ready_console,\n    )\n    from Tests.UI.test_destination_shells import _wait_for_selector\n    from Tests.UI.test_library_prompts_canvas import _build_test_app\n    from tldw_chatbook.app import TldwCli\n    from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar\n    from tldw_chatbook.Widgets.Console.console_composer_menu_modal import ACTION_PROMPTS\n",
+          "end_location": {
+            "column": 1,
+            "row": 211
+          },
+          "location": {
+            "column": 1,
+            "row": 204
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 5,
+      "row": 204
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 204,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 79,
+      "row": 286
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_console_prompt_mixins.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "    from dataclasses import replace\n\n    from tldw_chatbook.Chat.console_chat_store import ConsoleSettingsComponent\n",
+          "end_location": {
+            "column": 1,
+            "row": 287
+          },
+          "location": {
+            "column": 1,
+            "row": 285
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 5,
+      "row": 285
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 285,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  }
+]

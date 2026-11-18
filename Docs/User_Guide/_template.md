@@ -31,9 +31,6 @@ the [guide index](index.md))
 
 ## Quirks & troubleshooting
 (honest limitations with backlog refs; common errors and their fixes)
-
-—
-*Verified against dev @ <short-sha> — <YYYY-MM-DD>*
 <!-- END TEMPLATE -->
 
 ## Authoring rules
@@ -49,8 +46,9 @@ the [guide index](index.md))
 - Form-heavy panes (chiefly Settings): self-describing form fields may be
   summarized at field-group level; interactive/behavioral controls are always
   enumerated individually.
-- Before the phase PR merges: re-check dev history for the documented
-  screen's modules; re-verify and re-stamp affected sections if it moved.
+- No "Verified against" lines or stamps in a page. Record what you verified,
+  and against which branch and date, in the task's Implementation Notes
+  (parallel PRs appending stamps caused most User Guide sync conflicts).
 
 ## Capture recipe
 
@@ -62,89 +60,60 @@ Playwright PNG harness) were never exercised.
 Fidelity bar: nav bar labels present and complete, box-drawing glyphs intact,
 theme colors rendered (not monochrome), no truncated right edge.
 
-1. Scratch profile (create once, reuse across every page's captures — never
-   point `TLDW_CONFIG_PATH` at a real profile):
-   ```bash
-   S=<scratch-root>            # any writable scratch dir, e.g. $TMPDIR/guide_capture
-   mkdir -p "$S/g0_profile"
-   cat > "$S/g0_profile/config.toml" <<'EOF'
-   [general]
-   users_name = "guide_g0"
-   default_tab = "chat"
+Use the checked-in driver. `scripts/capture_user_guide.py <target>` boots the
+real app on a throwaway profile and writes a self-contained SVG (targets
+`search-rag`, `file-notes`, `watchlists-workflow`, `plugins`);
+`scripts/regen_approval_card_svg.py` renders the approval card. Before it
+imports the app, the driver isolates the whole profile, not just the config
+file: HOME, USERPROFILE, XDG_CONFIG_HOME, XDG_DATA_HOME, XDG_CACHE_HOME and
+TLDW_CONFIG_PATH point into a fresh temporary directory, the keyring is the
+null backend, proxies and credential-like environment variables are dropped,
+writes to the real profile are refused, and sockets reach loopback only. It
+deletes that profile when it finishes.
 
-   [splash_screen]
-   enabled = false
-   EOF
-   ```
+1. Add a target for your page to `scripts/capture_user_guide.py`: an
+   `async def _<name>(app, pilot) -> Path` that drives the app to the state
+   being documented (pilot clicks and key presses, with `_wait(...)` for each
+   state) and returns `IMAGES / "<screen>" / "<name>.svg"`. Register it in
+   `TARGETS`, with any setup that must run before the app boots in the second
+   slot (as `watchlists-workflow` does), and list it in the module docstring.
 
-2. Driver script — copy per page and add pilot actions (clicks, key presses,
-   `await pilot.pause(...)`) between entering `run_test()` and calling
-   `save_screenshot()` to drive to the state being documented:
-   ```bash
-   cat > "$S/capture_<screen>.py" <<'EOF'
-   """Drive the real app under run_test and export an SVG screenshot."""
-   import asyncio, os
-
-   if "TLDW_CONFIG_PATH" not in os.environ:
-       raise SystemExit("Refusing to run against the real profile: set TLDW_CONFIG_PATH")
-
-   async def main() -> None:
-       from tldw_chatbook.app import TldwCli
-       app = TldwCli()
-       async with app.run_test(size=(200, 50)) as pilot:
-           # --- drive to the state being documented, e.g.: ---
-           # await pilot.click("#some-nav-label")
-           # await pilot.pause(0.5)
-           app.save_screenshot(os.environ["GUIDE_CAPTURE_OUT"])
-
-   asyncio.run(main())
-   EOF
-   ```
-
-3. Run it against the scratch profile, writing straight into the page's image
-   directory:
+2. Run it from the repository root, one target per process:
    ```bash
    cd "$(git rev-parse --show-toplevel)"   # your checkout of the branch being documented
    mkdir -p "Docs/User_Guide/images/<screen>"
-   TLDW_CONFIG_PATH="$S/g0_profile/config.toml" \
-     GUIDE_CAPTURE_OUT="Docs/User_Guide/images/<screen>/<name>.svg" \
-     .venv/bin/python "$S/capture_<screen>.py"
+   PYTHONPATH=. .venv/bin/python scripts/capture_user_guide.py <target>
    ```
 
-4. Sanity-check before embedding: open the `.svg` in a browser, or thumbnail
+3. Sanity-check before embedding: open the `.svg` in a browser, or thumbnail
    it locally (macOS: `qlmanage -t -s 2458 -o /tmp/out file.svg`) and eyeball
    it against the fidelity bar above.
 
-5. Strip the remote font sources (Textual/rich exports embed `@font-face`
-   rules that fetch Fira Code from cdnjs.cloudflare.com — docs images must
-   be self-contained; keep the `local(...)` source and the `monospace`
-   fallback):
+4. Check that no remote font source is left. Textual/rich exports embed
+   `@font-face` rules that fetch Fira Code from cdnjs.cloudflare.com; the
+   driver strips them (keeping the `local(...)` source and the `monospace`
+   fallback), because docs images must be self-contained:
    ```bash
-   python3 - <<'EOF'
-   import pathlib, re
-   pat = re.compile(r',\s*\n\s*url\("https://cdnjs\.cloudflare\.com/[^"]+"\) format\("woff2?"\)')
-   for svg in pathlib.Path("Docs/User_Guide/images/<screen>").glob("*.svg"):
-       svg.write_text(pat.sub("", svg.read_text()))
-   EOF
    grep -rl "cdnjs" Docs/User_Guide/images/ && echo "STILL DIRTY" || echo clean
    ```
 
-**Standard size: 200×50 cells.** The live nav survey (Task 1) drove the app
-at 235×52; this recipe deliberately uses a smaller, fixed 200×50 so every
-page's captures are the same size. Verified during the Step 1 experiment
-that 200 columns does *not* clip the 13-item nav bar — every destination
-through "More: Ctrl+P" renders inside the frame. Always pass
-`size=(200, 50)` to `run_test()`. This margin is thin: at 200 columns the
-current 13-item nav bar has only about one column of slack before "More:
-Ctrl+P" gets clipped, so any future nav-label change (renamed/added/removed
-destination) needs a re-check against the fidelity bar for right-edge
-clipping.
+Never drive the app for a capture with only `TLDW_CONFIG_PATH` set: HOME, the
+XDG directories and the OS keyring would still be your real profile's. If a
+one-off script is unavoidable, start it the way the driver's `main()` does:
+call the driver's `_isolate()` on a fresh temporary directory before anything
+imports `tldw_chatbook`, then install the same DB-layer ports before building
+`TldwCli()`.
+
+**Standard size: 235×52 cells**, the size `scripts/capture_user_guide.py`
+uses (its `SIZE`) and the size of nearly every capture already in the
+guide. Always pass `size=(235, 52)` to `run_test()` so every page's captures
+match.
 
 **Output path convention:** `Docs/User_Guide/images/<screen>/<name>.svg`,
 where `<screen>` is the same kebab-case slug used for that screen's guide
 page (e.g. `console`, `library`) and `<name>` describes the specific view
 (e.g. `overview`, `get-started-card`).
 
-Demo-content rules: scratch profile only (TLDW_CONFIG_PATH), canned demo
-text, no personal data; local llama endpoint for live replies; delete the
-scratch data dir afterwards.
+Demo-content rules: the driver's throwaway profile only, canned demo text, no
+personal data; a loopback endpoint or a scripted model gateway for replies
+(the driver refuses connections to any other address).

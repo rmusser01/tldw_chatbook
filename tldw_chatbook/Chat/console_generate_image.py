@@ -517,6 +517,8 @@ class LLMContextOptions:
         model: Resolved model string, or ``None``.
         api_key: Resolved API key, or ``None`` when the provider needs
             none (e.g. a local backend).
+        api_base_url: The resolution's checked endpoint to pin, or ``None``
+            for the adapter's default (TASK-40300).
         chat_call: A ``chat_api_call``-shaped callable. ``None`` (the
             default) lazily imports and uses the real
             ``Chat.Chat_Functions.chat_api_call`` -- importing this module
@@ -532,6 +534,7 @@ class LLMContextOptions:
     model: str | None = None
     api_key: str | None = None
     chat_call: Callable[..., Any] | None = None
+    api_base_url: str | None = None
 
 
 def _shape_llm_context_payload(
@@ -762,6 +765,7 @@ def compose_llm_context_prompt(
             model=options.model,
             system_message=_CONTEXT_LLM_SYSTEM_PROMPT,
             streaming=False,
+            **({"api_base_url": options.api_base_url} if options.api_base_url else {}),
         )
     except Exception as exc:  # noqa: BLE001 - graceful fallback is load-bearing here
         logger.debug(

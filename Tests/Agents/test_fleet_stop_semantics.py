@@ -77,9 +77,7 @@ def _pin_outlive_on(monkeypatch):
     independent of any future default flip, the same way
     `pin_turn_scoped_children` pins the opposite pole.
     """
-    pin_agent_settings(
-        monkeypatch, **{agent_service.SUBAGENTS_OUTLIVE_TURN_KEY: True}
-    )
+    pin_agent_settings(monkeypatch, **{agent_service.SUBAGENTS_OUTLIVE_TURN_KEY: True})
 
 
 def _two_turn_child(entered, release, timeout=10.0):
@@ -170,9 +168,7 @@ def test_probe_a_stop_mid_turn_leaves_the_child_running(db, monkeypatch):
     assert _child_row(db)["status"] == RUN_DONE
 
 
-def test_probe_a_wait_agents_cancel_stops_waiting_without_cancelling(
-    db, monkeypatch
-):
+def test_probe_a_wait_agents_cancel_stops_waiting_without_cancelling(db, monkeypatch):
     """Outlive ON: Stop during `wait_agents` releases the WAIT, not the kids.
 
     RED at the untouched merge-base (`wait_agents`' cancel branch called
@@ -286,9 +282,12 @@ def test_a_stopped_parents_survivor_still_drains_steering(db, monkeypatch):
         assert handle.status == RUN_RUNNING
         # Steer the survivor AFTER its parent turn was stopped -- the
         # panel path's post (USER source), which must still say yes...
-        assert coordinator.post_steering(
-            handle.handle_id, STEERING_SOURCE_USER, "check the appendix"
-        ) is True
+        assert (
+            coordinator.post_steering(
+                handle.handle_id, STEERING_SOURCE_USER, "check the appendix"
+            )
+            is True
+        )
     finally:
         release.set()
     _wait_until(coordinator.all_finished, "the released child never finished")
@@ -298,8 +297,7 @@ def test_a_stopped_parents_survivor_still_drains_steering(db, monkeypatch):
     second_payload = chat.child_calls["slow task"][1]["messages_payload"]
     steer_text = format_steering_message(STEERING_SOURCE_USER, "check the appendix")
     assert any(
-        message.get("role") == "user"
-        and message.get("content") == steer_text
+        message.get("role") == "user" and message.get("content") == steer_text
         for message in second_payload
     ), second_payload
 
@@ -307,9 +305,7 @@ def test_a_stopped_parents_survivor_still_drains_steering(db, monkeypatch):
 # -- probe (b): outlive OFF -- byte-identical kill-switch path -------------
 
 
-def test_probe_b_stop_kills_everything_through_the_cancel_event_path(
-    db, monkeypatch
-):
+def test_probe_b_stop_kills_everything_through_the_cancel_event_path(db, monkeypatch):
     """Outlive OFF: Stop still takes the whole run tree, via the Events.
 
     GREEN at the untouched merge-base and required to stay green through
@@ -501,9 +497,7 @@ def test_probe_b_a_mid_loop_child_notices_stop_before_settle_under_the_kill_swit
 # because fleet children are daemon threads that die with the process.
 
 
-def test_a_survivor_of_a_stopped_turn_dies_on_its_own_cancel_event(
-    db, monkeypatch
-):
+def test_a_survivor_of_a_stopped_turn_dies_on_its_own_cancel_event(db, monkeypatch):
     """The Event path survives the decoupling -- Cancel still works.
 
     The parent-poll term is gone from a decoupled child's poll, so its
@@ -612,9 +606,7 @@ def test_a_cancel_alled_child_draws_the_not_retained_refusal_not_unknown(
     )
 
 
-def test_app_exit_takes_everything_fleet_children_are_daemon_threads(
-    db, monkeypatch
-):
+def test_app_exit_takes_everything_fleet_children_are_daemon_threads(db, monkeypatch):
     """The app-exit half of the audit: children die with the process.
 
     App exit (`ConsoleRuntime.dispose` -> `controller.shutdown()`) cancels

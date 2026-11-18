@@ -26,9 +26,10 @@ has just been mounted and holds no focus (Textual does not carry focus across
 the remove/remount a recompose performs), so its opening announcement is
 filtered out here.
 
-`SourcesPane` deliberately does NOT use this gate: TASK-1100 relies on the
-row-0 highlight of a freshly populated sources table selecting the first
-source, which is what arms `Preview`/`Check now` on arrival.
+`SourcesPane` uses this gate too (TASK-38586): its row-0 arrival arming —
+selecting the first source so `Preview`/`Check now` start enabled —
+happens explicitly, once per pane instance, in `SourcesPane.compose()`,
+instead of riding on the announcement the gate filters out.
 """
 
 from __future__ import annotations
@@ -80,18 +81,14 @@ class IdSelectionModel:
         if direction not in {-1, 1} or source_id not in self.visible_ids:
             return source_id
         current_index = self.visible_ids.index(source_id)
-        target_index = min(
-            max(current_index + direction, 0), len(self.visible_ids) - 1
-        )
+        target_index = min(max(current_index + direction, 0), len(self.visible_ids) - 1)
         target_id = self.visible_ids[target_index]
         if self.anchor_id not in self.visible_ids:
             self.anchor_id = source_id
         anchor_index = self.visible_ids.index(self.anchor_id)
         old_start, old_end = sorted((anchor_index, current_index))
         new_start, new_end = sorted((anchor_index, target_index))
-        self._selected_ids.difference_update(
-            self.visible_ids[old_start : old_end + 1]
-        )
+        self._selected_ids.difference_update(self.visible_ids[old_start : old_end + 1])
         self._selected_ids.update(self.visible_ids[new_start : new_end + 1])
         return target_id
 

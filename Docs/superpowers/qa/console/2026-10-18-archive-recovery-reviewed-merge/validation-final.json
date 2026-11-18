@@ -1,0 +1,274 @@
+{
+  "source_snapshot_sha256": "22b25f2b59e4400f52ff78779ca699cf3d7fa13b411e1d9cba972f494816d86a",
+  "source_files": 104,
+  "runs": [
+    {
+      "name": "mount-red",
+      "exit_code": 1,
+      "classification": "valid_pending_mount_policy_red",
+      "log_sha256": "28b29422c558fb39be7ffcea3300e1e7440f94f2e33e8abc2b24da3ca1ce7388",
+      "summary": [
+        "1 failed in 2.54s"
+      ]
+    },
+    {
+      "name": "mount-retired-red",
+      "exit_code": 1,
+      "classification": "invalid_incomplete_fake_not_a_hosted_error_control",
+      "log_sha256": "54ed0e348463be4c90a4f6d195eb96aa12a9bea89e18295606bb04fc08a479c8",
+      "summary": [
+        "1 failed in 1.97s"
+      ]
+    },
+    {
+      "name": "mount-exit-red",
+      "exit_code": 1,
+      "classification": "exact_native_mount_error_red",
+      "log_sha256": "f29497aa5f9cb071c7c0656b219d4cfd328be0e7e24f289c7bb671b59ada96d3",
+      "summary": [
+        "1 failed in 1.60s"
+      ]
+    },
+    {
+      "name": "mount-yield-red",
+      "exit_code": 1,
+      "classification": "native_exit_and_answerability_red",
+      "log_sha256": "a40b3c1b03e9a9f97b2699ce795976c8b89d89754a786532a5f2ce5917516f51",
+      "summary": [
+        "2 failed, 12 deselected in 1.93s"
+      ]
+    },
+    {
+      "name": "mount-concurrent-red",
+      "exit_code": 1,
+      "classification": "overlapping_native_initialization_red",
+      "log_sha256": "289356c15d1d6d779a045549091c6e43dae39ec82efc9dbf594480d65fb83194",
+      "summary": [
+        "1 failed, 11 deselected in 2.01s"
+      ]
+    },
+    {
+      "name": "cold-view-red",
+      "exit_code": 1,
+      "classification": "superseded_incorrect_new_hook_setup",
+      "log_sha256": "76ecb94e58839f4b70e9d6ca66f25736e4371da3f00cc8cdfe1528daaa6050b1",
+      "summary": [
+        "4 failed, 33 deselected in 25.13s"
+      ]
+    },
+    {
+      "name": "queue-cold-red",
+      "exit_code": 1,
+      "classification": "first_user_queue_edit_red",
+      "log_sha256": "8cd7a8048711213a9e7653f49f5723e3178712320a91ff3c9713e212dcd329ca",
+      "summary": [
+        "1 failed in 2.35s"
+      ]
+    },
+    {
+      "name": "boot-census",
+      "exit_code": 1,
+      "classification": "is_mounted_only_does_not_close_hosted_error",
+      "log_sha256": "9fad53bf510d3262f57f5fb008dd34988a5d06bfe6fa3988dabf75a27fe94fc9",
+      "summary": [
+        "1 failed, 3 passed in 11.92s"
+      ]
+    },
+    {
+      "name": "mount-census-green",
+      "exit_code": 1,
+      "classification": "mount_fixed_reveals_true_recovery_import_breach",
+      "log_sha256": "1afb1bb1786d42ac685ae98a3c0d5fcb628cea5bed0f19342790cfe08854fe8c",
+      "summary": [
+        "1 failed, 14 passed in 18.06s"
+      ]
+    },
+    {
+      "name": "first-use-green",
+      "exit_code": 143,
+      "classification": "superseded_invalid_new_hook_setup_terminated",
+      "log_sha256": "55619787df7165cbb458ed10c8350ea2419f44d7aad0252599ac578cb26eb303",
+      "summary": []
+    },
+    {
+      "name": "cold-lifecycle-green",
+      "exit_code": 0,
+      "classification": "closing_first_use_regressions",
+      "log_sha256": "986bba35ee58a195a3efef1d4d4cd4213226885e0e31cf05de50847416857ee1",
+      "summary": [
+        "5 passed, 51 deselected in 17.00s"
+      ]
+    },
+    {
+      "name": "attached-boot-green",
+      "exit_code": 1,
+      "classification": "33_passed_baseline_only_census_variation",
+      "log_sha256": "9c9c0081c7fc1de233aa8a99c15322497f1a1f1ef5f3183457a578d419febc0e",
+      "summary": [
+        "1 failed, 33 passed in 37.11s"
+      ]
+    },
+    {
+      "name": "first-use-boot-alone",
+      "exit_code": 0,
+      "classification": "intermediate_isolated_census",
+      "log_sha256": "bfc91fc6f0376ebadf624c4d682b0c8379e295c38b53a5fd42146ccb0d52e4ca",
+      "summary": [
+        "  /Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/Tests/Performance/test_ui_ready_module_census.py:530: UserWarning: ui-ready-census: 1031/1031 modules (headroom 0); snapshot drift +25/-27",
+        "4 passed, 1 warning in 25.64s"
+      ]
+    },
+    {
+      "name": "first-use-dispatch-owned",
+      "exit_code": 0,
+      "classification": "intermediate_77_passed",
+      "log_sha256": "ff3d62645b0ca3b0c552c7b25ef1564334fdde24905f60ffdbce5a2eafee7db4",
+      "summary": [
+        "77 passed in 126.72s (0:02:06)"
+      ]
+    },
+    {
+      "name": "first-use-native",
+      "exit_code": 0,
+      "classification": "intermediate_12_passed",
+      "log_sha256": "4288963fab33ac1eb18d61cc2c5999473946b454345ddbd86c7066be190e2c18",
+      "summary": [
+        "12 passed, 31 deselected in 222.55s (0:03:42)"
+      ]
+    },
+    {
+      "name": "first-use-ratchets",
+      "exit_code": 1,
+      "classification": "diagnostic_10_failures_attributed",
+      "log_sha256": "37054f17763fa70b887dffc2dd1ca2d7966b30170e36cb8ee4c2e664601d80ed",
+      "summary": [
+        "10 failed, 58 passed in 1.96s"
+      ]
+    },
+    {
+      "name": "extract-ratchets",
+      "exit_code": 1,
+      "classification": "61_passed_7_inherited_failures",
+      "log_sha256": "d14d1897bd918b56ccec0ce40d3c93f0d92ae27c1016ea786a85fb3915758075",
+      "summary": [
+        "7 failed, 61 passed in 1.94s"
+      ]
+    },
+    {
+      "name": "extracted-ratchets-green",
+      "exit_code": 0,
+      "classification": "closing_three_changed_limit_guards",
+      "log_sha256": "a6f2576119362abe7cd666efd7e8f66120dd78f0eb61de13b4dad9b21f2403ce",
+      "summary": [
+        "6 passed, 62 deselected in 2.21s"
+      ],
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "pytest",
+        "Tests/Architecture/test_screen_size_ratchet.py",
+        "Tests/Architecture/test_module_size_ratchet.py",
+        "-k",
+        "chat_screen or console_chat_controller or console_interrupt_rounds",
+        "-q",
+        "--tb=short",
+        "--basetemp=/private/tmp/archive-recovery-pr3162-merge-20261018/extracted-ratchets-green-tmp",
+        "-o",
+        "cache_dir=/private/tmp/archive-recovery-pr3162-merge-20261018/extracted-ratchets-green-cache"
+      ]
+    },
+    {
+      "name": "extracted-contracts",
+      "exit_code": 0,
+      "classification": "closing_contracts",
+      "log_sha256": "a9b504b931927ed34f514fc740c2619171a8a1d9ec96f30a592d552e1efa1bc0",
+      "summary": [
+        "223 passed in 444.15s (0:07:24)"
+      ],
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "pytest",
+        "Tests/Chat/test_console_archive_recovery_followup.py",
+        "Tests/Chat/test_console_archive_recovery_dispatch.py",
+        "Tests/Chat/test_console_prepared_request.py",
+        "Tests/Chat/test_console_local_review_hook.py",
+        "Tests/Chat/test_console_selection_core.py",
+        "Tests/UI/test_console_runtime_ownership.py::test_attach_and_detach_cover_exactly_the_same_slot_set",
+        "Tests/UI/test_console_runtime_ownership.py::test_view_hook_inventory_contains_only_disposable_projections",
+        "Tests/UI/test_console_runtime_ownership.py::test_detach_releases_the_old_chat_screen_from_every_runtime_hook",
+        "-q",
+        "--tb=short",
+        "--basetemp=/private/tmp/archive-recovery-pr3162-merge-20261018/extracted-contracts-tmp",
+        "-o",
+        "cache_dir=/private/tmp/archive-recovery-pr3162-merge-20261018/extracted-contracts-cache"
+      ]
+    },
+    {
+      "name": "extracted-native",
+      "exit_code": 0,
+      "classification": "closing_mounted_interactions",
+      "log_sha256": "48691ae4b1ff0c63e4422dbfbe2746007a1f91ad31c2a34a92401bda879bd2fe",
+      "summary": [
+        "19 passed in 104.83s (0:01:44)"
+      ],
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "pytest",
+        "Tests/UI/test_console_archive_recovery_flow.py::test_production_recovery_keeps_exact_history_and_active_draft",
+        "Tests/UI/test_console_archive_recovery_flow.py::test_preview_hidden_chat_and_explicit_open_preserve_original_branch",
+        "Tests/UI/test_console_selection_core.py",
+        "-q",
+        "--tb=short",
+        "--basetemp=/private/tmp/archive-recovery-pr3162-merge-20261018/extracted-native-tmp",
+        "-o",
+        "cache_dir=/private/tmp/archive-recovery-pr3162-merge-20261018/extracted-native-cache"
+      ]
+    },
+    {
+      "name": "merge-final-boot",
+      "exit_code": 0,
+      "classification": "closing_isolated_boot",
+      "log_sha256": "0536d1cd667bf4ee30658531c738846881df180b282503d57fd4ac1c1cec4cbe",
+      "summary": [
+        "  /Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/Tests/Performance/test_ui_ready_module_census.py:530: UserWarning: ui-ready-census: 1030/1031 modules (headroom 1); snapshot drift +24/-27",
+        "4 passed, 1 warning in 24.82s"
+      ],
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "pytest",
+        "Tests/Performance/test_ui_ready_module_census.py",
+        "-q",
+        "--tb=short",
+        "--basetemp=/private/tmp/archive-recovery-pr3162-merge-20261018/merge-final-boot-tmp",
+        "-o",
+        "cache_dir=/private/tmp/archive-recovery-pr3162-merge-20261018/merge-final-boot-cache"
+      ]
+    },
+    {
+      "name": "merge-final-worker",
+      "exit_code": 0,
+      "classification": "closing_derived_gate",
+      "log_sha256": "06801079b082f185b239b97b5902b2b5847fcda3ca2a71f6988d4461233326b1",
+      "summary": []
+    },
+    {
+      "name": "merge-final-diagnostics",
+      "exit_code": 0,
+      "classification": "closing_derived_gate",
+      "log_sha256": "c7df5d4681192e1927e94345769d17a8571f4173ff6a1e82f15530be4e1acffc",
+      "summary": []
+    },
+    {
+      "name": "merge-final-ui-census",
+      "exit_code": 0,
+      "classification": "closing_derived_gate",
+      "log_sha256": "63c0b4857fefbb47fe565e2630a4850c2351dc817279e1ec4667200fa1283884",
+      "summary": []
+    }
+  ],
+  "scope": "Targeted only; no new live/model requests (30/30 consumed). Counts overlap. Final source execution operations preserved through import/annotation lint cleanup, with independent AST/global-reader verification.",
+  "merge_gates": "Not a merge claim; exact commit review and hosted current-base/CI/thread/queue outcome follow publication."
+}

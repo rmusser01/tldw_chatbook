@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Image Gen
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Draft — save/revert below · 1 unsaved | Defaults affect future Console image generations.                          │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │ Gemini (AI Studio)      Not configured▐ ▌ Off  Test                                                                        │  │  │                                         │
+│  category search             │  │  │                                                                                                                            │  │  │ Selected category: Image Gen            │
+│                              │  │  │                                                                                                                            │  │  │ Unsaved changes                         │
+│      Console Behavior        │  │  │  Backend settings                                                                                                          │  │  │  Guided edits: use the panel's own      │
+│  Data & Privacy              │  │  │ ╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  │  │  │  Save/Revert controls below.            │
+│      Storage                 │  │  │ │  ▶ SD.cpp (local)                                                                                                     │  │  │  │ Local-only: saves write your config     │
+│      Workspaces              │  │  │ │                                                                                                                       │  │  │  │ file.                                   │
+│      Tool Profiles           │  │  │ ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  │  │  │ Impact and boundaries                   │
+│      Privacy & Security      │  │  │                                                                                                                            │  │  │ Image generation backend defaults for   │
+│      Network               ▃ │  │  │ ╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  │  │  │ SwarmUI, OpenRouter, and other backend  │
+│      My Profile              │  │  │ │  ▼ SwarmUI (local)                                                                                                    │  │  │  │ models.                                 │
+│  Troubleshooting             │  │  │ │                                                                                                                       │▅ │  │  │  Runtime owner: Settings persisted      │
+│      Diagnostics (view)      │  │  │ │  Base URL                │ http://127.0.0.1:7801                                                                      │  │  │  │  defaults; Console /generate-image      │
+│      About (view)            │  │  │ │  Default model           │                                                                                            │  │  │  │  Writes allowed: Yes                    │
+│      Agents                  │  │  │ │  Timeout (seconds)       │ 120                                                                                        │  │  │  │  Owns: image_generation.                │
+│  Expert                      │  │  │ │  Swarm token             │ Paste a key/token to save locally in config                                        Clear   │  │  │  │    default_backend                      │
+│      Hooks                   │  │  │ │                                                                                                                       │  │  │  │  image_generation.                      │
+│      Internal Prompts        │  │  │ │   missing                                                                                                             │  │  │  │    enabled_backends                     │
+│      Advanced Config         │  │  │ │                                                                                                                       │  │  │  │  image_generation.                      │
+│   Domain Defaults ▾ (13)     │  │  │ │   Advanced keys for SwarmUI (local) live in config.toml -> [image_generation.swarmui] (not editable here).            │  │  │  │    <backend>.*                          │
+│      RAG                     │  │  │ │                                                                                                                       │  │  │  │  image_generation.                      │
+│      Artifacts (view)        │  │  │ │                                                                                                                       │  │  │  │    default_batch                        │
+│      Roleplay (view)         │  │  │ │                                                                                                                       │  │  │  │  image_generation.                      │
+│      Skills (view)           │  │  │ ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  │  │  │    max_variants_per_message             │
+│      Schedules               │  │  │                                                                                                                            │  │  │  image_generation.                      │
+│      Watchlists (view)       │  │  │ ╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  │  │  │    context_llm_enabled                  │
+│      Dreams                  │  │  │ │  ▶ ComfyUI (H3 image edit)                                                                                            │  │  │  │  image_generation.                      │
+│      Guardian                │  │  │ │                                                                                                                       │  │  │  │    context_llm_turns                    │
+│      Workflows (view)        │  │  │ ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  │  │  │  image_generation.                      │
+│      MCP Defaults (view)     │  │  │                                                                                                                            │  │  │    context_llm_timeout_seconds          │
+│      ACP Defaults (view)     │  │  │ ╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  │  │  │  Affected config: [image_generation]    │
+│    > Image Gen *           ▆ │  │  │ │  ▶ OpenRouter                                                                                                         │  │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+ Clears the locally saved key -- env/keyring sources still apply.
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

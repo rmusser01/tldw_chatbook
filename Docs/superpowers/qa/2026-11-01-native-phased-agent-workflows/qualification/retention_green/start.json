@@ -1,0 +1,28 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "--tb=short",
+    "Tests/DB/test_sync_log_retention.py",
+    "Tests/Backup_Recovery/test_finite_library_workers.py::test_finite_worker_native_cache_lifetime[success-media]",
+    "Tests/Backup_Recovery/test_finite_library_workers.py::test_finite_worker_native_cache_lifetime[error-media]",
+    "Tests/Backup_Recovery/test_finite_library_workers.py::test_finite_worker_native_cache_lifetime[borrowed-media]",
+    "Tests/Backup_Recovery/test_finite_library_workers.py::test_finite_worker_native_cache_lifetime[transaction-media]",
+    "Tests/Backup_Recovery/test_finite_library_workers.py::test_finite_worker_native_cache_lifetime[operation-media]",
+    "Tests/Backup_Recovery/test_finite_library_workers.py::test_finite_worker_native_cache_lifetime[cancel-media]",
+    "Tests/Backup_Recovery/test_finite_library_workers.py::test_finite_worker_preserves_unowned_lifetimes[memory-notes]",
+    "Tests/Backup_Recovery/test_finite_library_workers.py::test_finite_worker_preserves_unowned_lifetimes[custom-notes]",
+    "--basetemp",
+    "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/t10-retention_green-77ltqrpc/pytest",
+    "--junitxml",
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-retention_green/tests.xml"
+  ],
+  "basetemp": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/t10-retention_green-77ltqrpc",
+  "pgid": 12270,
+  "pid": 12270,
+  "signals": [],
+  "started": 1793854080.729116,
+  "whole_bound": 160
+}

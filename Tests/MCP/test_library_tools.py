@@ -29,6 +29,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tldw_chatbook.app_services import ProfileStorage
 from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
 from tldw_chatbook.MCP.local_runtime_delegate import (
     RAW_TOOL_CALL_REFUSED_MESSAGE,
@@ -93,9 +94,7 @@ def test_manifest_does_not_advertise_generic_collection_container_tools():
 
 def test_manifest_does_not_advertise_unimplemented_ingest_media():
     """The local MCP manifest omits the retired placeholder ingest tool."""
-    names = {
-        entry["name"] for entry in describe_local_mcp_capabilities()["tools"]
-    }
+    names = {entry["name"] for entry in describe_local_mcp_capabilities()["tools"]}
 
     assert "ingest_media" not in names
 
@@ -129,12 +128,14 @@ def test_manifest_note_organization_schemas_are_the_shared_contract():
         "ensure_keywords",
         "expected_organization_version",
     } <= set(save["inputSchema"]["properties"])
-    assert search["inputSchema"] == LIBRARY_TOOL_DESCRIPTORS[
-        "library_search_notes"
-    ].input_schema
-    assert save["inputSchema"] == LIBRARY_TOOL_DESCRIPTORS[
-        "library_save_note"
-    ].input_schema
+    assert (
+        search["inputSchema"]
+        == LIBRARY_TOOL_DESCRIPTORS["library_search_notes"].input_schema
+    )
+    assert (
+        save["inputSchema"]
+        == LIBRARY_TOOL_DESCRIPTORS["library_save_note"].input_schema
+    )
 
 
 def test_manifest_library_entries_do_not_alias_descriptor_schemas():
@@ -238,7 +239,6 @@ def test_delegate_diagnostics_report_library_tools_implemented_not_missing():
 
 @pytest.mark.asyncio
 async def test_delegate_lazily_constructs_one_shared_service(monkeypatch):
-    import tldw_chatbook.MCP.local_runtime_delegate as delegate_module
     import tldw_chatbook.MCP.server as server_module
 
     fake_service = FakeLibraryToolService()
@@ -251,12 +251,8 @@ async def test_delegate_lazily_constructs_one_shared_service(monkeypatch):
     monkeypatch.setattr(
         server_module, "build_local_library_tool_service", fake_factory, raising=False
     )
-    monkeypatch.setattr(
-        delegate_module, "get_chachanotes_db_lazy", lambda: object()
-    )
-    monkeypatch.setattr(delegate_module, "get_media_db_lazy", lambda: object())
-
-    delegate = LocalMCPRuntimeDelegate()
+    storage = ProfileStorage(chachanotes=object(), media=object())
+    delegate = LocalMCPRuntimeDelegate(storage_provider=lambda: storage)
     await delegate.execute_tool("library_list_media", {})
     await delegate.execute_tool("library_list_notes", {})
 
@@ -273,7 +269,6 @@ async def test_delegate_forwards_its_policy_enforcer_to_the_factory(monkeypatch)
     """Task 5 (spec §6): the delegate carries the enforcer handle into the
     shared-service factory so the chunk tools' writing operations are
     service-level gated on the local MCP surface too."""
-    import tldw_chatbook.MCP.local_runtime_delegate as delegate_module
     import tldw_chatbook.MCP.server as server_module
 
     enforcer = object()
@@ -286,12 +281,10 @@ async def test_delegate_forwards_its_policy_enforcer_to_the_factory(monkeypatch)
     monkeypatch.setattr(
         server_module, "build_local_library_tool_service", fake_factory, raising=False
     )
-    monkeypatch.setattr(
-        delegate_module, "get_chachanotes_db_lazy", lambda: object()
+    storage = ProfileStorage(chachanotes=object(), media=object())
+    delegate = LocalMCPRuntimeDelegate(
+        policy_enforcer=enforcer, storage_provider=lambda: storage
     )
-    monkeypatch.setattr(delegate_module, "get_media_db_lazy", lambda: object())
-
-    delegate = LocalMCPRuntimeDelegate(policy_enforcer=enforcer)
     await delegate.execute_tool("library_list_media", {})
 
     assert seen["policy_enforcer"] is enforcer
@@ -440,7 +433,9 @@ def test_factory_wires_the_policy_enforcer_into_the_chunk_tool_service(
             super().__init__(*args, **kwargs)
             built.append(self)
 
-    monkeypatch.setattr(chunk_module, "LocalMediaChunkToolService", _RecordingChunkService)
+    monkeypatch.setattr(
+        chunk_module, "LocalMediaChunkToolService", _RecordingChunkService
+    )
     enforcer = object()
 
     service = server_module.build_local_library_tool_service(

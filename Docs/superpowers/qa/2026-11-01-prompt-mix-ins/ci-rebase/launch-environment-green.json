@@ -1,0 +1,17 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/Backup_Recovery/test_profile_launch_environment.py",
+    "-q",
+    "--tb=short",
+    "-p",
+    "no:cacheprovider",
+    "--basetemp",
+    "/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-env-c9uukie6/green-pytest"
+  ],
+  "returncode": 0,
+  "raw_text": ".....                                                                    [100%]\n============================= slowest 25 durations =============================\n\n(15 durations < 1s hidden.)\n5 passed in 0.45s\n",
+  "sha256": "7e63b680373ce64e1c217c1b1f9765da2597160470d65903a077c7de59302d1e"
+}

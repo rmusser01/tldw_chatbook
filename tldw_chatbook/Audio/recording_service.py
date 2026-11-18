@@ -94,6 +94,36 @@ class AudioDeviceError(AudioRecordingError):
     pass
 
 
+def _assemble_vad_frames(
+    pending: bytes, chunk: bytes, frame_size: int
+) -> "tuple[List[bytes], bytes]":
+    """Assemble fixed-size VAD frames across chunk boundaries.
+
+    TASK-38612: `_process_audio_chunk` receives backend chunks whose length
+    is arbitrary (any user-configured `buffer_duration_ms` that is not a
+    multiple of the 20 ms VAD frame yields sub-frame tails). Walking each
+    chunk in isolation drops `len(chunk) % frame_size` bytes every time --
+    continuous audio loss at the capture stage. This helper instead
+    prefixes the chunk with the partial frame carried over from the
+    previous chunk, slices off whole frames, and returns the new tail to
+    carry forward -- the same windowing carry `speech_presentation.py`'s
+    `PcmEnvelope` uses for envelope windows.
+
+    Args:
+        pending: Partial frame bytes carried from the previous chunk.
+        chunk: Newly captured bytes for this chunk.
+        frame_size: Exact byte length of one VAD frame (> 0).
+
+    Returns:
+        (complete frames in order, new partial-frame carry -- possibly
+        empty; never longer than ``frame_size - 1``).
+    """
+    data = pending + chunk
+    aligned_length = len(data) - len(data) % frame_size
+    frames = [data[i : i + frame_size] for i in range(0, aligned_length, frame_size)]
+    return frames, data[aligned_length:]
+
+
 class AudioRecordingService:
     """
     Cross-platform audio recording service with streaming support.
@@ -120,6 +150,11 @@ class AudioRecordingService:
     #: Class-level fallback for instances built via ``__new__`` (some tests
     #: skip the constructor's backend probe); ``__init__`` always overrides it.
     retain_audio: bool = True
+
+    #: Class-level fallback (same `__new__` rationale as `_preroll_frames`
+    #: above): the sub-frame tail `_process_audio_chunk` carries between
+    #: chunks. ``__init__`` always resets it to empty.
+    _vad_pending_frame: bytes = b""
 
     # Audio configuration defaults
     DEFAULT_SAMPLE_RATE = 16000  # 16kHz is standard for speech recognition
@@ -212,6 +247,10 @@ class AudioRecordingService:
         # ahead of the next accepted frame after a silence run. See
         # `VAD_PREROLL_MS` above for the incident this exists to fix.
         self._preroll_frames: Deque[bytes] = deque(maxlen=preroll_frame_count)
+        # Sub-frame tail carried into the next chunk by
+        # `_process_audio_chunk` (TASK-38612); reset per capture in
+        # `start_recording`.
+        self._vad_pending_frame: bytes = b""
 
         # Initialize backend
         self.backend = self._initialize_backend(backend)
@@ -389,6 +428,9 @@ class AudioRecordingService:
             self.audio_buffer = []
             self._audio_buffer_bytes = 0
             self._buffer_limit_reached = False
+            # A new capture must not inherit the previous capture's
+            # sub-frame tail (at most one 20 ms frame of stale audio).
+            self._vad_pending_frame = b""
             self.is_recording = True
 
             # Start recording thread
@@ -505,9 +547,15 @@ class AudioRecordingService:
                 int(self.sample_rate * frame_duration_ms / 1000) * 2
             )  # 2 bytes per sample
 
-            # Process in VAD-compatible frames
-            for i in range(0, len(chunk) - frame_size + 1, frame_size):
-                frame = chunk[i : i + frame_size]
+            # Process in VAD-compatible frames. The sub-frame tail of this
+            # chunk is carried into the next one instead of being dropped
+            # (TASK-38612): chunks arrive at user-configured durations, and
+            # any duration not a multiple of the frame would otherwise lose
+            # `len(chunk) % frame_size` bytes on EVERY chunk.
+            frames, self._vad_pending_frame = _assemble_vad_frames(
+                self._vad_pending_frame, chunk, frame_size
+            )
+            for frame in frames:
                 if self.vad.is_speech(frame, self.sample_rate):
                     # Speech onset after a silence run: replay the buffered
                     # pre-roll frames first so the onset they contain (a
@@ -617,10 +665,22 @@ class AudioRecordingService:
         self._audio_buffer_bytes = 0
         self.callback = None
 
-        # Close PyAudio if needed
+        # Close PyAudio if needed. TASK-38612: if the recording thread
+        # missed the join timeout above, the stream can still be open and
+        # `terminate()` raises -- that must not escape over callers (it
+        # used to abort stop_recording() after the capture was saved but
+        # before audio_data was returned, losing the recording to a
+        # cleanup error). Mirror `__del__`'s guarded terminate, with
+        # logging; the success path (terminate runs, handle cleared) is
+        # unchanged. On failure the handle is kept so `__del__` can retry
+        # once the straggler thread has closed the stream.
         if self.backend == "pyaudio" and self.pyaudio_instance:
-            self.pyaudio_instance.terminate()
-            self.pyaudio_instance = None
+            try:
+                self.pyaudio_instance.terminate()
+            except Exception as e:
+                logger.error(f"Error terminating PyAudio during stop: {e}")
+            else:
+                self.pyaudio_instance = None
 
         return audio_data
 

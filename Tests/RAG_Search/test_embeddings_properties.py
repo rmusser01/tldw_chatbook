@@ -428,15 +428,22 @@ class TestThreadSafetyProperties:
         errors = []
         threads = []
 
-        def create_service_and_embed(op_id):
-            try:
-                with patch(
-                    "tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory"
-                ) as mock_factory:
-                    mock_instance = MagicMock()
-                    mock_instance.embed.return_value = np.array([[0.1] * 384])
-                    mock_factory.return_value = mock_instance
+        # Patch ONCE in the test thread, like test_concurrent_embedding_creation
+        # above. unittest.mock.patch is not thread-safe when entered/exited
+        # concurrently on the same target: a racing unpatch could hand a
+        # worker the REAL factory class, whose constructor then attempts a
+        # real (offline-failing) HuggingFace download for the fake
+        # "model_N" ids — the intermittent "Failed to download or load
+        # model" failures this test used to produce.
+        with patch(
+            "tldw_chatbook.RAG_Search.simplified.embeddings_wrapper.EmbeddingFactory"
+        ) as mock_factory:
+            mock_instance = MagicMock()
+            mock_instance.embed.return_value = np.array([[0.1] * 384])
+            mock_factory.return_value = mock_instance
 
+            def create_service_and_embed(op_id):
+                try:
                     # Create a new service instance
                     service = EmbeddingsServiceWrapper(
                         model_name=f"model_{op_id % 3}"  # Vary models
@@ -447,18 +454,18 @@ class TestThreadSafetyProperties:
                     results.append((op_id, embeddings is not None))
 
                     service.close()
-            except Exception as e:
-                errors.append((op_id, e))
+                except Exception as e:
+                    errors.append((op_id, e))
 
-        # Execute operations concurrently
-        for i in range(num_operations):
-            thread = threading.Thread(target=create_service_and_embed, args=(i,))
-            threads.append(thread)
-            thread.start()
+            # Execute operations concurrently
+            for i in range(num_operations):
+                thread = threading.Thread(target=create_service_and_embed, args=(i,))
+                threads.append(thread)
+                thread.start()
 
-        # Wait for completion
-        for thread in threads:
-            thread.join(timeout=10)
+            # Wait for completion
+            for thread in threads:
+                thread.join(timeout=10)
 
         # All operations should succeed
         assert len(errors) == 0

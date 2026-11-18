@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+    "format",
+    "--stdin-filename",
+    "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/UI/test_console_runtime_ownership.py",
+    "-"
+  ],
+  "actual_formatted_sha256": "e13f7a098c7156843f1e9c098285f3ab7c2f22a983fddc1bdfe5362ba89cc7e2",
+  "original_formatted_sha256": "f9656bf8a66e868a9151745b0a5be615fd521c423058ac0c60d1629f2a735fa6",
+  "overlay_callback_lines_unchanged_by_formatter": true,
+  "reverse_overlay_from_formatted_final_restores_exact_formatted_original": true,
+  "required_changed_hunk_format_gate": true,
+  "whole_owner_debt_unmodified": true
+}

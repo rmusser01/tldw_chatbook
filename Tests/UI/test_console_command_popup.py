@@ -23,6 +23,11 @@ from tldw_chatbook.Chat.console_skill_resolver import SkillCommandCandidate
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_command_popup import ConsoleCommandPopup
 
+# TASK-40323: the mounted cases build `_build_test_app`, which loads config
+# (`build_test_app_config` -> `load_settings`); the per-test sandbox refuses
+# that with RecoveryRequired, so the whole file keeps the bootstrap profile.
+pytestmark = pytest.mark.bootstrap_profile
+
 SUGGESTIONS = [
     CommandSuggestion(insert_text="/a ", label="/a", description="first"),
     CommandSuggestion(insert_text="/b ", label="/b", description="second"),
@@ -88,9 +93,13 @@ async def test_slash_opens_popup_and_typing_filters():
         # popup offers the registered commands" -- so assert that, plus the
         # six this test was written for, and let honest additions through.
         labels = _popup_labels(popup)
-        assert labels == [
+        commands = [
             f"/{name}" for name in default_console_registry().available_names()
         ]
+        # 0520df15ac (TASK-32954) ships the built-in Character Creator skill,
+        # so the trusted skills' `/skills <name>` rows follow the commands.
+        assert labels[: len(commands)] == commands
+        assert all(label.startswith("/skills ") for label in labels[len(commands) :])
         assert {
             "/prompt",
             "/system",
@@ -122,8 +131,11 @@ async def test_enter_accepts_and_inserts_without_sending():
         await pilot.press("enter")
         await pilot.pause()
         assert composer.draft_text() == "/skills "
-        # No skill candidates configured -> arg-mode list is empty -> hidden.
-        assert not popup.is_open
+        # Arg mode lists the trusted skills, hidden when there are none;
+        # 0520df15ac (TASK-32954) ships a built-in one.
+        names = [skill.name for skill in console._skill._console_skill_candidates]
+        assert popup.is_open == bool(names)
+        assert (_popup_labels(popup) if popup.is_open else []) == names
 
 
 @pytest.mark.asyncio
@@ -168,6 +180,7 @@ async def test_escape_closes_popup_and_keeps_draft():
         assert composer.draft_text() == "/"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_skill_entries_and_skills_arg_mode():
     app = _build_test_app()
@@ -179,15 +192,16 @@ async def test_skill_entries_and_skills_arg_mode():
         await _wait_for_selector(console, pilot, "#console-native-composer")
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         popup = console.query_one("#console-command-popup", ConsoleCommandPopup)
-        # Test-level snapshot injection — production refreshes candidates via
-        # _refresh_console_skill_candidates; setting the tuple directly is
-        # deliberate here, not the production path.
+        console._focus_console_composer_if_needed(force=True)
+        await pilot.press("/", "w", "e", "b")
+        await pilot.pause()
+        assert composer.draft_text() == "/web"
+        # Publish this fixture's candidate after the actual draft change, just as skill discovery does.
         await pilot.app.workers.wait_for_complete()
         console._console_skill_candidates = (
             SkillCommandCandidate(name="web-search", description="Search the web"),
         )
-
-        await pilot.press("/", "w")
+        console._sync_console_command_popup()
         await pilot.pause()
         # Bare `/skill-name` is not dispatchable on dev (fallback resolver
         # removed), so the entry completes to the `/skills <name> ` form.
@@ -310,8 +324,12 @@ async def test_enter_with_popup_closed_sends_normally():
         submit_spy = await _spy_submit_draft(console)
 
         console.query_one("#console-send-message", Button).press()
-        await pilot.app.workers.wait_for_complete()
-        await pilot.pause()
+        # 3e618d7119 receives a stock Send into runtime custody: submit_draft
+        # runs on the runtime's task, not a Textual worker (TASK-41139).
+        for _ in range(300):
+            if submit_spy.await_count:
+                break
+            await pilot.pause(0.1)
         submit_spy.assert_awaited()
 
 
@@ -382,3 +400,148 @@ async def test_popup_anchor_clears_composer_with_chips_below():
         assert popup_bottom <= chips.region.y, (
             f"popup {popup.region} overlaps status chips {chips.region}"
         )
+
+
+# ---------------------------------------------------------------------------
+# TASK-18921: usage-ranked suggestions (display-only; filtering unchanged)
+# ---------------------------------------------------------------------------
+
+from tldw_chatbook.Chat.console_command_grammar import (
+    KIND_COMMAND,
+    CommandParse,
+)
+from tldw_chatbook.Chat.console_command_suggestions import suggestions_for_draft
+from tldw_chatbook.Chat.prompt_history import PromptHistory
+
+
+def _seeded_history(*inputs: str) -> PromptHistory:
+    """Build a history store with in-memory entries only (no file IO)."""
+    history = PromptHistory("/nonexistent/t18921_prompt_history.jsonl")
+    history._entries = [{"input": text, "timestamp": 0.0} for text in inputs]
+    history._loaded = True
+    return history
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_popup_orders_most_used_command_first():
+    app = _build_test_app()
+    history = _seeded_history(
+        "/model",
+        "/model",
+        "/help",
+        "an ordinary prompt",
+    )
+    app.console_prompt_history_factory = lambda: history
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        popup = console.query_one("#console-command-popup", ConsoleCommandPopup)
+
+        await pilot.press("/")
+        await pilot.pause()
+        labels = _popup_labels(popup)
+        # Most-used first, then alphabetical ties: /model (2 uses) leads,
+        # /help (1) follows, everything else stays alphabetical within the
+        # zero tier.
+        assert labels[0] == "/model"
+        assert labels[1] == "/help"
+        assert labels[2:] == sorted(labels[2:], key=str.lower)
+        # The full registered set is still offered — ranking reorders, it
+        # never drops or adds rows. The live screen's registry (which
+        # registers the console-action commands on top of the defaults) and
+        # its skill candidates are the source of truth, not a fresh
+        # default registry.
+        expected_labels = [
+            s.label
+            for s in suggestions_for_draft(
+                "/", console._console_command_registry, console._console_skill_candidates
+            )
+        ]
+        assert sorted(labels) == sorted(expected_labels)
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_popup_order_is_registry_order_with_no_usage_data():
+    # AC#3 at the UI seam: zero usage data (a fresh install's history) keeps
+    # today's ordering byte-identical.
+    app = _build_test_app()
+    app.console_prompt_history_factory = lambda: _seeded_history("hello world")
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        popup = console.query_one("#console-command-popup", ConsoleCommandPopup)
+
+        await pilot.press("/")
+        await pilot.pause()
+        # Expected order is what the unranked provider yields for the live
+        # screen's own registry + skill candidates (the harness profile
+        # carries an installed skill), so the claim is "no reordering",
+        # not a hardcoded list.
+        expected = [
+            s.label
+            for s in suggestions_for_draft(
+                "/", console._console_command_registry, console._console_skill_candidates
+            )
+        ]
+        assert _popup_labels(popup) == expected
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_command_dispatch_records_usage_token(tmp_path):
+    app = _build_test_app()
+    history = PromptHistory(tmp_path / "prompt_history.jsonl")
+    app.console_prompt_history_factory = lambda: history
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        # A dispatched command records its minimal token fire-and-forget;
+        # give the loop a beat to land the append.
+        await console._dispatch_console_command(
+            CommandParse(kind=KIND_COMMAND, name="help")
+        )
+        for _ in range(5):
+            await pilot.pause()
+        assert "/help" in history.entry_texts()
+
+        # The /skills form keeps the invoked skill's name; free-form args
+        # beyond it are never recorded.
+        await console._dispatch_console_command(
+            CommandParse(kind=KIND_COMMAND, name="skills", args="web-search and more")
+        )
+        for _ in range(5):
+            await pilot.pause()
+        assert "/skills web-search" in history.entry_texts()
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_unknown_command_dispatch_records_nothing(tmp_path):
+    app = _build_test_app()
+    history = PromptHistory(tmp_path / "prompt_history.jsonl")
+    app.console_prompt_history_factory = lambda: history
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        await console._dispatch_console_command(
+            CommandParse(kind=KIND_COMMAND, name="not-a-command")
+        )
+        for _ in range(5):
+            await pilot.pause()
+        assert history.entry_texts() == ()

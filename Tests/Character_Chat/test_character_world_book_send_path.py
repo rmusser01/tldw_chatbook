@@ -27,8 +27,11 @@ def _build_processor(conversation_books, char_data, has_native_book):
 
 
 def _book(name, key, enabled=True):
-    return {"name": name, "enabled": enabled,
-            "entries": [{"keys": [key], "content": f"{name} lore", "enabled": True}]}
+    return {
+        "name": name,
+        "enabled": enabled,
+        "entries": [{"keys": [key], "content": f"{name} lore", "enabled": True}],
+    }
 
 
 def test_attached_only_character_fires():
@@ -49,7 +52,9 @@ def test_conversation_wins_same_name():
 
 
 def test_disabled_attached_book_does_not_fire():
-    char = {"extensions": {"character_world_books": [_book("Off", "dragon", enabled=False)]}}
+    char = {
+        "extensions": {"character_world_books": [_book("Off", "dragon", enabled=False)]}
+    }
     proc = _build_processor([], char, has_native_book=False)
     assert proc is None  # nothing to process
 

@@ -1,0 +1,22 @@
+[
+  {
+    "path": "tldw_chatbook/UI/Screens/evals_screen.py",
+    "sha256": "71f910ebe96bbbeec8baa0b8ab57661afdde0400188d7f424b05083d168f4cb0"
+  },
+  {
+    "path": "tldw_chatbook/UI/Evals/character_bench_editor.py",
+    "sha256": "601b4960ed0a4e06fe1a83ea63a788710bc08f270e2091de59140498dc68f845"
+  },
+  {
+    "path": "tldw_chatbook/Evals/character_probe/storage.py",
+    "sha256": "3418063ead93c10f5e2eb37e211c3b30a33adf15b95975b9ee9ec067c55cb8ae"
+  },
+  {
+    "path": "tldw_chatbook/UI/Evals/card_picker.py",
+    "sha256": "f1b220072620dedcf9374f7a607e16b0081feae81854c841c4829cda506a1400"
+  },
+  {
+    "path": "Tests/UI/test_evals_bench_save_publication.py",
+    "sha256": "72255c96078c80ff5cee099ff80f5f31d2ae701e830672774cb1689ef1044bae"
+  }
+]

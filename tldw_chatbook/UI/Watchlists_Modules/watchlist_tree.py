@@ -54,7 +54,9 @@ class TreeScope:
         parent_context: Parent occurrence that qualifies a source selection.
     """
 
-    kind: Literal["all", "unassigned", "watchlist", "source", "starred", "unread", "today"]
+    kind: Literal[
+        "all", "unassigned", "watchlist", "source", "starred", "unread", "today"
+    ]
     watchlist_id: int | None = None
     source_id: int | None = None
     parent_context: SourceParentContext | None = None
@@ -183,9 +185,7 @@ class WatchlistTree(Vertical):
     # screen derives it from `runtime_backend` and service availability),
     # and `recompose=True` because it changes which buttons are disabled.
     write_disabled_reason: reactive[str | None] = reactive(None, recompose=True)
-    selection_disabled_reason: reactive[str | None] = reactive(
-        None, recompose=True
-    )
+    selection_disabled_reason: reactive[str | None] = reactive(None, recompose=True)
 
     def __init__(
         self,
@@ -215,9 +215,7 @@ class WatchlistTree(Vertical):
         # which is the honest state for "no items yet".
         self._source_counts: dict[int, Mapping[str, int]] = dict(source_counts or {})
         self._all_source_rows = self._sorted_source_rows(all_source_rows)
-        self._unassigned_source_rows = self._sorted_source_rows(
-            unassigned_source_rows
-        )
+        self._unassigned_source_rows = self._sorted_source_rows(unassigned_source_rows)
         self._unread_pin_source_id = unread_pin_source_id
         self._source_cache: dict[int, list[Mapping[str, Any]]] = {}
         # `set_reactive`, not plain assignment: both reactives are
@@ -287,8 +285,7 @@ class WatchlistTree(Vertical):
             [
                 row
                 for row in self._all_source_rows
-                if self._source_counts.get(int(row["id"]), {}).get("unread", 0)
-                > 0
+                if self._source_counts.get(int(row["id"]), {}).get("unread", 0) > 0
                 or int(row["id"]) == self._unread_pin_source_id
             ],
         )
@@ -317,9 +314,9 @@ class WatchlistTree(Vertical):
                     id=f"wl-tree-tag-{index}",
                     compact=True,
                     tooltip=(
-                        f"Clear the \"{escape_markup(tag)}\" tag filter."
+                        f'Clear the "{escape_markup(tag)}" tag filter.'
                         if tag == self.active_tag
-                        else f"Show only watchlists tagged \"{escape_markup(tag)}\"."
+                        else f'Show only watchlists tagged "{escape_markup(tag)}".'
                     ),
                 )
                 button.add_class("watchlist-tree-tag")
@@ -379,7 +376,12 @@ class WatchlistTree(Vertical):
         )
 
         def action(
-            label: str, button_id: str, *, allowed: bool, blocked_copy: str, ready_copy: str
+            label: str,
+            button_id: str,
+            *,
+            allowed: bool,
+            blocked_copy: str,
+            ready_copy: str,
         ) -> Button:
             disabled_reason = reason if reason else (None if allowed else blocked_copy)
             button = Button(
@@ -454,7 +456,7 @@ class WatchlistTree(Vertical):
 
     @staticmethod
     def _unread_phrase(unread: int) -> str:
-        """"3 unread items" / "1 unread item" / "No unread items".
+        """ "3 unread items" / "1 unread item" / "No unread items".
 
         TASK-2304 AC#3, the hover half of the answer. Says the word the bare
         number cannot, on the node the pointer is actually over, including
@@ -593,7 +595,9 @@ class WatchlistTree(Vertical):
             id=f"wl-tree-expand-{watchlist_id}",
             compact=True,
             tooltip=(
-                f"Collapse {watchlist_name}." if is_open else f"Expand {watchlist_name}."
+                f"Collapse {watchlist_name}."
+                if is_open
+                else f"Expand {watchlist_name}."
             ),
         )
         expander.add_class("watchlist-tree-expander")
@@ -603,8 +607,7 @@ class WatchlistTree(Vertical):
             id=f"wl-tree-node-watchlist-{watchlist_id}",
             compact=True,
             tooltip=(
-                f"Show sources in {watchlist_name}. "
-                f"{self._unread_phrase(unread)}."
+                f"Show sources in {watchlist_name}. {self._unread_phrase(unread)}."
             ),
         )
         node.add_class("watchlist-tree-watchlist")
@@ -651,7 +654,9 @@ class WatchlistTree(Vertical):
     def _source_rows(self, watchlist_id: int) -> list[Mapping[str, Any]]:
         """Fetch a watchlist's sources once, on first expand."""
         if watchlist_id not in self._source_cache:
-            self._source_cache[watchlist_id] = list(self._load_source_rows(watchlist_id))
+            self._source_cache[watchlist_id] = list(
+                self._load_source_rows(watchlist_id)
+            )
         return self._source_cache[watchlist_id]
 
     @staticmethod
@@ -673,9 +678,7 @@ class WatchlistTree(Vertical):
             expanded: Expanded watchlist ids.
         """
         if self.is_mounted:
-            self.post_message(
-                TreeExpansionChanged(self.expanded_root_kinds, expanded)
-            )
+            self.post_message(TreeExpansionChanged(self.expanded_root_kinds, expanded))
 
     def watch_expanded_root_kinds(
         self, expanded_root_kinds: frozenset[AggregateRootKind]
@@ -686,9 +689,7 @@ class WatchlistTree(Vertical):
             expanded_root_kinds: Expanded aggregate root kinds.
         """
         if self.is_mounted:
-            self.post_message(
-                TreeExpansionChanged(expanded_root_kinds, self.expanded)
-            )
+            self.post_message(TreeExpansionChanged(expanded_root_kinds, self.expanded))
 
     def watch_active_tag(self, tag: str | None) -> None:
         """Tell the owning screen the tag filter, for the same reason.
@@ -813,7 +814,7 @@ class WatchlistTree(Vertical):
 
         if button_id.startswith("wl-tree-tag-"):
             event.stop()
-            index = int(button_id[len("wl-tree-tag-"):])
+            index = int(button_id[len("wl-tree-tag-") :])
             tags = self._all_tags()
             if 0 <= index < len(tags):
                 tag = tags[index]
@@ -832,11 +833,13 @@ class WatchlistTree(Vertical):
         elif button_id == "wl-tree-node-starred":
             scope = TreeScope(kind="starred")
         elif button_id.startswith("wl-tree-node-watchlist-"):
-            scope = TreeScope(kind="watchlist", watchlist_id=int(button_id.rsplit("-", 1)[1]))
+            scope = TreeScope(
+                kind="watchlist", watchlist_id=int(button_id.rsplit("-", 1)[1])
+            )
         elif button_id.startswith("wl-tree-node-source-"):
             if self.selection_disabled_reason is not None:
                 return
-            remainder = button_id[len("wl-tree-node-source-"):]
+            remainder = button_id[len("wl-tree-node-source-") :]
             parent_part, _, source_part = remainder.partition("-")
             if parent_part in {"all", "unassigned", "unread"}:
                 scope = TreeScope(

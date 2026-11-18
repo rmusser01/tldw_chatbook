@@ -13,6 +13,7 @@ from textual.events import DescendantFocus
 from textual.widgets import Button, Input, Static
 from textual.worker import WorkerCancelled
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
     LibraryHarness,
@@ -365,8 +366,9 @@ async def test_conversations_mount_three_retained_roles_once(
         assert compose_calls.count(screen) == 1
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_reader_info_is_explicit_and_truthful() -> None:
+async def test_reader_info_is_explicit_and_truthful(request) -> None:
     app = _build_test_app()
     _seed_conversations(app, _conversation_records())
     screen = _active_conversations_screen(app)
@@ -388,6 +390,10 @@ async def test_reader_info_is_explicit_and_truthful() -> None:
             ),
         ),
         message_total=1,
+        # The saved transcript's token as the seeded detail service reports
+        # it: the first list read re-checks a loaded transcript and reloads
+        # one whose epoch moved (TASK-33628.10).
+        message_epoch="epoch-chat-a",
         complete=True,
     )
     screen._conversations_state.reader_loaded_metadata = _conversation_records()[0]
@@ -1051,8 +1057,7 @@ async def test_messages_synced_revalidates_find_focus_before_deferred_reveal(
                 screen.on_descendant_focus(DescendantFocus(replacement_focus))
                 assert screen.focused is replacement_focus
                 assert (
-                    screen._notes_state.focus_intent_generation
-                    > prior_focus_generation
+                    screen._notes_state.focus_intent_generation > prior_focus_generation
                 )
         finally:
             release_mount.set()
@@ -1168,9 +1173,7 @@ async def test_exiting_select_mode_restarts_invalidated_progressive_reader() -> 
             screen.query_one("#library-conversations-select-toggle", Button).press()
             await pilot.pause()
             assert screen._conversations_state.reader_state.bulk_active
-            invalidated_generation = (
-                screen._conversations_state.reader_state.generation
-            )
+            invalidated_generation = screen._conversations_state.reader_state.generation
 
             screen.query_one("#library-conversations-select-toggle", Button).press()
             await pilot.pause()
@@ -1652,9 +1655,11 @@ async def test_authoritative_refresh_marks_selected_conversation_deleted_without
         )
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_page_drift_confirms_exact_identity_before_declaring_deletion(
     monkeypatch: pytest.MonkeyPatch,
+    request,
 ) -> None:
     app = _build_test_app()
     records = [
@@ -1674,7 +1679,11 @@ async def test_page_drift_confirms_exact_identity_before_declaring_deletion(
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await screen.workers.wait_for_complete()
-        screen._conversations_state.reader_state = _loaded_reader_state()
+        # Carry the seeded service's saved-transcript epoch, so the page
+        # read's re-check (TASK-33628.10) finds this load current.
+        screen._conversations_state.reader_state = replace(
+            _loaded_reader_state(), message_epoch="epoch-chat-a"
+        )
         screen._conversations_state.reader_loaded_metadata = records[0]
         screen._conversations_state.reader_selected_metadata = records[0]
         screen._selected_conversation_id = "chat-a"

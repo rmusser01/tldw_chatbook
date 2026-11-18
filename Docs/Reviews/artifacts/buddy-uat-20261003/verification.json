@@ -1,0 +1,404 @@
+{
+  "base": "01a2020981c6197e5cd9945e5287567ad977edfe",
+  "branch": "codex/chatbook-buddy-uat",
+  "verification_status": "Four scoped Chatbook product repairs, command/workspace/fresh-upgrade and realtime/audio harness qualification verified; native/human/live OpenAI acceptance remains open.",
+  "production_and_test_sha256": {
+    "tldw_chatbook/UI/Screens/chat_screen.py": "958552eeec74477bbc76b2891aa9239d9f8ac9a80fc5719e59d8a062a0856d54",
+    "tldw_chatbook/UI/Screens/home_screen.py": "0c1cca82be1076cc2e48582742429fb2f4445c539dec8005927ba9ec708352c2",
+    "tldw_chatbook/UI/Navigation/buddy_management.py": "03ff044872bd83ac512adedeff7b5e5b94fd0372bb9375184fce9817461448ba",
+    "tldw_chatbook/app_service_wiring.py": "4224347adaaef849b5728c90dc5ae8769366ea64954b0ca30c9858e8519a5957",
+    "tldw_chatbook/app_lifecycle.py": "b5fd115b5868100378250370d94319c40e9b6269b3025f7a2532f7c993b9dc41",
+    "tldw_chatbook/config.py": "ae6542e60ecc3967b6f0d264ee2981a18cf0fca4ccdcff5542f12993b0f173d3",
+    "Tests/Persona_Buddy/test_buddy_management_coordinator.py": "b77dc6f756211b1cc70338dca80ccda3cf745f95af7efee55c545f5ef6ea34ff",
+    "Tests/Persona_Buddy/test_persona_buddy_preferences.py": "90eebc952dd493187fccbf6aa6e4d4ff4f9404d42b07bcd5039f8926509340e3",
+    "Tests/UI/test_buddy_conversation_layout.py": "1df2d16194f2753eba607a60616a920f3717a44f474fc5759c17a12a4ede1a75",
+    "Tests/UI/test_buddy_management_journey.py": "b2acc6320082a4c49ae2ec27424775cdc91be065111f0127e82611675fcbd24f",
+    "Tests/UI/test_console_dictation_buddy.py": "1919830cc7e5af24b4886d95e52ae45dd36df76b342d245451fc4f42785f4577",
+    "Tests/UI/test_persona_buddy_app_mount.py": "4878a4e85c80965192f4396361e283247ab840058b2e0cf3b9140dbf89ac36cb",
+    "Tests/UI/test_home_console_resume.py": "59a5a46393e5afa351944daedd2e300a1fd2508d6c857264ed2c3ed5bea329d5",
+    "Tests/Persona_Buddy/test_buddy_interaction_config_projection.py": "7c7d38ea0369f9265be13a878ba4d76e09aaad9d94963f23c5f927fb612fe408",
+    "Tests/UI/test_console_shutdown_recompose.py": "215676257339a0bffdd20420e77efb6ed79b678f128a88846d0b9e2c1e7e039a",
+    "Tests/UI/test_buddy_conversation_modal.py": "384b4bc05d1642c0043bf057ff11a0b5f7d0282b2b42486fbb95f0a45dc8232a",
+    "Tests/UI/test_console_realtime_wiring.py": "dcda34ca065a6a1097279726df7a2110ca1f39590737534760e5c2ff60d78940",
+    "Tests/UI/test_console_realtime_controller.py": "254e78524f30c742af36a6198960ac33d4046d15d804b135ab1c6e9ce8153c7a",
+    "Tests/LLM_Calls/test_openai_realtime_session.py": "7eb8ce27ad40171abb65ec497f0fcfc9dfe200fa258afa96b8466bab0a5040c3"
+  },
+  "earlier_two_repairs_source_and_test_sha256": {
+    "tldw_chatbook/UI/Screens/chat_screen.py": "6bb090345cd04d7a81376b96687ea295544287dffa5a4cce357c8b13dd040cbb",
+    "tldw_chatbook/UI/Screens/home_screen.py": "0c1cca82be1076cc2e48582742429fb2f4445c539dec8005927ba9ec708352c2",
+    "tldw_chatbook/config.py": "ae6542e60ecc3967b6f0d264ee2981a18cf0fca4ccdcff5542f12993b0f173d3",
+    "Tests/UI/test_buddy_management_journey.py": "b2acc6320082a4c49ae2ec27424775cdc91be065111f0127e82611675fcbd24f",
+    "Tests/UI/test_buddy_conversation_layout.py": "1df2d16194f2753eba607a60616a920f3717a44f474fc5759c17a12a4ede1a75",
+    "Tests/UI/test_console_dictation_buddy.py": "1919830cc7e5af24b4886d95e52ae45dd36df76b342d245451fc4f42785f4577",
+    "Tests/UI/test_persona_buddy_app_mount.py": "4878a4e85c80965192f4396361e283247ab840058b2e0cf3b9140dbf89ac36cb",
+    "Tests/UI/test_home_console_resume.py": "6cdbd827959f2bbc4990171ca1932f5cbbaf9591e0a7d8650e5df696fd850a47",
+    "Tests/Persona_Buddy/test_persona_buddy_preferences.py": "90eebc952dd493187fccbf6aa6e4d4ff4f9404d42b07bcd5039f8926509340e3",
+    "Tests/Persona_Buddy/test_buddy_interaction_config_projection.py": "2b6016c6a17c5ea2c3ab20ac38ecdcd596b0a34d03b12730f2930be069a800fa"
+  },
+  "rendered_evidence_sha256": {
+    "buddy-cold-management-fixed.png": "93b541e459612ab47a6e39af5e3d02b541924662611176e9aa3b669d21eb0190",
+    "buddy-final-cold-settings.png": "93b541e459612ab47a6e39af5e3d02b541924662611176e9aa3b669d21eb0190",
+    "buddy-final-independent-draft.png": "82691a7e80e7ec699929327b38d40744398abf03e7df38f75c4bbf1f4f782899",
+    "buddy-final-warm-resume.png": "5629adb3ab0f692f194d28e78162db4133b869ca5d88f63fa94baa6d5db05d42",
+    "buddy-independent-draft-fixed.png": "3de5f422522adc04bb32af0beeb3f566c281ea5f070b98baa1e4e1f2840939fc",
+    "buddy-moved-and-resized.png": "6683a4f9e70e96c4df92c86ea44645ebb115b36aa3bac58e070a5e70ff15a381",
+    "buddy-owner-after-restart-fixed.png": "dd0d1f0af72937dbca01af6358bcff65b59a642dc303d0fe5071c857a57e57df",
+    "buddy-settings-after-restart-fixed.png": "33839097ed16613a14d885f3c23d4e8a325bf2b2c6279a9e8b5f3bf2b954e0c0",
+    "buddy-static-library.png": "ac6b7b01dc65b94dff8173131e08f2c14eb133e16e273f1e19faa84fe5d4f0c3",
+    "home-resume-before-fix.png": "ad19c50d6463f85d6296ef2727af66feb15945a6bb6329b583f3bdd2903194d7",
+    "home-resume-fixed.png": "17cf009e465e39aa240a77a52554be286274ccc917773ac7a1bf2187122dd986",
+    "buddy-final-visible.png": "d0534e48498b759705f5c3738a14a53832622e5f2c9e8d1f8762479351c61f0c",
+    "buddy-final-workspace-binding.png": "8587b9dcd88bce962985807181342de5f4f9f50c2204b1cc1228691009920a36",
+    "buddy-final-workspace-inbox.png": "a4becda92cf6647a80e4a8ccc1b08f34036d9551993d0bed379ee0a3dcbe5c74",
+    "buddy-workspace-detour-draft.jpg": "5d02f9089f3170a4e5ad33403c2d1716643994b38659f5af40a701bb7e071e2f",
+    "buddy-visible-qualified.jpg": "d38aa0d5a33438cb42dbe06e5724b66b6333314be9ebbc15b87dd94f5526cfcd",
+    "Docs/Reviews/artifacts/buddy-uat-20261003/buddy-realtime-preview-ready.png": "e1389d5a3f6e35a8b11b2239121ead58e2f365ac55d397b22a222fa65cef383f",
+    "Docs/Reviews/artifacts/buddy-uat-20261003/buddy-realtime-cold-conversation.png": "dd0d1f0af72937dbca01af6358bcff65b59a642dc303d0fe5071c857a57e57df"
+  },
+  "screenshot_attribution": {
+    "earlier_two_repairs": "The seven original PNGs qualify the earlier Home/config repair stage. They are not attributed to later motion, cold management or lifecycle source changes.",
+    "cold_management": "buddy-cold-management-fixed.png qualifies the first cold-management source stage; launch receipt retained locally.",
+    "final": "The four buddy-final-* PNGs were captured from the fresh runtime whose six production hashes match final static verification.",
+    "workspace_command_final": "Two buddy-final-workspace-* PNGs show the applied workspace binding on Home and its read-only empty inbox in the same final runtime. Six command-*.svg files are separate headless fresh/schema69-to75 upgrade captures on implementation commit6893d5f55e; source hashes pin the test-stage bytes.",
+    "workspace_detour": "Actual same-process browser check after switching saved A to Buddy UAT Workspace and back: original saved A history and exact unsent phrase Draft A stays with Buddy UAT A. are visible. Wide-to-default viewport testing was restored after capture.",
+    "qualified_visible": "Final default viewport after the workspace detour: Home with Buddy visible and bound again to saved A. Browser tab12 is retained as the deliverable; product6 hashes unchanged."
+  },
+  "final_runtime_source_sha256": {
+    "tldw_chatbook/UI/Screens/chat_screen.py": "958552eeec74477bbc76b2891aa9239d9f8ac9a80fc5719e59d8a062a0856d54",
+    "tldw_chatbook/UI/Screens/home_screen.py": "0c1cca82be1076cc2e48582742429fb2f4445c539dec8005927ba9ec708352c2",
+    "tldw_chatbook/config.py": "ae6542e60ecc3967b6f0d264ee2981a18cf0fca4ccdcff5542f12993b0f173d3",
+    "tldw_chatbook/app_service_wiring.py": "4224347adaaef849b5728c90dc5ae8769366ea64954b0ca30c9858e8519a5957",
+    "tldw_chatbook/app_lifecycle.py": "b5fd115b5868100378250370d94319c40e9b6269b3025f7a2532f7c993b9dc41",
+    "tldw_chatbook/UI/Navigation/buddy_management.py": "03ff044872bd83ac512adedeff7b5e5b94fd0372bb9375184fce9817461448ba"
+  },
+  "runtime": {
+    "name": "Chatbook Textual through supported textual-serve",
+    "port": 18770,
+    "normal_profile_used": false,
+    "physical_microphone_opened": false,
+    "provider_requests_sent": false,
+    "normal_config_metadata_read_for_credential_preflight": true
+  },
+  "targeted_runs": {
+    "earlier_two_repairs": {
+      "tests": "225",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "407.893",
+      "xml_sha256": "3828935c940b13b945f02658bafcdd016be91f61215dfab458d466a46df7adad",
+      "log_sha256": "97e4cefdf939e09a273262465afe75a17255ec8e3809be1f6ea308b66a757a1f",
+      "local_stem": "/private/tmp/chatbook-buddy-uat-final-20261003"
+    },
+    "motion_followup": {
+      "tests": "88",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "146.306",
+      "xml_sha256": "09ca8355cbffd62f1cdcf285f5b2153931ad6d15c246fa418b8d4d871cee24ae",
+      "log_sha256": "1b540d800dbb09233fdff5b5e26e2791a873afebd29623eded9180a1d43f52ab",
+      "local_stem": "/private/tmp/chatbook-buddy-motion-green-20261003"
+    },
+    "persona_assignment_guard": {
+      "tests": "33",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "86.816",
+      "xml_sha256": "6f682dc39abb7c8937be97763ce1f2ff1897515adfea44b911f0be67c6164486",
+      "log_sha256": "1e8ec7c50f669b623015a31812768b6330c908990ae3dbbc3ac5875b4d712817",
+      "local_stem": "/private/tmp/chatbook-buddy-persona-guard-20261003"
+    },
+    "held_resume_red": {
+      "tests": "1",
+      "failures": "1",
+      "errors": "0",
+      "skipped": "0",
+      "time": "35.637",
+      "xml_sha256": "24d028327a79d87a39a7382a1ae49bf1dad12907f23205eacd9daeafadf64fce",
+      "log_sha256": "85f9cf8c57c86e9ceacd49b3359528b1884be90fd12f9bdfed75076e3f0fa7a7",
+      "local_stem": "/private/tmp/chatbook-resume-shutdown-red-v2-20261003"
+    },
+    "held_resume_green": {
+      "tests": "3",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "143.947",
+      "xml_sha256": "298e0ba8c01dbdae4bbb513d0412f815784865417db956b7725bc3c675cbe041",
+      "log_sha256": "f42152f488fd99cb0a5abc50dbde96fc8f7efe6c08b5d7bdb4b67ead4918d6cb",
+      "local_stem": "/private/tmp/chatbook-resume-shutdown-green-20261003"
+    },
+    "queued_remount_red": {
+      "tests": "1",
+      "failures": "1",
+      "errors": "0",
+      "skipped": "0",
+      "time": "5.509",
+      "xml_sha256": "bcf3ae42377a9a41b6f4620fed3a8abfc8f5a7787920e33d749c919a63bc61a1",
+      "log_sha256": "f02250f93869dfbf7a4a66f998cd544b67c3d825618e011b0343eaafc04154fe",
+      "local_stem": "/private/tmp/chatbook-queued-shutdown-red-v3-20261003"
+    },
+    "final_combined": {
+      "tests": "64",
+      "failures": "1",
+      "errors": "0",
+      "skipped": "0",
+      "time": "356.121",
+      "xml_sha256": "7aad1ba59fabc2424b49eb6be66b0153063c23a72cb3eead8c0639c8d48a88cf",
+      "log_sha256": "9dc014b1194eeba22ccbbe84f1e453dfc33cd91c72b34340eee1b34cce03a2f0",
+      "local_stem": "/private/tmp/chatbook-buddy-final-repairs-20261003"
+    },
+    "corrected_queued_regression": {
+      "tests": "1",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "3.251",
+      "xml_sha256": "051c8c687b0245af4cfb94177b42096c0e13604c404ea1512c1466f61e127c76",
+      "log_sha256": "edf1cdd6f8993713e402ba00c8779db62091ce5cdfbd8adb5b0f51fe19863590",
+      "local_stem": "/private/tmp/chatbook-queued-shutdown-final-20261003"
+    },
+    "existing_shutdown_guards": {
+      "tests": "14",
+      "failures": "2",
+      "errors": "0",
+      "skipped": "1",
+      "time": "25.841",
+      "xml_sha256": "96d4bd73e0c5edefce00acb2ba4261e6295ef91611ce359f1593f14b199c3699",
+      "log_sha256": "4a1adc1fa6c29933013a521bccfb0522faea83e637d53a6f464e08ac8d5afd8b",
+      "local_stem": "/private/tmp/chatbook-console-shutdown-guards-20261003"
+    },
+    "workspace_command_initial": {
+      "tests": "89",
+      "failures": "10",
+      "errors": "0",
+      "skipped": "0",
+      "time": "174.471",
+      "xml_sha256": "82f3282e0da3394234f4e6f8ed7721afa46c838124b47789dfe0bcbca2bf902b",
+      "log_sha256": "207d11630057433fdc12d00939579453e5be0f5b0291a72c82fad3a96e382af8",
+      "local_stem": "/private/tmp/chatbook-buddy-workspace-running-20261003"
+    },
+    "command_profile_isolation": {
+      "tests": "47",
+      "failures": "2",
+      "errors": "0",
+      "skipped": "0",
+      "time": "167.344",
+      "xml_sha256": "5d9c36e588605a4d70a75f11b7625a42311bad72a0b85a83d771dc3e67ed0b0c",
+      "log_sha256": "45806fc5f70fe98296bb11508041a43a7907935ad3fd7cb147f176c8513f5950",
+      "local_stem": "/private/tmp/chatbook-buddy-command-profile-20261003"
+    },
+    "workspace_command_before_button_readiness": {
+      "tests": "89",
+      "failures": "1",
+      "errors": "0",
+      "skipped": "0",
+      "time": "180.855",
+      "xml_sha256": "d1794e33c3227a173f56766772c8875d477a0f10bc9e6810c03bad533fcb67a1",
+      "log_sha256": "41e791ae6b2ed5244dd8ab563f0c991a98b736c26f5cec4a6bb698369f5cc8e1",
+      "local_stem": "/private/tmp/chatbook-buddy-workspace-command-final-20261003"
+    },
+    "native_streaming_button_readiness": {
+      "tests": "2",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "55.073",
+      "xml_sha256": "b95d40effb23f02900361e08a8daa194ddf0529f7de9d3aebe41934e059c7e4e",
+      "log_sha256": "8aeff2609132b9b4a442e426162bb3b3404648d1fcd0eff251bb87ff530c8f79",
+      "local_stem": "/private/tmp/chatbook-buddy-command-ready-20261003"
+    },
+    "workspace_command_qualified": {
+      "tests": "89",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "189.647",
+      "xml_sha256": "515173de322ea9a167a6c1a2b74553ee3b892c0700a55fcef7de85532f78ccb1",
+      "log_sha256": "32d8fe60c33e341d4ef356b67ebabf9eae33795b7372d54e0ef6b79e6fba3a63",
+      "local_stem": "/private/tmp/chatbook-buddy-workspace-command-qualified-20261003"
+    }
+  },
+  "final_checks": {
+    "unique_passing_checks": 64,
+    "composition": "63 passed in final_combined; corrected queued-remount outcome passed separately. The combined failure was an over-specific test assertion expecting empty mounts instead of no mount calls. No product source changed after that run.",
+    "workspace_command_checks": 89,
+    "total_unique_passing_checks": 334,
+    "workspace_command_composition": "89 passed in one final targeted run. Its names do not overlap the64 four-repair checks. The combined total153 is an aggregate of targeted runs, not one full-suite run. Product6 source hashes stayed identical throughout command harness repair.",
+    "realtime_checks": 181,
+    "realtime_composition": "181 unique cases passed in one final targeted run with no warnings, disjoint from the earlier153. Total334 aggregates scoped runs on identical product hashes."
+  },
+  "static": {
+    "base": "01a2020981c6197e5cd9945e5287567ad977edfe",
+    "baseline_diagnostics": 487,
+    "current_diagnostics": 487,
+    "introduced": [],
+    "removed": [],
+    "compiled": [
+      "tldw_chatbook/UI/Screens/chat_screen.py",
+      "tldw_chatbook/UI/Screens/home_screen.py",
+      "tldw_chatbook/UI/Navigation/buddy_management.py",
+      "tldw_chatbook/app_service_wiring.py",
+      "tldw_chatbook/app_lifecycle.py",
+      "tldw_chatbook/config.py"
+    ],
+    "source_sha256": {
+      "tldw_chatbook/UI/Screens/chat_screen.py": "958552eeec74477bbc76b2891aa9239d9f8ac9a80fc5719e59d8a062a0856d54",
+      "tldw_chatbook/UI/Screens/home_screen.py": "0c1cca82be1076cc2e48582742429fb2f4445c539dec8005927ba9ec708352c2",
+      "tldw_chatbook/UI/Navigation/buddy_management.py": "03ff044872bd83ac512adedeff7b5e5b94fd0372bb9375184fce9817461448ba",
+      "tldw_chatbook/app_service_wiring.py": "4224347adaaef849b5728c90dc5ae8769366ea64954b0ca30c9858e8519a5957",
+      "tldw_chatbook/app_lifecycle.py": "b5fd115b5868100378250370d94319c40e9b6269b3025f7a2532f7c993b9dc41",
+      "tldw_chatbook/config.py": "ae6542e60ecc3967b6f0d264ee2981a18cf0fca4ccdcff5542f12993b0f173d3"
+    },
+    "command_test": {
+      "path": "Tests/UI/test_buddy_conversation_modal.py",
+      "sha256": "384b4bc05d1642c0043bf057ff11a0b5f7d0282b2b42486fbb95f0a45dc8232a",
+      "ruff": "clean (--no-cache)",
+      "format": "clean (--no-cache --check)",
+      "compile": "passed",
+      "diff_check": "passed"
+    }
+  },
+  "independent_review": "Final lifecycle, warm Resume, malformed motion and cold saved-target admission reviewed; no remaining actionable findings. Queued shutdown regression independently passed. Command profile isolation, explicit native-streaming test mode and visible Send readiness were separately reviewed with no actionable finding; all24 original behavioral assertions remain.",
+  "existing_worker_guard_base_control_sha256": "aa55896bf7e5c2ce0299a1e318eaed61d9aa3ad23e8b8fff99f71b190d0498d3",
+  "coverage_limits": [
+    "No full test sweep",
+    "App/runtime tests use isolated profiles; realtime preflight read normal config credential-field presence and fingerprint only, without writes.",
+    "No physical Terminal UAT",
+    "No physical microphone/playback or configured OpenAI realtime acceptance",
+    "Unsent draft preservation covers navigation and modal dismissal, not process exit",
+    "The two full-app draft sends use the explicitly configured native streaming path with a stalled gateway double; no real provider or default agent-bridge qualification is implied."
+  ],
+  "workspace_command_sources_sha256": {
+    "Tests/UI/test_buddy_conversation_modal.py": "384b4bc05d1642c0043bf057ff11a0b5f7d0282b2b42486fbb95f0a45dc8232a",
+    "Tests/UI/test_buddy_v1_qualification_capture.py": "667ccdeeee287325c41318bdbd46fb60b4a66b3e103487ef3b0190471c30cad1",
+    "Tests/UI/test_buddy_workspace_modal.py": "12dac4599e7fd201e2e1e02ed35c9ee568db9b7cc7ca2ff8da69ef3dde1be60b",
+    "Tests/Persona_Buddy/test_buddy_workspace_coordinator.py": "55b3af13663370544c5b25c173bf4d3e7eca5589f5cd1060bd9720996638eef9",
+    "Tests/Persona_Buddy/test_buddy_inbox.py": "5142d096b5853db1ce852f5c75a1fa96969663982f4bbc5334374fe9ac6fce85",
+    "Tests/Persona_Buddy/test_persona_buddy_console_adapters.py": "e9da46453840ff12fc1b979bde2df00e0d076f4cbf2bc58b0e49522f2c13ae5f",
+    "Tests/private_profile.py": "ebf5502df17040c96ca88ff0dc0dd1a166a8870975de760600d9f5aa7af45539",
+    "Tests/conftest.py": "c6d4987f1a9102485d590df436cb7e3c0642886a015e7d658ddbbe2070682c46"
+  },
+  "workspace_command_profile_journeys": {
+    "fresh": {
+      "headless": true,
+      "source_commit": "6893d5f55e778af6c693ef36008c9f70a20e9864",
+      "harness_sha256": "667ccdeeee287325c41318bdbd46fb60b4a66b3e103487ef3b0190471c30cad1",
+      "schema_version": 75,
+      "frames": {
+        "static": {
+          "frame_count": 1,
+          "observed_indices": [
+            0
+          ],
+          "sequence": [
+            0
+          ],
+          "animate": false,
+          "loop": true,
+          "buddy_owner": "9911eb01-6bd1-4e00-89e1-029e100ddb55",
+          "persona_owner": null
+        },
+        "dynamic": {
+          "frame_count": 4,
+          "observed_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "sequence": [
+            0,
+            1,
+            2,
+            3,
+            0
+          ],
+          "animate": true,
+          "loop": true,
+          "buddy_owner": "9911eb01-6bd1-4e00-89e1-029e100ddb55",
+          "persona_owner": null
+        }
+      },
+      "workspace_explicit_none": true,
+      "persona_count_unchanged_during_artwork_selection": true,
+      "captures": {
+        "command-fresh-static-home.svg": {
+          "export_sha256": "47da2961c87fc72a14aebc028830c6b4ed1f59f5689f66f08bd8a7225a30b722",
+          "repository_sha256": "eb35bcb839ead728175ba4b6f58a72aa893acc91335db13ba71704eed6c44310"
+        },
+        "command-fresh-dynamic-home.svg": {
+          "export_sha256": "47da2961c87fc72a14aebc028830c6b4ed1f59f5689f66f08bd8a7225a30b722",
+          "repository_sha256": "eb35bcb839ead728175ba4b6f58a72aa893acc91335db13ba71704eed6c44310"
+        },
+        "command-fresh-workspace-inbox.svg": {
+          "export_sha256": "d8e55bb33b61801c3dc80fa402ce4bad2efa0cd0f1467be2769ec476399ff0d3",
+          "repository_sha256": "878ac38faef8d9b42fb400aaffe4800c7a900cc0e254c1e45260f73a857ba887"
+        }
+      }
+    },
+    "upgrade": {
+      "headless": true,
+      "source_commit": "6893d5f55e778af6c693ef36008c9f70a20e9864",
+      "harness_sha256": "667ccdeeee287325c41318bdbd46fb60b4a66b3e103487ef3b0190471c30cad1",
+      "schema_version": 75,
+      "frames": {
+        "static": {
+          "frame_count": 1,
+          "observed_indices": [
+            0
+          ],
+          "sequence": [
+            0
+          ],
+          "animate": false,
+          "loop": true,
+          "buddy_owner": "e7627ec9-d472-40e1-a344-da7789092c8b",
+          "persona_owner": null
+        },
+        "dynamic": {
+          "frame_count": 4,
+          "observed_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "sequence": [
+            0,
+            1,
+            2,
+            3,
+            0
+          ],
+          "animate": true,
+          "loop": true,
+          "buddy_owner": "e7627ec9-d472-40e1-a344-da7789092c8b",
+          "persona_owner": null
+        }
+      },
+      "workspace_explicit_none": true,
+      "persona_count_unchanged_during_artwork_selection": true,
+      "captures": {
+        "command-upgrade-static-home.svg": {
+          "export_sha256": "47da2961c87fc72a14aebc028830c6b4ed1f59f5689f66f08bd8a7225a30b722",
+          "repository_sha256": "eb35bcb839ead728175ba4b6f58a72aa893acc91335db13ba71704eed6c44310"
+        },
+        "command-upgrade-dynamic-home.svg": {
+          "export_sha256": "47da2961c87fc72a14aebc028830c6b4ed1f59f5689f66f08bd8a7225a30b722",
+          "repository_sha256": "eb35bcb839ead728175ba4b6f58a72aa893acc91335db13ba71704eed6c44310"
+        },
+        "command-upgrade-workspace-inbox.svg": {
+          "export_sha256": "d8e55bb33b61801c3dc80fa402ce4bad2efa0cd0f1467be2769ec476399ff0d3",
+          "repository_sha256": "878ac38faef8d9b42fb400aaffe4800c7a900cc0e254c1e45260f73a857ba887"
+        }
+      }
+    }
+  },
+  "realtime_audio_supplement": {
+    "path": "realtime-audio-verification.json",
+    "sha256": "ffe238f048db362e35bc367036752c4e686197199c83cd73d90e5409a040ffad"
+  }
+}

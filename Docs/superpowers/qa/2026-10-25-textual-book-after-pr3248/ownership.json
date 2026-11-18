@@ -1,0 +1,1060 @@
+{
+  "new_tasks": [
+    {
+      "id": 36930,
+      "title": "Retire pending quiz Submit publication when its Study context changes",
+      "priority": "medium",
+      "rank": 1,
+      "path": "backlog/tasks/task-36930 - Retire-pending-quiz-Submit-publication-when-its-Study-context-changes.md"
+    },
+    {
+      "id": 36931,
+      "title": "Keep Watchlists inbox SQLite work off the UI event loop",
+      "priority": "medium",
+      "rank": 2,
+      "path": "backlog/tasks/task-36931 - Keep-Watchlists-inbox-SQLite-work-off-the-UI-event-loop.md"
+    },
+    {
+      "id": 36932,
+      "title": "Keep Personas controls responsive during Lore settings saves",
+      "priority": "medium",
+      "rank": 3,
+      "path": "backlog/tasks/task-36932 - Keep-Personas-controls-responsive-during-Lore-settings-saves.md"
+    }
+  ],
+  "existing_owner_updates": [
+    "33283",
+    "33279"
+  ],
+  "existing_sources_witness_owner": "33283",
+  "close_owner_criteria": [
+    {
+      "id": "15466",
+      "path": "backlog/tasks/task-15466 - Port-the-held-connection-idiom-to-Library_Collections-RAG_Indexing-and-client_notifications.md",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 All three DBs hold thread-local connections with isolation_level=None; the pre-port DML call-site audit is recorded in this task\n- [x] #2 Pure-read service calls no longer open write transactions (evidence)\n- [x] #3 RAG indexing no longer opens/commits per item — batched (evidence)\n- [x] #4 All three DBs' existing test surfaces green; no connection leak (probe or unit evidence)\n<!-- AC:END -->\n",
+      "status": "Done"
+    },
+    {
+      "id": "15469",
+      "path": "backlog/tasks/task-15469 - Personas-dictionaries---indexed-attachment-lookup-and-a-threaded-backend.md",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 A dictionary row click issues no full-table scan (query-plan or timing evidence) and at most 2 queries, none on the event loop\n- [x] #2 Statistics and attachment lists return identical values (tests)\n- [x] #3 Click latency before/after with a 1,000+-conversation DB recorded\n<!-- AC:END -->\n",
+      "status": "Done"
+    },
+    {
+      "id": "15779",
+      "path": "backlog/tasks/task-15779 - Watchlists-artifacts-pane-briefing-selection-destroys-the-briefings-table-and-its-focus.md",
+      "criteria": "\n- [x] Selecting a briefing in the artifacts pane does not destroy the\n      briefings `DataTable` widget instance (in-place update instead of a\n      recompose that tears it down), OR the recompose explicitly restores\n      focus and cursor position to the table afterward\n- [x] A second arrow-key press immediately after selecting a briefing moves\n      the cursor to the next row (regression test — this is the concrete\n      symptom: today it does nothing until the user re-focuses)\n- [x] The scripts/audio/citations clearing task-15461 folded into\n      `watch_selected_briefing` (via `set_reactive`) keeps working unchanged\n- [x] `Tests/Watchlists/test_watchlists_artifacts_pane.py` stays green\n",
+      "status": "Done"
+    },
+    {
+      "id": "16325",
+      "path": "backlog/tasks/task-16325 - Persist-structured-claims-and-enable-follow-up-QA-over-run-evidence.md",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 Extracted claims with source id and quote and confidence are persisted as a run artifact in JSON\n- [x] #2 Follow-up questions are answered from stored evidence without new searches when evidence suffices\n- [x] #3 Insufficient evidence triggers an explicit fallback to a new search or run rather than a fabricated answer\n- [x] #4 The seed shape is bounded (outline plus key claims plus unresolved questions) matching the server follow-up contract\n- [x] #5 Tests cover retrieval and the fallback boundary\n<!-- AC:END -->\n",
+      "status": "Done"
+    },
+    {
+      "id": "16334",
+      "path": "backlog/tasks/task-16334 - Expose-budgets-and-follow-up-QA-in-the-Research-window.md",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 The Research window has a limits input parsed into limits_json on run creation (numeric key=value pairs; invalid pairs warn in the status line without blocking creation),Follow-up questions can be asked against the selected completed local run and the answer or explicit insufficient-evidence verdict is displayed,Follow-up ask requires a selected run on the local source and reports a clear status otherwise,The limits text persists through save_state and restore_state,Tests cover limits parsing, payload wiring, follow-up display, and the no-selection guard\n<!-- AC:END -->\n",
+      "status": "Done"
+    },
+    {
+      "id": "19559",
+      "path": "backlog/tasks/task-19559 - exclusive=True without group= makes every worker on a node cancel its siblings.md",
+      "criteria": "\n- [x] A lint or test fails on `exclusive=True` scheduled without an explicit\n      `group=`, covering both `@work(...)` decorators and `run_worker(...)`\n      calls, including multi-line forms\n- [x] The guard has an explicit, documented allowlist mechanism for any site\n      that genuinely wants default-group mutual exclusion, so suppressing it is\n      a deliberate recorded choice rather than a silent one\n- [x] The four named user-visible instances are fixed: Study rating submission,\n      Media analysis generation, the four unfixed Watchlists section loaders,\n      and the Settings advanced-config backup load\n- [x] Fast consecutive flashcard ratings all persist — pinned by a test that\n      drives consecutive submissions, not by inspection\n- [x] The Settings advanced-config editor is never overwritten by a background\n      load while the user has unsaved typing in it\n- [x] Handlers in this family no longer rely on `except Exception:` to observe\n      cancellation, given `CancelledError` is a `BaseException`\n- [x] The remaining sites are triaged with the user-visible ones fixed and the\n      rest either grouped or allowlisted — the count is driven to a number the\n      guard can hold\n",
+      "status": "Done"
+    },
+    {
+      "id": "19870",
+      "path": "backlog/tasks/task-19870 - Mutation-workers-refresh-inline-instead-of-dispatching-into-the-loader-group.md",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 A refresh triggered by a mutation worker is subject to the same worker\n      group as a refresh triggered directly by the user\n- [x] #2 Two refreshes that overlap — one from a mutation, one from a user action —\n      cannot interleave their writes to the same list\n- [x] #3 A test drives a mutation and a concurrent user refresh and asserts the\n      resulting list contents, and is mutation-checked (restoring the inline\n      `await` makes it red)\n- [x] #4 The schedules workbench, watchlists notification handlers, and watchlists\n      briefing generation/cast/audio handlers are covered\n- [x] #5 TASK-19559's worker-group guard is extended to notice an inline loader\n      call inside a worker body, or the reason it cannot is recorded\n<!-- AC:END -->\n",
+      "status": "Done"
+    },
+    {
+      "id": "21238",
+      "path": "backlog/tasks/task-21238 - A corrupt notifications database can now fail unrelated Media, Research and Watchlists flows.md",
+      "criteria": "\n- [x] A corrupt or unopenable notifications database does not fail a media ingest job, a research run, or a watchlists inbox refresh — the flow completes and the notification is skipped\n- [x] A test injects a corrupt notifications store and asserts each of those three flows still completes\n- [x] The two Watchlists inbox workers cannot take the app down on an escaping exception\n- [x] The lazy-store race test covers all six stores, or the five uncovered stores are shown to be exercised by the one covered case\n- [x] TASK-21105's boot-file count (27) does not regress\n",
+      "status": "Done"
+    },
+    {
+      "id": "282",
+      "path": "backlog/tasks/task-282 - Home-dashboard-thread-and-cache-seam-queries.md",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 Dashboard seam queries run off the event loop with a short-TTL cache; Home still reflects fresh data per its seam contract\n- [x] #2 Selection/count-only changes patch targeted widgets instead of recomposing rail/canvas\n- [x] #3 Existing Home triage tests green\n<!-- AC:END -->\n",
+      "status": "Done"
+    },
+    {
+      "id": "2834",
+      "path": "backlog/tasks/task-2834 - Guard-against-blocking-IO-reachable-from-a-Textual-message-handler.md",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 Opening the export folder from the Chatbook wizard cannot block the app, on any platform\n- [x] #2 A repo-wide test fails when a new blocking call becomes reachable from a message handler\n- [x] #3 The guard is proven to catch a known instance, not just to report a clean result\n- [x] #4 Pre-existing accepted paths are baselined individually with a stated reason, not silenced wholesale\n- [x] #5 The guard cannot be fooled by the same call name appearing in a comment or string\n<!-- AC:END -->\n",
+      "status": "In Progress"
+    },
+    {
+      "id": "33279",
+      "path": "backlog/tasks/task-33279 - PERF-20-HTTP-client-reuse---pooled-sessions-cached-SSLContext-nothing-built-on-the-loop.md",
+      "criteria": "<!-- AC:BEGIN -->\n- [ ] #1 Hosted provider calls reuse a pooled session per provider/base URL\n- [ ] #2 httpx clients share a cached SSLContext\n- [ ] #3 No HTTP client is constructed on the event loop\n- [ ] #4 Research Ask Follow-up and URL opening run off the event loop\n<!-- AC:END -->\n",
+      "status": "To Do"
+    },
+    {
+      "id": "33283",
+      "path": "backlog/tasks/task-33283 - PERF-24-Watchlists-and-Schedules---incremental-panes-DB-off-the-event-loop.md",
+      "criteria": "<!-- AC:BEGIN -->\n- [ ] #1 No Schedules interaction performs synchronous sqlite on the event loop\n- [ ] #2 SchedulingService async methods do their DB work off the loop\n- [ ] #3 Mark-all-read runs as a batched write\n- [ ] #4 Watchlists tree and panes update in place on count refresh and selection changes\n<!-- AC:END -->\n",
+      "status": "To Do"
+    },
+    {
+      "id": "33910.14",
+      "path": "backlog/tasks/task-33910.14 - Roleplay-frame-B9a-entry-and-Options-draft-domains-no-layout-change.md",
+      "criteria": "<!-- AC:BEGIN -->\n- [ ] #1 A dirty Options or entry draft triggers the aggregate guard dialog on a kind switch, an item switch and leaving Roleplay\n- [ ] #2 For entry and Options drafts left from a non-editor view (Used by, Info, Try it) or from the list, \"Save and continue\" saves and continues, \"Discard and continue\" leaves the aggregate clean and continues, and an invalid field blocks with the recovery dialog\n- [ ] #3 With a dirty entry form, the form text is byte-identical after arrows, Move and a background reload\n- [ ] #4 Arrowing to another row and pressing Update updates the form's entry and leaves the cursor row unchanged in the database\n- [ ] #5 Opening another entry (Enter or a click), or deleting the form's own entry, while the form is dirty shows the inline guard (Update / Discard / Stay)\n- [ ] #6 A new lore book or chat dictionary stays a draft until Create and never saves as \"Untitled\"; after Create the book opens in Entries with focus on the entries table\n- [ ] #7 Ctrl+Q with a dirty entry or Options draft prompts through the quit guard once TASK-33622.14 is on dev\n- [ ] #8 The dated ADR-046 amendment adding the two draft domains (G4) is written\n- [ ] #9 Implementation plan written under Docs/superpowers/plans/ before work starts\n- [ ] #10 Gates in spec §5.4 Definition of done pass\n<!-- AC:END -->\n",
+      "status": "To Do"
+    },
+    {
+      "id": "33910.3",
+      "path": "backlog/tasks/task-33910.3 - Roleplay-frame-B2a-line-based-items-list-marks-bar-and-one-delete-modal.md",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 The D14 dry-run census is recorded before any production code, and the plan names the chosen design (A, or fallback B)\n- [x] #2 The first list item sits on row 19 at every size, with at least 13 characters visible at 120x36 (today's toolbar stays until B2b)\n- [x] #3 With the 348-character volume profile, `/ isolde ⏎ ⏎` opens the card\n- [x] #4 Scrolling to the end, then searching and clearing, skips no name (RP-080)\n- [x] #5 Marks survive search and sort, and the marks bar reads `✓ 3 marked (2 hidden)` when two marked rows are filtered out\n- [x] #6 Personas shows `Personas 114` with Default Narrator present\n- [x] #7 With 348 characters, a selection past row 200 restores; after an insert ahead, a delete ahead and a scroll to the end every id appears exactly once and no exception escapes; a late window from a superseded query is dropped\n- [x] #8 CI counts on `roleplay_full_app()` seeded with 348 and 5,000 characters: per settled keystroke exactly one window query (≤200 rows), one `set_options`, 0 widget mounts, 0 recomposes, and prompts built equal to the window's rows, with stalls detected only by the discriminating heartbeat form\n- [x] #9 Live-harness evidence (not a pytest threshold): the median of at least 10 ABBA-interleaved runs at 348 and 5,000 characters, from key event to first idle after paint, is recorded in the §5.10 ledger against ≤250 ms, with `set_options` ≤50 ms at 348\n- [x] #10 With 5,000 rows loaded and scrolled to the end, a 120 ↔ 160 resize and End each settle within the same budget, shown by CI counts (prompts rebuilt at most once per settled width, at most one `set_options`, 0 mounts, 0 recomposes) and recorded live-harness evidence\n- [x] #11 Leaving and returning, and a suspend and resume, clear the marks and leave no window worker running\n- [x] #12 Hostile names render literally in the list prompts, the border titles and the delete modal (the B1 hostile-name test, extended)\n- [x] #13 Implementation plan written under Docs/superpowers/plans/ before work starts\n- [x] #14 Gates in spec §5.4 Definition of done pass\n- [x] #15 The list is one RoleplayItemList (#personas-library-rows) with 1- or 2-line density per spec 1.5.2 and no blank separators; a long name is middle-ellipsised and shows whole in a hover tooltip (R-010 to R-017)\n- [x] #16 A click on gutter column 2 toggles a mark and never loads; a click elsewhere on the row loads it and never marks (R-017)\n- [x] #17 The marks bar shows only while marks exist, on the items pane's bottom row, without moving the cursor row: at full width the count, Export…, Delete… and Clear esc; narrower, it degrades by the bar's own width and drops whole actions (Clear, then Export), never cutting one; bulk Export and Delete act only from it, and the Inspector no longer retargets at marks (R-041, R-043)\n- [x] #18 Every list delete, single or marked, goes through one modal that names up to 5 items plus \"and N more\", labelled Delete N marked for a bulk delete (R-050)\n- [x] #19 The list's top border shows the kind and its count (or n of total) and the bottom border #N of M, blank with nothing loaded or the loaded row hidden; the page bar and the count line are gone (R-060, R-061)\n- [x] #20 space, m and s act on the list widget, not the pane container; a focused button never toggles a row (R-070)\n- [x] #21 The three retired broad rules leave, and MAX_ANCESTOR_SCOPED_BARE_TYPE_RULES is lowered to the measured count (R-100)\n- [x] #22 The harness gains select_roleplay_item, highlighted_item_id, visible_item_ids, item_at and list_state; roleplay_full_app() seeds a real temporary ChaChaNotes, and the B1 journey asserts save then reload (R-143, carry-over)\n- [x] #23 The J1-fast journey exists as a passing prefix plus a strict xfail(raises=NotYetDelivered) full journey (R-146)\n- [x] #24 The User Guide's list and marks sections describe the new behaviour (R-185)\n- [x] #25 Hygiene carry-overs: TASK-33910.1 is set Done with a note, and _paint_header's child lookups sit under the header's guard (hardening, unreproduced)\n<!-- AC:END -->\n",
+      "status": "Done"
+    },
+    {
+      "id": "33910.8",
+      "path": "backlog/tasks/task-33910.8 - Roleplay-frame-B5b-1-one-guard-dialog-per-domain-executors-and-the-load-fence.md",
+      "criteria": "<!-- AC:BEGIN -->\n- [ ] #1 With a dirty domain, a guarded switch fired from Card, Test chat, Chats, the list or the rail offers Save and continue · Discard and continue · Stay, and \"Save and continue\" saves the record before the switch happens\n- [ ] #2 \"Discard and continue\" leaves the aggregate draft state clean and the switch happens\n- [ ] #3 An invalid field blocks the switch and shows the recovery dialog\n- [ ] #4 Deleting other rows never touches the loaded item or its draft: a dirty Edit plus `del` on another row keeps the draft and the open editor\n- [ ] #5 Deleting the loaded item while dirty asks the guard first, then the delete modal, which names it \"(open · unsaved changes are discarded)\"\n- [ ] #6 A late load result is dropped, and a failed load or a loaded id deleted underneath shows `couldn't open · Retry`\n- [ ] #7 A `ConflictError` on save shows \"Changed elsewhere · Reload\" and keeps the draft\n- [ ] #8 `del` is unarmed on conversations and versions (R31)\n- [ ] #9 Hostile names render literally in the guard dialog and in the delete modal's loaded-item line\n- [ ] #10 Implementation plan written under Docs/superpowers/plans/ before work starts\n- [ ] #11 Gates in spec §5.4 Definition of done pass\n<!-- AC:END -->\n",
+      "status": "To Do"
+    },
+    {
+      "id": "34752",
+      "path": "backlog/tasks/task-34752 - Study-quizzes-one-writer-for-the-question-list.md",
+      "criteria": "<!-- AC:BEGIN -->\n- [ ] #1 Two overlapping question-list rebuilds leave exactly one row per question, in order, and current_quiz_questions matches the rows\n- [ ] #2 A question-list rebuild still in flight when the Quizzes view is torn down (or the app shuts down) stops without writing, and no caller writes the attempt panel after it\n- [ ] #3 A regression test fails on origin/dev for the stated reason and passes with the fix\n<!-- AC:END -->\n",
+      "status": "To Do"
+    },
+    {
+      "id": "36099",
+      "path": "backlog/tasks/task-36099 - Keep-newer-Study-quiz-drafts-when-earlier-creates-complete.md",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 A quiz create completing after newer name or description edits preserves those exact raw values without implicitly persisting them.\n- [x] #2 A question create completing after newer edits to the question text or correct answer preserves those values and their active editing context.\n- [x] #3 Successful unchanged submissions still persist once and clear their submitted form normally; failed creates preserve current drafts and permit retry.\n- [x] #4 Bounded mounted regressions drive both existing create handlers through controlled awaits and verify live fields separately from actual stored records. TASK-34752 question-list ownership remains independently scoped.\n<!-- AC:END -->\n",
+      "status": "Done"
+    },
+    {
+      "id": "36360",
+      "path": "backlog/tasks/task-36360 - Keep-quiz-final-answer-retry-from-duplicating-answers-and-inflating-scores.md",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 A final-answer definite pre-write failure followed by retry sends and persists exactly one answer for each quiz question, and the resulting score does not exceed the total possible score.\n- [x] #2 Changing the final answer after that failure uses its current value once; earlier completed-question answers remain intact.\n- [x] #3 Ordinary successful multi-question attempts preserve grading/history behavior, and definite failure leaves the current question, answer and retry usable.\n- [x] #4 Bounded mounted regressions exercise actual Start/Submit dispatch and independently verify service payload, real SQLite answers/score and visible result, retaining the ordinary passing control; uncertain-commit or server-wide idempotency is not introduced.\n<!-- AC:END -->\n",
+      "status": "Done"
+    },
+    {
+      "id": "36729",
+      "path": "backlog/tasks/task-36729 - Keep-Study-navigation-responsive-while-shell-Start-quiz-awaits-the-server.md",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 With the production service awaiting a controlled server Start response, the Study shell Start quiz action allows a subsequent enabled Dashboard section action to take effect before that response is released.\n- [x] #2 An ordinary successful shell Start still creates one attempt and presents its result; existing validation/refusal and failed-request feedback remain recoverable without duplicate dispatch.\n- [x] #3 The inner Start attempt path retains its current responsive behavior, and existing question-list, draft, panel-retirement and attempt ownership contracts remain unchanged.\n- [x] #4 Mounted production-owner tests compare shell and inner Start under the same held service boundary, prove independent App-queue responsiveness, and retain ordinary completion and error controls.\n- [x] #5 A pending Start that completes after its quiz panel is removed or replaced does not terminate the app or publish into the replacement panel; the created remote attempt is reported truthfully, and returning to Quizzes remains usable.\n<!-- AC:END -->\n",
+      "status": "Done"
+    },
+    {
+      "id": "36899",
+      "path": "backlog/tasks/task-36899 - Keep-pending-quiz-Start-within-its-runtime-and-scope-lifetime.md",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 A Start completion from a runtime or Study scope that has since been reset cannot replace the current attempt, question, status or answer draft, or expose an old attempt for Submit through the new backend.\n- [x] #2 Changing away and back before completion does not revive an obsolete Start; existing protection for removed/replaced quiz panels and shared duplicate admission remains effective.\n- [x] #3 Ordinary same-context Start/Submit and failure recovery remain usable, and any already-created remote attempt is described truthfully without claiming cancellation rolled it back.\n- [x] #4 Mounted production-owner regressions with held responses cover runtime change, scope change and away/back transitions, including the real local SQLite submission boundary; ordinary completion and retry controls pass without background exceptions.\n<!-- AC:END -->\n",
+      "status": "Done"
+    },
+    {
+      "id": "36900",
+      "path": "backlog/tasks/task-36900 - Keep-Watchlists-navigation-responsive-during-article-body-reads.md",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 A later enabled article selection can reach its current reader while an older article body read remains held, without waiting for release of the obsolete read.\n- [x] #2 Enabled Watchlists section navigation completes while an earlier article body read remains held.\n- [x] #3 Late success or failure from superseded, departed-view, changed-backend/query/page or detached detail work cannot replace the current reader or mark an obsolete selection read through stale publication authority.\n- [x] #4 Narrow list projections, shared row identity and one hydrated reader publication remain intact; mounted ordinary, overlapping, out-of-order, failure and teardown regressions pass with no background exceptions and all controlled holds released.\n<!-- AC:END -->\n",
+      "status": "Done"
+    },
+    {
+      "id": "643",
+      "path": "backlog/tasks/task-643 - Make-runtime-policy-the-sole-application-runtime-source-authority.md",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 TldwCli no longer imports or instantiates AppState while the exported legacy state models remain importable and retain their documented serialization behavior\n- [x] #2 RuntimePolicyContext exposes read-only state plus creating-thread-affine revision snapshots and persist-before-publish compare-and-swap commits whose persistence failures leave the prior state unchanged, with no direct setter or persistence escape hatch\n- [x] #3 Stale asynchronous capability refresh results cannot overwrite a newer runtime source or server identity\n- [x] #4 All production runtime-source and capability writers use the authoritative context and app-level compatibility projections have no independent writers\n- [x] #5 Runtime-policy persistence follows the effective config path, uses the ADR-029 private read/atomic-write boundary, fails closed for unsafe POSIX targets, reports Windows privacy posture as unverified, and neither falls back to nor migrates from the ordinary default path under an override\n- [x] #6 Focused runtime-policy, off-owner mutation, persistence-failure recovery, privacy-sentinel, scoped static, ownership-guard, and architecture checks pass\n<!-- AC:END -->\n",
+      "status": "Done"
+    },
+    {
+      "id": "644",
+      "path": "backlog/tasks/task-644 - Move-cross-visit-screen-snapshots-behind-an-in-memory-owner.md",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 ScreenStateStore owns canonical-tab snapshot envelopes in memory, rejects off-owner mutation, treats restored inputs as read-only, and never inserts policy metadata into domain snapshot dictionaries\n- [x] #2 Runtime-source or active-server incompatibility discards stale snapshots while compatible snapshots restore without exposing the backing mapping\n- [x] #3 TldwCli navigation no longer creates or reads _screen_states and recent-snapshot consumers use the truthful store API\n- [x] #4 Fresh screen construction, canonical alias-configured startup, alias sharing by resolved canonical tab, pending-work vetoes, corrupt snapshot recovery, and explicit Library, Settings, and Watchlists navigation-context precedence are preserved\n- [x] #5 Focused mounted, nested Settings-draft, large Console snapshot, off-owner mutation, payload-redaction sentinel, scoped static, and ownership-guard checks pass\n<!-- AC:END -->\n",
+      "status": "Done"
+    },
+    {
+      "id": "646",
+      "path": "backlog/tasks/task-646 - Complete-destination-handoff-ownership-and-ACP-target-recovery.md",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 Typed Study, Artifacts, and ACP slots preserve revisioned single-slot replacement semantics\n- [x] #2 Artifacts resolves only an exact canonical local:chatbook target, never substitutes the latest first-page record, releases transient failures for later lifecycle or user retry, and acknowledges success or terminal missing-target outcomes\n- [x] #3 ACP consumes its canonical local:acp_session record target by reconstructing the same identifier from the current runtime session; an exact match keeps that row selected and exposes the mounted detail pane, while malformed, stale, or unsupported targets receive explicit recovery\n- [x] #4 All listed raw application pending fields and the dead pending_notes_workspace_context slot are removed and an AST ownership guard prevents their return\n- [x] #5 Focused exact-target, replacement-race, privacy-sentinel, mounted full-production-app, and static checks plus the installed-wheel gate, app-independent product-maturity sentinel, and authorized integrated suite pass without collecting legacy surrogate applications\n<!-- AC:END -->\n",
+      "status": "Done"
+    }
+  ],
+  "watchlists_screen": {
+    "candidate_head": "42243f8efcfd40996051c3359bfd3599fbc4d1f1",
+    "status": "provisional-until-parent-merged-tree-qualification",
+    "book_path": "C:\\Users\\GDesktop-1\\Downloads\\textual-1.pdf",
+    "book_pages": {
+      "focus": "PDF179-180 / printed170-171",
+      "queue": "PDF145-146/158 / printed136-137/149",
+      "worker": "PDF335 / printed326"
+    },
+    "adr_required": false,
+    "adr_reason": "Bounded repair under existing destination/controller/DB contracts, preserving policy checks and file/memory semantics.",
+    "adr_paths": [
+      "<audit-checkout>\\backlog\\decisions\\011-chatbook-workbench-ui-system.md",
+      "<audit-checkout>\\backlog\\decisions\\033-application-session-state-ownership.md",
+      "<audit-checkout>\\backlog\\decisions\\042-watchlists-reader-first-ia.md"
+    ],
+    "original_owner_evidence": {
+      "path": "<audit-checkout>\\Docs\\QA\\perf-structural-audit-2026-09-27\\appendix-issues-by-pr.md",
+      "focus_line": 745,
+      "mark_all_read_schedules_line": 753,
+      "section_lines": "730-776"
+    },
+    "records": [
+      {
+        "id": "TASK-33283",
+        "path": "<audit-checkout>\\backlog\\tasks\\task-33283 - PERF-24-Watchlists-and-Schedules---incremental-panes-DB-off-the-event-loop.md",
+        "source": "candidate-worktree",
+        "scope_decision": "Existing owner of Notifications table rebuild/cursor-key symptom: AC4; original PERF24 appendix line745 explicitly names NotificationsPane. Attach new focus/second-Down witness; no duplicate task.",
+        "acceptance_criteria": "<!-- AC:BEGIN -->\n- [ ] #1 No Schedules interaction performs synchronous sqlite on the event loop\n- [ ] #2 SchedulingService async methods do their DB work off the loop\n- [ ] #3 Mark-all-read runs as a batched write\n- [ ] #4 Watchlists tree and panes update in place on count refresh and selection changes\n<!-- AC:END -->"
+      },
+      {
+        "id": "TASK-15779",
+        "path": "<audit-checkout>\\backlog\\tasks\\task-15779 - Watchlists-artifacts-pane-briefing-selection-destroys-the-briefings-table-and-its-focus.md",
+        "source": "candidate-worktree",
+        "scope_decision": "Done; ACs restrict table/focus preservation to briefing selection in Artifacts. Sibling reference, does not own Notifications.",
+        "acceptance_criteria": "- [x] Selecting a briefing in the artifacts pane does not destroy the\n      briefings `DataTable` widget instance (in-place update instead of a\n      recompose that tears it down), OR the recompose explicitly restores\n      focus and cursor position to the table afterward\n- [x] A second arrow-key press immediately after selecting a briefing moves\n      the cursor to the next row (regression test — this is the concrete\n      symptom: today it does nothing until the user re-focuses)\n- [x] The scripts/audio/citations clearing task-15461 folded into\n      `watch_selected_briefing` (via `set_reactive`) keeps working unchanged\n- [x] `Tests/Watchlists/test_watchlists_artifacts_pane.py` stays green"
+      },
+      {
+        "id": "TASK-15460",
+        "path": "<audit-checkout>\\backlog\\tasks\\task-15460 - Watchlists---replace-per-keystroke-pane-teardowns-with-in-place-updates.md",
+        "source": "candidate-worktree",
+        "scope_decision": "Done; ACs cover search/filter typing and search Input focus; notification row selection is outside scope.",
+        "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 Typing in Watchlists search/filter boxes causes no pane recompose (evidence)\n- [x] #2 Filtering results identical, including the debounced DB reload path (tests)\n- [x] #3 Focus stays in the input while typing (regression test replacing the re-focus override)\n<!-- AC:END -->"
+      },
+      {
+        "id": "TASK-35868",
+        "path": "<audit-checkout>\\backlog\\tasks\\task-35868 - Preserve-unsaved-Watchlists-rule-fields-across-refresh-and-section-return.md",
+        "source": "candidate-worktree",
+        "scope_decision": "Done; raw Rules draft fields across refresh/section return only.",
+        "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 A changed Rules-list refresh preserves unsaved Name, Condition, Threshold, Severity and Enabled values in both New and Edit forms, with the same target rule identity.\n- [x] #2 A settled focused editable control retains its instance, focus, cursor and selection during list-only refresh; tests establish these preconditions before refreshing.\n- [x] #3 Switching Rules to another Watchlists section and back restores the unsaved new/edit draft and its original target without an implicit save.\n- [x] #4 Explicit Save and Cancel retire only the appropriate draft; validation failure retains it, and existing condition-guidance, backend eligibility and mutation behavior remain intact.\n- [x] #5 Mounted tests type real changes before both triggers, cover New/Edit and Save/Cancel, and retain the completed visibility/seeding/guidance regressions.\n<!-- AC:END -->"
+      },
+      {
+        "id": "TASK-36900",
+        "path": "<audit-checkout>\\backlog\\tasks\\task-36900 - Keep-Watchlists-navigation-responsive-during-article-body-reads.md",
+        "source": "candidate-worktree",
+        "scope_decision": "Done; Reader async body hydration and current publication authority only; actual inbox synchronous DB stall has a different boundary.",
+        "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 A later enabled article selection can reach its current reader while an older article body read remains held, without waiting for release of the obsolete read.\n- [x] #2 Enabled Watchlists section navigation completes while an earlier article body read remains held.\n- [x] #3 Late success or failure from superseded, departed-view, changed-backend/query/page or detached detail work cannot replace the current reader or mark an obsolete selection read through stale publication authority.\n- [x] #4 Narrow list projections, shared row identity and one hydrated reader publication remain intact; mounted ordinary, overlapping, out-of-order, failure and teardown regressions pass with no background exceptions and all controlled holds released.\n<!-- AC:END -->"
+      },
+      {
+        "id": "TASK-19870",
+        "path": "<audit-checkout>\\backlog\\tasks\\task-19870 - Mutation-workers-refresh-inline-instead-of-dispatching-into-the-loader-group.md",
+        "source": "candidate-worktree",
+        "scope_decision": "Done; mutation/user refreshes use the same worker group and cannot interleave; does not offload synchronous inbox DB calls.",
+        "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 A refresh triggered by a mutation worker is subject to the same worker\n      group as a refresh triggered directly by the user\n- [x] #2 Two refreshes that overlap — one from a mutation, one from a user action —\n      cannot interleave their writes to the same list\n- [x] #3 A test drives a mutation and a concurrent user refresh and asserts the\n      resulting list contents, and is mutation-checked (restoring the inline\n      `await` makes it red)\n- [x] #4 The schedules workbench, watchlists notification handlers, and watchlists\n      briefing generation/cast/audio handlers are covered\n- [x] #5 TASK-19559's worker-group guard is extended to notice an inline loader\n      call inside a worker body, or the reason it cannot is recorded\n<!-- AC:END -->"
+      },
+      {
+        "id": "TASK-19559",
+        "path": "<audit-checkout>\\backlog\\tasks\\task-19559 - exclusive=True without group= makes every worker on a node cancel its siblings.md",
+        "source": "candidate-worktree",
+        "scope_decision": "Done; worker group/exclusivity/cancellation ownership; coroutine scheduling does not guarantee synchronous SQLite offloading.",
+        "acceptance_criteria": "- [x] A lint or test fails on `exclusive=True` scheduled without an explicit\n      `group=`, covering both `@work(...)` decorators and `run_worker(...)`\n      calls, including multi-line forms\n- [x] The guard has an explicit, documented allowlist mechanism for any site\n      that genuinely wants default-group mutual exclusion, so suppressing it is\n      a deliberate recorded choice rather than a silent one\n- [x] The four named user-visible instances are fixed: Study rating submission,\n      Media analysis generation, the four unfixed Watchlists section loaders,\n      and the Settings advanced-config backup load\n- [x] Fast consecutive flashcard ratings all persist — pinned by a test that\n      drives consecutive submissions, not by inspection\n- [x] The Settings advanced-config editor is never overwritten by a background\n      load while the user has unsaved typing in it\n- [x] Handlers in this family no longer rely on `except Exception:` to observe\n      cancellation, given `CancelledError` is a `BaseException`\n- [x] The remaining sites are triaged with the user-visible ones fixed and the\n      rest either grouped or allowlisted — the count is driven to a number the\n      guard can hold"
+      },
+      {
+        "id": "TASK-15466",
+        "path": "<audit-checkout>\\backlog\\tasks\\task-15466 - Port-the-held-connection-idiom-to-Library_Collections-RAG_Indexing-and-client_notifications.md",
+        "source": "candidate-worktree",
+        "scope_decision": "Done; held connections/autocommit/batching; file-backed thread-local and in-memory single connection contract must be retained, but no inbox controller offloading AC.",
+        "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 All three DBs hold thread-local connections with isolation_level=None; the pre-port DML call-site audit is recorded in this task\n- [x] #2 Pure-read service calls no longer open write transactions (evidence)\n- [x] #3 RAG indexing no longer opens/commits per item — batched (evidence)\n- [x] #4 All three DBs' existing test surfaces green; no connection leak (probe or unit evidence)\n<!-- AC:END -->"
+      },
+      {
+        "id": "TASK-282",
+        "path": "<audit-checkout>\\backlog\\tasks\\task-282 - Home-dashboard-thread-and-cache-seam-queries.md",
+        "source": "candidate-worktree",
+        "scope_decision": "Done; Home dashboard query/cache/rail/canvas scope; does not cover Watchlists inbox controller.",
+        "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 Dashboard seam queries run off the event loop with a short-TTL cache; Home still reflects fresh data per its seam contract\n- [x] #2 Selection/count-only changes patch targeted widgets instead of recomposing rail/canvas\n- [x] #3 Existing Home triage tests green\n<!-- AC:END -->"
+      },
+      {
+        "id": "TASK-21238",
+        "path": "<audit-checkout>\\backlog\\tasks\\task-21238 - A corrupt notifications database can now fail unrelated Media, Research and Watchlists flows.md",
+        "source": "candidate-worktree",
+        "scope_decision": "Done; corruption/unavailable notification isolation and exit_on_error=False; no DB thread-affinity/offload AC.",
+        "acceptance_criteria": "- [x] A corrupt or unopenable notifications database does not fail a media ingest job, a research run, or a watchlists inbox refresh — the flow completes and the notification is skipped\n- [x] A test injects a corrupt notifications store and asserts each of those three flows still completes\n- [x] The two Watchlists inbox workers cannot take the app down on an escaping exception\n- [x] The lazy-store race test covers all six stores, or the five uncovered stores are shown to be exercised by the one covered case\n- [x] TASK-21105's boot-file count (27) does not regress"
+      },
+      {
+        "id": "TASK-22450",
+        "path": "<audit-checkout>\\backlog\\tasks\\task-22450 - Stabilize-Watchlists-Feed-Items-snapshots-and-atomic-scope-commits.md",
+        "source": "candidate-worktree",
+        "scope_decision": "Done; Feed Items Reader snapshots and atomic scope commits only.",
+        "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 Scope navigation keeps the committed highlight, rows, and Reader active until the replacement snapshot succeeds, then commits scope, rows, and Reader clearing atomically.\n- [x] #2 Feed Items pagination uses the canonical effective-date and item-id keyset with an initial item-id high-water mark and a seen-id guard instead of offset paging.\n- [x] #3 New arrivals remain behind the new-items affordance and do not reorder or relabel the mounted snapshot before explicit refresh.\n- [x] #4 Failed and superseded loads preserve the committed view and cannot publish stale results.\n- [x] #5 Search, status filters, page navigation, and open-item pinning operate within the stable snapshot contract.\n- [x] #6 Affected Watchlists tests, modified-file Ruff, and branch diff checks pass.\n<!-- AC:END -->"
+      },
+      {
+        "id": "TASK-34425",
+        "path": "<audit-checkout>\\backlog\\tasks\\task-34425 - Structural-sharing-for-ReaderItemSnapshot-pages.md",
+        "source": "candidate-worktree",
+        "scope_decision": "Done; immutable Reader snapshot structural sharing only.",
+        "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 Paging performs zero deepcopies,Rows from page 1 remain identical objects after N turns,No mutation of shared rows by callers,Tests pass\n<!-- AC:END -->"
+      },
+      {
+        "id": "TASK-34967",
+        "path": "<audit-checkout>\\backlog\\tasks\\task-34967 - Gate-Watchlists-per-visit-section-loads-on-staleness.md",
+        "source": "candidate-worktree",
+        "scope_decision": "To Do; revisit staleness query avoidance only, not cursor focus or synchronous inbox mutation.",
+        "acceptance_criteria": "<!-- AC:BEGIN -->\n- [ ] Re-entering Watchlists with unchanged data skips redundant section re-queries (two attempts reverted; see notes)\n- [x] Forced refresh action still reloads everything\n- [ ] Overview and tree stay correct after data changes\n<!-- AC:END -->"
+      },
+      {
+        "id": "TASK-31914",
+        "source": "remote-only-owner-sweep",
+        "scope_decision": "Complete text read; test-boundary/setup/alignment owner, no Notifications keyboard or inbox SQLite offload AC.",
+        "ref_oid": "50ca9843676539c03cdb43d0516746044a1cf1eb",
+        "path": "backlog/tasks/task-31914 - Watchlists-failure-policy-test-bypasses-the-live-check-coordinator.md",
+        "blob": "e3ff719de14e6c2ee9d09c5d9e2bc5680b2700d4",
+        "full_text": "---\nid: TASK-31914\ntitle: Watchlists failure-policy test bypasses the live check coordinator\nstatus: Done\nassignee:\n  - '@codex'\ncreated_date: '2026-09-05 00:46'\nupdated_date: '2026-09-05 01:24'\nlabels:\n  - watchlists\n  - tests\ndependencies: []\npriority: high\n---\n\n## Description\n\n<!-- SECTION:DESCRIPTION:BEGIN -->\nKeep the Watchlists unexpected check-failure UI test hermetic and discriminating after local Check now moved behind the operation coordinator.\n<!-- SECTION:DESCRIPTION:END -->\n\n## Acceptance Criteria\n<!-- AC:BEGIN -->\n- [x] #1 The unexpected-failure test intercepts the current local Check now execution boundary.\n- [x] #2 The test records a warning-or-higher failure without attempting network egress.\n- [x] #3 The complete Watchlists check-now failure-policy module passes.\n<!-- AC:END -->\n\n## Implementation Plan\n\n<!-- SECTION:PLAN:BEGIN -->\n1. Reproduce the CI teardown error and trace the request from the button handler to the current local execution owner.\n2. Update the test to inject its failure at the operation-coordinator boundary and assert the legacy controller is not reached.\n3. Run the focused regression, the complete failure-policy module, Ruff, and git diff checks.\n4. Record implementation evidence and complete the task.\n\nADR required: no\nADR path: N/A\nReason: hermetic test maintenance for an existing Watchlists execution boundary; no runtime architecture, storage, security, service contract, or long-lived UX decision changes.\n<!-- SECTION:PLAN:END -->\n\n## Implementation Notes\n\n<!-- SECTION:NOTES:BEGIN -->\n- Patched the current `watchlists_operation_coordinator.accept_checks` boundary and asserted the accepted source IDs, replacing a stale patch of the bypassed legacy controller method.\n- This keeps the unexpected-exception policy test hermetic; CI had recorded real CloudFront connection attempts during teardown when the stale patch allowed the seeded URL through.\n- Evidence: the exact regression passes and the complete module passes 27/27; Ruff and diff checks pass.\n- ADR required: no; runtime behavior is unchanged.\n<!-- SECTION:NOTES:END -->\n\n## PR 2427 rebase renumbering provenance\n\nReview-owned TASK-31758 was renumbered to TASK-31914 on 2026-09-06\nwhile rebasing PR 2427 onto dev c4d45c0926. The user approved preserving\nupstream task identities and renumbering review-created collisions only.\nOriginal creation dates, task history, and literal verification artifact paths\nare retained. See backlog/docs/pr-2427-rebase-reconciliation.md for the mapping.\n"
+      },
+      {
+        "id": "TASK-31915",
+        "source": "remote-only-owner-sweep",
+        "scope_decision": "Complete text read; test-boundary/setup/alignment owner, no Notifications keyboard or inbox SQLite offload AC.",
+        "ref_oid": "50ca9843676539c03cdb43d0516746044a1cf1eb",
+        "path": "backlog/tasks/task-31915 - Verify-current-Watchlists-source-creation-off-loop.md",
+        "blob": "3fadf033e0cf8be86a6b7a41d4c122ebd747330f",
+        "full_text": "---\nid: TASK-31915\ntitle: Verify current Watchlists source creation off loop\nstatus: Done\nassignee:\n  - '@codex'\ncreated_date: '2026-09-06'\nupdated_date: '2026-09-06 00:53'\nlabels:\n  - tests\ndependencies: []\n---\n\n## Description\n\n<!-- SECTION:DESCRIPTION:BEGIN -->\nThe off-loop regression observes a retired post-insert getter. Prove the current\natomic batch lookup, insert and result materialization stay off the event loop.\n<!-- SECTION:DESCRIPTION:END -->\n\n## Acceptance Criteria\n<!-- AC:BEGIN -->\n- [x] #1 Real file-backed creation and exact-source reuse execute the batch transaction off loop and return the durable source.\n- [x] #2 An inline-offload mutation fails the updated guard, without loosening nonempty thread assertions.\n- [x] #3 Complete affected Watchlists files and scoped lint pass.\n<!-- AC:END -->\n\n## Implementation Plan\n\n<!-- SECTION:PLAN:BEGIN -->\n1. Retain the reproduced missing-getter failure and inspect the exact batch owner.\n2. Observe the real batch and transaction boundary for new and existing sources;\n   keep insertion and returned identity/data assertions, with test-owned cleanup.\n3. Run complete off-loop and service files, process-local inline mutation, and review.\n\nADR required: no\nADR path: N/A\nReason: Test-only repair reflecting the existing atomic source-creation contract.\n<!-- SECTION:PLAN:END -->\n\n## Implementation Notes\n\n<!-- SECTION:NOTES:BEGIN -->\nReplaced the retired add/get expectation with real batch, transaction and result-materialization thread observations for both creation and exact-source reuse. Keeps positive work assertions, verifies the actual source_id projection against the durable row and checks no insert on reuse. Function-scoped loop executor shutdown allows thread-owned SQLite cleanup before asserting zero remaining handles. Original complete two-file baseline:41 passed/2 failed. Final five complete off-loop/service/project-context/atomic-promotion files:143 passed,2 existing dependency warnings in28.90s. XML:/private/tmp/tldw-offloop-promotion-final.xml. A process-local inline-offload mutation failed both new variants at the off-loop assertion. Whole changed-test Ruff/format and diff checks pass; independent review clear. No production Watchlists changes or new ADR; follows existing exact batch contract.\n<!-- SECTION:NOTES:END -->\n\n## PR 2427 rebase renumbering provenance\n\nReview-owned TASK-31796 was renumbered to TASK-31915 on 2026-09-06\nwhile rebasing PR 2427 onto dev c4d45c0926. The user approved preserving\nupstream task identities and renumbering review-created collisions only.\nOriginal creation dates, task history, and literal verification artifact paths\nare retained. See backlog/docs/pr-2427-rebase-reconciliation.md for the mapping.\n"
+      },
+      {
+        "id": "TASK-31680",
+        "source": "remote-only-owner-sweep",
+        "scope_decision": "Complete text read; test-boundary/setup/alignment owner, no Notifications keyboard or inbox SQLite offload AC.",
+        "ref_oid": "50ca9843676539c03cdb43d0516746044a1cf1eb",
+        "path": "backlog/tasks/task-31680 - Settle-Watchlists-startup-snapshots-before-direct-fixture-navigation.md",
+        "blob": "e31a630b06fa976ac605646fb37879dc45743c5d",
+        "full_text": "---\nid: TASK-31680\ntitle: Settle Watchlists startup snapshots before direct fixture navigation\nstatus: Done\nassignee:\n  - '@codex'\ncreated_date: '2026-09-05 18:20'\nupdated_date: '2026-09-05 18:26'\nlabels: []\ndependencies: []\n---\n\n## Description\n\n<!-- SECTION:DESCRIPTION:BEGIN -->\nPrevent direct database seeding in the scoped item fixture from racing an older startup tree snapshot that legitimately reconciles missing selections.\n<!-- SECTION:DESCRIPTION:END -->\n\n## Acceptance Criteria\n<!-- AC:BEGIN -->\n- [x] #1 The scoped item fixture waits for initial startup work and publishes its newly seeded tree before direct scope navigation.\n- [x] #2 A controlled delayed startup snapshot demonstrates the original failure and the corrected fixture preserves exact member-only assertions.\n- [x] #3 The complete affected Watchlists collection test file passes without changing production reconciliation.\n<!-- AC:END -->\n\n## Implementation Plan\n\n<!-- SECTION:PLAN:BEGIN -->\n1. Preserve deterministic RED probe: freeze startup tree snapshot before direct DBseeds, publish after fixture selects newwatchlist; runtime correctly reconciles missing IDtoAll and original exactmember assertion fails. 2. In Tests/Watchlists/test_watchlists_collections_screen.py::test_items_reload_scopes_to_watchlist wait for startup workers before seeding, then await the real _load_tree_data worker after seeding before direct scope commit. Keep exact loaded/member-only assertions. 3. Repeat same in-memory delayed-snapshot probe against corrected fixture, then full affected4file225case gate alongside31670. 4. Scoped staticchecks,parent review,evidence notes,done,scoped commit independentof31670. ADR required:no. ADR path:N/A. Reason:test-only faithful startup and directseed preconditions, production reconciliation unchanged.\n<!-- SECTION:PLAN:END -->\n\n## Implementation Notes\n\n<!-- SECTION:NOTES:BEGIN -->\nScoped item fixture now drains real startup workers before direct DBseeding and awaits a fresh real tree snapshot afterward, before selecting its newlycreatedwatchlist. Runtime reconciliation and exact member-only assertions are unchanged. Controlled in-memory gate froze startupwatchlistIDs[], released the snapshot after fixtureselectedwatchlist1, and deterministically changed scope toAll beforefix (member-onlyassertionfailed). Sameprobe afterfix preserveswatchlist1 andpasses10.39s. Full exact4filegate with collection, bundle, OPML and localservice tests:225passed106.09s; report /private/tmp/tldw-31670-31680-watchlists-green.xml. Scoped Ruff lint, changedrangeformat, diffcheck and parentindependentreview passed. No new ADR: faithful testpreconditions only. Existing startup-readiness lessons cover this mechanism.\n<!-- SECTION:NOTES:END -->\n"
+      },
+      {
+        "id": "TASK-31694",
+        "source": "remote-only-owner-sweep",
+        "scope_decision": "Complete text read; test-boundary/setup/alignment owner, no Notifications keyboard or inbox SQLite offload AC.",
+        "ref_oid": "50ca9843676539c03cdb43d0516746044a1cf1eb",
+        "path": "backlog/tasks/task-31694 - Align-Watchlists-refresh-and-retry-tests-with-committed-Reader-contracts.md",
+        "blob": "cb1c8dc20ffb4b42c77d64637ebeef25a9da7030",
+        "full_text": "---\nid: TASK-31694\ntitle: Align Watchlists refresh and retry tests with committed Reader contracts\nstatus: Done\nassignee:\n  - '@codex'\ncreated_date: '2026-09-05 18:36'\nupdated_date: '2026-09-05 18:46'\nlabels: []\ndependencies: []\n---\n\n## Description\n\n<!-- SECTION:DESCRIPTION:BEGIN -->\nUpdate stale regression expectations to the explicitly shipped retained-open-row and visible retry chrome behavior.\n<!-- SECTION:DESCRIPTION:END -->\n\n## Acceptance Criteria\n<!-- AC:BEGIN -->\n- [x] #1 Refresh tests assert the open row is retained while new page contents and selected Reader content remain correct.\n- [x] #2 Reader failure coverage asserts visible retry chrome with stale content cleared and recovery still available.\n<!-- AC:END -->\n\n## Implementation Plan\n\n<!-- SECTION:PLAN:BEGIN -->\n1. Read the merged refresh-retention and visible retry-chrome contracts and preserve the three existing RED cases. 2. Assert retained open rows alongside new first-page data and Reader identity; assert visible retry controls while stale data is cleared. Keep real service requests and bounded settlement. 3. Run both complete affected Watchlists files, scoped checks, parent review, and scoped commit. ADR required: no. ADR path: N/A. Reason: test-only alignment with explicitly merged behavior, no product changes.\n<!-- SECTION:PLAN:END -->\n\n## Implementation Notes\n\n<!-- SECTION:NOTES:BEGIN -->\nAligned stale tests with the explicit Reader contracts already merged in TASK31725 / b6740f08912 (retain the open row on same-context refresh) and a62d92f590c (keep retry chrome visible). Refresh still requests a fresh first page and preserves selected content; assertions now also pin retained rows without inflating the service snapshot count. Failure coverage retains all stale-data and retry checks and adds real search/filter/pager visibility and geometry. Both complete Watchlists files passed, 48 pagination plus 57 scoped rebuilds, within the clean 269-test combined gate (/private/tmp/tldw-31693-31695-final.xml). Scoped Ruff and diff checks passed. No product changes or new ADR required.\n\nParent completed bounded final diff review with no actionable findings.\n<!-- SECTION:NOTES:END -->\n"
+      }
+    ]
+  },
+  "personas_screen": [
+    {
+      "path": "backlog/tasks/task-15469 - Personas-dictionaries---indexed-attachment-lookup-and-a-threaded-backend.md",
+      "complete_ac": "\n- [x] #1 A dictionary row click issues no full-table scan (query-plan or timing evidence) and at most 2 queries, none on the event loop\n- [x] #2 Statistics and attachment lists return identical values (tests)\n- [x] #3 Click latency before/after with a 1,000+-conversation DB recorded\n"
+    },
+    {
+      "path": "backlog/tasks/task-2834 - Guard-against-blocking-IO-reachable-from-a-Textual-message-handler.md",
+      "complete_ac": "\n- [x] #1 Opening the export folder from the Chatbook wizard cannot block the app, on any platform\n- [x] #2 A repo-wide test fails when a new blocking call becomes reachable from a message handler\n- [x] #3 The guard is proven to catch a known instance, not just to report a clean result\n- [x] #4 Pre-existing accepted paths are baselined individually with a stated reason, not silenced wholesale\n- [x] #5 The guard cannot be fooled by the same call name appearing in a comment or string\n"
+    },
+    {
+      "path": "backlog/tasks/task-33910.3 - Roleplay-frame-B2a-line-based-items-list-marks-bar-and-one-delete-modal.md",
+      "complete_ac": "\n- [x] #1 The D14 dry-run census is recorded before any production code, and the plan names the chosen design (A, or fallback B)\n- [x] #2 The first list item sits on row 19 at every size, with at least 13 characters visible at 120x36 (today's toolbar stays until B2b)\n- [x] #3 With the 348-character volume profile, `/ isolde ⏎ ⏎` opens the card\n- [x] #4 Scrolling to the end, then searching and clearing, skips no name (RP-080)\n- [x] #5 Marks survive search and sort, and the marks bar reads `✓ 3 marked (2 hidden)` when two marked rows are filtered out\n- [x] #6 Personas shows `Personas 114` with Default Narrator present\n- [x] #7 With 348 characters, a selection past row 200 restores; after an insert ahead, a delete ahead and a scroll to the end every id appears exactly once and no exception escapes; a late window from a superseded query is dropped\n- [x] #8 CI counts on `roleplay_full_app()` seeded with 348 and 5,000 characters: per settled keystroke exactly one window query (≤200 rows), one `set_options`, 0 widget mounts, 0 recomposes, and prompts built equal to the window's rows, with stalls detected only by the discriminating heartbeat form\n- [x] #9 Live-harness evidence (not a pytest threshold): the median of at least 10 ABBA-interleaved runs at 348 and 5,000 characters, from key event to first idle after paint, is recorded in the §5.10 ledger against ≤250 ms, with `set_options` ≤50 ms at 348\n- [x] #10 With 5,000 rows loaded and scrolled to the end, a 120 ↔ 160 resize and End each settle within the same budget, shown by CI counts (prompts rebuilt at most once per settled width, at most one `set_options`, 0 mounts, 0 recomposes) and recorded live-harness evidence\n- [x] #11 Leaving and returning, and a suspend and resume, clear the marks and leave no window worker running\n- [x] #12 Hostile names render literally in the list prompts, the border titles and the delete modal (the B1 hostile-name test, extended)\n- [x] #13 Implementation plan written under Docs/superpowers/plans/ before work starts\n- [x] #14 Gates in spec §5.4 Definition of done pass\n- [x] #15 The list is one RoleplayItemList (#personas-library-rows) with 1- or 2-line density per spec 1.5.2 and no blank separators; a long name is middle-ellipsised and shows whole in a hover tooltip (R-010 to R-017)\n- [x] #16 A click on gutter column 2 toggles a mark and never loads; a click elsewhere on the row loads it and never marks (R-017)\n- [x] #17 The marks bar shows only while marks exist, on the items pane's bottom row, without moving the cursor row: at full width the count, Export…, Delete… and Clear esc; narrower, it degrades by the bar's own width and drops whole actions (Clear, then Export), never cutting one; bulk Export and Delete act only from it, and the Inspector no longer retargets at marks (R-041, R-043)\n- [x] #18 Every list delete, single or marked, goes through one modal that names up to 5 items plus \"and N more\", labelled Delete N marked for a bulk delete (R-050)\n- [x] #19 The list's top border shows the kind and its count (or n of total) and the bottom border #N of M, blank with nothing loaded or the loaded row hidden; the page bar and the count line are gone (R-060, R-061)\n- [x] #20 space, m and s act on the list widget, not the pane container; a focused button never toggles a row (R-070)\n- [x] #21 The three retired broad rules leave, and MAX_ANCESTOR_SCOPED_BARE_TYPE_RULES is lowered to the measured count (R-100)\n- [x] #22 The harness gains select_roleplay_item, highlighted_item_id, visible_item_ids, item_at and list_state; roleplay_full_app() seeds a real temporary ChaChaNotes, and the B1 journey asserts save then reload (R-143, carry-over)\n- [x] #23 The J1-fast journey exists as a passing prefix plus a strict xfail(raises=NotYetDelivered) full journey (R-146)\n- [x] #24 The User Guide's list and marks sections describe the new behaviour (R-185)\n- [x] #25 Hygiene carry-overs: TASK-33910.1 is set Done with a note, and _paint_header's child lookups sit under the header's guard (hardening, unreproduced)\n"
+    },
+    {
+      "path": "backlog/tasks/task-33910.8 - Roleplay-frame-B5b-1-one-guard-dialog-per-domain-executors-and-the-load-fence.md",
+      "complete_ac": "\n- [ ] #1 With a dirty domain, a guarded switch fired from Card, Test chat, Chats, the list or the rail offers Save and continue · Discard and continue · Stay, and \"Save and continue\" saves the record before the switch happens\n- [ ] #2 \"Discard and continue\" leaves the aggregate draft state clean and the switch happens\n- [ ] #3 An invalid field blocks the switch and shows the recovery dialog\n- [ ] #4 Deleting other rows never touches the loaded item or its draft: a dirty Edit plus `del` on another row keeps the draft and the open editor\n- [ ] #5 Deleting the loaded item while dirty asks the guard first, then the delete modal, which names it \"(open · unsaved changes are discarded)\"\n- [ ] #6 A late load result is dropped, and a failed load or a loaded id deleted underneath shows `couldn't open · Retry`\n- [ ] #7 A `ConflictError` on save shows \"Changed elsewhere · Reload\" and keeps the draft\n- [ ] #8 `del` is unarmed on conversations and versions (R31)\n- [ ] #9 Hostile names render literally in the guard dialog and in the delete modal's loaded-item line\n- [ ] #10 Implementation plan written under Docs/superpowers/plans/ before work starts\n- [ ] #11 Gates in spec §5.4 Definition of done pass\n"
+    },
+    {
+      "path": "backlog/tasks/task-33910.14 - Roleplay-frame-B9a-entry-and-Options-draft-domains-no-layout-change.md",
+      "complete_ac": "\n- [ ] #1 A dirty Options or entry draft triggers the aggregate guard dialog on a kind switch, an item switch and leaving Roleplay\n- [ ] #2 For entry and Options drafts left from a non-editor view (Used by, Info, Try it) or from the list, \"Save and continue\" saves and continues, \"Discard and continue\" leaves the aggregate clean and continues, and an invalid field blocks with the recovery dialog\n- [ ] #3 With a dirty entry form, the form text is byte-identical after arrows, Move and a background reload\n- [ ] #4 Arrowing to another row and pressing Update updates the form's entry and leaves the cursor row unchanged in the database\n- [ ] #5 Opening another entry (Enter or a click), or deleting the form's own entry, while the form is dirty shows the inline guard (Update / Discard / Stay)\n- [ ] #6 A new lore book or chat dictionary stays a draft until Create and never saves as \"Untitled\"; after Create the book opens in Entries with focus on the entries table\n- [ ] #7 Ctrl+Q with a dirty entry or Options draft prompts through the quit guard once TASK-33622.14 is on dev\n- [ ] #8 The dated ADR-046 amendment adding the two draft domains (G4) is written\n- [ ] #9 Implementation plan written under Docs/superpowers/plans/ before work starts\n- [ ] #10 Gates in spec §5.4 Definition of done pass\n"
+    },
+    {
+      "path": "backlog/tasks/task-36455 - Keep-newer-Dictionary-Settings-drafts-when-an-earlier-Save-completes.md",
+      "complete_ac": "\n- [x] #1 Ordinary Dictionary Settings Save adopts the actual persisted version while later raw settings edits remain visible and unsaved; only submitted settings are acknowledged.\n- [x] #2 The next explicit Save persists retained settings to the same dictionary using the correct optimistic-lock version. No-later-edit success becomes clean and definite failures preserve the current draft for retry.\n- [x] #3 Existing New, leave and quit protections continue to detect retained settings edits, and choosing Stay retains them; entry-draft and transition ownership remain with their existing tasks.\n- [x] #4 Mounted real-service/SQLite regressions cover ordinary success, input before Save, input accepted during Save, next Save and definite failure, witnessing child delivery independently of pump settlement.\n"
+    },
+    {
+      "path": "backlog/tasks/task-36097 - Keep-newer-Character-and-Persona-edits-dirty-when-earlier-saves-finish.md",
+      "complete_ac": "\n- [x] #1 Completing a Character Save retains later form edits as unsaved while adopting the actual persisted record identity and version; the newer text is neither overwritten nor falsely acknowledged.\n- [x] #2 Completing a Persona Save provides the same guarantee for later edits and its actual persisted identity/version.\n- [x] #3 After either completion, existing New and leave/quit guards still detect the later edits; choosing Stay retains them, and no transition silently treats them as saved.\n- [x] #4 A subsequent explicit Save persists the remaining edits to the same record with the correct version; a Save with no later edits becomes clean and failed saves preserve drafts. Mounted real-store regressions distinguish these outcomes.\n"
+    },
+    {
+      "path": "backlog/tasks/task-36098 - Preserve-newer-Image-and-Video-Settings-drafts-after-pending-saves.md",
+      "complete_ac": "\n- [x] #1 A successful Image Gen Save persists its submitted settings while retaining later edits as visible unsaved values.\n- [x] #2 A successful Video Gen Save retains later edits through its post-save configuration load while persisting only the submitted snapshot.\n- [x] #3 Post-save refresh preserves the user's current editing context, including active Input focus, caret and selection, without stealing focus after the user moves elsewhere. Another explicit Save persists the remaining draft; no-edit success becomes clean and deliberate Revert restores persisted values.\n- [x] #4 Mounted regressions with a controlled pending configuration write cover both panels, failed saves and saves without later edits, without staging effective defaults, borrowed credentials or incidental mount events as user changes.\n"
+    },
+    {
+      "path": "backlog/tasks/task-36457 - Keep-newer-Theme-drafts-when-an-earlier-Save-returns-to-the-picker.md",
+      "complete_ac": "\n- [x] #1 Palette, name and dark-mode edits accepted while a Save is pending remain recoverable and honestly dirty after completion; only the submitted theme is written.\n- [x] #2 The actual saved-file identity remains separate from a newer draft name. A subsequent explicit Save follows the existing target-resolution and overwrite rules and persists the retained draft.\n- [x] #3 A successful Save with no later edits still returns to the picker. Existing explicit Back, category/destination leave, backup and quit protections remain effective.\n- [x] #4 Mounted real-TOML controls cover ordinary Save, later palette/name/dark edits, definite failure, Save-as and next Save, witnessing actual enabled-control input before release and ordinary reopening behavior.\n"
+    },
+    {
+      "path": "backlog/tasks/task-532 - Bring-Roleplay-personas-to-parity-with-tldw_server-personas-module.md",
+      "blob": "0ecbc748b8c3dc704d842be9f9d4fb0b6e0cd8f6",
+      "complete_ac": "\n- [ ] #1 A persona in chatbook is modeled as a character-side assistant identity that matches tldw_server's persona profile concept (derived from / linked to a character), not as the user's own identity\n- [ ] #2 A persona projects into a chat as the assistant (system prompt / exemplar assembly), mirroring tldw_server's persona-backed chat behavior\n- [ ] #3 Macro substitution matches tldw_server: `{{user}}` resolves to the human user; `{{persona}}`/`{{char}}`/`{{character}}` resolve to the character/persona\n- [ ] #4 A persona can be selected/active and persists across sessions, consistent with tldw_server's persona selection semantics\n- [ ] #5 The \"persona = who you are\" framing is removed from the Roleplay/Settings surfaces and copy\n"
+    }
+  ],
+  "remote_candidate_criteria": [
+    {
+      "path": "backlog/tasks/task-2703 - Console-Edit-Message-modal-buttons-invisible-in-real-terminals.md",
+      "ref_oid": "00047683d219b3f1017cbbfe74d5d19565e38ed3",
+      "blob": "607f1d8a2ac08d04c1617b7fc5e9475fff7edc7b",
+      "criteria": "- [ ] Cancel / Save / Edit & resend are visible in a real terminal (tmux\n      and a normal TTY) for both USER and non-USER targets of the modal.\n- [ ] Focus is visibly indicated when Tab reaches each button.\n- [ ] A regression check exists that would catch a live-terminal-only\n      disappearance (at minimum: a note in the test explaining why the\n      headless assertion is insufficient, plus a geometry assertion that\n      holds under the real stylesheet).\n- [ ] The User Guide quirk note in\n      `Docs/User_Guide/console/branching-and-rewind.md` is updated/removed\n      to match the fixed behavior."
+    },
+    {
+      "path": "backlog/tasks/task-3401 - Fix-character-avatar-rendering-Console-rail-0x0-collapse-Roleplay-thumb-fold-stripes.md",
+      "ref_oid": "00047683d219b3f1017cbbfe74d5d19565e38ed3",
+      "blob": "c63bc409e693c0f45372b5a3fa8069bdee75f4e4",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 Console rail avatar paints a non-zero region with the active character portrait in pixels mode\n- [x] #2 Console avatar placeholder text remains visible (no 0x0 collapse) when no portrait is available\n- [x] #3 Roleplay inspector portrait and editor/expression thumbnails render with no fold (painted height equals mosaic rows, no black continuation stripes)\n- [x] #4 Regression tests pin the painted regions for the console builder and the roleplay thumb mount path\n- [x] #5 Existing console and personas avatar test suites still pass\n- [x] #6 Pre-existing mosaic test failures root-caused and fixed (Rich 15 file= harness emits no ANSI; noise-cell-box test statistically flaky) so the suite is green\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-743 - Rehome-file-operation-auditing-off-the-deleted-Settings-side-effect.md",
+      "ref_oid": "00047683d219b3f1017cbbfe74d5d19565e38ed3",
+      "blob": "77f3fcdfb111910f97b678c7bb4400ece5adc82c",
+      "criteria": "<!-- AC:BEGIN -->\n- [ ] A decision is made and recorded: either (a) file-operation auditing is reimplemented at the `BuiltinToolProvider.invoke` seam so it covers every real write regardless of UI state, or (b) `Tools/file_operation_hooks.py` is removed as dead code\n- [ ] If kept and reimplemented, the stale `_global_executor` reference in `INTEGRATION_INSTRUCTIONS` is corrected to describe the actual current wiring\n- [ ] If removed, a grep confirms no remaining references to `install_claude_code_hooks` or `Tools/file_operation_hooks.py` anywhere in the codebase\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-24404 - Settings form for creating and editing chunking templates.md",
+      "ref_oid": "01ab680be21718354a3a022cb342d6a49bd24da5",
+      "blob": "9345d654461b323e2124a84bb49643bab0ec771e",
+      "criteria": "<!-- AC:BEGIN -->\n- [ ] Settings (F9) Library/RAG area offers create and edit of chunking templates (name, method, chunk options, tags), writing through the existing service layer (`chunking_interop_library` / RAG-admin `create_template` / `update_template`) — no new direct DB writes\n- [ ] Validate-on-write verdicts surface to the user: the reserved name `auto` (case-insensitive, whole word) and invalid bodies are refused with the validator's field/message summary (`InvalidTemplateError`); builtin templates are not editable (`BuiltinTemplateError`)\n- [ ] The form lists existing templates from the service listing and renders its decoration fields explicitly — `name_reserved` rows flagged (and refused as new names), `template_valid` false rows shown with their `template_validation_errors` summary (fields minted in `RAG_Admin/local_rag_admin_service.py:132-159`). Note the ingest picker is NOT the reference: it drops reserved-name rows and renders every other name uniformly, so there is no picker \"validity decoration\" to mirror\n- [ ] A template created or edited in Settings is immediately selectable in the Library ingest picker (its `_chunk_template_names` cache / re-fetch path covered); the media-details select is out of scope per the Description's scope note\n- [ ] Nothing is added to the deprecated settings surfaces (`Tools_Settings_Window` / `enhanced_settings_sidebar`)\n- [ ] Targeted tests: a form contract test (create happy path + reserved-name and builtin refusals) and a picker-cache invalidation test\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-3500 - Align-MCP-perform_rag_search-and-agent-RAGSearchTool-with-profile-driven-retrieval.md",
+      "ref_oid": "01ba6485258cbd4c4e7afedee94196ab264256cf",
+      "blob": "bba202d880d2fc0ef89c49f910c6745a5fbfca4a",
+      "criteria": "<!-- AC:BEGIN -->\n- [ ] #1 MCP perform_rag_search resolves and honors the active RAG profile's default_search_mode the same way Library's rag-mode search does, instead of a hardcoded search behavior\n- [ ] #2 The agent runtime's RAGSearchTool resolves and honors the active RAG profile the same way\n- [ ] #3 A query issued through MCP/RAGSearchTool and the same query issued through Library's Search/RAG canvas return results with the same match-strength semantics (score-kind-aware bands, not a fabricated similarity) for the same active profile\n- [ ] #4 Reranking-enabled profiles apply reranking on the MCP/agent path exactly as they do on the Library path, with the same skip-on-unavailable disclosure rather than a hard failure\n- [ ] #5 Existing MCP/agent RAG search callers continue to work without a breaking API change\n- [ ] #6 mcp_inspector._ScoredRow no longer defaults score_kind to vector_similarity blindly -- fused/reranker kinds are handled before MCP routes through profiles (mcp_inspector.py:502)\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-15510 - Settings-navigation-preselect-applies-the-provider-then-silently-drops-the-model.md",
+      "ref_oid": "07a6cb3e1d27ed133fba4ab065fd42c86394c1d7",
+      "blob": "388d4b576a9e5c5ece452d49b2df2ec6c643469f",
+      "criteria": "- [ ] Navigating to Providers & Models with both a provider and a model applies both, with the model field showing the requested model\n- [ ] A genuinely unsaved user draft in Providers & Models is still preserved when a navigation context arrives, and the model is not force-applied over it\n- [ ] The two tests marked xfail(strict=True) for this defect in `Tests/UI/test_settings_configuration_hub.py` pass with the marker removed\n- [ ] A test distinguishes the two dirtiness sources directly, so a future change that re-suppresses the model fails loudly rather than silently"
+    },
+    {
+      "path": "backlog/tasks/task-34405 - Batch-Console-character-and-workspace-metadata-reads.md",
+      "ref_oid": "096a468b899ec163ca820ad244d524209726afa1",
+      "blob": "f3b3bcdceab51281190a633982b5d6cdf88fdd36",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 Character scope refresh avoids repeated owned connection preparation within one finite snapshot\n- [x] #2 Authority revision ambient-scope changes and cancellation retain all freshness and retirement guarantees\n- [x] #3 Workspace availability refresh removes redundant reads and publishes only the current generation\n- [ ] #4 A finite qualified database callback shares one complete counted repository interval without dropping SQL, extending native connection ownership, admitting fresh work during pause, or granting authority to other repositories or unqualified owners\n- [ ] #5 The controller durable worker shares one complete counted interval for its exact file-backed Notes receiver while all SQL executes, native close follows interval exit, cancellation retains live ownership, other receivers require independent admission, and custom or memory behavior is preserved\n- [ ] #6 Every real repository source boundary performs its fresh path proof outside the shared coordinator and rechecks exact issued owner path lease and native hold before acceptance; counted same-owner work may finish during pause while new independent owners and revoked or retargeted proofs refuse\n- [ ] #7 A full Console agent worker independently admits its installed config, Runs and workspace sources and reaches the provider while retaining native cleanup and cancellation/drain guarantees; the finite Notes interval is limited to database callbacks.\n- [ ] #8 Real Console settings generation and context-policy persistence callbacks retain one exact captured file-backed Notes interval through all native work and repeated cancellation, retire only worker-created connections after interval exit, preserve committed CAS and caller-owned/custom/memory behavior, and refuse changed persistence/database/repository bindings without stale publication.\n- [x] #9 A cold exact-stock flat browser performs its two unchanged global/Default queries within one physically retired native connection, preserves custom/borrowed/error semantics, and refuses changed stock owners/readers before accepting a result.\n- [x] #10 The original Agent section and fleet preserve one matching empty-conversation historical reader across full rail renders, publish only the current owner and full key, and retain actual native retirement and repeated cancellation semantics.\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-34561 - Fix-Console-recovery-layout-churn-and-verify-native-captured-send-performance.md",
+      "ref_oid": "096a468b899ec163ca820ad244d524209726afa1",
+      "blob": "85b6f21084790bc0bcd0bc1188217e8804bcdb41",
+      "criteria": "<!-- AC:BEGIN -->\n- [ ] #1 Repeated unchanged recovery-row state produces no stylesheet work and visible/hidden geometry remains correct\n- [ ] #2 Three captured messages complete with exact trace receipts on native Windows Linux and macOS with recorded performance counts\n- [ ] #3 All identified fixes are reviewed and included in one PR against dev\n- [ ] #4 Background scheduler safety checks resolve configuration and read the stop state off the UI thread while retaining fresh fail-safe and cancellation ownership behavior\n- [ ] #5 Staggered subscription indexing performs blocking configuration and native admission only in its declared worker while retaining its fresh refusal behavior\n- [ ] #6 MCP catalog setup keeps loop-bound asynchronous catalog and publication on the main loop while blocking store-backed reads run in finite workers with fresh permission resolution and safe cancellation\n- [ ] #7 Each witness query uses one fresh validated control-record and registry observation, preserving source/startup/paired-generation refusals and rejecting changes during observation without authority reuse across calls\n- [ ] #8 Coordinator locks never cover blocking native source validation; exact issued operation and native ownership are rechecked after out-of-lock validation and pause cancellation retarget and retirement refusals remain intact\n- [ ] #9 Context estimates reuse only a same-source same-owner checked sparse display policy with the existing one-second refresh and cancellation fences while live actions and dispatch keep fresh independent configuration reads\n- [ ] #10 Actual installed MCP permission reads avoid repeated owner-only generation selections while every full raw source/native check remains fresh and same-source wrong-path retarget pause cancellation and retirement refusals remain intact\n- [ ] #11 Nested installed repository operations on the same participant and exact path perform one fresh prior native path proof while changed target paths independent owners pause cancellation and restoration retain their required checks\n- [ ] #12 Shared Windows regression fixtures use actual TokenUser default ownership while the separate required elevated custody jobs retain and verify their original Administrators TokenOwner.\n- [ ] #13 Ordinary Character and active subagent count display refreshes share at most a two-second observation only for the exact local owner; owner generation run and child changes invalidate immediately, changed-owner pending reads cannot publish, failures and cancellation are retryable, and actions keep fresh native scope checks.\n- [ ] #14 The standard asynchronous external MCP catalog performs one fresh complete store load off its caller loop, keeps governance and live connection projection on that loop, rejects changed service or store owners, and retains producer and native worker custody through cancellation; custom and subclass routes preserve their contract.\n- [ ] #15 The fleet display honors exact process-owned setup or bound active primary live state including empty children, while terminal resumed unknown and custom bridges preserve durable fallback and nonempty live handles retain precedence.\n- [ ] #16 Actual asynchronous Console submission and continuation snapshot capture keeps UI-owned composition and governance on its caller loop while a finite fresh MCP source worker supplies an ephemeral definition maximum; exact actor service source settings and configuration changes refuse publication, default policy and downgrade audit behavior remain intact, cancellation drains native custody, and synchronous or custom provider contracts remain compatible.\n- [ ] #17 Awaited Character browser removal retires its real Textual message pump independently of suspended controller refreshes and rejects late presentation while preserving the existing state identity and view contracts.\n- [ ] #18 Warm synchronous Console display from an exact standard checked readiness owner within its original one-second age opens no redundant enclosing native configuration scope; cold expired replaced injected retargeted paused or foreign-loop owners retain fresh fallback or refusal, nested disk readers and live actions keep fresh native lifetimes, and body errors and retirement ownership remain intact.\n- [ ] #19 Actual native Console Send preparation keeps both delivering Textual message pumps responsive to driver input; ordinary pump callers transfer one captured continuation to a finite owned worker before blocking native reads, while direct and spoken-worker outcome contracts, duplicate gates, exact chat and draft fences, cancellation drain and fresh native authority remain intact.\n- [ ] #20 Concurrent hook indicator refreshes share one accepted physical native reader; cancellation drains its custody, owner or reader replacement suppresses publication, and Send keeps its required fresh authorization reads.\n- [ ] #21 Every accepted hook snapshot read retains native custody through repeated cancellation; reader and publication errors reach their matching callers, and optional indicator scheduling cannot mask the original Send result or cancellation.\n- [x] #22 An unchanged admitted Windows workspace root remains usable with Python 64-bit volume and 128-bit file identifiers; complete identity comparisons still refuse replaced roots, changed high bits and reparse points, restore the prior directory and retire all retained handles, with original cross-platform pin and isolated-helper controls retained.\n- [ ] #23 Standard MCP composition performs its original fresh compose-time switch check before catalog access without a duplicate controller read; custom or changed factories and callbacks retain their precheck, and source replacement, cancellation and permission changes refuse unsafe publication.\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-15465 - Pair-WAL-with-synchronous=NORMAL-uniformly-across-live-databases.md",
+      "ref_oid": "09f0039ef41e7057393d0f0f4e3a63b5e34ea338",
+      "blob": "7f744a01db963998ee996e7e103e2757b99ab540",
+      "criteria": "<!-- AC:BEGIN -->\n- [ ] #1 Every live application database runs WAL + synchronous=NORMAL, verified by a probe reading effective PRAGMAs from created files\n- [ ] #2 A write-stall microbenchmark on one write-hot path (e.g. watchlists item upserts or workspace pin/save) recorded before/after\n- [ ] #3 Backup/restore and DB-maintenance surfaces handle -wal/-shm sidecars correctly (test or documented check)\n- [ ] #4 Each DB carries a one-line rationale comment like the Library_Ingest_Jobs template\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-14920 - Repair-20-stale-contract-failures-in-console-and-personas-UI-suites.md",
+      "ref_oid": "0b8e1c7513d980e6e60f60d246bd09869b512bd1",
+      "blob": "d66a77f1930500f0fd0ebe2ce0c1e417577c9cbd",
+      "criteria": "<!-- AC:BEGIN -->\n- [ ] #1 Each of the 20 failures is classified as stale-contract (test fix) or real regression (product fix), with the evidence that decided it — not repaired wholesale to green\n- [ ] #2 Any classified as a real regression is fixed in the product, or filed separately with its reproduction if it needs owner judgement\n- [ ] #3 Both files run WHOLE with a READ nonzero pass count and zero failures\n- [ ] #4 If the moved-seam shape (`_ensure_active_console_session_settings` and friends) recurs across other suites, the sweep that finds them is checkable rather than asserted\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-34800 - Reserve-Canvas-context-in-the-Personal-Context-Next-Send-preview.md",
+      "ref_oid": "0d9cd11c2293be8a3a7192c4e07fa09b502ffd7c",
+      "blob": "b29e4ec152491177de16d0df8a0d2283ceb736fb",
+      "criteria": "<!-- AC:BEGIN -->\n- [ ] #1 A native production preview regression reproduces the Canvas-enabled budget mismatch before the fix.\n- [ ] #2 With identical profile, model, message and tool inputs, the Inspector and dispatched request agree on selected records and their available input budget, including Canvas schemas and runtime guidance.\n- [ ] #3 Preview does not register an executable Canvas run, create staging records, grant mutation authority, or change the selected Canvas.\n- [ ] #4 Disabled, unavailable and stale Canvas states preserve their existing fail-closed behavior, with native Python >=3.12 targeted verification and a recorded ADR check.\n- [ ] #5 Current Goal/Canvas preview budget parity and post-await Canvas ownership regressions execute in required PR checks.\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-34806 - Expose-learned-response-rules-in-composer-and-scoped-settings.md",
+      "ref_oid": "0d9cd11c2293be8a3a7192c4e07fa09b502ffd7c",
+      "blob": "5e125c4fac85f96d601d0498d7d958c523ee819b",
+      "criteria": "<!-- AC:BEGIN -->\n- [ ] #1 Composer commands dispatch natively and refusals preserve the draft.\n- [ ] #2 Chat, Workspace and global settings reach one scoped manager with explicit promotion and tested revisions.\n- [ ] #3 Stop remains reachable during checking and token-backed controls render at 80x24 and 120x35.\n- [ ] #4 Detached or superseded manager reload/action callbacks cannot read removed children or project stale scope results; mounted edits and exact saved revision remain intact.\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-34810 - Research-workspace-deletes-a-note-on-the-UI-loop.md",
+      "ref_oid": "0d9cd11c2293be8a3a7192c4e07fa09b502ffd7c",
+      "blob": "34f0172f9046bdbc55b4613ddc20d024bb31e920",
+      "criteria": "<!-- AC:BEGIN -->\n- [ ] #1 Deleting a note from the Research workspace does not block the UI while another connection holds the database write lock\n- [ ] #2 The delete still completes, or reports its failure, once the lock is released or the wait times out\n- [ ] #3 A test holds the write lock on another connection during the delete and shows the event loop keeps running\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-35970 - Console-the-collapsed-Character-section-recomposes-twice-per-send-Refreshing-then-the-result.md",
+      "ref_oid": "0e3b5419df2eafbd6607687ce0a0596eebe2705e",
+      "blob": "0d06ae0e162be9e15694886e7f12722da405d090",
+      "criteria": "<!-- AC:BEGIN -->\n- [ ] #1 A send with the Character section collapsed causes no Character-section recompose or layout request\n- [ ] #2 Expanding the Character section after such a send shows the current chats with no stale Refreshing line\n- [ ] #3 The held-run layout-request test in Tests/UI/test_console_run_tick_layout_requests.py no longer exempts the Character section\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-429 - Character-card-import-preserves-embedded-character-book-lorebooks.md",
+      "ref_oid": "1648e02943248c76eb09a795ef47507a3849a1ff",
+      "blob": "c73bae0ed9b78aa6fefc1448043f0a67bc0df549",
+      "criteria": "<!-- AC:BEGIN -->\n- [ ] #1 Importing a v2 card with a character_book results in that lorebook existing in the app and being attached to the imported character\n- [ ] #2 Import surfaces what happened to the lorebook (e.g. toast naming the imported book); if any part cannot be imported, the user is told instead of silent dropping\n- [ ] #3 Round-trip: exporting the character and re-importing preserves the book\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-635 - First-run-character-chat-UAT-orientation-markup-crash-approval-card-mount-order.md",
+      "ref_oid": "1648e02943248c76eb09a795ef47507a3849a1ff",
+      "blob": "fefd11efa3a593af53e19b1dc4f47141ea30ef62",
+      "criteria": "- [x] A first-time user can import a SillyTavern PNG character card, start a\n  chat, send a message, and see the reply, with the conversation persisted —\n  verified end-to-end by an automated UAT against the real app object.\n- [x] With no provider configured, Start Chat is blocked gracefully with an\n  actionable explanation (disabled button + tooltip, no crash, no dead end).\n- [x] The first-run orientation empty state renders without MarkupError for a\n  missing-API-key provider, an unknown provider, and a ready provider, and the\n  literal `[api_settings.<provider>]` TOML path remains visible to the user.\n- [x] `ChatApprovalCard` mounts without `NoMatches` regardless of compose\n  timing.\n- [x] Previously failing `test_chat_approvals_and_resume.py` tests pass."
+    },
+    {
+      "path": "backlog/tasks/task-19872 - Double-pressing Settings Load Backup reports edits were kept that never existed.md",
+      "ref_oid": "278a5f0926ac3c80a0a421099939f45057dcee1c",
+      "blob": "99bba488d72626137166a3839b2d39f92ca85648",
+      "criteria": "- [ ] Pressing \"Load Backup\" twice in quick succession does not report that\n      unsaved edits were kept when the user made none\n- [ ] The guard distinguishes a write the application itself made from a genuine\n      user edit\n- [ ] A real unsaved user edit is still protected — a backup load that would\n      overwrite typed-but-unsaved config text still declines and still says so\n- [ ] A test drives both cases (double-press with no user edit; single press\n      with a pending user edit) and asserts the message, and is\n      mutation-checked\n- [ ] The interleaving is reproduced before the fix is written, and what was\n      observed is recorded — this task was reasoned from code, not driven"
+    },
+    {
+      "path": "backlog/tasks/task-35587 - Prepare-Settings-prompt-summary-off-the-UI-thread.md",
+      "ref_oid": "34f88d6322ee2819d3e189e97eda5bc0e3f419f1",
+      "blob": "24efcd3f936337f21f90aa456434789926b3a0a4",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 Settings composition and refresh never perform the customized-prompt storage read on the UI thread.\n- [x] #2 Count publication rejects stale config, edited, cancelled, and unmounted results; failures show unavailable rather than Defaults.\n- [x] #3 Existing prompt storage admission remains unchanged and targeted tests plus native Windows profiling verify the change.\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-1346 - Watchlists-tab-strip-diverges-from-the-approved-spec.md",
+      "ref_oid": "38316811c5a3634e6dd36cd6d38f283014eaaf8f",
+      "blob": "17c7a8c2c9b501853edda9a14bf2d72fbb3e308f",
+      "criteria": "<!-- AC:BEGIN -->\n- [ ] #1 A decision is recorded on whether the spec adopts the six-section strip or the implementation adopts the spec's five tabs\n- [ ] #2 Whichever is chosen, the spec and the implementation agree, and the spec's Empty states section no longer references a tab that does not exist\n- [ ] #3 If Artifacts is added, its empty state names the next slice rather than showing a bare table\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-1620 - Console-Edit-Message-modal-buttons-invisible-in-real-terminals.md",
+      "ref_oid": "38316811c5a3634e6dd36cd6d38f283014eaaf8f",
+      "blob": "c818a529641aba42e5c8aa22fac69139870ed32d",
+      "criteria": "- [ ] Cancel / Save / Edit & resend are visible in a real terminal (tmux\n      and a normal TTY) for both USER and non-USER targets of the modal.\n- [ ] Focus is visibly indicated when Tab reaches each button.\n- [ ] A regression check exists that would catch a live-terminal-only\n      disappearance (at minimum: a note in the test explaining why the\n      headless assertion is insufficient, plus a geometry assertion that\n      holds under the real stylesheet).\n- [ ] The User Guide quirk note in\n      `Docs/User_Guide/console/branching-and-rewind.md` is updated/removed\n      to match the fixed behavior."
+    },
+    {
+      "path": "backlog/tasks/task-1620 - Settings-persistence-badge-names-the-save-model-on-every-category.md",
+      "ref_oid": "38316811c5a3634e6dd36cd6d38f283014eaaf8f",
+      "blob": "13c932ee27766c606d6e820b203814550ba53845",
+      "criteria": "- [x] Every category's State bar leads with a persistence badge in the same position\n- [x] The four own-persistence categories and Workspaces render the State banner at all (previously skipped)\n- [x] Workspaces' banner names the reversal path for each immediate action\n- [x] The dirty 'Unsaved changes' banner keeps priority over the badge"
+    },
+    {
+      "path": "backlog/tasks/task-1621 - Settings-filter-clears-after-opening-a-match;-rail-overflow-cue.md",
+      "ref_oid": "38316811c5a3634e6dd36cd6d38f283014eaaf8f",
+      "blob": "786fb6cec1ff440cae2800642b0383f6f4e11b44",
+      "criteria": "- [x] Enter-open clears the query and restores the full rail\n- [x] The rail scrollbar is visible against the panel (overflow cue)"
+    },
+    {
+      "path": "backlog/tasks/task-1622 - Settings-focused-field-guidance-for-Threshold;-numeric-labels-carry-units.md",
+      "ref_oid": "38316811c5a3634e6dd36cd6d38f283014eaaf8f",
+      "blob": "8b87f10ffb4e7ef27b0cfef31a3ce4380374f7fd",
+      "criteria": "- [x] Threshold has a dedicated guidance entry (purpose, saved-as, applies)\n- [x] Every Console Behavior Input is covered; the fallback only renders while nothing is focused\n- [x] Label column widened so full labels render; units added (chars/px/themes); Image Gen backend rows keep 12 (120-col geometry guard)"
+    },
+    {
+      "path": "backlog/tasks/task-1640 - Settings-copy-action-verbs,-honest-dirty-banner,-spelled-stats.md",
+      "ref_oid": "38316811c5a3634e6dd36cd6d38f283014eaaf8f",
+      "blob": "b8ea8d936f6fa05d705fe47371f5238030cd48f4",
+      "criteria": "- [x] The Overview Theme action names its verb ('Open Theme editor')\n- [x] The dirty banner states the truth: switching categories keeps the draft\n- [x] The t hint uses each category's real verb (test provider / check storage / check privacy / validate config / preview appearance / check index)\n- [x] DB stats spell their labels (Prompts / Chats/Notes / Media)\n- [x] The full reassurance paragraph reads on Overview; one line elsewhere\n- [x] Duplicate headings removed (Console Behavior, Provider readiness); stacked colons in the config-path row fixed"
+    },
+    {
+      "path": "backlog/tasks/task-1641 - Settings-field-level-search.md",
+      "ref_oid": "38316811c5a3634e6dd36cd6d38f283014eaaf8f",
+      "blob": "d8d03aef0f9b13e66654667ebbe0510dfc6bec3c",
+      "criteria": "- [x] Typing a field label surfaces its category (rank tier between description and owned keys)\n- [x] The echo line names the field: 'Console Behavior › Threshold (chars)'\n- [x] Enter opens the category AND focuses the matched field, firing its guidance\n- [x] Existing rank-tier order is preserved"
+    },
+    {
+      "path": "backlog/tasks/task-1642 - Settings-pin-the-State-bar;-fold-indicator-and-folding-edge-cases.md",
+      "ref_oid": "38316811c5a3634e6dd36cd6d38f283014eaaf8f",
+      "blob": "82ec9122ca2b06129ee15663c0241ac77ea7782a",
+      "criteria": "- [x] One State banner, pinned between the pane title and the scrollable body, on every category\n- [x] The fold indicator is re-evaluated after the sync-rows recompose\n- [x] Every in-place guidance refresh path folds dotted keys (console, appearance, storage, rag, provider)"
+    },
+    {
+      "path": "backlog/tasks/task-23193 - Record-personal-context-profile-authority-ADR.md",
+      "ref_oid": "3e9dc5b5d023b9862efa075aed535479792d3058",
+      "blob": "e0a7ac3ec4c3e874b40b77caef3831633a2a0bf6",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 An accepted canonical ADR records the Personal Context Profile authority, sync, conflict, privacy, encryption, migration, and rollback decisions required by the approved design.\n- [x] #2 The ADR index and all design-suite references use one collision-free ADR number and canonical path.\n- [x] #3 Reference and Markdown diff checks pass for every document changed by this task.\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-24403 - Inject-bounded-Personal-Context-into-Console-requests.md",
+      "ref_oid": "3e9dc5b5d023b9862efa075aed535479792d3058",
+      "blob": "29bc3e81114f4369157e1945fd4d782bd7cfb78c",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 Eligible global and mapped-workspace profile records are selected deterministically with workspace precedence, priority, expiry, visibility, authority, and unsupported-record rules\n- [x] #2 Serialized profile context is escaped, whole-record only, and bounded by both byte and token budgets\n- [x] #3 Locked, disabled, absent, and unlinked states fail closed without profile content\n- [x] #4 Console live dispatch and Next Send preview consume the exact same immutable per-turn snapshot\n- [x] #5 Agent child configurations preserve the same profile block and empty-profile behavior remains byte-identical\n- [x] #6 Targeted Personal Context, Agent, Console, and documentation verification passes\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-32464 - Console-library-access-modal-paints-a-blocked-glyph-for-an-unselected-radio.md",
+      "ref_oid": "4186a0a650370af447ad1e2109063acf0ea49917",
+      "blob": "d882e4520b9b719bd156386d3de5974dde6209bc",
+      "criteria": "<!-- AC:BEGIN -->\n- [ ] #1 A decision is recorded on which glyph pair an unselected radio wears, and whether the Library legend covers radios at all\n- [ ] #2 The modal reads its glyphs from the shared constants rather than local literals\n- [ ] #3 A test pins the painted radio glyphs so a future legend change cannot silently pass this surface by\n- [ ] #4 The Library glyph legend's own documentation states where radios sit, so the next audit finds the answer instead of the counterexample\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-33244 - Dreams-settings-surface-enable-Dreams-and-edit-the-interest-profile-in-Settings.md",
+      "ref_oid": "4593db6db176d297c8de2e4ad9293c1f1e093c91",
+      "blob": "aec447800ad64c1d799125c596951a6ed4c1803d",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 Dreams can be enabled and disabled from the Settings screen without editing config.toml by hand,Interest profile topics and region are viewable and editable; user topics addable and removable with weight,Section follows ADR-150 tokens and lives in the canonical settings_screen.py (no legacy settings windows),Stale footer-hints test name corrected to the current action count,dreams.md enable-path section points at the Settings screen first, config.toml as the escape hatch\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-1346 - Watchlists-tab-strip-diverges-from-the-approved-spec.md",
+      "ref_oid": "4972be0c34f93f2a0c1b27ae069811f30bf03825",
+      "blob": "d036ac74ec50601123833a061aed1586af1fb5f5",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 A decision is recorded on whether the spec adopts the six-section strip or the implementation adopts the spec's five tabs\n- [x] #2 Whichever is chosen, the spec and the implementation agree, and the spec's Empty states section no longer references a tab that does not exist\n- [x] #3 (moot in its original form — see notes) If Artifacts is added, its empty state names the next slice rather than showing a bare table\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-1620 - Console-Edit-Message-modal-buttons-invisible-in-real-terminals.md",
+      "ref_oid": "4972be0c34f93f2a0c1b27ae069811f30bf03825",
+      "blob": "19e5fd0e89b8e899af26a436629974b1812ae7b7",
+      "criteria": "- [ ] Cancel / Save / Edit & resend are visible in a real terminal (tmux\n      and a normal TTY) for both USER and non-USER targets of the modal.\n- [ ] Focus is visibly indicated when Tab reaches each button.\n- [ ] A regression check exists that would catch a live-terminal-only\n      disappearance (at minimum: a note in the test explaining why the\n      headless assertion is insufficient, plus a geometry assertion that\n      holds under the real stylesheet).\n- [ ] The User Guide quirk note in\n      `Docs/User_Guide/console/branching-and-rewind.md` is updated/removed\n      to match the fixed behavior."
+    },
+    {
+      "path": "backlog/tasks/task-15603 - Settings-navigation-preselect-applies-the-provider-then-silently-drops-the-model.md",
+      "ref_oid": "4b140b4e13ae7812b304d0d41986d0f3de9f97a2",
+      "blob": "2d54a31af4ce1805dc36cb1628ef5f27e2364f5b",
+      "criteria": "- [ ] Navigating to Providers & Models with both a provider and a model applies both, with the model field showing the requested model\n- [ ] A genuinely unsaved user draft in Providers & Models is still preserved when a navigation context arrives, and the model is not force-applied over it\n- [ ] The two tests marked xfail(strict=True) for this defect in `Tests/UI/test_settings_configuration_hub.py` pass with the marker removed\n- [ ] A test distinguishes the two dirtiness sources directly, so a future change that re-suppresses the model fails loudly rather than silently"
+    },
+    {
+      "path": "backlog/tasks/task-31560 - Complete-new-Library-modal-contracts.md",
+      "ref_oid": "50ca9843676539c03cdb43d0516746044a1cf1eb",
+      "blob": "4760c455d57343b4a47fb86862dd30905ab5492e",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 The production presenter edges resolve to `SkillImportChoiceModal` and `LibraryReviewSetPickerDialog`.\n- [x] #2 Both modals have negative, positive, focus, and lifecycle contract coverage.\n- [x] #3 Skill import choice initializes the shared dismissal mixin exactly once.\n- [x] #4 The Library modal inventory and focused contract tests pass.\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-31562 - Keep-Speech-settings-UI-tests-splash-free-and-viewport-aware.md",
+      "ref_oid": "50ca9843676539c03cdb43d0516746044a1cf1eb",
+      "blob": "398c40af5c04f454cd877906bb6666816f67cd9b",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 The production Settings boundary test mounts Settings deterministically without waiting for the splash animation.\n- [x] #2 Speech action tests bring Save, Restore Defaults, and Revert controls into the test viewport while preserving the intended focused-field interaction.\n- [x] #3 The three reported Speech settings regressions pass in a targeted pytest run.\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-31564 - Keep-Settings-to-Speech-Lab-boundary-test-offline.md",
+      "ref_oid": "50ca9843676539c03cdb43d0516746044a1cf1eb",
+      "blob": "73b39707c7829209026500fa7ac822fcfd87c099",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 The boundary test replaces the Speech playground TTS service seam with a deterministic fake.\n- [x] #2 The test still proves Settings save and Speech Lab navigation cross the production App boundary.\n- [x] #3 The focused test passes without blocked network attempts.\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-31566 - Refresh-Settings-category-and-Image-Gen-coverage.md",
+      "ref_oid": "50ca9843676539c03cdb43d0516746044a1cf1eb",
+      "blob": "a02c28a2c5342cf2485c2cc25229bb7e078225a0",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 The seven reproduced Settings failures pass\n- [x] #2 Both affected Settings modules pass in full\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-31590 - Repair-Console-side-chat-modal-regressions.md",
+      "ref_oid": "50ca9843676539c03cdb43d0516746044a1cf1eb",
+      "blob": "b4717f4e1f8e9227212273353998305d259e0560",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 Reproduced side-chat modal failures pass\n- [x] #2 Console side-chat modal module passes in full\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-31656 - Wait-for-mounted-Watchlists-artifact-geometry-after-generation.md",
+      "ref_oid": "50ca9843676539c03cdb43d0516746044a1cf1eb",
+      "blob": "c08dd73d6aed0b1216867ce350256263f4990a4f",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 Generation readiness waits for the current visible mounted table geometry as well as database row agreement.\n- [x] #2 A controlled delayed-layout regression retains the original list, button, body placement and painted-label assertions.\n- [x] #3 The complete affected Watchlists test file and scoped static checks pass.\n- [x] #4 Cast readiness likewise tolerates replacement-table absence and waits for the current mounted geometry while preserving script row and content assertions.\n- [x] #5 Synthesize readiness waits for its current mounted script detail before audio-content assertions, including transient replacement absence.\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-31659 - Defer-Console-command-modal-imports-until-first-use.md",
+      "ref_oid": "50ca9843676539c03cdb43d0516746044a1cf1eb",
+      "blob": "bf5919c202353550fe4078ca8df89576b54df1b9",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 Style and rewind commands retain behavior\n- [x] #2 Command-only modal imports are deferred without changing boot budgets\n- [x] #3 Video capacity prompt retains first-use behavior and stays off the boot import path\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-31670 - Remove-orphaned-Watchlists-lookup-and-recognize-bound-service-callbacks.md",
+      "ref_oid": "50ca9843676539c03cdb43d0516746044a1cf1eb",
+      "blob": "bf7f2e409e8d5729bed5e87c07bf793a80347c57",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 The unused case-insensitive lookup is removed while atomic collection reuse behavior stays covered.\n- [x] #2 The caller audit recognizes exact WatchlistBundleService bound callbacks and rejects unrelated objects with colliding method names.\n- [x] #3 Affected Watchlists collection and subscription tests and scoped static checks pass.\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-31676 - Restore-Personas-expression-reference-runtime-resolution.md",
+      "ref_oid": "50ca9843676539c03cdb43d0516746044a1cf1eb",
+      "blob": "4eb8606ff6fa8352fcf5ec12320574a89af1cf9e",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 Expression generation constructs the canonical resolved reference image at runtime without broadening route preimport closure.\n- [x] #2 Reported expression generation failures are diagnosed and repaired without weakening generation, cancellation or first-clear assertions.\n- [x] #3 Focused expression tests and relevant import/static checks pass.\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-31680 - Settle-Watchlists-startup-snapshots-before-direct-fixture-navigation.md",
+      "ref_oid": "50ca9843676539c03cdb43d0516746044a1cf1eb",
+      "blob": "e31a630b06fa976ac605646fb37879dc45743c5d",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 The scoped item fixture waits for initial startup work and publishes its newly seeded tree before direct scope navigation.\n- [x] #2 A controlled delayed startup snapshot demonstrates the original failure and the corrected fixture preserves exact member-only assertions.\n- [x] #3 The complete affected Watchlists collection test file passes without changing production reconciliation.\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-31681 - Exercise-lazy-Watchlists-filters-in-painted-toolbar-coverage.md",
+      "ref_oid": "50ca9843676539c03cdb43d0516746044a1cf1eb",
+      "blob": "a35e89fb59fae569df72c67985a548c4edfc74b1",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 The visibility test opens Filters through the real control and waits for its mounted laid-out editor.\n- [x] #2 Every original toolbar control stays within its pane and its expected labels paint on the correct current row at both terminal sizes.\n- [x] #3 Affected Watchlists visual cases pass without weakening viewport or paint assertions or changing product layout.\n- [x] #4 Painted reverse-video checks are bounded to their table region and reject duplicate labels in adjacent panes.\n- [x] #5 Tree highlight coverage uses a real paged Reader service so successful navigation can commit before the original style assertions.\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-31683 - Align-database-contract-tests-with-quiescent-connections-and-SQL-formatting.md",
+      "ref_oid": "50ca9843676539c03cdb43d0516746044a1cf1eb",
+      "blob": "9267d12eaeebfcfd32b824e52983194acd6f8343",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 ChaChaNotes connection assertions pin the actual quiescent connection factory alongside unchanged private-file and PRAGMA contracts.\n- [x] #2 Resume projection checks retain byte bounds and pre-JSON filtering without depending on whitespace inside the CAST expression.\n- [x] #3 Both complete database files pass with scoped static checks and no production changes.\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-31688 - Exercise-canonical-generation-settings-hydration-in-resume-fixtures.md",
+      "ref_oid": "50ca9843676539c03cdb43d0516746044a1cf1eb",
+      "blob": "9c4c887c32d34ec1e1d49d2290d01200204da9a8",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 Both reported complete-snapshot and durable-replacement resume tests pass at the canonical hydration boundary\n- [x] #2 Current provider endpoint configuration and row-owned prompt and prefill precedence remain asserted\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-31692 - Align-Library-modal-inventory-with-concrete-launch-ownership.md",
+      "ref_oid": "50ca9843676539c03cdb43d0516746044a1cf1eb",
+      "blob": "7ccee4419f43f065e8e8ed983af6a0867e92a5cc",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 Every declared Library modal launch edge maps to its actual production owner and presenter\n- [x] #2 The inventory continues rejecting undeclared, missing, nested and injected modal edges without count-only changes\n- [x] #3 Modal inventory and relevant dismissal tests pass with static checks\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-31694 - Align-Watchlists-refresh-and-retry-tests-with-committed-Reader-contracts.md",
+      "ref_oid": "50ca9843676539c03cdb43d0516746044a1cf1eb",
+      "blob": "cb1c8dc20ffb4b42c77d64637ebeef25a9da7030",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 Refresh tests assert the open row is retained while new page contents and selected Reader content remain correct.\n- [x] #2 Reader failure coverage asserts visible retry chrome with stale content cleared and recovery still available.\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-31699 - Run-the-Persona-publication-descriptor-budget-in-a-fresh-process.md",
+      "ref_oid": "50ca9843676539c03cdb43d0516746044a1cf1eb",
+      "blob": "c7dff95683a30f6acfcd0c089bb07587c5f25de9",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 The real256asset publication succeeds under unchanged RLIMIT_NOFILE256 in a fresh interpreter.\n- [x] #2 Unrelated parent descriptors do not consume the publication measurement or relax its ceiling.\n- [x] #3 The complete publication file and deterministic parent-pressure check pass with scoped static checks.\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-31718 - Defer-Settings-and-Scheduling-payload-until-first-use.md",
+      "ref_oid": "50ca9843676539c03cdb43d0516746044a1cf1eb",
+      "blob": "f86d937cc054d2af04518e49167a08855f035941",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 Settings route pre-import does not eagerly load the RAG profile engine or Tool Pack service/review implementation closure.\n- [x] #2 Scheduling route pre-import defers detail widgets and create/edit/audit forms until their actual first use, preserving event identity and runtime behavior.\n- [x] #3 Focused import-closure regressions and affected Settings/Scheduling behavior tests pass without ratchet increases or exemptions.\n- [x] #4 The complete pre-import census records measured reductions and any remaining independently owned Library cost.\n- [x] #5 The compact Scheduling geometry harness loads the canonical app stylesheet set, preserving its original one-row and visibility assertions.\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-31725 - Refresh-Watchlists-regression-contracts.md",
+      "ref_oid": "50ca9843676539c03cdb43d0516746044a1cf1eb",
+      "blob": "f8e785ca2a7a5c68c79bdbbb66bcc3b57ae675f3",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 The four reproduced Watchlists failures pass.\n- [x] #2 The affected Watchlists modules pass in full.\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-31731 - Repair-Console-modal-dismissal-regressions.md",
+      "ref_oid": "50ca9843676539c03cdb43d0516746044a1cf1eb",
+      "blob": "746a91cfe6139cb0200f1eb86d8e94c25bcc65b1",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 Reproduced modal dismissal failures pass\n- [x] #2 Console modal dismissal module passes in full\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-31773 - Move-Console-dictionary-and-world-book-operations-into-the-retrieval-owner.md",
+      "ref_oid": "50ca9843676539c03cdb43d0516746044a1cf1eb",
+      "blob": "c565f446f957ef6a8e9baa80964dc8d7d9c0c2c6",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 Dictionary and world-book send appliers and picker outcomes preserve current behavior, including error containment and guard release.\n- [x] #2 Screen event admission and Textual worker scheduling remain on ChatScreen, and all moved dependencies are explicit and late-bound.\n- [x] #3 Whole affected dictionary, world-book, retrieval, and native integration tests pass without increasing architecture ceilings.\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-31775 - Bind-dictionary-send-integration-fixtures-to-durable-conversation-authority.md",
+      "ref_oid": "50ca9843676539c03cdb43d0516746044a1cf1eb",
+      "blob": "d738c172c764b66fef6f1903cc6c7680320c0c0c",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 Both provider and agent dictionary sends reach their intended dispatch branch and preserve exact dictionary expansion assertions using current durable conversation authority.\n- [x] #2 No production persistence guard or expected output is relaxed, and the complete integration file passes.\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-31912 - Move-pure-Console-rewind-and-settings-draft-policy-to-their-existing-owners.md",
+      "ref_oid": "50ca9843676539c03cdb43d0516746044a1cf1eb",
+      "blob": "1532b173301559d1f2fc67f685fbdc7aeeee5ffe",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 Rewind summary eligibility and initial settings draft results remain identical for all existing cases.\n- [x] #2 The pure helpers live on their existing Commands and SettingsNavigation owners, with redundant constructor callbacks retired and all runtime/test callers correctly bound.\n- [x] #3 Normalized function AST bodies and arguments match the baseline, affected whole-file checks pass or pre-existing failures are separately evidenced, and no architecture ceilings increase.\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-31914 - Watchlists-failure-policy-test-bypasses-the-live-check-coordinator.md",
+      "ref_oid": "50ca9843676539c03cdb43d0516746044a1cf1eb",
+      "blob": "e3ff719de14e6c2ee9d09c5d9e2bc5680b2700d4",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 The unexpected-failure test intercepts the current local Check now execution boundary.\n- [x] #2 The test records a warning-or-higher failure without attempting network egress.\n- [x] #3 The complete Watchlists check-now failure-policy module passes.\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-31915 - Verify-current-Watchlists-source-creation-off-loop.md",
+      "ref_oid": "50ca9843676539c03cdb43d0516746044a1cf1eb",
+      "blob": "3fadf033e0cf8be86a6b7a41d4c122ebd747330f",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 Real file-backed creation and exact-source reuse execute the batch transaction off loop and return the durable source.\n- [x] #2 An inline-offload mutation fails the updated guard, without loosening nonempty thread assertions.\n- [x] #3 Complete affected Watchlists files and scoped lint pass.\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-31917 - Fence-combined-Console-settings-live-publication.md",
+      "ref_oid": "50ca9843676539c03cdb43d0516746044a1cf1eb",
+      "blob": "a64165eac3fd4e8f6aabcb66d9ed00a83b7ea022",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 Fork eligibility and fence issuance reject the source between generation-settings and context-policy publication.\n- [x] #2 Other sessions remain forkable; the source becomes forkable after success or an exception without leaking transition ownership.\n- [x] #3 Exact-origin, duplicate-submission and existing settings persistence behavior are preserved.\n- [x] #4 Targeted complete-file tests, scoped static checks and review qualify the repair; unrelated census failures remain explicitly open.\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-31929 - Consume-character-Chat-handoffs-on-cached-Console-resume.md",
+      "ref_oid": "50ca9843676539c03cdb43d0516746044a1cf1eb",
+      "blob": "041f4f6c344a865c2222dae238d0e1a27866f1f1",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 Returning to the same Console consumes and acknowledges one staged Chat handoff and creates exactly the intended character-bound session.\n- [x] #2 First mount and ordered saved-chat startup retain their existing behavior; suspending again stops pending resume timers before hidden consumption.\n- [x] #3 Focused real navigation regressions and relevant full lifecycle files pass without direct test-side handoff consumption.\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-16319 - Trajectory-export-versioned-JSON-trace-format-and-writer.md",
+      "ref_oid": "5911e5f4c6d408b62b036b8d400d81c1b10a7b60",
+      "blob": "97d668ffe70f3784b5039af2f49656c13b85b27b",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 Export produces a schema-versioned single-file JSON trace of one conversation,Tool payloads redacted by default; full payloads only with explicit opt-in flag,Import validator round-trips the exported file (task-2 seam),Export of a conversation lacking sidecar rows still succeeds (legacy fallback),Unit tests cover format, redaction, and edge cases\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-34565 - Define-structured-document-engine-contracts-and-conformance-fixtures.md",
+      "ref_oid": "5afd95ddf931b4a0c5a856f7ca9edb6018c7fd0a",
+      "blob": "785d1be4548d5384f304f8f71ec9f6e370cacc0e",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 Immutable request identities and typed result contracts enforce diagnostic ranges and truthful formatting admission.\n- [x] #2 Versioned fixtures cover strict JSON, physical-line JSONL, YAML preservation and unsupported constructs.\n- [x] #3 Both runtime fixture copies are byte-identical with SHA-256 recorded and focused contract tests pass.\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-34570 - Qualify-structured-formatting-in-native-editor-undo-history.md",
+      "ref_oid": "5afd95ddf931b4a0c5a856f7ca9edb6018c7fd0a",
+      "blob": "a4011d46b62a9605f519aa8dd7de3aeb438588e2",
+      "criteria": "<!-- AC:BEGIN -->\n- [ ] #1 Real native typing, formatting, typing, undo, undo and redo preserve the correct document states and earlier history.\n- [ ] #2 Identity and editability guards refuse stale/read-only results; no-op output creates no edit.\n- [ ] #3 Selection, caret, focus, scroll and composition behavior are qualified without a custom snapshot undo stack.\n- [ ] #4 Qualification evidence names runtime versions, test commands and unsupported environments; temporary production wiring is removed before commit.\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-34361 - Expose-learned-response-rules-in-composer-and-scoped-settings.md",
+      "ref_oid": "73823fde3a4ef93e71b2da853e3918e2c1e5bccd",
+      "blob": "890d4434e45a6c2b4f5513995d7c056a0352a402",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 Composer commands dispatch natively and refusals preserve the draft.\n- [x] #2 Chat, Workspace and global settings reach one scoped manager with explicit promotion and tested revisions.\n- [x] #3 Stop remains reachable during checking and token-backed controls render at 80x24 and 120x35.\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-18060 - Make-research-runs-durable-resumable-jobs.md",
+      "ref_oid": "7ddf85969937fdd4e1b23a37d7819666ee1a72d8",
+      "blob": "a5e4f494eefe3312eb746c5283d3ec5ff05ce16f",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 Exactly one executor can run a given research run at a time, and a run whose executor died can be taken over rather than stranded\n- [x] #1a A worker that wakes after its lease was taken over cannot complete or renew the run it lost\n- [x] #1b A run whose executor keeps dying is failed on a retry budget rather than retried forever\n- [x] #1c A phase that reports no progress for longer than the lease is not taken over\n- [x] #1d An executor that lost its lease cannot write artifacts or settle budget, not merely cannot finish the run\n- [x] #2 A resumed run restores the budget it already spent instead of being granted it again\n- [ ] #3 A resumed run continues from its last completed phase without repeating searches it already paid for\n- [x] #4 Persisted evidence is bounded by a stated cap, and an artifact that exceeded it records that it did\n- [ ] #5 A run interrupted by an application exit continues on the next launch without user intervention\n- [ ] #6 A run parked for checkpoint review is not re-entered by the scheduler on every tick\n- [ ] #7 A completed run announces itself EXACTLY ONCE in the conversation that requested it, however it was launched and however many times it was taken over\n- [ ] #8 A completed run's report is reachable from the artifacts screen\n- [ ] #9 A synthesis that takes longer than any single provider timeout completes, and a user-set runtime limit that cannot cover the work refuses before spending\n- [ ] #10 The documentation states that runs resume at next launch and do not progress while the application is closed\n- [ ] #11 A terminal or cancelled run leaves no scheduler task behind\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-32307 - Console-settings-modal-P0-UX-quick-wins-endpoint-copy-provider-order-llama.cpp-port.md",
+      "ref_oid": "7ec9bbda60857471d3843d6fe3f99c657f369e85",
+      "blob": "956b8982fdc95c247aec707dc2e7d3c9cd837935",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] Endpoint-not-saved blocker copy names Save model defaults (Console Settings) or F9 Settings\n- [x] Provider options ordered Cloud, then Local, then Custom-and-legacy, by display name\n- [x] chat_screen blocked-reason matcher keys off the new copy signal\n- [x] DEFAULT_LLAMACPP_BASE_URL defined once and shared by gateway/session settings\n- [x] Local discovery candidates include 8080 and 9099\n- [x] Targeted tests pass\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-16812 - Record-repository-research-graph-and-biomedical-stress-live-baselines.md",
+      "ref_oid": "82f7a14c640a4035ce0bcc6e3ab57ee679c24705",
+      "blob": "5242e826dd73b5aadd5e962ec670011d1f7992ab",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 The baseline script supports named question sets with a biomedical set of domain-tuned questions,The repositories and open_research_graph category lanes are run live and scored,The biomedical lane is re-run against the biomedical question set as a stress measurement,The baseline doc records all three results in the comparison table,Questions-per-set and spend bounds stay documented\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-34406.9 - Defer-unused-Personal-Context-interview-imports-from-ordinary-sends.md",
+      "ref_oid": "863435dd5b36612a80aea609501000319d04e9c9",
+      "blob": "552606f8805e7b1b7ffe9bd7880a3aa1244725bb",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 Real bootstrap and ordinary profile context/tool composition keep interview modules unloaded until requested, preserving native guards and original service outcomes.\n- [x] #2 All existing public exports, star import, discoverability, object identity and direct interview submodule imports remain compatible.\n- [x] #3 Targeted causal and connected verification, lint and independent review pass; no permission, storage, key, timeout, worker lifetime, budget or dependency changes.\n- [x] #4 Report balanced unprofiled fresh first-send comparisons with identical full settings, headers and27ordered schemas, verified responses and owned cleanup; retain slower or failed samples.\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-100 - Fix-character-card-import-and-lenient-V2-validation.md",
+      "ref_oid": "a24d2748abfe1b7002c5ed82a4d64e947edb472e",
+      "blob": "e72b57c0c5b917c8c271113867f90be6d07a3e56",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 `load_character_card_from_file` is a real implementation that parses .json/.yaml/.yml/.md/.txt text cards and .png/.webp image cards with embedded metadata.\n- [x] #2 V2 cards missing description/personality/scenario/first_mes/mes_example still import; only a missing/blank `name` (or non-dict `data` node) is fatal.\n- [x] #3 Explicit-V2 cards that fail structural validation no longer hard-abort; import falls back V2 → V1 → generic multi-format detection.\n- [x] #4 Character book entries are preserved with defaults (numeric positions normalized, missing enabled/insertion_order defaulted) instead of failing validation or being dropped.\n- [x] #5 V3 cards (`spec: chara_card_v3`, `ccv3` PNG metadata key) are recognized and imported.\n- [x] #6 All user-supplied cards with embedded card data parse successfully (verified: 107/108 files in the reporter's card folder; the single failure is a PNG with no embedded metadata at all).\n- [x] #7 Regression tests cover the lenient import paths and the previously-broken stub.\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-482 - Validate-Chroma-persist_directory-uniformly-across-vector-store-and-collection-indexes.md",
+      "ref_oid": "a24d2748abfe1b7002c5ed82a4d64e947edb472e",
+      "blob": "f22c284132ecaf5ed5ddf75333ecfd303827977e",
+      "criteria": "<!-- AC:BEGIN -->\n- [ ] Config-sourced Chroma `persist_directory` is validated via `path_validation.py` before use.\n- [ ] `vector_store.py` and `collection_indexes.py` construct their `PersistentClient` with the SAME validated path string (no divergence → no `SharedSystemClient` Settings/path collision).\n- [ ] Existing RAG tests still pass; a test covers that both sites resolve to the identical validated path.\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-523 - Remove-stale-compact-model-bar-settings-patch-from-chat-UI-tests.md",
+      "ref_oid": "a24d2748abfe1b7002c5ed82a4d64e947edb472e",
+      "blob": "57d6f302888161354bf6c729984c5d14b576b178",
+      "criteria": "<!-- AC:BEGIN -->\n- [x] #1 The fixture patches only configuration seams used by the mounted chat widgets\n- [x] #2 All chat approvals and resume UI tests pass\n- [x] #3 The merge-base failure and no-ADR decision are documented\n- [x] #4 The first-run orientation and enhanced chat-window integration modules also pass without retired settings patches\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-524 - Restore-MCP-character-chat-dead-dispatch-and-persistence.md",
+      "ref_oid": "a24d2748abfe1b7002c5ed82a4d64e947edb472e",
+      "blob": "35797ff8ed54364f52cacba5f115a421f332ff07",
+      "criteria": "<!-- AC:BEGIN -->\n- [ ] #1 `MCPTools.chat_with_character` dispatches to `chat_api_call(..., streaming=False)` using the same kwarg map as TASK-334 sites\n- [ ] #2 MCP character chat performs a real LLM call and returns the response\n- [ ] #3 The conversation is persisted (identified and integrated with the conversation-save path, rebuilt if necessary)\n- [ ] #4 A test confirms: character chat via MCP works end-to-end and persists to the database\n- [ ] #5 The `NotImplementedError` stubs in `MCP/tools.py` are removed once no longer called\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-531 - Dollar-mention-riders-multimodal-dead-picker.md",
+      "ref_oid": "a24d2748abfe1b7002c5ed82a4d64e947edb472e",
+      "blob": "6bd524cfe9f333f91172880cf9d18493326ec657",
+      "criteria": "<!-- AC:BEGIN -->\n- [ ] #1 A design decision (or implementation) for $-mention expansion on multimodal drafts, preserving attachments.\n- [ ] #2 Dead picker machinery is removed or re-wired; no retained-dead code paths remain for skill invocation.\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-532 - Bring-Roleplay-personas-to-parity-with-tldw_server-personas-module.md",
+      "ref_oid": "a24d2748abfe1b7002c5ed82a4d64e947edb472e",
+      "blob": "0ecbc748b8c3dc704d842be9f9d4fb0b6e0cd8f6",
+      "criteria": "<!-- AC:BEGIN -->\n- [ ] #1 A persona in chatbook is modeled as a character-side assistant identity that matches tldw_server's persona profile concept (derived from / linked to a character), not as the user's own identity\n- [ ] #2 A persona projects into a chat as the assistant (system prompt / exemplar assembly), mirroring tldw_server's persona-backed chat behavior\n- [ ] #3 Macro substitution matches tldw_server: `{{user}}` resolves to the human user; `{{persona}}`/`{{char}}`/`{{character}}` resolve to the character/persona\n- [ ] #4 A persona can be selected/active and persists across sessions, consistent with tldw_server's persona selection semantics\n- [ ] #5 The \"persona = who you are\" framing is removed from the Roleplay/Settings surfaces and copy\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-25715 - Global-hotkeys-open-new-modals-over-an-unresolved-required-decision.md",
+      "ref_oid": "ab8cb921d63eeced50e456bc44ea2904d3181847",
+      "blob": "4ad52dcc4093f23892e05e3e092d360c5c023746",
+      "criteria": "<!-- AC:BEGIN -->\n- [ ] #1 Global hotkeys that open panels are suppressed while a blocking decision card is mounted\n- [ ] #2 Modal surfaces render a scrim that visually separates them from live content\n- [ ] #3 Clicks outside a modal produce a visible response rather than silently doing nothing\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-18060 - Make-research-runs-durable-resumable-jobs.md",
+      "ref_oid": "b80e4318349787c65ad9139d40852ecb01bd089e",
+      "blob": "d3aa9dfe14b979241a3a039060bd0c40378349ef",
+      "criteria": "<!-- AC:BEGIN -->\n- [ ] #1 Exactly one executor can run a given research run at a time, and a run whose executor died can be taken over rather than stranded\n- [ ] #1a A worker that wakes after its lease was taken over cannot complete or renew the run it lost\n- [ ] #1b A run whose executor keeps dying is failed on a retry budget rather than retried forever\n- [ ] #1c A phase that reports no progress for longer than the lease is not taken over\n- [ ] #1d An executor that lost its lease cannot write artifacts or settle budget, not merely cannot finish the run\n- [ ] #2 A resumed run restores the budget it already spent instead of being granted it again\n- [ ] #3 A resumed run continues from its last completed phase without repeating searches it already paid for\n- [ ] #4 Persisted evidence is bounded by a stated cap, and an artifact that exceeded it records that it did\n- [ ] #5 A run interrupted by an application exit continues on the next launch without user intervention\n- [ ] #6 A run parked for checkpoint review is not re-entered by the scheduler on every tick\n- [ ] #7 A completed run announces itself EXACTLY ONCE in the conversation that requested it, however it was launched and however many times it was taken over\n- [ ] #8 A completed run's report is reachable from the artifacts screen\n- [ ] #9 A synthesis that takes longer than any single provider timeout completes, and a user-set runtime limit that cannot cover the work refuses before spending\n- [ ] #10 The documentation states that runs resume at next launch and do not progress while the application is closed\n- [ ] #11 A terminal or cancelled run leaves no scheduler task behind\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-205 - Remove-or-wire-the-orphan-research-route.md",
+      "ref_oid": "be83cc5cd2f6b9279472784a294d2c86652c8b02",
+      "blob": "1955029d3e2aca6ee9c380d49ff312373912950c",
+      "criteria": "<!-- AC:BEGIN -->\n- [ ] #1 The research route is reachable via shell navigation or its registration is removed\n- [ ] #2 Route inventory and screen registry are consistent with each other\n<!-- AC:END -->"
+    },
+    {
+      "path": "backlog/tasks/task-34403 - Fix-Console-recovery-layout-churn-and-verify-native-captured-send-performance.md",
+      "ref_oid": "ce8b4f068e3c71dd4086d09b61bf3cc5b36f335e",
+      "blob": "a6882b0f40170c28905f8b385695894212c1ca91",
+      "criteria": "<!-- AC:BEGIN -->\n- [ ] #1 Repeated unchanged recovery-row state produces no stylesheet work and visible/hidden geometry remains correct\n- [ ] #2 Three captured messages complete with exact trace receipts on native Windows Linux and macOS with recorded performance counts\n- [ ] #3 All identified fixes are reviewed and included in one PR against dev\n- [ ] #4 Background scheduler safety checks resolve configuration and read the stop state off the UI thread while retaining fresh fail-safe and cancellation ownership behavior\n- [ ] #5 Staggered subscription indexing performs blocking configuration and native admission only in its declared worker while retaining its fresh refusal behavior\n- [ ] #6 MCP catalog setup keeps loop-bound asynchronous catalog and publication on the main loop while blocking store-backed reads run in finite workers with fresh permission resolution and safe cancellation\n- [ ] #7 Each witness query uses one fresh validated control-record and registry observation, preserving source/startup/paired-generation refusals and rejecting changes during observation without authority reuse across calls\n- [ ] #8 Coordinator locks never cover blocking native source validation; exact issued operation and native ownership are rechecked after out-of-lock validation and pause cancellation retarget and retirement refusals remain intact\n- [ ] #9 Context estimates reuse only a same-source same-owner checked sparse display policy with the existing one-second refresh and cancellation fences while live actions and dispatch keep fresh independent configuration reads\n- [ ] #10 Actual installed MCP permission reads avoid repeated owner-only generation selections while every full raw source/native check remains fresh and same-source wrong-path retarget pause cancellation and retirement refusals remain intact\n- [ ] #11 Nested installed repository operations on the same participant and exact path perform one fresh prior native path proof while changed target paths independent owners pause cancellation and restoration retain their required checks\n- [ ] #12 Shared Windows regression fixtures use actual TokenUser default ownership while the separate required elevated custody jobs retain and verify their original Administrators TokenOwner.\n- [ ] #13 Ordinary Character and active subagent count display refreshes share at most a two-second observation only for the exact local owner; owner generation run and child changes invalidate immediately, changed-owner pending reads cannot publish, failures and cancellation are retryable, and actions keep fresh native scope checks.\n- [ ] #14 The standard asynchronous external MCP catalog performs one fresh complete store load off its caller loop, keeps governance and live connection projection on that loop, rejects changed service or store owners, and retains producer and native worker custody through cancellation; custom and subclass routes preserve their contract.\n- [ ] #15 The fleet display honors exact process-owned setup or bound active primary live state including empty children, while terminal resumed unknown and custom bridges preserve durable fallback and nonempty live handles retain precedence.\n- [ ] #16 Actual asynchronous Console submission and continuation snapshot capture keeps UI-owned composition and governance on its caller loop while a finite fresh MCP source worker supplies an ephemeral definition maximum; exact actor service source settings and configuration changes refuse publication, default policy and downgrade audit behavior remain intact, cancellation drains native custody, and synchronous or custom provider contracts remain compatible.\n- [ ] #17 Awaited Character browser removal retires its real Textual message pump independently of suspended controller refreshes and rejects late presentation while preserving the existing state identity and view contracts.\n- [ ] #18 Warm synchronous Console display from an exact standard checked readiness owner within its original one-second age opens no redundant enclosing native configuration scope; cold expired replaced injected retargeted paused or foreign-loop owners retain fresh fallback or refusal, nested disk readers and live actions keep fresh native lifetimes, and body errors and retirement ownership remain intact.\n- [ ] #19 Actual native Console Send preparation keeps both delivering Textual message pumps responsive to driver input; ordinary pump callers transfer one captured continuation to a finite owned worker before blocking native reads, while direct and spoken-worker outcome contracts, duplicate gates, exact chat and draft fences, cancellation drain and fresh native authority remain intact.\n- [ ] #20 Concurrent hook indicator refreshes share one accepted physical native reader; cancellation drains its custody, owner or reader replacement suppresses publication, and Send keeps its required fresh authorization reads.\n- [ ] #21 Every accepted hook snapshot read retains native custody through repeated cancellation; reader and publication errors reach their matching callers, and optional indicator scheduling cannot mask the original Send result or cancellation.\n- [x] #22 An unchanged admitted Windows workspace root remains usable with Python 64-bit volume and 128-bit file identifiers; complete identity comparisons still refuse replaced roots, changed high bits and reparse points, restore the prior directory and retire all retained handles, with original cross-platform pin and isolated-helper controls retained.\n- [ ] #23 Standard MCP composition performs its original fresh compose-time switch check before catalog access without a duplicate controller read; custom or changed factories and callbacks retain their precheck, and source replacement, cancellation and permission changes refuse unsafe publication.\n<!-- AC:END -->"
+    }
+  ],
+  "open_prs": [
+    {
+      "number": 3246,
+      "head": "7a5e2513c5d7e00ef57f3d19cd8e81a01e006d05",
+      "files_checked": 3000,
+      "relevant_files": [
+        "Docs/Architecture/notifications.md"
+      ]
+    },
+    {
+      "number": 3245,
+      "head": "0eca4d34ff85f4b2e8c859406d6e32ce216a9cdb",
+      "files_checked": 12,
+      "relevant_files": []
+    },
+    {
+      "number": 3242,
+      "head": "10f59cf6e7d91c2f57aa0d44706ec2f51fcfbf3b",
+      "files_checked": 12,
+      "relevant_files": []
+    },
+    {
+      "number": 3237,
+      "head": "dee2f1edc2855afd7270e53a57307814c0f5491c",
+      "files_checked": 497,
+      "relevant_files": []
+    },
+    {
+      "number": 3235,
+      "head": "bba16bb74d0bf81b3b6740b33e29e9178ed22f5f",
+      "files_checked": 15,
+      "relevant_files": []
+    },
+    {
+      "number": 3234,
+      "head": "872a05fd42df168ca38f723d758c80f1d4757717",
+      "files_checked": 167,
+      "relevant_files": []
+    },
+    {
+      "number": 3233,
+      "head": "791f585d42c88e7aaceacdf46d48f09be4c7120b",
+      "files_checked": 8,
+      "relevant_files": []
+    },
+    {
+      "number": 3232,
+      "head": "3071ac5a2fe9cbf24875f2da76c8aed1cd5fa090",
+      "files_checked": 4,
+      "relevant_files": []
+    },
+    {
+      "number": 3227,
+      "head": "6a9a00554d0406681d2021ccafdeadec7625fce1",
+      "files_checked": 11,
+      "relevant_files": []
+    },
+    {
+      "number": 3225,
+      "head": "a1bc9155dbdb2c878bdbe389b5cd6238faf9c5f0",
+      "files_checked": 14,
+      "relevant_files": []
+    },
+    {
+      "number": 3224,
+      "head": "d8a0456cc9c13cf110ff8b33262917621de18ff4",
+      "files_checked": 7,
+      "relevant_files": []
+    },
+    {
+      "number": 3211,
+      "head": "0e3b5419df2eafbd6607687ce0a0596eebe2705e",
+      "files_checked": 29,
+      "relevant_files": []
+    },
+    {
+      "number": 3200,
+      "head": "0d085eda773bc1385119d533366edb2ca2632b0d",
+      "files_checked": 5,
+      "relevant_files": []
+    },
+    {
+      "number": 3192,
+      "head": "37e82b8f06a3f8db06be47c33b8de05a96df161f",
+      "files_checked": 4,
+      "relevant_files": []
+    },
+    {
+      "number": 3183,
+      "head": "0945d280e258515c0763d67d46e4fd024d5de46a",
+      "files_checked": 8,
+      "relevant_files": []
+    },
+    {
+      "number": 3173,
+      "head": "fcc6066d51857869c332e9d9779d5fb1098bb8f4",
+      "files_checked": 14,
+      "relevant_files": []
+    },
+    {
+      "number": 3172,
+      "head": "a3da967db73d582e6902cc8060e39f4a02553ce9",
+      "files_checked": 4,
+      "relevant_files": []
+    },
+    {
+      "number": 3166,
+      "head": "34f88d6322ee2819d3e189e97eda5bc0e3f419f1",
+      "files_checked": 435,
+      "relevant_files": []
+    },
+    {
+      "number": 3162,
+      "head": "366bd3dbfa620b466c6fecb38c363e3093130841",
+      "files_checked": 796,
+      "relevant_files": []
+    },
+    {
+      "number": 3157,
+      "head": "ebba583bd1ae2ceea1e87e78f3d07597cc76a7e6",
+      "files_checked": 15,
+      "relevant_files": []
+    },
+    {
+      "number": 3156,
+      "head": "58d8425296c3d2c095a574331249dbd0e9c736ac",
+      "files_checked": 11,
+      "relevant_files": []
+    },
+    {
+      "number": 3155,
+      "head": "082ed66b5b5867cf6b5494758ff90c6fcfcce7e3",
+      "files_checked": 11,
+      "relevant_files": [
+        "Tests/UI/test_console_os_notifications.py",
+        "Tests/UI/test_settings_console_os_notifications_journeys.py",
+        "Tests/Utils/test_os_notifications.py",
+        "backlog/tasks/task-18925 - Opt-in-OS-notifications-for-background-Console-events.md",
+        "tldw_chatbook/Utils/os_notifications.py"
+      ]
+    },
+    {
+      "number": 3148,
+      "head": "97ac608aba159bd8696ea50d279261867d97e16a",
+      "files_checked": 265,
+      "relevant_files": [
+        "tldw_chatbook/UI/Screens/personas_screen.py"
+      ]
+    },
+    {
+      "number": 3134,
+      "head": "0334fa4ca84008e5a06980807e1a06e7987042a7",
+      "files_checked": 1,
+      "relevant_files": []
+    },
+    {
+      "number": 3096,
+      "head": "5afd95ddf931b4a0c5a856f7ca9edb6018c7fd0a",
+      "files_checked": 163,
+      "relevant_files": []
+    },
+    {
+      "number": 3050,
+      "head": "2557f186f6e635567c370824fa43e2aadec6b82d",
+      "files_checked": 721,
+      "relevant_files": [
+        "tldw_chatbook/UI/Screens/personas_screen.py"
+      ]
+    },
+    {
+      "number": 3049,
+      "head": "bdff2a2d957c9b3ee4cf532589562b901c193df3",
+      "files_checked": 675,
+      "relevant_files": [
+        "tldw_chatbook/UI/Screens/personas_screen.py"
+      ]
+    },
+    {
+      "number": 3036,
+      "head": "0b9ae198219290eea25b41561d0eeba0e260fa29",
+      "files_checked": 98,
+      "relevant_files": []
+    },
+    {
+      "number": 2819,
+      "head": "d55a54e0eed3fdfa30d818aa20d7f33b3917fc2c",
+      "files_checked": 1,
+      "relevant_files": []
+    },
+    {
+      "number": 1655,
+      "head": "a1e4c2920a9d566496a7be8c4d76023972089c05",
+      "files_checked": 31,
+      "relevant_files": []
+    }
+  ],
+  "allocation": {
+    "utc": "2026-10-25T23:18:39.972623+00:00",
+    "unique_ref_oids": 310,
+    "tree_task_paths": 1372964,
+    "max_id": 36900,
+    "errors": [],
+    "frontmatter_claims": 5761
+  },
+  "registered_worktrees": 52,
+  "global_screen": "Fetched heads/remotes, all paginated open PR file lists, close-owner criteria, registered worktree task filenames, audited-checkout frontmatter and historical task paths.",
+  "resume_reservation_check": {
+    "utc": "2026-10-25T23:36:23.906977+00:00",
+    "unique_ref_oids": 310,
+    "tree_task_paths": 1372964,
+    "max_id": 36930,
+    "errors": []
+  },
+  "resume_reservation_ruling": "Existing36930 was this session successful CLI result, checked by title/body/merged pin and creation log;36931/36932 had no claims in the fresh sweep. Empty CLI completion template sections removed without adding plans or completion notes.",
+  "final_publication_id_check": {
+    "utc": "2026-10-25T23:48:52.723160+00:00",
+    "unique_ref_oids": 310,
+    "branch_ref_collisions": [],
+    "worktree_claims": [
+      "<audit-checkout>\\backlog\\tasks\\task-36930 - Retire-pending-quiz-Submit-publication-when-its-Study-context-changes.md",
+      "<audit-checkout>\\backlog\\tasks\\task-36931 - Keep-Watchlists-inbox-SQLite-work-off-the-UI-event-loop.md",
+      "<audit-checkout>\\backlog\\tasks\\task-36932 - Keep-Personas-controls-responsive-during-Lore-settings-saves.md"
+    ],
+    "open_pr_heads_unchanged": 30
+  }
+}

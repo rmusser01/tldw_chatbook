@@ -1,7 +1,13 @@
-"""Fresh-profile Buddy installation through real Persona and SQLite stores."""
+"""Fresh-profile built-in Buddy seeding through real Buddy and SQLite stores.
+
+TASK-39057: these cases drive ``BuddyLibrary.ensure_builtin``, the seeding the
+app's readiness pass runs, since the Persona_Visual installer they used to
+drive had no production caller and was deleted.
+"""
 
 import pytest
 
+import tldw_chatbook.Persona_Buddy.library as library_module
 from Tests.app_module_patches import set_app_global
 from tldw_chatbook.Actor_Packs.persona_coordinator import PersonaActorPackCoordinator
 from tldw_chatbook.Actor_Packs.repository import ActorPackRepository
@@ -9,12 +15,13 @@ from tldw_chatbook.Character_Chat.local_character_persona_service import (
     LocalCharacterPersonaService,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from tldw_chatbook.Persona_Visual.builtin_pixel_migu import (
-    PIXEL_MIGU_PERSONA_ID,
-    ensure_builtin_pixel_migu_buddy,
-)
+from tldw_chatbook.Persona_Buddy.library import BuddyLibrary
 from tldw_chatbook.Persona_Visual.repository import PersonaVisualRepository
-from tldw_chatbook.Persona_Visual.runtime import resolve_active_persona_visual
+
+#: The Persona the retired installer created; app readiness still reads it to
+#: decide whether a legacy profile retired the built-in Buddy.
+LEGACY_PERSONA_ID = "local-persona-builtin-pixel-migu"
+BUNDLE = "assets/persona_visual/pixel_migu"
 
 
 @pytest.fixture
@@ -29,20 +36,34 @@ def components(tmp_path):
 
 
 def install(components):
-    _db, service, coordinator, root = components
-    return ensure_builtin_pixel_migu_buddy(service, coordinator, profile_root=root)
+    db, _service, _coordinator, root = components
+    return BuddyLibrary(db, root).ensure_builtin()
 
 
-def test_fresh_install_links_independent_character_and_resolves_baseline_states(
-    components,
-):
-    db, _service, coordinator, root = components
-    persona = install(components)
-    assert persona["id"] == PIXEL_MIGU_PERSONA_ID
-    assert persona["name"] == "pixel-migu"
-    character = db.get_character_card_by_id(persona["character_card_id"])
-    assert character["extensions"]["tldw/builtin_id"] == "pixel-migu"
-    graph = PersonaVisualRepository(db).get_active_persona_pack(persona["id"])
+def _copied_bundle(root, monkeypatch):
+    """Point the library's resource reader at an editable copy of the bundle."""
+    import shutil
+
+    package_root = root / "modified-package"
+    resource_root = package_root / BUNDLE
+    shutil.copytree(library_module.files("tldw_chatbook").joinpath(BUNDLE), resource_root)
+    monkeypatch.setattr(library_module, "files", lambda _package: package_root)
+    return resource_root
+
+
+def _buddy_rows(db) -> int:
+    return db.execute_query("SELECT COUNT(*) FROM buddy_profiles").fetchone()[0]
+
+
+def test_fresh_install_publishes_an_independent_buddy_with_every_state(components):
+    db, service, _coordinator, root = components
+    buddy = install(components)
+    assert buddy.name == "pixel-migu"
+    assert buddy.source_key == "builtin:pixel-migu"
+    library = BuddyLibrary(db, root)
+    graph = library.get_graph(buddy.id)
+    assert graph.identity.persona_id is None
+    assert graph.identity.buddy_id == buddy.id
     assert len(graph.assets) == 64
     assert (
         "LicenseRef-User-Supplied"
@@ -51,107 +72,73 @@ def test_fresh_install_links_independent_character_and_resolves_baseline_states(
             (graph.pack.id,),
         ).fetchone()[0]
     )
-    for state in (
-        "idle",
-        "listening",
-        "thinking",
-        "speaking",
-        "approval_needed",
-        "tool_running",
-        "error",
-        "wake_armed",
-        "offline",
-    ):
-        resolution = resolve_active_persona_visual(
-            PersonaVisualRepository(db),
-            profile_root=root,
-            persona_id=persona["id"],
-            requested_state=state,
-        )
-        assert resolution.frames, state
-    assert coordinator.repository.list_persona_intents() == ()
+    for state in graph.version.manifest.states:
+        for reduced in (False, True):
+            resolution = library.resolve_preview(
+                buddy.id, state=state, reduced_motion=reduced
+            )
+            assert resolution.frames, state
+            assert resolution.resolved_state == state
+    # Seeding creates no Persona, legacy or otherwise.
+    assert service.list_persona_profiles(include_deleted=True) == []
+    assert PersonaVisualRepository(db).get_active_persona_pack(LEGACY_PERSONA_ID) is None
 
 
-def test_restart_preserves_edits_tombstone_and_existing_selection(components):
-    db, service, coordinator, root = components
-    service.create_persona_profile(
-        {"id": "chosen", "name": "Chosen", "is_active": True}
-    )
-    install(components)
-    service.update_persona_profile(
-        PIXEL_MIGU_PERSONA_ID, {"name": "My custom name", "is_active": False}
-    )
-    service.delete_persona_profile(PIXEL_MIGU_PERSONA_ID)
-    before = service.persona_store_path.read_bytes()
-    service = LocalCharacterPersonaService(
-        db, persona_store_path=root / "personas.json"
-    )
-    coordinator = PersonaActorPackCoordinator(ActorPackRepository(db), service)
-    ensure_builtin_pixel_migu_buddy(service, coordinator, profile_root=root)
-    assert service.persona_store_path.read_bytes() == before
-    assert service.get_persona_profile("chosen")["is_active"] is True
-    assert len(service.list_persona_profiles(include_deleted=True)) == 2
-
-
-def test_failed_graph_activation_rolls_back_persona_and_retries(
-    components, monkeypatch
-):
-    db, service, coordinator, _root = components
-    original = PersonaVisualRepository._activate_new_pack_in_transaction
-
-    def fail(*args, **kwargs):
-        original(*args, **kwargs)
-        raise ValueError("injected activation failure")
-
-    with monkeypatch.context() as patch:
-        patch.setattr(
-            PersonaVisualRepository, "_activate_new_pack_in_transaction", fail
-        )
-        with pytest.raises(ValueError):
-            install(components)
-    assert service.list_persona_profiles() == []
-    assert coordinator.repository.get_identity("persona", PIXEL_MIGU_PERSONA_ID) is None
-    assert coordinator.repository.list_persona_intents() == ()
-    assert (
-        PersonaVisualRepository(db).get_active_persona_pack(PIXEL_MIGU_PERSONA_ID)
-        is None
-    )
-    assert install(components)["name"] == "pixel-migu"
-
-
-def test_restart_preserves_archived_visual_binding(components):
-    db, service, coordinator, root = components
-    install(components)
-    repository = PersonaVisualRepository(db)
-    graph = repository.get_active_persona_pack(PIXEL_MIGU_PERSONA_ID)
-    repository.archive_binding(
-        persona_id=PIXEL_MIGU_PERSONA_ID, expected_identity=graph.identity
-    )
-    service = LocalCharacterPersonaService(
-        db, persona_store_path=root / "personas.json"
-    )
-    coordinator = PersonaActorPackCoordinator(ActorPackRepository(db), service)
-    ensure_builtin_pixel_migu_buddy(service, coordinator, profile_root=root)
-    assert repository.get_active_persona_pack(PIXEL_MIGU_PERSONA_ID) is None
-
-
-def test_repeated_readiness_avoids_resource_io_and_duplicates(components, monkeypatch):
-    from tldw_chatbook.Persona_Visual import builtin_pixel_migu
-
-    db, service, _coordinator, _root = components
+def test_restart_reuses_the_buddy_without_reading_resources(components, monkeypatch):
+    db, _service, _coordinator, root = components
     first = install(components)
-    graph = PersonaVisualRepository(db).get_active_persona_pack(PIXEL_MIGU_PERSONA_ID)
+    graph = BuddyLibrary(db, root).get_graph(first.id)
 
-    def unexpected(*args, **kwargs):
+    def unexpected(*_args, **_kwargs):
         raise AssertionError("Repeated readiness reopened bundled resources")
 
-    monkeypatch.setattr(builtin_pixel_migu, "files", unexpected)
-    assert install(components) == first
-    assert len(service.list_persona_profiles()) == 1
-    assert (
-        PersonaVisualRepository(db).get_active_persona_pack(PIXEL_MIGU_PERSONA_ID)
-        == graph
-    )
+    monkeypatch.setattr(library_module, "files", unexpected)
+    restarted = BuddyLibrary(db, root)
+    assert restarted.ensure_builtin() == first
+    assert restarted.list_buddies() == (first,)
+    assert restarted.get_graph(first.id).identity == graph.identity
+
+
+def test_failed_publication_leaves_no_buddy_and_retries(components, monkeypatch):
+    db, _service, _coordinator, root = components
+
+    def fail(*_args, **_kwargs):
+        raise ValueError("injected publication failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(library_module, "publish_persona_visual", fail)
+        with pytest.raises(ValueError):
+            install(components)
+    assert BuddyLibrary(db, root).list_buddies() == ()
+    assert _buddy_rows(db) == 0
+    assert install(components).name == "pixel-migu"
+
+
+@pytest.mark.parametrize("interruption", [KeyboardInterrupt, SystemExit, RuntimeError])
+def test_postcommit_interruption_keeps_committed_frames(
+    components, monkeypatch, interruption
+):
+    db, _service, _coordinator, root = components
+    publish = library_module.publish_persona_visual
+    committed = []
+
+    def interrupt_after_commit(repository, snapshot, **kwargs):
+        publish(repository, snapshot, **kwargs)
+        committed.append(snapshot.buddy_id)
+        raise interruption
+
+    with monkeypatch.context() as patch:
+        patch.setattr(library_module, "publish_persona_visual", interrupt_after_commit)
+        with pytest.raises(interruption):
+            install(components)
+    restarted = BuddyLibrary(db, root)
+    buddy = restarted.ensure_builtin()
+    # The committed owner survives; the retry neither removes nor replaces it.
+    assert buddy.id == committed[0]
+    assert restarted.list_buddies() == (buddy,)
+    result = restarted.resolve_preview(buddy.id, state="idle")
+    assert result.frames
+    assert result.resolved_state == "idle"
 
 
 def test_app_readiness_installs_after_recovery_and_before_return(
@@ -174,39 +161,54 @@ def test_app_readiness_installs_after_recovery_and_before_return(
     )
     app_module.TldwCli.ensure_actor_pack_recovery(app)
     assert coordinator.recovery_attempted
-    from tldw_chatbook.Persona_Buddy.library import BuddyLibrary
-
     assert BuddyLibrary(db, root).list_buddies()[0].name == "pixel-migu"
     assert (
-        PersonaVisualRepository(db).get_active_persona_pack(PIXEL_MIGU_PERSONA_ID)
+        PersonaVisualRepository(db).get_active_persona_pack(LEGACY_PERSONA_ID)
         is None
     )
     with pytest.raises(ValueError):
-        service.get_persona_profile(PIXEL_MIGU_PERSONA_ID)
+        service.get_persona_profile(LEGACY_PERSONA_ID)
 
 
 @pytest.mark.parametrize("retirement", ["inactive", "deleted", "archived"])
 def test_app_readiness_preserves_retired_legacy_builtin(
     components, monkeypatch, retirement
 ):
+    """A profile whose user retired the legacy built-in Persona gets no Buddy."""
+    from dataclasses import replace
     from types import SimpleNamespace
 
     from loguru import logger
 
     import tldw_chatbook.app as app_module
-    from tldw_chatbook.Persona_Buddy.library import BuddyLibrary
+    from Tests.Persona_Visual.test_persona_visual_publication import _snapshot
+    from tldw_chatbook.Persona_Visual.publication import publish_persona_visual
 
     db, service, coordinator, root = components
-    install(components)
+    # The state an older release's installer left: the Persona and its pack.
+    service.create_persona_profile(
+        {"id": LEGACY_PERSONA_ID, "name": "pixel-migu", "is_active": True}
+    )
+    repository = PersonaVisualRepository(db)
+    source = root / "legacy-source"
+    profile = root / "legacy-profile"
+    source.mkdir(mode=0o700)
+    profile.mkdir(mode=0o700)
+    publish_persona_visual(
+        repository,
+        replace(_snapshot(source), persona_id=LEGACY_PERSONA_ID),
+        source_root=source,
+        profile_root=profile,
+        authority_guard=lambda: True,
+    )
     if retirement == "inactive":
-        service.update_persona_profile(PIXEL_MIGU_PERSONA_ID, {"is_active": False})
+        service.update_persona_profile(LEGACY_PERSONA_ID, {"is_active": False})
     elif retirement == "deleted":
-        service.delete_persona_profile(PIXEL_MIGU_PERSONA_ID)
+        service.delete_persona_profile(LEGACY_PERSONA_ID)
     else:
-        repository = PersonaVisualRepository(db)
-        graph = repository.get_active_persona_pack(PIXEL_MIGU_PERSONA_ID)
+        graph = repository.get_active_persona_pack(LEGACY_PERSONA_ID)
         repository.archive_binding(
-            persona_id=PIXEL_MIGU_PERSONA_ID, expected_identity=graph.identity
+            persona_id=LEGACY_PERSONA_ID, expected_identity=graph.identity
         )
     set_app_global(monkeypatch, "get_user_data_dir", lambda: root)
     app = SimpleNamespace(
@@ -220,97 +222,26 @@ def test_app_readiness_preserves_retired_legacy_builtin(
     assert BuddyLibrary(db, root).list_buddies() == ()
 
 
-def test_racing_service_loser_cleanup_preserves_winners_frames(components, monkeypatch):
-    db, service, coordinator, root = components
-    other_service = LocalCharacterPersonaService(
-        db, persona_store_path=root / "personas.json"
-    )
-    other_coordinator = PersonaActorPackCoordinator(
-        ActorPackRepository(db), other_service
-    )
-    create = coordinator.create_persona
-
-    def competing_create(*args, **kwargs):
-        # Both services observed no Persona. The second commits after the first
-        # copies assets but before the first prepares its JSON CAS operation.
-        ensure_builtin_pixel_migu_buddy(
-            other_service, other_coordinator, profile_root=root
-        )
-        return create(*args, **kwargs)
-
-    monkeypatch.setattr(coordinator, "create_persona", competing_create)
-    with pytest.raises(ValueError):
-        install(components)
-    repository = PersonaVisualRepository(db)
-    assert repository.get_active_persona_pack(PIXEL_MIGU_PERSONA_ID) is not None
-    for state in ("idle", "thinking", "tool_running"):
-        result = resolve_active_persona_visual(
-            repository, PIXEL_MIGU_PERSONA_ID, root, state
-        )
-        assert result.frames
-        assert result.resolved_state == state
-    assert len(other_service.list_persona_profiles()) == 1
-    # The losing instance must discover the winning profile on its next read.
-    assert install(components)["id"] == PIXEL_MIGU_PERSONA_ID
-    assert len(service.list_persona_profiles()) == 1
-
-
-@pytest.mark.parametrize("interruption", [KeyboardInterrupt, SystemExit, RuntimeError])
-def test_postcommit_interruption_keeps_committed_frames(
-    components, monkeypatch, interruption
-):
-    db, _service, coordinator, root = components
-    create = coordinator.create_persona
-
-    def interrupt_after_commit(*args, **kwargs):
-        create(*args, **kwargs)
-        raise interruption
-
-    monkeypatch.setattr(coordinator, "create_persona", interrupt_after_commit)
-    with pytest.raises(interruption):
-        install(components)
-    restarted = LocalCharacterPersonaService(
-        db, persona_store_path=root / "personas.json"
-    )
-    ensure_builtin_pixel_migu_buddy(
-        restarted,
-        PersonaActorPackCoordinator(ActorPackRepository(db), restarted),
-        profile_root=root,
-    )
-    result = resolve_active_persona_visual(
-        PersonaVisualRepository(db), PIXEL_MIGU_PERSONA_ID, root, "idle"
-    )
-    assert result.frames
-    assert result.resolved_state == "idle"
-
-
 def test_buddy_seed_reads_resources_from_zip_traversable(components, monkeypatch):
     """A ZIP-backed package must expose the same installed Buddy states."""
     import zipfile
 
-    from tldw_chatbook.Persona_Visual import builtin_pixel_migu as builtin
-
-    source = builtin.files("tldw_chatbook").joinpath("assets/persona_visual/pixel_migu")
-    archive_path = components[3] / "resources.zip"
+    db, _service, _coordinator, root = components
+    source = library_module.files("tldw_chatbook").joinpath(BUNDLE)
+    archive_path = root / "resources.zip"
     with zipfile.ZipFile(archive_path, "w") as archive:
         for resource in source.iterdir():
-            archive.writestr(
-                f"assets/persona_visual/pixel_migu/{resource.name}",
-                resource.read_bytes(),
-            )
+            archive.writestr(f"{BUNDLE}/{resource.name}", resource.read_bytes())
     with zipfile.ZipFile(archive_path) as archive:
-        monkeypatch.setattr(builtin, "files", lambda _package: zipfile.Path(archive))
-        persona = install(components)
-    db, _service, _coordinator, root = components
-    graph = PersonaVisualRepository(db).get_active_persona_pack(persona["id"])
+        monkeypatch.setattr(
+            library_module, "files", lambda _package: zipfile.Path(archive)
+        )
+        buddy = install(components)
+    library = BuddyLibrary(db, root)
+    graph = library.get_graph(buddy.id)
     assert len(graph.assets) == 64
     for state in graph.version.manifest.states:
-        result = resolve_active_persona_visual(
-            PersonaVisualRepository(db),
-            persona["id"],
-            root,
-            state,
-        )
+        result = library.resolve_preview(buddy.id, state=state)
         assert result.frames, state
         assert result.resolved_state == state
 
@@ -319,31 +250,51 @@ def test_buddy_seed_reads_resources_from_zip_traversable(components, monkeypatch
     "filename", ["../escape.png", "/escape.png", "nested/escape.png"]
 )
 def test_buddy_seed_rejects_non_flat_asset_paths(components, monkeypatch, filename):
-    """A malformed resource filename never reaches immutable publication."""
+    """TASK-39124: a bundled filename that is not one flat name is refused
+    before it is read, and nothing is published."""
     import json
-    import shutil
 
-    from tldw_chatbook.Persona_Visual import builtin_pixel_migu as builtin
-
-    root = components[3]
-    package_root = root / "modified-package"
-    resource_root = package_root / "assets/persona_visual/pixel_migu"
-    shutil.copytree(
-        builtin.files("tldw_chatbook").joinpath("assets/persona_visual/pixel_migu"),
-        resource_root,
+    db, _service, _coordinator, root = components
+    resource_root = _copied_bundle(root, monkeypatch)
+    (resource_root.parent / "escape.png").write_bytes(
+        (resource_root / "alert-idle-1.png").read_bytes()
     )
+    (resource_root / "nested").mkdir()
+    (resource_root / "nested/escape.png").write_bytes(b"x")
     declarations = json.loads((resource_root / "assets.json").read_bytes())
-    declarations[0]["filename"] = filename
+    declarations[0]["filename"] = (
+        str(resource_root.parent / "escape.png") if filename == "/escape.png" else filename
+    )
     (resource_root / "assets.json").write_text(json.dumps(declarations))
-    monkeypatch.setattr(builtin, "files", lambda _package: package_root)
     monkeypatch.setattr(
-        builtin,
-        "_publish_immutable",
-        lambda *args: pytest.fail("invalid asset reached publisher"),
+        library_module,
+        "publish_persona_visual",
+        lambda *args, **kwargs: pytest.fail("invalid asset reached publication"),
     )
     with pytest.raises(ValueError):
         install(components)
-    assert components[1].list_persona_profiles() == []
+    assert _buddy_rows(db) == 0
+
+
+def test_buddy_seed_rejects_symlinked_resource_leaf(components, monkeypatch):
+    """TASK-39124: the seed reads each bundled leaf without following a link."""
+    db, _service, _coordinator, root = components
+    resource_root = _copied_bundle(root, monkeypatch)
+    resource = resource_root / "alert-idle-1.png"
+    external = root / "external.png"
+    resource.replace(external)
+    try:
+        resource.symlink_to(external)
+    except OSError:
+        pytest.skip("symlink creation unavailable")
+    monkeypatch.setattr(
+        library_module,
+        "publish_persona_visual",
+        lambda *args, **kwargs: pytest.fail("linked asset reached publication"),
+    )
+    with pytest.raises(ValueError):
+        install(components)
+    assert _buddy_rows(db) == 0
 
 
 @pytest.mark.parametrize(
@@ -353,52 +304,15 @@ def test_buddy_seed_rejects_non_flat_asset_paths(components, monkeypatch, filena
 def test_buddy_seed_uses_canonical_manifest_validation(
     components, monkeypatch, field, value
 ):
-    """Canonical schema failures stop installation before any asset publication."""
+    """A canonical schema failure installs nothing and leaves no owner row."""
     import json
-    import shutil
 
-    from tldw_chatbook.Persona_Visual import builtin_pixel_migu as builtin
-
-    package_root = components[3] / "modified-package"
-    resource_root = package_root / "assets/persona_visual/pixel_migu"
-    shutil.copytree(
-        builtin.files("tldw_chatbook").joinpath("assets/persona_visual/pixel_migu"),
-        resource_root,
-    )
+    db, _service, _coordinator, root = components
+    resource_root = _copied_bundle(root, monkeypatch)
     manifest = json.loads((resource_root / "manifest.json").read_bytes())
     manifest[field] = value
     (resource_root / "manifest.json").write_text(json.dumps(manifest))
-    monkeypatch.setattr(builtin, "files", lambda _package: package_root)
-    monkeypatch.setattr(
-        builtin,
-        "_publish_immutable",
-        lambda *args: pytest.fail("invalid manifest reached publisher"),
-    )
     with pytest.raises(ValueError):
         install(components)
-    assert components[1].list_persona_profiles() == []
-
-
-def test_buddy_seed_rejects_symlinked_resource_leaf(components, monkeypatch):
-    """Resource materialization preserves the loader's no-follow leaf check."""
-    import shutil
-
-    from tldw_chatbook.Persona_Visual import builtin_pixel_migu as builtin
-
-    package_root = components[3] / "modified-package"
-    resource_root = package_root / "assets/persona_visual/pixel_migu"
-    shutil.copytree(
-        builtin.files("tldw_chatbook").joinpath("assets/persona_visual/pixel_migu"),
-        resource_root,
-    )
-    resource = resource_root / "alert-idle-1.png"
-    external = components[3] / "external.png"
-    resource.replace(external)
-    try:
-        resource.symlink_to(external)
-    except OSError:
-        pytest.skip("symlink creation unavailable")
-    monkeypatch.setattr(builtin, "files", lambda _package: package_root)
-    with pytest.raises(ValueError):
-        install(components)
-    assert components[1].list_persona_profiles() == []
+    assert BuddyLibrary(db, root).list_buddies() == ()
+    assert _buddy_rows(db) == 0

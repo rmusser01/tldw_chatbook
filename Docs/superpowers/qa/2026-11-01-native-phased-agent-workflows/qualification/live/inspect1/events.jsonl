@@ -1,0 +1,18 @@
+{"event": "ready", "label": "whole-mounted-chat", "pid": 768, "time": 1793853716.341202}
+{"conversation": "d57a6e56-9522-4089-8ed6-d539888a7ac7", "event": "hydrated-original-chat", "pid": 768, "session": "5e35eafb-d968-473f-8fc1-464d228cacf9", "time": 1793853717.888075}
+{"event": "ready", "label": "named-chat-tab", "pid": 768, "time": 1793853717.892601}
+{"base": "http://127.0.0.1:8010", "event": "native-provider", "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0", "pid": 768, "provider": "llama_cpp", "ready": true, "time": 1793853717.9179032}
+{"event": "ready", "label": "typed history command", "pid": 768, "time": 1793853719.2056372}
+{"event": "ready", "label": "#console-send-message", "pid": 768, "time": 1793853719.207052}
+{"event": "clicked", "id": "#console-send-message", "pid": 768, "region": [116, 52, 14, 1], "time": 1793853719.633337}
+{"event": "ready", "label": "history", "pid": 768, "time": 1793853719.633582}
+{"event": "ready", "label": "saved workflow loaded", "pid": 768, "time": 1793853719.633657}
+{"event": "ready", "label": "#workflow-open", "pid": 768, "time": 1793853719.633857}
+{"event": "clicked", "id": "#workflow-open", "pid": 768, "region": [92, 27, 24, 1], "time": 1793853720.030665}
+{"event": "ready", "label": "reopened history detail", "pid": 768, "time": 1793853720.137781}
+{"event": "restart-inert", "pid": 768, "results": 3, "spend": {"child_launch": 3, "generation": 5, "model_call": 10, "tokens": 21959}, "status": "completed", "time": 1793853720.138004}
+{"event": "completed-history-inert", "pid": 768, "result_count": 3, "spend": {"child_launch": 3, "generation": 5, "model_call": 10, "tokens": 21959}, "time": 1793853720.1381068}
+{"event": "ready", "label": "completed-history-detach", "pid": 768, "time": 1793853720.388105}
+{"event": "original-media-after-executor-join", "handles": [], "operations": [], "pid": 768, "time": 1793853720.607641}
+{"event": "monitor-released", "pid": 768, "time": 1793853720.607821}
+{"event": "creators-returned", "pid": 768, "time": 1793853720.610804}

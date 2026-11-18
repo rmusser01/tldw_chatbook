@@ -62,7 +62,7 @@ async def test_console_switch_carries_settle_window_typing_to_new_session():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
 
         store, session_a, session_b_id, composer = await _settle_window_swap(
             console, pilot, type_during_window="typed in window"
@@ -85,7 +85,7 @@ async def test_console_switch_without_typing_swaps_drafts_exactly_as_before():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
 
         store, session_a, session_b_id, composer = await _settle_window_swap(
             console, pilot, type_during_window=""
@@ -105,7 +105,7 @@ async def test_raw_refusal_during_switch_settle_preserves_both_session_drafts():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
 
         store = console._ensure_console_chat_store()
         session_a = store.ensure_session(title="Chat A")

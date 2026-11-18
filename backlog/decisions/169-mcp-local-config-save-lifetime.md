@@ -3,7 +3,7 @@
 Status: Accepted
 Date: 2026-09-18
 Task: TASK-32793
-Extends: ADR-168; ADR-033 settings commit models remain authoritative.
+Extends: ADR-168; ADR-303 settings commit models remain authoritative.
 
 ## Context
 

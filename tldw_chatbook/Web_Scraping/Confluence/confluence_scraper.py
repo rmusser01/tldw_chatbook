@@ -6,7 +6,6 @@
 import asyncio
 from typing import Dict, Any, List, Optional
 import re
-from urllib.parse import urlparse
 
 #
 # Third-party imports
@@ -147,7 +146,7 @@ class ConfluenceScraper(Scraper):
             try:
                 # Fetch pages in space
                 response = await asyncio.to_thread(
-                self.auth.make_request,
+                    self.auth.make_request,
                     "GET",
                     "/rest/api/content",
                     params={
@@ -211,7 +210,7 @@ class ConfluenceScraper(Scraper):
         while len(pages) < limit:
             try:
                 response = await asyncio.to_thread(
-                self.auth.make_request,
+                    self.auth.make_request,
                     "GET",
                     "/rest/api/content/search",
                     params={

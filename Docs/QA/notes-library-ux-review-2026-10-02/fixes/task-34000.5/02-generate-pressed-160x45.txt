@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N  ┌──────────────────────────────────────────────────────┐  I  A field guide to Markdown tables                         │
+│ │ Navigation                     │  a  │ Media (23)      Sets                                 │  t  Docs team                                                │
+│ │     Import…                    │  v  │ Media · 23 of 23 · all types · sort: Newest          │  e    ○ Find  Read later  Use in Console  More               │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎ │     │  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ Clear filter   │  m  No analysis to search yet.                               │
+│ │ ▊ Search Library…         ▎▊x▎ │     │  ▊  Title/keyword…                  ▎                │  s                                                           │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎ │     │  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                │       Read  Analysis (selected)  Highlights  Info            │
+│ │                                │     │    type: All types    sort: Newest                   │     No analysis yet.                                         │
+│ │ ────────────────────────────── │     │                                                      │        Add analysis       Generate                           │
+│ │ Browse                     ▾   │     │    Export…     Trash     Select                      │                                                              │
+│ │  ▸ Media (23) — your files     │     │    Review these                                      │                                                              │
+│ │    Conversations (12)          │     │ █▸ A field guide to Markdown tables                  │                                                              │
+│ │    Notes (122)                 │     │ █    article · updated 5d · loaded                   │                                                              │
+│ │    Prompts (10) — reuse        │     │    Voice memo 2026-09-29                             │                                                              │
+│ │    Skills (4) — AI add-ons     │<--- │      audio · updated 6d                              │                                                              │
+│ │    Collections (6)             │     │    学習メモ — 日本語の文法                           │                                                              │
+│ │    Search / RAG — find all     │     │      document · updated 1w                           │                                                              │
+│ │ ────────────────────────────── │     │    Server logs excerpt 2026-09-27                    │                                                              │
+│ │ Artifacts                  ▾   │     │      plaintext · updated 1w                          │                                                              │
+│ │    All artifacts               │     │    Spaced repetition, explained                      │<---                                                          │
+│ │    Chatbooks                   │     │      article · updated 1w                            │                                                              │
+│ │    Reports                     │     │    Podcast: Deep Work revisited (ep. 112) — trans…   │                                                              │
+│ │ ────────────────────────────── │     │      audio · updated 1w                              │                                                              │
+│ │ Create                     ▾   │     │    Grocery receipt (OCR text)                        │                                                              │
+│ │    New note                    │     │      plaintext · updated 1w                          │                                                              │
+│ │    New prompt                  │<--- │    Research notes — interview synthesis (export)   ▄ │                                                              │
+│ │    New skill                   │     │      document · updated 1w                           │                                                              │
+│ │ ────────────────────────────── │     │    How SQLite FTS5 ranks results                     │                                                              │
+│ │ Study                      ▾   │     │      article · updated 2w                            │                                                              │
+│ │    Study decks (0)             │     │    Lecture 4 — Transformers (transcript)             │                                                              │
+│ │    Flashcards due: 0           │     │      video · updated 2w                              │                                                              │
+│ │    Quizzes (0)                 │     │    The Dispossessed — sample chapter                 │                                                              │
+│ │ ────────────────────────────── │     │      ebook · updated 2w                              │                                                              │
+│ │ Import / Export            ▾   │     │    Q3 planning memo                                  │                                                              │
+│ │    Import…                     │     │      document · updated 3w · analysed                │                                                              │
+│ │    Export                      │     │               1-20 of 23 · Page 1 of 2               │                                                              │
+│ │ ────────────────────────────── │     │              Already on the first page.              │                                                              │
+│ │ Details                    ▸   │     │                 ○ Previous     Next                  │                                                              │
+│ └────────────────────────────────┘     └──────────────────────────────────────────────────────┘                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | F6 next pane | ] next item | l read later | c use in Console | t trash | s select | esc focus Library | F1 · Ctrl+P · Ctrl+Q

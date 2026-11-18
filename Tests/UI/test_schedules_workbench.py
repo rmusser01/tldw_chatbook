@@ -91,6 +91,9 @@ from Tests.UI.schedules_test_helpers import (
 # (`_row_subtitle`'s definition branch had none -- unlike the reminder
 # branch, which deliberately drops it via `_format_next_run(compact=True)`,
 # task-23111).
+# ``bootstrap_profile``: see the same note in test_schedules_disabled_state.py
+# (pure, but its setup imports the app; whole-PR review of Phase 9, round 2).
+@pytest.mark.bootstrap_profile
 def test_definition_row_subtitle_carries_a_timezone_label() -> None:
     now = datetime(2026, 9, 5, 12, 0, tzinfo=timezone.utc)
     row = UnifiedRow(
@@ -110,7 +113,7 @@ def test_definition_row_subtitle_carries_a_timezone_label() -> None:
     )
     subtitle = _row_subtitle(row, now)
     assert "2026-09-06 09:00 UTC" in subtitle
-    assert subtitle == "Daily at 09:00 UTC · 2026-09-06 09:00 UTC (in 21h)"
+    assert subtitle == "2026-09-06 09:00 UTC (in 21h) · Daily at 09:00 UTC"
 
 
 class WorkbenchTestApp(ConsolidatedCSSApp):
@@ -4510,7 +4513,7 @@ async def test_conflicts_tab_renders_rows_and_resolves():
         assert table.row_count == 1
         server_button = tab.query_one("#scheduling-use-server", Button)
         local_button = tab.query_one("#scheduling-use-local", Button)
-        # The Lab/Schedules/Logs UX overhaul (9dd2374b5, ADR-031) replaced the
+        # The Lab/Schedules/Logs UX overhaul (9dd2374b5, ADR-299) replaced the
         # per-button resolve tooltips with one guidance line set by
         # `_set_actions_enabled` whenever rows exist; this pin tracks that
         # shipped copy (the old per-version tooltips only exist pre-populate).

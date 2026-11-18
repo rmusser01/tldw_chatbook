@@ -7,8 +7,10 @@ introduced later when sub-second dispatch latency is required.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Optional
+
+from loguru import logger
 
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import DORMANT_TRANSFER_STATES
 from tldw_chatbook.Scheduling.services.briefing_projection import BriefingProjection
@@ -17,8 +19,12 @@ from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProj
 # dreams phase 1: typing only -- importing the Dreams projection at module
 # level would put its (small, but nonzero) import chain on every boot's
 # `_ui_ready` module census for queue consumers that never wire Dreams.
+# guardian task 2: same guard, same reason, for the Guardian projection.
 if TYPE_CHECKING:
     from tldw_chatbook.Scheduling.services.dreams_projection import DreamsProjection
+    from tldw_chatbook.Scheduling.services.guardian_projection import (
+        GuardianProjection,
+    )
 
 _FUTURE_SORT_KEY = "9999-12-31T23:59:59+00:00"
 _DEFAULT_OWNER_ID = "local"
@@ -52,11 +58,13 @@ class PriorityQueue:
         watchlist_projection: WatchlistProjection | None = None,
         briefing_projection: BriefingProjection | None = None,
         dreams_projection: "DreamsProjection | None" = None,  # dreams phase 1
+        guardian_projection: GuardianProjection | None = None,  # guardian task 2
     ) -> None:
         self.db = db
         self.watchlist_projection = watchlist_projection
         self.briefing_projection = briefing_projection
         self.dreams_projection = dreams_projection
+        self.guardian_projection = guardian_projection
         self._items: list[dict[str, Any]] = []
 
     @staticmethod
@@ -119,6 +127,7 @@ class PriorityQueue:
         self._append_projected(self.watchlist_projection)
         self._append_projected(self.briefing_projection)
         self._append_projected(self.dreams_projection)  # dreams phase 1
+        self._append_projected(self.guardian_projection)  # guardian task 2
 
         self._items.sort(key=self._sort_key)
 
@@ -174,13 +183,46 @@ class PriorityQueue:
                 self._items.pop(0)
                 continue
 
-            run_at = datetime.fromisoformat(run_at_str)
+            run_at = self._coerce_run_at(run_at_str)
+            if run_at is None:
+                # TASK-38607: a hand-edited junk timestamp must not escape
+                # pop_due (it used to raise ValueError out of
+                # fromisoformat, terminating tick()/run() on every
+                # restart). Skip and log, like load() discards rows
+                # without a run time.
+                logger.warning(
+                    "Skipping scheduled task with unparseable next_run_at={!r} "
+                    "(id={!r})",
+                    run_at_str,
+                    self._items[0].get("id"),
+                )
+                self._items.pop(0)
+                continue
             if run_at <= now:
                 due.append(self._items.pop(0))
             else:
                 break
 
         return due
+
+    @staticmethod
+    def _coerce_run_at(value: Any) -> Optional[datetime]:
+        """Parse a ``next_run_at`` value the way the DB layer does.
+
+        TASK-38607: mirrors ``scheduled_tasks_db._parse_utc_iso`` -- junk
+        parses to ``None`` (the caller skips and logs it), and a naive
+        stamp is interpreted as UTC instead of raising TypeError at the
+        aware/naive comparison and killing the scheduler worker.
+        """
+        if not value or not isinstance(value, str):
+            return None
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
 
     def __len__(self) -> int:
         return len(self._items)

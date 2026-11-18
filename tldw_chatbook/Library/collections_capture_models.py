@@ -5,7 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from types import MappingProxyType
-from typing import Any, Literal, Mapping
+from typing import TYPE_CHECKING, Any, Literal, Mapping
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Utils.egress import UrlProvenance
 
 
 CAPTURE_PAGE_SIZE = 20
@@ -388,9 +391,11 @@ class CaptureDetail(CaptureSummary):
     word_count: int | None = None
     media_reference: ExternalMediaReference | None = None
     offline_copy: CaptureOfflineCopy | None = None
+    url_provenance: UrlProvenance | None = None
 
     def __post_init__(self) -> None:
         super().__post_init__()
+        _normalize_capture_provenance(self)
         if not isinstance(self.submitted_url, str):
             raise CollectionsCaptureError("invalid_submitted_url")
         submitted_url = self.submitted_url.strip()
@@ -484,8 +489,10 @@ class CaptureSaveRequest:
     clean_html: str | None = None
     byline: str | None = None
     published_at: str | None = None
+    url_provenance: UrlProvenance | None = None
 
     def __post_init__(self) -> None:
+        _normalize_capture_provenance(self)
         object.__setattr__(
             self,
             "authority_key",
@@ -969,3 +976,15 @@ __all__ = [
     "ResolvedCaptureDetail",
     "SavedCaptureSearch",
 ]
+
+
+def _normalize_capture_provenance(capture: CaptureSaveRequest | CaptureDetail) -> None:
+    # Lazy to preserve the source-neutral models' import boundary.
+    from tldw_chatbook.Utils.egress import UrlProvenance
+
+    provenance = capture.url_provenance
+    if provenance is None:
+        provenance = UrlProvenance.UNKNOWN
+    if not isinstance(provenance, UrlProvenance):
+        raise CollectionsCaptureError("invalid_url_provenance")
+    object.__setattr__(capture, "url_provenance", provenance)

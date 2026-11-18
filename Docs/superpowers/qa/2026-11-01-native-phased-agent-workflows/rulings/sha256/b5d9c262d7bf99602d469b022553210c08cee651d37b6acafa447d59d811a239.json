@@ -1,0 +1,16 @@
+{
+  "full_report_read_at": "2026-11-05T02:05:35.589969+00:00",
+  "report_sha256": "bf6564671f0ee45906a101636df2a4db7180bc92dc82028c935089146141ce10",
+  "bytes": 22456,
+  "private_evidence_manifest_sha256": "931423f7d8bde82f72a9d09c79fdc0b2572eb30a9f150a668cb8e3148d199d4e",
+  "verdict": "SPEC FAIL / QUALITY NEEDS FIXES",
+  "findings": {
+    "Critical": 0,
+    "Important": 6,
+    "Minor": 2,
+    "visual": 1,
+    "cannot_verify_groups": 2
+  },
+  "scope": "Root full report read/hash; no duplicate native probes or private full-manifest audit",
+  "next": "one combined Task9 fix round1 to same implementer; Task10 gated"
+}

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="50.943" timestamp="2026-10-31T12:44:20.988871-07:00" hostname="DESKTOP-BISU2HE"><testcase classname="Tests.UI.test_console_archive_recovery_flow" name="test_production_recovery_keeps_exact_history_and_active_draft[button-size0]" time="43.785"><failure message="AssertionError: (ConsoleRunState(status=&lt;ConsoleRunStatus.VALIDATING: 'validating'&gt;, visible_copy='Validating provider.'), [], [])&#10;assert False&#10; +  where False = &lt;function mounted_recovery.&lt;locals&gt;.&lt;lambda&gt; at 0x000001E3B966D300&gt;()">Tests\UI\test_console_archive_recovery_flow.py:321: in test_production_recovery_keeps_exact_history_and_active_draft
+    async with mounted_recovery(
+C:\Python312\Lib\contextlib.py:210: in __aenter__
+    return await anext(self.gen)
+Tests\UI\test_console_archive_recovery_flow.py:236: in mounted_recovery
+    await wait_until(
+Tests\UI\test_library_conversation_recovery_flow.py:20: in wait_until
+    assert predicate(), debug() if debug else "condition not reached"
+E   AssertionError: (ConsoleRunState(status=&lt;ConsoleRunStatus.VALIDATING: 'validating'&gt;, visible_copy='Validating provider.'), [], [])
+E   assert False
+E    +  where False = &lt;function mounted_recovery.&lt;locals&gt;.&lt;lambda&gt; at 0x000001E3B966D300&gt;()</failure></testcase></testsuite></testsuites>

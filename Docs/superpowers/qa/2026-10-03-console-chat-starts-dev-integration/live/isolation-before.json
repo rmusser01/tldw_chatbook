@@ -1,0 +1,6 @@
+{
+  "real_config_sha256": "15c6cb224a6a51c7de5c3f716fbe9dfaef7b7ca05cf9daa7e3ebe247df9310da",
+  "profile": "/private/tmp/console-dev-live-01a0fa6c",
+  "server": "http://127.0.0.1:9099",
+  "model": "/Users/macbook-dev/Working/Language_Models/gemma-4-26B-A4B/gemma-4-26B-A4B-it-ultra-uncensored-heretic-Q4_K_M.gguf"
+}

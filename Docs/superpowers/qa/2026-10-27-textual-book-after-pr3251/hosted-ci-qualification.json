@@ -1,0 +1,343 @@
+{
+  "head": "6746d7e4ba897eaffc4c9f47427b510464b0fd89",
+  "runs": [
+    {
+      "id": 40540997790,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40540997790",
+      "conclusion": "success",
+      "jobs": 25
+    },
+    {
+      "id": 40540997830,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40540997830",
+      "conclusion": "success",
+      "jobs": 1
+    }
+  ],
+  "new_ui_cases_executed": 56,
+  "required_existing_cases_executed": 5,
+  "verified_case_call_rows": 61,
+  "ui_shards": [
+    {
+      "name": "UI Fast Lane (1)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40540997790/job/122319019654",
+      "seconds": 889.0,
+      "sha256": "6f69fbfed120544adaf11e9c5005a122bc90b677de93b94006338842816da7f6",
+      "cases": {
+        "Tests/UI/test_study_quiz_submit_lifetime.py::test_obsolete_submit_preserves_current_attempt_and_exact_draft[panel-replaced-success]": [
+          5.25
+        ],
+        "Tests/UI/test_study_quiz_submit_lifetime.py::test_obsolete_submit_preserves_current_attempt_and_exact_draft[runtime-away-back-success]": [
+          5.09
+        ],
+        "Tests/UI/test_library_notes_tree_paint_readiness.py::test_tree_settle_waits_for_paint_without_hiding_missing_folders[folders-present]": [
+          0.21
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (2)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40540997790/job/122319019536",
+      "seconds": 1019.0,
+      "sha256": "f9fdf8a98ff5844c715250017bc2f5a786799b6afafa15b189bf40f9942195e8",
+      "cases": {
+        "Tests/UI/test_notifications_inbox_responsiveness.py::test_memory_inbox_preserves_rows_and_mutations_on_owning_thread": [
+          0.0
+        ],
+        "Tests/UI/test_notifications_inbox_responsiveness.py::test_inbox_denial_prevents_store_access": [
+          0.0
+        ],
+        "Tests/UI/test_roleplay_pending_activation.py::test_window_state_reexports_preserve_the_existing_import_identity": [
+          0.0
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (3)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40540997790/job/122319019272",
+      "seconds": 844.0,
+      "sha256": "6a3f4554808e5afd2c2516eced1f69db0075d97db0d45d85bf7a031d252a14dc",
+      "cases": {
+        "Tests/UI/test_personas_lore_save_responsiveness.py::test_retired_save_reports_captured_book_without_replacing_current_panel[same-book]": [
+          9.19
+        ],
+        "Tests/UI/test_notifications_inbox_responsiveness.py::test_inbox_corrupt_store_reports_load_failure": [
+          8.42
+        ],
+        "Tests/UI/test_study_quiz_submit_lifetime.py::test_submit_history_completion_cannot_publish_after_runtime_reset[failure]": [
+          6.57
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (4)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40540997790/job/122319019444",
+      "seconds": 1113.0,
+      "sha256": "da7b30981c5894a142f9fba66b37faa029d7ce5c5afaf9636edb13b86b655455",
+      "cases": {
+        "Tests/UI/test_personas_lore_save_responsiveness.py::test_cancelled_before_entry_save_allows_a_later_explicit_retry": [
+          9.33
+        ],
+        "Tests/UI/test_notifications_inbox_responsiveness.py::test_inbox_mutations_persist_and_refresh_without_blocking[dismiss]": [
+          8.29
+        ],
+        "Tests/UI/test_study_quiz_submit_lifetime.py::test_obsolete_submit_preserves_current_attempt_and_exact_draft[scope-away-back-failure]": [
+          7.28
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (5)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40540997790/job/122319019543",
+      "seconds": 902.0,
+      "sha256": "76d527f1c567653145d3b02e5e0d0a6364a7a7a3fcc14529ce72ea4127deb0b4",
+      "cases": {
+        "Tests/UI/test_personas_lore_save_responsiveness.py::test_newer_raw_settings_survive_and_next_save_uses_saved_version": [
+          9.3
+        ],
+        "Tests/UI/test_notifications_inbox_responsiveness.py::test_each_admitted_inbox_mutation_refreshes_after_its_native_commit[mark-read]": [
+          8.85
+        ],
+        "Tests/UI/test_study_quiz_submit_lifetime.py::test_obsolete_submit_preserves_current_attempt_and_exact_draft[panel-replaced-failure]": [
+          7.09
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (6)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40540997790/job/122319019337",
+      "seconds": 916.0,
+      "sha256": "983648b1cc660f043ae018567c1ec369aa6bdfb449436ccf13df6eec9743f840",
+      "cases": {
+        "Tests/UI/test_notifications_inbox_responsiveness.py::test_inbox_mutations_persist_and_refresh_without_blocking[mark-read]": [
+          7.94
+        ],
+        "Tests/UI/test_study_quiz_submit_lifetime.py::test_submit_history_completion_cannot_publish_after_runtime_reset[success]": [
+          6.24
+        ],
+        "Tests/UI/test_roleplay_pending_activation.py::test_superseded_dictionary_search_waits_for_authoritative_publication": [
+          4.01
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (7)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40540997790/job/122319019213",
+      "seconds": 972.0,
+      "sha256": "8abde706f42b5360acb295002921c00a51b3c6d23d4b0dbeffcc7bd6bff55222",
+      "cases": {
+        "Tests/UI/test_notifications_inbox_responsiveness.py::test_each_admitted_inbox_mutation_refreshes_after_its_native_commit[dismiss]": [
+          8.71
+        ],
+        "Tests/UI/test_roleplay_pending_activation.py::test_four_key_find_opens_once_after_matching_publication[repeated]": [
+          4.78
+        ],
+        "Tests/UI/test_roleplay_pending_activation.py::test_newer_intent_retires_activation_before_selection_dispatch[reload]": [
+          4.35
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (8)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40540997790/job/122319019509",
+      "seconds": 1048.0,
+      "sha256": "2977c97a43e8075bba99d2828881c322a0f8c40596ff7ee7069b17a4267b540d",
+      "cases": {
+        "Tests/UI/test_notifications_inbox_responsiveness.py::test_inbox_sqlite_failure_propagates_without_changed_flags[mark_read]": [
+          0.28
+        ],
+        "Tests/UI/test_notifications_inbox_responsiveness.py::test_inbox_sqlite_failure_propagates_without_changed_flags[dismiss]": [
+          0.25
+        ],
+        "Tests/UI/test_notifications_inbox_responsiveness.py::test_inbox_awaitable_overrides_keep_callers_loop_and_return_values": [
+          0.0
+        ],
+        "Tests/UI/test_notifications_inbox_responsiveness.py::test_custom_sync_inbox_stays_on_callers_thread": [
+          0.0
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (9)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40540997790/job/122319019439",
+      "seconds": 882.0,
+      "sha256": "9e0ee309ef6a223998b1e75a5d843f8512d48c1c373970592488b79098bee4cd",
+      "cases": {
+        "Tests/UI/test_study_quiz_submit_lifetime.py::test_obsolete_submit_preserves_current_attempt_and_exact_draft[runtime-local-success]": [
+          6.62
+        ],
+        "Tests/UI/test_study_quiz_submit_lifetime.py::test_obsolete_submit_preserves_current_attempt_and_exact_draft[runtime-local-failure]": [
+          6.62
+        ],
+        "Tests/UI/test_study_quiz_submit_lifetime.py::test_obsolete_submit_preserves_current_attempt_and_exact_draft[attempt-replaced-failure]": [
+          6.15
+        ],
+        "Tests/UI/test_study_quiz_submit_lifetime.py::test_obsolete_submit_preserves_current_attempt_and_exact_draft[attempt-replaced-success]": [
+          6.09
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (10)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40540997790/job/122319019585",
+      "seconds": 1033.0,
+      "sha256": "155ce45789deab3c45143c1c53df0551ea46ed28772283c5585166e38de17cf1",
+      "cases": {
+        "Tests/UI/test_personas_lore_save_responsiveness.py::test_ordinary_save_reports_real_sqlite_result[True]": [
+          10.62
+        ],
+        "Tests/UI/test_chunking_lab_edit_publication.py::test_final_preparation_preserves_newer_keyboard_input[delivered]": [
+          7.73
+        ],
+        "Tests/UI/test_roleplay_pending_activation.py::test_four_key_find_opens_once_after_matching_publication[late]": [
+          6.67
+        ],
+        "Tests/UI/test_roleplay_pending_activation.py::test_newer_intent_retires_activation_before_selection_dispatch[cursor]": [
+          4.9
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (11)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40540997790/job/122319019335",
+      "seconds": 908.0,
+      "sha256": "0f551bb56a579ac69fa0430f342b9ba404bbfb7ae2e6d1a75d320b07abea55c0",
+      "cases": {
+        "Tests/UI/test_personas_lore_save_responsiveness.py::test_held_save_releases_screen_controls_and_ignores_repeat": [
+          9.24
+        ],
+        "Tests/UI/test_library_notes_tree_keeps_folders_after_create.py::test_rail_new_note_then_escape_shows_the_folders_and_add_to_folder_lists_them": [
+          9.03
+        ],
+        "Tests/UI/test_library_notes_tree_keeps_folders_after_create.py::test_loading_row_paints_while_the_root_slice_loads_and_g_is_not_advertised_on_unfiled": [
+          8.61
+        ],
+        "Tests/UI/test_library_notes_tree_keeps_folders_after_create.py::test_palette_new_note_then_blank_then_escape_shows_every_top_level_folder": [
+          7.88
+        ],
+        "Tests/UI/test_library_notes_tree_keeps_folders_after_create.py::test_a_template_create_lands_in_a_tree_with_its_folders": [
+          6.85
+        ],
+        "Tests/UI/test_study_quiz_submit_lifetime.py::test_obsolete_submit_preserves_current_attempt_and_exact_draft[runtime-away-back-failure]": [
+          6.24
+        ],
+        "Tests/UI/test_chunking_lab_edit_publication.py::test_final_preparation_preserves_newer_keyboard_input[held]": [
+          5.89
+        ],
+        "Tests/UI/test_chunking_lab_sample_import_drafts.py::test_sample_read_rechecks_intent_after_queued_transition_computes": [
+          5.79
+        ],
+        "Tests/UI/test_roleplay_pending_activation.py::test_newer_intent_retires_activation_before_selection_dispatch[query]": [
+          4.52
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (12)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40540997790/job/122319018834",
+      "seconds": 1054.0,
+      "sha256": "8cd59ceff2ddb329d9b28c6f3cc4f4cf93c86b9df0a531b62692b04016d87489",
+      "cases": {
+        "Tests/UI/test_personas_lore_save_responsiveness.py::test_ordinary_save_reports_real_sqlite_result[False]": [
+          11.77
+        ],
+        "Tests/UI/test_study_quiz_submit_lifetime.py::test_obsolete_submit_preserves_current_attempt_and_exact_draft[scope-away-back-success]": [
+          8.81
+        ],
+        "Tests/UI/test_study_quiz_submit_lifetime.py::test_obsolete_submit_preserves_current_attempt_and_exact_draft[workspace-B-failure]": [
+          8.47
+        ],
+        "Tests/UI/test_chunking_lab_edit_publication.py::test_undo_publishes_after_competing_status_preparation[worker-first]": [
+          8.07
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (13)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40540997790/job/122319019580",
+      "seconds": 717.0,
+      "sha256": "56235777811c4c7da2ba1848d2d800fd1e03e958ad83e1725715f807f2b9ec4c",
+      "cases": {
+        "Tests/UI/test_study_quiz_submit_lifetime.py::test_obsolete_submit_preserves_current_attempt_and_exact_draft[workspace-B-success]": [
+          4.72
+        ],
+        "Tests/UI/test_study_quiz_submit_lifetime.py::test_current_submit_completes_and_preserves_normal_history_refresh": [
+          4.22
+        ],
+        "Tests/UI/test_library_notes_tree_paint_readiness.py::test_tree_settle_waits_for_paint_without_hiding_missing_folders[folders-absent]": [
+          0.19
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (14)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40540997790/job/122319019714",
+      "seconds": 1035.0,
+      "sha256": "450c404cd41cfe8fbc14646dde116416cf18be572eddadaa057520861ba17832",
+      "cases": {
+        "Tests/UI/test_personas_lore_save_responsiveness.py::test_retired_save_reports_captured_book_without_replacing_current_panel[selection]": [
+          10.94
+        ],
+        "Tests/UI/test_chunking_lab_edit_publication.py::test_final_sample_echo_preserves_queued_configuration_keys": [
+          8.37
+        ],
+        "Tests/UI/test_roleplay_pending_activation.py::test_dictionary_reload_retires_activation_queued_after_publication": [
+          4.39
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (15)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40540997790/job/122319019765",
+      "seconds": 1197.0,
+      "sha256": "deb712c94ead6ff76f4253f15eeb0a2266402282f62759d37211436d81ac74ba",
+      "cases": {
+        "Tests/UI/test_personas_lore_save_responsiveness.py::test_retired_save_reports_captured_book_without_replacing_current_panel[panel-failure]": [
+          10.69
+        ],
+        "Tests/UI/test_chunking_lab_edit_publication.py::test_status_refresh_stays_live_during_final_preparation": [
+          7.19
+        ],
+        "Tests/UI/test_roleplay_pending_activation.py::test_four_key_find_opens_once_after_matching_publication[ordinary]": [
+          5.13
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (16)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40540997790/job/122319019440",
+      "seconds": 821.0,
+      "sha256": "988ab411329d96181bb22605bc0f5209af08e1b229fa3a3e184a59e0372ef7ff",
+      "cases": {
+        "Tests/UI/test_personas_lore_search_save_landing.py::test_save_refresh_keeps_enter_fenced_until_matching_rows_land[included-not-first]": [
+          9.0
+        ],
+        "Tests/UI/test_personas_lore_search_save_landing.py::test_save_refresh_keeps_enter_fenced_until_matching_rows_land[filtered-away]": [
+          8.88
+        ],
+        "Tests/UI/test_roleplay_pending_activation.py::test_four_key_find_opens_once_after_matching_publication[held]": [
+          4.19
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (17)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40540997790/job/122319019169",
+      "seconds": 908.0,
+      "sha256": "b2f67f2686baf69e44cdf66ba763f0e4f1bb383ffa5cac0f1466256a8285d47c",
+      "cases": {
+        "Tests/UI/test_personas_lore_save_responsiveness.py::test_cancelling_save_keeps_admission_until_native_write_finishes": [
+          9.01
+        ],
+        "Tests/UI/test_notifications_inbox_responsiveness.py::test_inbox_read_hold_leaves_ui_loop_responsive": [
+          7.57
+        ],
+        "Tests/UI/test_chunking_lab_edit_publication.py::test_undo_publishes_after_competing_status_preparation[pending-worker]": [
+          6.0
+        ]
+      }
+    }
+  ],
+  "max_ui_shard_seconds": 1197.0,
+  "method": "Hosted successful job logs: each exact new node has one call-duration row, rather than collection-only evidence. No uploaded child-XML claim."
+}

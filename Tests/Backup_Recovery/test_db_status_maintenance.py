@@ -15,7 +15,8 @@ from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 from tldw_chatbook.Backup_Recovery.runtime_maintenance import _bind,_settle_stage,_resume_hooks
 from tldw_chatbook.Utils.db_status_manager import DBStatusManager
 case=sys.argv[1]
-db=config.get_chachanotes_db_lazy()
+from tldw_chatbook.app_services import open_chachanotes_db
+db=open_chachanotes_db(config.get_chachanotes_db_path(), client_id=config.CLI_APP_CLIENT_ID, seed_builtin_content=True)
 db.add_note('Telemetry fixture','Retained during backup')
 db.close_connection()
 app=SimpleNamespace(db_sizes_status={'previous':'kept'})

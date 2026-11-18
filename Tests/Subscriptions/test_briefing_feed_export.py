@@ -74,7 +74,9 @@ def _make_briefing(db: SubscriptionsDB, watchlist_id: int, *, created_at: str) -
     return briefing_id
 
 
-def _make_script(db: SubscriptionsDB, briefing_id: int, *, preset_name: str = "p") -> int:
+def _make_script(
+    db: SubscriptionsDB, briefing_id: int, *, preset_name: str = "p"
+) -> int:
     return db.insert_briefing_script(
         briefing_id, preset_id=None, preset_name=preset_name, roster_snapshot_json="[]"
     )
@@ -104,7 +106,9 @@ def _seed_episode(
     if covers_from_ts is not None:
         db.update_briefing(briefing_id, covers_from_ts=covers_from_ts)
     script_id = _make_script(db, briefing_id, preset_name=preset_name)
-    audio_id = db.create_briefing_audio(script_id, voice_snapshot_json="[]", status="complete")
+    audio_id = db.create_briefing_audio(
+        script_id, voice_snapshot_json="[]", status="complete"
+    )
     source_path = (
         Path(file_path)
         if file_path is not None
@@ -139,8 +143,12 @@ def test_happy_path_writes_feed_xml_plus_one_file_per_episode_and_returns_the_co
     watchlist_id = _make_watchlist(db, "Morning AI Brief")
     audio_dir = briefing_audio.briefing_audio_dir()
 
-    _seed_episode(db, watchlist_id, audio_dir=audio_dir, created_at="2026-01-01 00:00:00")
-    _seed_episode(db, watchlist_id, audio_dir=audio_dir, created_at="2026-01-02 00:00:00")
+    _seed_episode(
+        db, watchlist_id, audio_dir=audio_dir, created_at="2026-01-01 00:00:00"
+    )
+    _seed_episode(
+        db, watchlist_id, audio_dir=audio_dir, created_at="2026-01-02 00:00:00"
+    )
 
     destination = tmp_path / "export"
     destination.mkdir()
@@ -238,7 +246,9 @@ def test_filenames_combine_stem_and_audio_id_so_identical_titles_cannot_collide(
     )
 
     assert result.episode_count == 2
-    written_names = sorted(p.name for p in destination.iterdir() if p.name != "feed.xml")
+    written_names = sorted(
+        p.name for p in destination.iterdir() if p.name != "feed.xml"
+    )
     assert len(written_names) == 2
     assert written_names[0] != written_names[1]
 
@@ -288,7 +298,9 @@ def test_episode_titles_lead_with_the_date_so_identical_presets_are_distinguisha
     assert "Jan 02, 2026" in titles[0] or "Jan 02, 2026" in titles[1]
 
 
-def test_episode_description_includes_covers_from_ts_when_present(tmp_path, monkeypatch):
+def test_episode_description_includes_covers_from_ts_when_present(
+    tmp_path, monkeypatch
+):
     """Task 4 review round 1: `covers_from_ts` is present on every
     `list_watchlist_audio_episodes` row but was previously unused -- fed
     into the description so an episode says what period it actually
@@ -320,7 +332,9 @@ def test_episode_description_includes_covers_from_ts_when_present(tmp_path, monk
 # --- the load-bearing security test ------------------------------------------
 
 
-def test_an_unsafe_file_path_is_skipped_without_any_filesystem_access(tmp_path, monkeypatch):
+def test_an_unsafe_file_path_is_skipped_without_any_filesystem_access(
+    tmp_path, monkeypatch
+):
     """A real, readable file sits at the "unsafe" path -- a wrong-order
     implementation would happily read/copy it. `audio_file_path_is_safe` is
     forced to return `False` regardless, and this asserts neither
@@ -345,7 +359,9 @@ def test_an_unsafe_file_path_is_skipped_without_any_filesystem_access(tmp_path, 
 
     monkeypatch.setattr(Path, "exists", _spy_exists)
 
-    copy_mock = Mock(side_effect=AssertionError("shutil.copy2 must not run for an unsafe path"))
+    copy_mock = Mock(
+        side_effect=AssertionError("shutil.copy2 must not run for an unsafe path")
+    )
     monkeypatch.setattr(briefing_export.shutil, "copy2", copy_mock)
 
     destination = tmp_path / "export"
@@ -434,7 +450,9 @@ def test_a_malformed_briefing_created_at_is_skipped_with_a_clear_reason_others_s
     assert len(result.skipped) == 1
     reason = result.skipped[0]
     assert str(bad_audio_id) in reason
-    assert "ValueError" not in reason, "the reason must say what went wrong, not a bare exception type"
+    assert "ValueError" not in reason, (
+        "the reason must say what went wrong, not a bare exception type"
+    )
     assert "timestamp" in reason.lower()
 
 
@@ -542,7 +560,9 @@ def test_re_exporting_to_the_same_directory_overwrites_cleanly(tmp_path, monkeyp
     db = _db(tmp_path)
     watchlist_id = _make_watchlist(db)
     audio_dir = briefing_audio.briefing_audio_dir()
-    _seed_episode(db, watchlist_id, audio_dir=audio_dir, created_at="2026-01-01 00:00:00")
+    _seed_episode(
+        db, watchlist_id, audio_dir=audio_dir, created_at="2026-01-01 00:00:00"
+    )
 
     destination = tmp_path / "export"
     destination.mkdir()
@@ -552,7 +572,9 @@ def test_re_exporting_to_the_same_directory_overwrites_cleanly(tmp_path, monkeyp
     )
     assert first.episode_count == 1
 
-    _seed_episode(db, watchlist_id, audio_dir=audio_dir, created_at="2026-01-02 00:00:00")
+    _seed_episode(
+        db, watchlist_id, audio_dir=audio_dir, created_at="2026-01-02 00:00:00"
+    )
 
     second = export_feed_directory(
         db, watchlist_id, destination=destination, watchlist_name="W", now=_NOW
@@ -589,11 +611,15 @@ def test_destination_directory_mode_is_never_forced_to_0o700(tmp_path, monkeypat
     )
 
     mode = stat.S_IMODE(os.stat(destination).st_mode)
-    assert mode == 0o755, "the user's destination directory must never be chmodded (Decision 2)"
+    assert mode == 0o755, (
+        "the user's destination directory must never be chmodded (Decision 2)"
+    )
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX file mode semantics")
-def test_exported_feed_xml_is_not_left_at_private_storage_permissions(tmp_path, monkeypatch):
+def test_exported_feed_xml_is_not_left_at_private_storage_permissions(
+    tmp_path, monkeypatch
+):
     """Task 4 review round 1 (IMPORTANT finding): `feed.xml`'s atomic-write
     partial used to be opened at `0o600`, and `os.replace` preserves the
     replaced-in file's mode, so every exported `feed.xml` landed `0o600` --

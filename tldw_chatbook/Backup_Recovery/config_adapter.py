@@ -673,6 +673,44 @@ def _excluded_root(config, owner, path, *, kind, local_id=""):
     )
 
 
+@dataclass(frozen=True)
+class _LocalSQLite:
+    """One exact SQLite store under the user data dir, with its sidecars,
+    that centralized backup never captures (TASK-39110; ``notes.sync_state``
+    was the first). ``reason`` is the refusal code.
+    """
+
+    owner_id: str
+    filename: str
+    reason: str
+    activation_required: bool = False
+
+    def discover(self, config):
+        database = user_data_dir(config) / self.filename
+        return tuple(
+            _excluded_root(
+                config,
+                self.owner_id,
+                Path(str(database) + suffix),
+                kind="file",
+                local_id=suffix,
+            )
+            for suffix in ("", "-wal", "-shm", "-journal")
+        )
+
+    def schema_policy(self):
+        return None
+
+    def validate(self, candidate):
+        return (self.reason,)
+
+    def capture(self, item, destination, cancel):
+        raise ValueError(self.reason)
+
+    def relocate(self, candidate, mapping):
+        raise ValueError(self.reason)
+
+
 class _Generated(_RawDeclaration):
     def discover(self, config):
         context = discovery_context(config)
@@ -1108,5 +1146,12 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
             "generation.styles",
             leaf="image_generation_styles",
             tree=True,
+        ),
+        # TASK-39110: the interview drafts are local-only by policy. The
+        # repository is captured by Personal_Context/recovery.py (TASK-40134).
+        _LocalSQLite(
+            "personal_context.interview_drafts",
+            "tldw_chatbook_personal_context_interviews.db",
+            "personal_context_interview_drafts_excluded",
         ),
     )

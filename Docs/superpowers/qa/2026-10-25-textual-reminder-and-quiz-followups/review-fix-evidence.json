@@ -1,0 +1,45 @@
+{
+  "reviewed_head": "4fd871e7697bd4efdca4f4cbbfea48537dde6036",
+  "results": [
+    {
+      "label": "review-retirement-red",
+      "tests": 4,
+      "failures": 4,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "label": "review-replacement-matched-red",
+      "tests": 2,
+      "failures": 2,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "label": "review-fix-settled-green",
+      "tests": 20,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "label": "review-census-contracts",
+      "tests": 167,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  ],
+  "source_sha256": {
+    "tldw_chatbook/UI/Screens/study_screen.py": "f86984a25ef972e3fba63d9578b14c7c4abcf71ecda141f1440f5ee0b520aaf7",
+    "tldw_chatbook/UI/Study_Window.py": "2e3ae3a7628f7e7a3eb93fb8f3ce01a38483069b271c17a7831fc81c13457b97",
+    "tldw_chatbook/UI/Study_Modules/quizzes_handler.py": "3b4e32827bab6948278d6215ff149b827e2b4a69417ccbd83646679aa3b2d84c",
+    "Tests/UI/test_study_quiz_start_responsiveness.py": "8f13a89c1e28a557d7c811bff4c1e305a21513a4f1fa904dd6b5816e0dbb141e"
+  },
+  "qualifications": [
+    "Retirement RED directly proves NoMatches in both return-after cases; replacement proof uses matched initialized-panel RED2/2 on4fd source with finally-restored guard.",
+    "Initial replacement seeds before worker initialization completed are excluded from causal RED claims; corrected matched fixture proves overwrite.",
+    "Final parent20/20 plus19/19 private child records pass; source hashes identify guarded GREEN.",
+    "Scoped worker/markup/backlog-file guards rerun after review fix exit0; census/queue/backlog-ID167/167."
+  ]
+}

@@ -10,6 +10,7 @@ stays a pure function of the value it returns.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 import html
 import re
@@ -74,6 +75,84 @@ LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES: tuple[str, ...] = (
     "conversations",
     "prompts",
 )
+
+#: The Console's Library RAG source-type default: exactly the three kinds
+#: retrieval has always run over from this screen (prompts OFF). It is the
+#: ONE default -- `chat_screen.CONSOLE_LIBRARY_RAG_SOURCE_SCOPE` is this
+#: same tuple -- so making the row editable (RAG-44) changes nothing until
+#: a user actually touches a toggle.
+CONSOLE_RAG_DEFAULT_SOURCE_TYPES: tuple[str, ...] = (
+    "notes",
+    "media",
+    "conversations",
+)
+#: The Console's leading noun for the source-scope line. NOT "Scope": the
+#: Console already spends that word on the retrieval ITEM scope ("Scope: 2
+#: items" in the rail and status strip), which is a different concept --
+#: this line says which KINDS of sources retrieval reads.
+CONSOLE_RAG_SOURCE_SUMMARY_PREFIX = "Sources"
+
+
+def normalize_console_rag_source_types(value: Any) -> tuple[str, ...]:
+    """Return a usable Console RAG source-type selection from loose input.
+
+    Every boundary the selection crosses (modal construction, the screen's
+    stored attribute, restored screen state) runs through here, so a
+    legacy payload, an unknown identifier, or a non-sequence can never
+    reach a retrieval request. Unknown values are dropped and the result
+    is ordered canonically; an unusable or empty result falls back to
+    `CONSOLE_RAG_DEFAULT_SOURCE_TYPES` rather than retrieving over
+    nothing.
+
+    Args:
+        value: Any candidate selection (sequence of source-type ids).
+
+    Returns:
+        A canonical, non-empty tuple of known source-type identifiers.
+    """
+    if isinstance(value, str) or not isinstance(value, Iterable):
+        return CONSOLE_RAG_DEFAULT_SOURCE_TYPES
+    try:
+        candidates = {str(item).strip().lower() for item in value}
+    except TypeError:
+        return CONSOLE_RAG_DEFAULT_SOURCE_TYPES
+    normalized = tuple(
+        source_type
+        for source_type in LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES
+        if source_type in candidates
+    )
+    return normalized or CONSOLE_RAG_DEFAULT_SOURCE_TYPES
+
+
+CONSOLE_LIBRARY_SEARCH_QUERY_MAX_CHARS = 2_000
+
+
+def sanitize_console_library_rag_query(value: Any) -> str:
+    """Return a normalized, validation-safe Console Library query."""
+    sanitized = sanitize_string(
+        str(value or ""), max_length=CONSOLE_LIBRARY_SEARCH_QUERY_MAX_CHARS
+    )
+    query = " ".join(sanitized.strip().split())
+    if not query:
+        return ""
+    if not validate_text_input(
+        query,
+        max_length=CONSOLE_LIBRARY_SEARCH_QUERY_MAX_CHARS,
+        allow_html=False,
+    ):
+        return ""
+    return query
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleLibrarySearchResult:
+    """One-shot Library search request returned by the modal."""
+
+    query: str
+    run: bool
+    source_types: tuple[str, ...] = CONSOLE_RAG_DEFAULT_SOURCE_TYPES
+
+
 #: The evidence depth used when the active RAG profile cannot be read at all
 #: (TASK-15020/B3). This used to be `LIBRARY_RAG_DEFAULT_TOP_K` -- the window's
 #: actual, unconfigurable default -- while the Console's Library RAG entry
@@ -299,8 +378,18 @@ def searching_status_line(source_types: Sequence[str]) -> str:
     return f"searching · {labels}…" if labels else "searching…"
 
 
-def library_rag_paid_mode_notice(provider: str) -> str:
+def library_rag_paid_mode_notice(provider: str, model: str | None = None) -> str:
     """Return the quiet line's ready-state paid-mode notice (PR-T2 Task 4).
+
+    TASK-34000.21 (review finding L-06): the line names the MODEL too --
+    `To openai · gpt-4.1-mini: question + evidence` -- with the same `·`
+    joiner the post-run footer uses, so the line above Run, the in-flight
+    `Asking openai…` line and the footer `openai · gpt-4.1-mini · $…` all
+    print the same raw provider key and the same model. Before this task
+    the model was named only AFTER the call, and it was the handler's own
+    default rather than the one `[chat_defaults]` said. With no model
+    resolvable anywhere the line says so (`its default model`) instead of
+    naming one it cannot know.
 
     Until this task, the ONLY provider-adjacent copy on the Library
     Search/RAG panel was the *blocked* branch's "Select a provider/model
@@ -318,13 +407,19 @@ def library_rag_paid_mode_notice(provider: str) -> str:
         provider: The provider `resolve_library_rag_answer_provider`
             would call if Run were pressed right now
             (`LibraryRagQueryState.ready_answer_provider`).
+        model: The model that call would name
+            (`LibraryRagQueryState.ready_answer_model`), or `None`/blank
+            when neither `[chat_defaults]` nor the provider's own table
+            names one.
 
     Returns:
         Compact recipient and outgoing-data disclosure. Keep the recipient
-        first so the reserved row remains readable at 80 columns; the mode
-        toggle already explains that Search stays local (task-2530).
+        first so the reserved row remains readable at 80 columns -- a long
+        model name is clipped after the recipient, never before it; the
+        mode toggle already explains that Search stays local (task-2530).
     """
-    return f"To {provider}: question + evidence"
+    model_text = (model or "").strip() or "its default model"
+    return f"To {provider} · {model_text}: question + evidence"
 
 
 def _clean_text(value: Any, fallback: str = "") -> str:
@@ -1084,7 +1179,9 @@ def library_rag_source_scope_summary(
     if not selected_types:
         return f"{prefix}: no sources selected"
     off_types = [
-        source_type for source_type in toggle_types if source_type not in selected_values
+        source_type
+        for source_type in toggle_types
+        if source_type not in selected_values
     ]
     selected_labels = ", ".join(
         _source_type_display_label(source_type) for source_type in selected_types
@@ -1172,6 +1269,13 @@ class LibraryRagQueryState:
     #: line's `library_rag_paid_mode_notice` (`library_search_rag_panel.
     #: py`'s `library_rag_query_status_children`).
     ready_answer_provider: str = ""
+    #: The model that provider would be asked for (TASK-34000.21) -- the
+    #: persisted `[chat_defaults]` model carried by `LibraryRagProviderGate.
+    #: model`. Derived under the SAME condition as `ready_answer_provider`
+    #: (rag mode, run enabled), so a model is never named for a provider
+    #: that cannot be billed; `""` when no model is named anywhere (the
+    #: quiet line then says `its default model`).
+    ready_answer_model: str = ""
 
     @property
     def blocked_is_empty_query(self) -> bool:
@@ -1220,6 +1324,7 @@ class LibraryRagQueryState:
         dependencies_ready: bool = True,
         index_ready: bool = True,
         provider_name: str | None = None,
+        provider_model: str | None = None,
         provider_credential_recovery: str = "",
     ) -> "LibraryRagQueryState":
         """Build query-control display state from UI or service values.
@@ -1251,6 +1356,13 @@ class LibraryRagQueryState:
                 impossible to construct: readiness is derived here as
                 `bool((provider_name or "").strip())`, so "ready" and "has
                 a name to show" can no longer disagree.
+            provider_model: The model half of the same gate
+                (`LibraryRagProviderGate.model`, TASK-34000.21), or `None`
+                when no model is named anywhere. Display only, exactly like
+                `provider_credential_recovery` below: it never affects
+                readiness, and it reaches `ready_answer_model` only under
+                the condition that fills `ready_answer_provider`, so a
+                blocked state never names a model it will not bill.
             provider_credential_recovery: The remedy for a provider that IS
                 named in config but cannot authenticate (`Library/library_
                 rag_answer_service.LibraryRagProviderGate.credential_
@@ -1274,6 +1386,7 @@ class LibraryRagQueryState:
         """
 
         normalized_provider_name = (provider_name or "").strip()
+        normalized_provider_model = (provider_model or "").strip()
         provider_ready = bool(normalized_provider_name)
         # Escaped like every other config-sourced display string in this
         # module: the remedy text embeds a TOML table name in brackets
@@ -1361,6 +1474,9 @@ class LibraryRagQueryState:
         ready_answer_provider = (
             normalized_provider_name if normalized_mode == "rag" and enabled else ""
         )
+        # Same condition, by construction (TASK-34000.21): the model rides
+        # with the provider or not at all.
+        ready_answer_model = normalized_provider_model if ready_answer_provider else ""
         return cls(
             query=normalized_query,
             mode=normalized_mode,
@@ -1376,6 +1492,7 @@ class LibraryRagQueryState:
             ),
             recovery_copy=recovery_copy,
             ready_answer_provider=ready_answer_provider,
+            ready_answer_model=ready_answer_model,
         )
 
 
@@ -1757,6 +1874,26 @@ class LibraryRagResultRow:
             raise ValueError(invalid_id_message)
         return f"local:media:{record_id}" if source_type == "media" else str(record_id)
 
+    def local_record_id(self) -> str:
+        """The bare local record id ``resolve_local_open_id`` parsed.
+
+        TASK-34000.24 (fix round 1): a workspace membership is keyed by the
+        record's own id -- what ``LocalMediaReadingService`` returns as
+        ``"id"`` and the Library row model reads -- so a Media result's
+        ``local:media:N`` envelope is taken off here, once, next to the
+        resolver that put it on. Notes and conversations keep their opaque
+        ids.
+
+        Returns:
+            The bare record id.
+
+        Raises:
+            ValueError: As ``resolve_local_open_id`` (not a local record).
+        """
+        resolved = self.resolve_local_open_id()
+        prefix = "local:media:"
+        return resolved[len(prefix):] if resolved.startswith(prefix) else resolved
+
 
 def library_rag_all_matches_weak(rows: Sequence[LibraryRagResultRow]) -> bool:
     """True when every row carrying a similarity bands weak (RAG-34/Task 8).
@@ -2005,8 +2142,7 @@ def library_rag_coverage_note(
     """
     route_notes = (
         tuple(
-            str(item)
-            for item in (diagnostics.get(LIBRARY_RAG_ROUTE_NOTES_KEY) or ())
+            str(item) for item in (diagnostics.get(LIBRARY_RAG_ROUTE_NOTES_KEY) or ())
         )
         if isinstance(diagnostics, Mapping)
         else ()
@@ -2177,6 +2313,7 @@ class LibraryRagPanelState:
         dependencies_ready: bool = True,
         index_ready: bool = True,
         provider_name: str | None = None,
+        provider_model: str | None = None,
         provider_credential_recovery: str = "",
         selected_source_types: Sequence[str] | None = None,
         history: Sequence[str] = (),
@@ -2230,6 +2367,11 @@ class LibraryRagPanelState:
                 ready `rag`-mode state must now name a provider
                 explicitly, which is the whole point: readiness can no
                 longer be asserted without a name to back it up.
+            provider_model: The gate's model half (`LibraryRagProviderGate.
+                model`, TASK-34000.21), forwarded unchanged to
+                `LibraryRagQueryState.from_values` so the quiet line can
+                name the model that will be billed. Display only; `None`
+                (the default) renders `its default model`.
             provider_credential_recovery: Forwarded unchanged to
                 `LibraryRagQueryState.from_values` -- the remedy shown when
                 a provider IS named in config but cannot authenticate. See
@@ -2275,6 +2417,7 @@ class LibraryRagPanelState:
             dependencies_ready=dependencies_ready,
             index_ready=index_ready,
             provider_name=provider_name,
+            provider_model=provider_model,
             provider_credential_recovery=provider_credential_recovery,
         )
         normalized_searched_query, _ = _sanitize_query(

@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import asdict, replace
+import functools
 import json
+from pathlib import Path
 import zlib
 
 import pytest
+
+from Tests.private_profile import private_profile_test
 
 from tldw_chatbook.Chat.console_exchange_capture import (
     CaptureDetail,
@@ -387,6 +391,138 @@ def test_new_legacy_row_after_logical_completion_reopens_checkpoint(
     assert LegacyTraceNormalizer(db).read_calls(second_message_id)
 
 
+#: TASK-40303: a bare key credentials-v1 never masked (fake, split at the prefix).
+_V1_UNMASKED_KEY = "sk" + "_live_" + "DONOTUSEEXAMPLEONLY" + "a1B2c3D4e5" * 2
+#: TASK-41133: a Groq key credentials-v2 never masked (fake, split likewise).
+_V2_UNMASKED_KEY = "gsk" + "_" + "DONOTUSEEXAMPLEONLY" + "a1B2" * 6
+#: Each older credential version, its fixed legacy policy id and a key it left.
+_OLDER_LEDGERS = {
+    "credentials-v1": ("00000000-0000-4000-8000-000000000097", _V1_UNMASKED_KEY),
+    "credentials-v2": ("00000000-0000-4000-8000-000000000098", _V2_UNMASKED_KEY),
+}
+
+
+@pytest.mark.parametrize("old_version", sorted(_OLDER_LEDGERS))
+def test_an_older_legacy_ledger_keeps_migrating_new_exchanges_under_the_current_version(
+    db: CharactersRAGDB, monkeypatch: pytest.MonkeyPatch, old_version: str
+) -> None:
+    """TASK-40303: the legacy policy id was one fixed row. A profile that
+    normalized an exchange before credentials-v2 holds it tagged
+    credentials-v1, so every later legacy batch raised
+    ``TraceIdentityConflict``, rolled back and was retried forever.
+    TASK-41133: the same for a v2 ledger once new exchanges bind v3."""
+    from tldw_chatbook.Chat import (
+        console_exchange_capture,
+        console_trace_legacy,
+        console_trace_repository,
+    )
+    from tldw_chatbook.Chat.console_trace_projection import project_capture_for_viewer
+    from tldw_chatbook.Chat.console_trace_redaction import (
+        CREDENTIAL_FILTER_VERSION,
+        READABLE_CREDENTIAL_FILTER_VERSIONS,
+        CredentialSanitizer,
+    )
+    from tldw_chatbook.Chat.console_trace_repository import TraceIdentityConflict
+    from tldw_chatbook.Chat.trace_export_profiles import TraceViewerProfile
+
+    old_policy_id, unmasked_key = _OLDER_LEDGERS[old_version]
+    conversation_id = db.add_conversation({"title": f"legacy {old_version} ledger"})
+    assert conversation_id is not None
+    old_message_id = _message(db, conversation_id, "answer-0")
+    # Capture and normalize it as the app did before that version was current.
+    older = functools.partial(CredentialSanitizer, version=old_version)
+    monkeypatch.setattr(console_trace_legacy, "CREDENTIAL_FILTER_VERSION", old_version)
+    monkeypatch.setattr(console_exchange_capture, "CredentialSanitizer", older)
+    monkeypatch.setattr(console_trace_repository, "CredentialSanitizer", older)
+    old = replace(_capture(0), response={"content": f"use {unmasked_key}"})
+    _insert_exchange(db, message_id=old_message_id, capture=old)
+    maintenance = LegacyTraceMaintenance(db)
+    assert maintenance.run_batch().logical_complete is True
+    monkeypatch.undo()
+
+    new_message_id = _message(db, conversation_id, "answer-1")
+    _insert_exchange(db, message_id=new_message_id, capture=_capture(1))
+    try:
+        reopened = maintenance.run_batch()
+    except TraceIdentityConflict:  # the runtime loop logs it and retries forever
+        reopened = None
+
+    assert reopened is not None and reopened.logical_complete is True
+    with db.transaction() as cursor:
+        policies = cursor.execute(
+            """SELECT policy.policy_id, policy.credential_filter_version
+                 FROM console_trace_calls AS call
+                 JOIN console_trace_policies AS policy USING (policy_id)
+                ORDER BY call.turn_id = ?""",
+            (new_message_id,),
+        ).fetchall()
+        assert cursor.execute("SELECT COUNT(*) FROM message_exchanges").fetchone()[0] == 0
+    # AC#3: the older row is not rewritten; the new call binds a row of its own.
+    assert [tuple(row) for row in policies] == [
+        (old_policy_id, old_version),
+        (policies[1][0], CREDENTIAL_FILTER_VERSION),
+    ]
+    assert policies[1][0] != policies[0][0]
+    # A new filter version needs its own legacy policy id, or this conflicts again.
+    assert set(console_trace_legacy._LEGACY_POLICY_IDS) == (
+        READABLE_CREDENTIAL_FILTER_VERSIONS
+    )
+    # AC#2: the call bound to the older policy still reads, and re-masks on read.
+    normalizer = LegacyTraceNormalizer(db)
+    assert normalizer.read_calls(new_message_id)
+    (old_call,) = normalizer.read_calls(old_message_id)
+    assert unmasked_key in json.dumps(old_call.capture.response)  # stored as it was left
+    for profile in TraceViewerProfile:
+        shown = project_capture_for_viewer(old_call.capture, profile)
+        assert unmasked_key not in json.dumps(shown.response), profile
+
+
+def test_a_pass_with_known_work_skips_the_idle_check(
+    db: CharactersRAGDB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TASK-33801: a pass that knows it has work opens one transaction, not two.
+
+    The read-only idle check costs a storage admission of its own; on a pass
+    with work it only falls through to the write path, so a work pass paid
+    three admissions where it used to pay two. The first pass (state unknown)
+    and a pass the loop flags with ``expect_work`` go straight to the write
+    path; later idle passes still use the read-only check.
+
+    Args:
+        db: A real ChaChaNotes database.
+        monkeypatch: Records every transaction a pass opens.
+    """
+    conversation_id = db.add_conversation({"title": "known work"})
+    assert conversation_id is not None
+    _insert_exchange(
+        db, message_id=_message(db, conversation_id, "answer-0"), capture=_capture(0)
+    )
+    opened: list[bool] = []
+    real_transaction = db.transaction
+
+    def recording_transaction(*, immediate: bool = False):
+        opened.append(immediate)
+        return real_transaction(immediate=immediate)
+
+    monkeypatch.setattr(db, "transaction", recording_transaction)
+    maintenance = LegacyTraceMaintenance(db)
+
+    assert maintenance.run_batch().logical_complete is True
+    assert opened == [True], f"first pass opened {opened}"
+
+    opened.clear()
+    assert maintenance.run_batch().logical_complete is True
+    assert opened == [False], f"idle pass opened {opened}"
+
+    _insert_exchange(
+        db, message_id=_message(db, conversation_id, "answer-1"), capture=_capture(1)
+    )
+    opened.clear()
+    maintenance.expect_work = True
+    assert maintenance.run_batch().processed_rows == 1
+    assert opened == [True], f"flagged work pass opened {opened}"
+
+
 def test_complete_check_without_new_rows_takes_no_write_transaction(
     db: CharactersRAGDB, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -430,3 +566,123 @@ def test_complete_check_without_new_rows_takes_no_write_transaction(
 
     assert reopened.processed_rows == 1
     assert True in immediate_calls, "new rows must still be normalized under the write lock"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_fresh_worker_batches_share_one_repository_admission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> None:
+    """The cold write fallback and warm read each keep the two-admission budget.
+
+    Args:
+        tmp_path: Private file-backed database directory.
+        monkeypatch: Counts the real admission seam without replacing its behavior.
+        request: Retains the selected profile in the existing child-test helper.
+    """
+    from tldw_chatbook.Backup_Recovery import storage_admission
+    from tldw_chatbook.DB.base_db import run_owned_db_call
+
+    database = CharactersRAGDB(tmp_path / "trace-admissions.db", "trace-admissions")
+    try:
+        conversation_id = database.add_conversation({"title": "cold trace batch"})
+        assert conversation_id is not None
+        message_id = _message(database, conversation_id, "answer")
+        _insert_exchange(database, message_id=message_id, capture=_capture(0))
+        database.close_connection()
+        assert database.registered_connection_count() == 0
+        # This case counts admission; the elapsed-yield case controls time separately.
+        maintenance = LegacyTraceMaintenance(database, clock=lambda: 0.0)
+        admissions: list[int] = []
+        acquire = storage_admission._acquire_storage
+
+        def counted_acquire(
+            *args: object, **kwargs: object
+        ) -> storage_admission.StorageLease:
+            admissions.append(1)
+            return acquire(*args, **kwargs)
+
+        monkeypatch.setattr(storage_admission, "_acquire_storage", counted_acquire)
+        first = await run_owned_db_call(database, maintenance.run_batch)
+        assert first.processed_rows == 1 and first.logical_complete
+        assert database.registered_connection_count() == 0
+        assert 1 <= len(admissions) <= 2, "cold normalization pays duplicate admission"
+
+        admissions.clear()
+        idle = await run_owned_db_call(database, maintenance.run_batch)
+        assert idle.processed_rows == 0 and idle.logical_complete
+        assert database.registered_connection_count() == 0
+        assert 1 <= len(admissions) <= 2, (
+            "idle completion exceeded its admission budget"
+        )
+    finally:
+        database.close_connection()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_fresh_worker_time_yield_preserves_row_and_retries_within_admission_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> None:
+    """A cold worker's legal zero-row yield retains work and physical cleanup.
+
+    Args:
+        tmp_path: Private file-backed database directory.
+        monkeypatch: Counts actual storage admission without replacing behavior.
+        request: Selects the private-profile child for the real worker case.
+    """
+    from tldw_chatbook.Backup_Recovery import storage_admission
+    from tldw_chatbook.DB.base_db import run_owned_db_call
+
+    database = CharactersRAGDB(tmp_path / "trace-yield.db", "trace-yield")
+    try:
+        conversation_id = database.add_conversation({"title": "cold trace yield"})
+        assert conversation_id is not None
+        message_id = _message(database, conversation_id, "answer")
+        _insert_exchange(database, message_id=message_id, capture=_capture(0))
+        database.close_connection()
+        assert database.registered_connection_count() == 0
+        ticks = iter((0.0, 0.101, 0.0, 0.0))
+        maintenance = LegacyTraceMaintenance(database, clock=lambda: next(ticks))
+        admissions: list[int] = []
+        acquire = storage_admission._acquire_storage
+
+        def counted_acquire(
+            *args: object, **kwargs: object
+        ) -> storage_admission.StorageLease:
+            admissions.append(1)
+            return acquire(*args, **kwargs)
+
+        monkeypatch.setattr(storage_admission, "_acquire_storage", counted_acquire)
+        yielded = await run_owned_db_call(database, maintenance.run_batch)
+        assert yielded.admitted and yielded.processed_rows == 0
+        assert yielded.logical_complete is False
+        assert database.registered_connection_count() == 0
+        assert 1 <= len(admissions) <= 2
+        with database.transaction() as cursor:
+            assert (
+                cursor.execute("SELECT COUNT(*) FROM message_exchanges").fetchone()[0]
+                == 1
+            )
+            assert (
+                cursor.execute("SELECT COUNT(*) FROM console_trace_calls").fetchone()[0]
+                == 0
+            )
+            state = cursor.execute(
+                "SELECT status, last_exchange_id, processed_rows "
+                "FROM console_trace_migration_state WHERE migration_name = ?",
+                ("legacy_exchange_normalization",),
+            ).fetchone()
+            assert tuple(state) == ("running", None, 0)
+        database.close_connection()
+        assert database.registered_connection_count() == 0
+
+        admissions.clear()
+        retried = await run_owned_db_call(database, maintenance.run_batch)
+        assert retried.admitted and retried.processed_rows == 1
+        assert retried.logical_complete is True
+        assert database.registered_connection_count() == 0
+        assert 1 <= len(admissions) <= 2
+        assert LegacyTraceNormalizer(database).read_calls(message_id)
+    finally:
+        database.close_connection()

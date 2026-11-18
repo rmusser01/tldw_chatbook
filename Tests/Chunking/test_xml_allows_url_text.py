@@ -4,7 +4,12 @@ from tldw_chatbook.Chunking.engine.strategies.json_xml import XMLChunkingStrateg
 def test_xml_allows_urls_in_text_nodes():
 
     strategy = XMLChunkingStrategy()
-    xml = '<?xml version="1.0"?>\n' "<root>\n" "  <info>Please visit http://example.com for details.</info>\n" "</root>"
+    xml = (
+        '<?xml version="1.0"?>\n'
+        "<root>\n"
+        "  <info>Please visit http://example.com for details.</info>\n"
+        "</root>"
+    )
     chunks = strategy.chunk(xml, max_size=50)
     assert isinstance(chunks, list)
     assert len(chunks) > 0

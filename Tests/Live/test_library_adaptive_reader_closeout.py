@@ -961,12 +961,9 @@ def _run_pytest_child(
     *,
     environ=None,
     must_not_continue: bool = True,
-    support_file: Path | None = None,
 ):
     checkout = tmp_path / "checkout"
     checkout.mkdir()
-    if support_file is not None:
-        (checkout / support_file.name).write_bytes(support_file.read_bytes())
     test_file = checkout / "test_boundary_attempt.py"
     test_file.write_text(
         "import os\nimport socket\nimport subprocess\n\n"
@@ -974,7 +971,7 @@ def _run_pytest_child(
         "    try:\n"
         + textwrap.indent(body, "        ")
         + "\n    except BaseException:\n"
-        "        pass\n"
+        + ("        pass\n" if must_not_continue else "        raise\n")
         + (
             '    raise AssertionError("prohibited attempt continued")\n'
             if must_not_continue
@@ -2084,36 +2081,71 @@ def test_child_same_inode_read_only_reuse_drops_write_authority(api, tmp_path):
     _assert_containment_attempt(module, result, scratch, "filesystem_write_denied")
 
 
-def test_child_allows_private_binary_read_inside_scratch(tmp_path):
+def test_child_allows_nofollow_scratch_ancestor_posture(tmp_path):
     module = _load_runner()
-    body = textwrap.dedent(
-        """
-        from pathlib import Path
-        from private_paths import open_private_binary
-
-        private_file = Path(os.environ["TMPDIR"]) / "private.bin"
-        file_fd = os.open(private_file, os.O_WRONLY | os.O_CREAT, 0o600)
-        os.write(file_fd, b"private")
-        os.close(file_fd)
-        with open_private_binary(private_file) as opened:
-            assert opened.stream.read() == b"private"
-        Path(os.environ["TMPDIR"]).joinpath("private-read.txt").write_text(
-            "read", encoding="utf-8"
-        )
-        """
-    ).strip()
-
-    result, scratch, _checkout = _run_pytest_child(
+    result, scratch, _ = _run_pytest_child(
         module,
         tmp_path,
-        body,
+        f"assert os.stat({str(tmp_path)!r}, follow_symlinks=False).st_mode",
         must_not_continue=False,
-        support_file=REPO_ROOT / "tldw_chatbook/Utils/private_paths.py",
+    )
+    assert result.returncode == 0
+    assert result.error is None
+    assert (scratch / "attempts.jsonl").read_bytes() == b""
+
+
+@pytest.mark.parametrize("exists", (False, True))
+def test_child_allows_only_nofollow_bootstrap_intent_metadata(tmp_path, exists):
+    module = _load_runner()
+    marker = tmp_path / ".tldw-bootstrap-directory-create.pending"
+    if exists:
+        marker.write_bytes(b"outside scratch")
+    body = f"os.stat({str(marker)!r}, follow_symlinks=False)"
+    if not exists:
+        body = "try:\n    " + body + "\nexcept FileNotFoundError:\n    pass"
+    result, scratch, _ = _run_pytest_child(
+        module, tmp_path, body, must_not_continue=False
+    )
+    assert result.returncode == 0
+    assert result.error is None
+    assert (scratch / "attempts.jsonl").read_bytes() == b""
+
+
+@pytest.mark.parametrize("operation", ("read", "write", "follow", "other-name"))
+def test_child_bootstrap_intent_exception_grants_no_other_access(tmp_path, operation):
+    module = _load_runner()
+    marker = tmp_path / ".tldw-bootstrap-directory-create.pending"
+    marker.write_bytes(b"outside scratch")
+    body = {
+        "read": f"open({str(marker)!r}, 'rb').read()",
+        "write": f"open({str(marker)!r}, 'wb').write(b'changed')",
+        "follow": f"os.stat({str(marker)!r})",
+        "other-name": f"os.stat({str(marker.with_name('other'))!r}, follow_symlinks=False)",
+    }[operation]
+    result, scratch, _ = _run_pytest_child(module, tmp_path, body)
+    category = (
+        "filesystem_write_denied" if operation == "write" else "filesystem_read_denied"
+    )
+    _assert_containment_attempt(module, result, scratch, category)
+    assert marker.read_bytes() == b"outside scratch"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX descriptor contract")
+def test_child_allows_private_binary_read_inside_scratch(tmp_path):
+    module = _load_runner()
+    selector = "Tests/Utils/test_private_paths.py::test_open_private_binary_hardens_before_read"
+    scratch = tmp_path / "scratch"
+
+    result = module.run_closeout_child(
+        checkout=REPO_ROOT,
+        scratch=scratch,
+        mode="pytest",
+        target=Path(f"{REPO_ROOT / selector}"),
     )
 
     assert result.returncode == 0
     assert result.error is None
-    assert (scratch / "tmp/private-read.txt").read_text(encoding="utf-8") == "read"
+    assert json.loads(result.result_path.read_text()) == {selector: "PASS"}
     assert (scratch / "attempts.jsonl").read_bytes() == b""
 
 
@@ -2184,6 +2216,26 @@ def test_child_settles_one_real_catalogue_selector(tmp_path):
 
     assert result.returncode == 0
     assert result.error is None
+
+
+def test_child_environment_replaces_supplied_profile_guard_identity(tmp_path):
+    from Tests import real_profile_guard
+
+    module = _load_runner()
+    expected = real_profile_guard.child_environment()
+    supplied = {
+        **os.environ,
+        real_profile_guard.REAL_HOME_ENV: str(tmp_path / "untrusted-real-home"),
+        real_profile_guard.PROFILE_SNAPSHOT_ENV: "not-json",
+        "TASK23019_FAKE_API_KEY": "must-not-reach-child",
+    }
+
+    prepared = module.prepare_scratch_environment(
+        tmp_path / "scratch", environ=supplied
+    )
+
+    assert all(prepared.env[name] == value for name, value in expected.items())
+    assert "TASK23019_FAKE_API_KEY" not in prepared.env
 
 
 def test_child_environment_redirects_every_writable_owner_before_import(tmp_path):
@@ -2845,6 +2897,7 @@ async def test_common_matrix_records_one_failed_cell_and_continues(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_media_capability_captures_settled_visible_selected_row(
     monkeypatch, tmp_path
 ):
@@ -5660,10 +5713,10 @@ def test_canonical_root_accepts_macos_var_alias(tmp_path):
 def test_windows_promotion_fails_stably_before_repository_write(tmp_path, monkeypatch):
     module = _load_runner()
     kwargs = _promote_fixture(module, tmp_path)
-    monkeypatch.setattr(module.os, "name", "nt")
-
-    with pytest.raises(module.CloseoutError) as error:
-        module.promote_evidence(**kwargs)
+    with monkeypatch.context() as platform:
+        platform.setattr(module.os, "name", "nt")
+        with pytest.raises(module.CloseoutError) as error:
+            module.promote_evidence(**kwargs)
 
     assert error.value.category == "promotion_unsupported_platform"
     assert not kwargs["destination"].parent.exists()
@@ -7388,3 +7441,58 @@ def test_verify_evidence_unresolvable_manifest_subject_fails_stably(
 
     assert module.main(["--verify-evidence", str(evidence)]) == 2
     assert json.loads(capsys.readouterr().err) == {"error": "subject_tree_mismatch"}
+
+
+def test_child_retains_popen_annotations_and_denies_construction(tmp_path):
+    module = _load_runner()
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    target = checkout / "test_popen_surface.py"
+    target.write_text(
+        "import subprocess\n"
+        "def annotated(process: subprocess.Popen | None = None): pass\n"
+        "def test_constructor():\n"
+        "    try:\n"
+        "        subprocess.Popen(['/definitely/not/a/task23019-program'])\n"
+        "    except BaseException:\n"
+        "        pass\n"
+        "    raise AssertionError('prohibited constructor continued')\n",
+        encoding="utf-8",
+    )
+    scratch = tmp_path / "scratch"
+    result = module.run_closeout_child(
+        checkout=checkout, scratch=scratch, mode="pytest", target=target
+    )
+    _assert_containment_attempt(module, result, scratch, "process_denied")
+
+
+def test_child_optional_audio_backends_are_unavailable_before_test_import(tmp_path):
+    module = _load_runner()
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    for name in ("sounddevice", "pyaudio"):
+        (checkout / f"{name}.py").write_text(
+            "raise AssertionError('optional audio backend initialized')\n",
+            encoding="utf-8",
+        )
+    target = checkout / "test_audio_boundary.py"
+    target.write_text(
+        "import importlib.util\n"
+        "for name in ('sounddevice', 'pyaudio'):\n"
+        "    assert importlib.util.find_spec(name) is None\n"
+        "    try:\n"
+        "        __import__(name)\n"
+        "    except ModuleNotFoundError:\n"
+        "        pass\n"
+        "    else:\n"
+        "        raise AssertionError('audio backend import was allowed')\n"
+        "def test_no_audio_device_authority(): pass\n",
+        encoding="utf-8",
+    )
+    scratch = tmp_path / "scratch"
+    result = module.run_closeout_child(
+        checkout=checkout, scratch=scratch, mode="pytest", target=target
+    )
+    assert result.returncode == 0
+    assert result.error is None
+    assert (scratch / "attempts.jsonl").read_bytes() == b""

@@ -2,7 +2,9 @@ from types import SimpleNamespace
 
 import pytest
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
-from tldw_chatbook.Subscriptions.watchlist_preview_service import WatchlistPreviewService
+from tldw_chatbook.Subscriptions.watchlist_preview_service import (
+    WatchlistPreviewService,
+)
 
 
 @pytest.mark.asyncio
@@ -10,12 +12,18 @@ async def test_preview_uses_run_executor_when_provided():
     async def fake_executor(subscription):
         return {
             "items": [
-                {"url": "https://example.com/post", "title": "Post", "content_hash": "hash-1"},
+                {
+                    "url": "https://example.com/post",
+                    "title": "Post",
+                    "content_hash": "hash-1",
+                },
             ],
         }
 
     svc = WatchlistPreviewService(run_executor=fake_executor)
-    result = await svc.preview({"source_type": "rss", "url": "https://example.com/feed"})
+    result = await svc.preview(
+        {"source_type": "rss", "url": "https://example.com/feed"}
+    )
 
     assert result["items"][0]["url"] == "https://example.com/post"
     assert "Preview completed" in result["log_text"]
@@ -84,7 +92,14 @@ async def test_preview_url_source_completes_end_to_end_without_raising(monkeypat
     """
 
     async def fake_guarded(
-        url, *, client, max_bytes, trusted_origins=frozenset(), headers=None, params=None, auth=None
+        url,
+        *,
+        client,
+        max_bytes,
+        trusted_origins=frozenset(),
+        headers=None,
+        params=None,
+        auth=None,
     ):
         return SimpleNamespace(
             status_code=200,
@@ -100,7 +115,9 @@ async def test_preview_url_source_completes_end_to_end_without_raising(monkeypat
     )
 
     svc = WatchlistPreviewService()
-    result = await svc.preview({"source_type": "url", "url": "https://example.com/page"})
+    result = await svc.preview(
+        {"source_type": "url", "url": "https://example.com/page"}
+    )
 
     # First check for a URL source stores a baseline snapshot and reports no
     # change yet -- the point of this test is that it completes at all.

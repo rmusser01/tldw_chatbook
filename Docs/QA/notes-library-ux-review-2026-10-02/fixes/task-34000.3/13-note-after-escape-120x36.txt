@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌────────────────────────────────────────────────────────┐  N  Saved · Export…                                  │
+│   a  │ Library notes · Ready                                  │  o      ‹ Notes      Index — start here              │
+│   v  │ Notes (122)                                            │  t                                                   │
+│      │ These notes live in the Library's own database — for   │  e                                                   │
+│      │ notes that live in a folder on disk, switch to Folder  │  s   In the Library database only — no file on disk  │
+│      │ files. To copy or keep a folder synced, choose Add     │     S                                                │
+│      │ from files.          █▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀█    Preview            Info  │
+│      │                      █                                                          █                             │
+│      │ Filter               █                  Replace existing file?                  █───────────────────────────┐ │
+│ ---> │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔█                                                          █                          ▁│ │
+│      │ ▊ start here         █             Replace "precious.md" in ~/exp?              █▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │ │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁█                                                          █                         ▎ │ │
+│      │                      █  The existing file will be overwritten by this export.   █▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │ │
+│      │    New     ○ Sort: Ne█                                                          █                           │ │
+│      │    Add from files…   █                                                          █1 13:47 · 2d ago           │ │
+│      │ Folders & placement  █                   Cancel      Replace                    █1 13:47 · 2d ago           │ │
+│      │    New folder     Add█                                                          █                           │ │
+│      │    ○ Remove placement█▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄█                           │ │
+│ ---> │ Sort unavailable — clear the filter                    │     │Linked from (0) — no notes link here yet      │ │
+│      │ filter: start here · 1 result                          │     │Reuse & Export                                │ │
+│      │                                                        │     │      Copy                                    │ │
+│      │   Clear filter                                         │     │  Export Markdown                             │ │
+│      │  ▾ Unfiled                                             │     │  Export text                                 │ │
+│      │    Index — start here · Unfiled · 2d                   │     │Export…                                       │ │
+│      │   Recently deleted (2)                                 │     │Danger                                        │ │
+│      │                                                        │     │    ┃    Delete    ┃                          │ │
+│      │                                                        │     └──────────────────────────────────────────────┘ │
+│      └────────────────────────────────────────────────────────┘     Export…                                          │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  enter delete note | esc back to note | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

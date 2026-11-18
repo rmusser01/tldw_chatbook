@@ -1,0 +1,46 @@
+{
+  "observed_at": "2026-09-27T23:51:56.534924+00:00",
+  "targets": [
+    {
+      "id": "5508f026-1efc-4cb2-8679-9995d9e1f2ca",
+      "title": "Zebra archival notes",
+      "workspace_id": null,
+      "archived": 0,
+      "version": 3,
+      "active_leaf_message_id": "e10dc185-2181-4db7-9d99-ac21c4571c77",
+      "message_ids": [
+        "5c05e3d3-2e44-4821-8837-dc421f3f13ca",
+        "e10dc185-2181-4db7-9d99-ac21c4571c77"
+      ]
+    },
+    {
+      "id": "3b098c43-5837-40fa-956d-fcbd15d18584",
+      "title": "Orchid planning conversation",
+      "workspace_id": "atlas",
+      "archived": 0,
+      "version": 1,
+      "active_leaf_message_id": "56fdd5bb-76c6-494e-a207-f2974c1553f1",
+      "message_ids": [
+        "56fdd5bb-76c6-494e-a207-f2974c1553f1",
+        "c3e62388-c405-435a-9303-dc896bbff9b5"
+      ]
+    },
+    {
+      "id": "d1be8b67-5e72-4429-a3c0-465e76605271",
+      "title": "Amber itinerary conversation",
+      "workspace_id": "vault",
+      "archived": 0,
+      "version": 3,
+      "active_leaf_message_id": "51815f15-942d-4f77-9e15-0ff957dfaf40",
+      "message_ids": [
+        "51815f15-942d-4f77-9e15-0ff957dfaf40",
+        "e1ff02a1-5ed7-40b1-87c9-dea646b7d17b"
+      ]
+    }
+  ],
+  "model_attempt_events": 62,
+  "source_draft": "Source draft stays unsent.",
+  "unrelated_draft": "Unrelated draft stays unsent.",
+  "native_open_history_verified": true,
+  "destination_composer_empty": true
+}

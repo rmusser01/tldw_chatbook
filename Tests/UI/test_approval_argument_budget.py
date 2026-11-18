@@ -21,6 +21,9 @@ from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
     _summarize_row_arguments,
 )
 
+# Keep the collection-admitted private profile for these app/config consumers.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 @pytest.mark.unit
 def test_the_destination_survives_a_huge_leading_content_argument():
@@ -158,9 +161,9 @@ def test_the_destination_survives_when_it_is_the_last_of_many_arguments():
 
     rendered = _summarize_arguments(arguments)
 
-    assert "IMPORTANT.md" in rendered, (
-        f"the destination was clipped off the end of a long argument list: {rendered!r}"
-    )
+    assert (
+        "IMPORTANT.md" in rendered
+    ), f"the destination was clipped off the end of a long argument list: {rendered!r}"
 
 
 @pytest.mark.unit

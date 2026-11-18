@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Literal
 
 from .authority import PluginMarker
-from .inspection import inspect_package
 from .models import PackageInspection
 from .package_files import canonical_json
 
@@ -33,6 +32,7 @@ class PluginReview:
         "update",
         "retain",
         "configure",
+        "select",
     ] = "install"
     intent: Literal["inherit", "enabled", "disabled"] | None = None
     previous_revision: str | None = None
@@ -59,6 +59,45 @@ class OperationReceipt:
     request_id: str | None = None
 
 
+@dataclass(frozen=True)
+class AuthorityResetReview:
+    """Explicit plugin-only reset, retaining the original namespace and roots."""
+
+    token: str
+    operation_id: str
+    namespace_id: str
+    posture: str
+    marker: object
+    roots_json: str
+    expires_at: float
+    # TASK-40308: whether setup will be refused afterwards (plugins installed or
+    # saved data kept), and whether a restore lets setup set them aside instead.
+    retained: bool = False
+    restored: bool = False
+
+
+@dataclass(frozen=True)
+class RestoredAuthorityReview:
+    """Adopting a restored plugin authority (TASK-40308): the reviewed rollback.
+
+    ``marker`` is the restored generation the passphrase authenticated and the
+    restored registry matches; ``current`` is the protected marker it replaces
+    (``None`` when the keyring holds none). ``undone`` counts the authority
+    generations after the backup that adoption undoes, when the marker shows them.
+    """
+
+    token: str
+    marker: object
+    current: object
+    undone: int | None
+    installations: tuple[tuple[str, str | None, str | None], ...]
+    data_roots: int
+    expires_at: float
+    # TASK-41105: each undone change as (generation, kind, installation, alias,
+    # detail), when the change list kept outside backups covers them all.
+    changes: tuple[tuple[int, str, str, str | None, str | None], ...] | None = None
+
+
 def inspection_identity(inspection: PackageInspection) -> str:
     """Bind deterministic inspection inputs, excluding observational timestamps."""
     value = inspection.model_dump(mode="json")
@@ -70,15 +109,7 @@ def inspection_identity(inspection: PackageInspection) -> str:
 
 def reinspect(inspection: PackageInspection, root: Path) -> PackageInspection:
     """Verify materialized bytes while preserving authenticated source provenance."""
-    observed = inspect_package(root, dialect=inspection.dialect)
-    observed = observed.model_copy(
-        update={
-            "source_identity": inspection.source_identity,
-            "source_digest": inspection.source_digest,
-            "materialized_identity": inspection.materialized_identity,
-            "link_targets": dict(inspection.link_targets),
-        }
-    )
-    if inspection_identity(observed) != inspection_identity(inspection):
-        raise ValueError("stale review or changed retained package")
-    return observed
+    from .package_files import capture_package
+    from .retained_inspection import _reinspect_expected
+
+    return _reinspect_expected(capture_package(root), inspection)

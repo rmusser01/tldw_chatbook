@@ -1,0 +1,16 @@
+{
+  "head": "4b1e070c972320e1353b6bac7e185035db125571",
+  "run_id": 41547453590,
+  "job_id": 125626405216,
+  "attempt": 1,
+  "log_path": "/private/tmp/mixins-4b1-perf.log",
+  "bytes": 133786,
+  "sha256": "971d9f70c8b2e1827605e72b615be339c7ec8045f04c6535d53710d2f547e128",
+  "unchanged_since_5a8": {
+    "Tests/Performance/test_ui_latency_guardrails.py": true,
+    "tldw_chatbook/UI/Screens/settings_screen.py": true,
+    ".github/workflows/perf-guard.yml": true
+  },
+  "failure": "f4 SettingsScreen10.1s against unchanged10s budget",
+  "action": "one same-head failed-only rerun; no code/threshold changes; root cause unconfirmed"
+}

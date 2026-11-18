@@ -16,6 +16,8 @@ from pydantic import (
 
 
 EVIDENCE_SNIPPET_CHAR_LIMIT = 4_000
+#: Ends the title of a staged reference whose excerpt was cut (TASK-41102).
+PARTIAL_EXCERPT_TITLE_SUFFIX = " (partial excerpt)"
 EXACT_SECRET_METADATA_KEYS = frozenset({"token"})
 TOKEN_SECRET_SUFFIXES = ("_token",)
 SUBSTRING_SECRET_METADATA_KEYS = frozenset(

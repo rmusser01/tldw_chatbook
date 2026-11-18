@@ -8,7 +8,6 @@ import math
 import re
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from ipaddress import IPv6Address
 from typing import Any
 from urllib.parse import ParseResult, unquote, urlparse, urlunparse
 
@@ -17,11 +16,19 @@ import httpx
 from tldw_chatbook.Chat.console_session_settings import normalize_llamacpp_base_url
 from tldw_chatbook.Chat.local_server_discovery import (
     MODEL_ID_MAX_CHARS,
-    MODEL_IDS_MAX_COUNT,
     MODEL_PROBE_RESPONSE_MAX_BYTES,
     UnsupportedModelResponseEncoding,
-    connect_error_is_refused,
+    classify_transport_failure,
     read_bounded_model_response,
+)
+from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+    ConnectionProbeAvailability,
+    ProviderEndpointResolution,
+    canonical_endpoint_host,
+    connection_probe_availability,
+    is_exact_schemeless_host,
+    read_schemeless_loopback,
+    resolve_provider_endpoint,
 )
 from tldw_chatbook.LLM_Calls import recovery_review as _provider_recovery
 from tldw_chatbook.LLM_Calls.qwencloud_url import (
@@ -29,6 +36,7 @@ from tldw_chatbook.LLM_Calls.qwencloud_url import (
     normalize_qwencloud_base_url,
 )
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
+    CAPABILITY_HINT_KEYS,
     DiscoveredModel,
     DiscoveryErrorKind,
     ModelDiscoveryError,
@@ -39,18 +47,25 @@ from tldw_chatbook.Utils.tls_trust import build_httpx_async_client
 from tldw_chatbook.provider_registry import RECORDS_BY_KEY
 
 _NATIVE_ENDPOINT_PATHS_BY_PROVIDER = {
-    "koboldcpp": frozenset({"/api/v1/generate"}),
     "ollama": frozenset({"/api/tags"}),
     "local_ollama": frozenset({"/api/tags"}),
 }
 _QWENCLOUD_PROVIDER_KEY = "qwencloud"
+_KOBOLDCPP_PROVIDER_KEY = "koboldcpp"
+#: The fix Settings offers with the contract's reason (TASK-36380). Only the
+#: native route keeps sending: chat_with_kobold posts KoboldAI's native
+#: payload to the saved endpoint, and Settings saves a root or a "/v1"
+#: endpoint as <root>/v1/chat/completions.
+KOBOLDCPP_ENDPOINT_HINT = (
+    "Use the server's /api/v1/generate route, such as "
+    "http://localhost:5001/api/v1/generate."
+)
 _MAX_ENDPOINT_LENGTH = 2000
 _MAX_GENERIC_PATH_DECODE_PASSES = 2
 _GENERIC_ENDPOINT_TAILS = (("models",), ("responses",), ("chat", "completions"))
 _GENERIC_REQUEST_ENDPOINT_TAILS = _GENERIC_ENDPOINT_TAILS[1:]
 _PERCENT_ESCAPE_RE = re.compile(r"%[0-9A-Fa-f]{2}")
 _ENCODED_PATH_SEPARATOR_RE = re.compile(r"%(?:2[fF]|5[cC])")
-_ZONE_ID_RE = re.compile(r"[A-Za-z0-9._~-]+")
 _BASE_URL_INFERABLE_PROVIDER_KEYS = frozenset(
     {
         "aphrodite",
@@ -59,6 +74,8 @@ _BASE_URL_INFERABLE_PROVIDER_KEYS = frozenset(
         "custom_openai_api",
         "custom_openai_api_2",
         "llama_cpp",
+        "strata",
+        "polystrata",
         "local_llamacpp",
         "local_llamafile",
         "local_llm",
@@ -208,7 +225,8 @@ def _parse_endpoint(endpoint: str | None) -> ParseResult | None:
     raw_endpoint = str(endpoint or "").strip()
     if not raw_endpoint or len(raw_endpoint) > _MAX_ENDPOINT_LENGTH:
         return None
-    candidate = raw_endpoint if "://" in raw_endpoint else f"http://{raw_endpoint}"
+    has_scheme = "://" in raw_endpoint
+    candidate = raw_endpoint if has_scheme else f"http://{raw_endpoint}"
     if "\\" in candidate or any(
         character.isspace() or ord(character) < 32 or ord(character) == 127
         for character in candidate
@@ -228,7 +246,33 @@ def _parse_endpoint(endpoint: str | None) -> ParseResult | None:
         parsed.port
     except ValueError:
         return None
+    if not has_scheme and not is_exact_schemeless_host(parsed.netloc):
+        return None  # the save refuses a remote endpoint without its scheme
+    if not _host_follows_contract(parsed):
+        return None
     return parsed if _is_structurally_safe_generic_endpoint(parsed) else None
+
+
+def _host_follows_contract(parsed: ParseResult) -> bool:
+    """Whether the endpoint contract's host rule accepts the URL's host.
+
+    TASK-38963: Discover models listed from hosts the save refuses, such as
+    ``-kobold`` or ``1.2.3``. TASK-39041: a bracketed IPv6 zone id ("%25"),
+    which PR #1562 had allowed, is refused too, as the save and TTS refuse it.
+    """
+    return canonical_endpoint_host(parsed.hostname or "") is not None
+
+
+def _qwencloud_base_url(endpoint: str | None) -> str:
+    """QwenCloud's base URL, reading a loopback endpoint typed without a
+    scheme as ``http://``, as the save does (TASK-39041).
+
+    Raises:
+        QwenCloudBaseURLValidationError: If the URL is malformed or unsafe.
+    """
+    return normalize_qwencloud_base_url(
+        endpoint if endpoint is None else read_schemeless_loopback(endpoint)
+    )
 
 
 def _is_structurally_safe_generic_endpoint(parsed: ParseResult) -> bool:
@@ -244,28 +288,15 @@ def _is_structurally_safe_generic_endpoint(parsed: ParseResult) -> bool:
 
 
 def _is_safe_generic_authority(netloc: str) -> bool:
-    """Allow percent only for an RFC 6874 bracketed IPv6 zone identifier."""
-    if any(character in netloc for character in '\\|^{}<>"`') or netloc.endswith(":"):
-        return False
-    if "%" not in netloc:
-        return True
+    """Refuse parser-ambiguous authority characters, "%" included.
 
-    host_port = netloc.rsplit("@", 1)[-1]
-    closing_bracket = host_port.find("]")
-    if not host_port.startswith("[") or closing_bracket < 0:
-        return False
-    bracketed_host = host_port[1:closing_bracket]
-    remainder = host_port[closing_bracket + 1 :]
-    if bracketed_host.count("%25") != 1 or (
-        remainder and not re.fullmatch(r":\d+", remainder)
-    ):
-        return False
-    address, zone_id = bracketed_host.split("%25", 1)
-    try:
-        IPv6Address(address)
-    except ValueError:
-        return False
-    return _ZONE_ID_RE.fullmatch(zone_id) is not None
+    TASK-39041: "%" was allowed for an RFC 6874 IPv6 zone id; the endpoint
+    contract refuses zone ids, so discovery does too.
+    """
+    return not (
+        any(character in netloc for character in '\\|^{}<>"`%')
+        or netloc.endswith(":")
+    )
 
 
 def _is_safe_generic_path(path: str) -> bool:
@@ -409,6 +440,47 @@ def _is_explicit_openai_compatible_path(path: str) -> bool:
     )
 
 
+def _kobold_contract(
+    provider_identity: str | None, endpoint: str | None
+) -> ProviderEndpointResolution | None:
+    """koboldcpp's endpoint-contract resolution; None for any other provider.
+
+    koboldcpp's discovery follows the contract alone, so it lists where
+    Switch model probes: the root's /v1/models for a bare root, a prefix root
+    such as /kobold, or the native /api/v1/generate (TASK-35832, TASK-36380).
+    """
+    if _normalized_provider_identity(provider_identity) != _KOBOLDCPP_PROVIDER_KEY:
+        return None
+    return resolve_provider_endpoint(_KOBOLDCPP_PROVIDER_KEY, endpoint)
+
+
+def contract_refusal_reason(
+    provider_identity: str | None, endpoint: str | None
+) -> str | None:
+    """Return why the endpoint contract refuses an endpoint, else None.
+
+    Settings shows it in place of its generic unsupported-endpoint copy, which
+    asks for an http:// /v1 endpoint even when the URL is one: koboldcpp
+    since TASK-36380 (with ``KOBOLDCPP_ENDPOINT_HINT``), every provider since
+    TASK-38963's review (a refused host such as ``-kobold``).
+
+    Args:
+        provider_identity: Provider name/identity.
+        endpoint: The configured or staged endpoint.
+
+    Returns:
+        The contract's first error for an endpoint it refuses, or None when
+        it accepts the endpoint or the provider key is missing or malformed
+        (any well-formed key is resolved, known or not).
+    """
+    resolution = resolve_provider_endpoint(
+        _normalized_provider_identity(provider_identity), endpoint
+    )
+    if not resolution.provider_key or not resolution.errors:
+        return None
+    return resolution.errors[0]
+
+
 def supports_openai_compatible_model_discovery(
     provider_identity: str,
     normalized_endpoint: str | None,
@@ -417,7 +489,11 @@ def supports_openai_compatible_model_discovery(
 
     Eligibility is based on explicit OpenAI-compatible URL paths. Native
     provider discovery URLs are rejected even when the provider can also expose
-    an OpenAI-compatible API at another configured endpoint.
+    an OpenAI-compatible API at another configured endpoint. The exception is
+    koboldcpp: once its URL parses, it is eligible exactly when Switch
+    model's probe is (the endpoint contract's
+    ``connection_probe_availability``), and lists at the contract's models URL
+    (TASK-35832, TASK-36380).
     """
     provider_key = _normalized_provider_identity(provider_identity)
     record = RECORDS_BY_KEY.get(provider_key)
@@ -427,15 +503,19 @@ def supports_openai_compatible_model_discovery(
         return False
     if provider_key == _QWENCLOUD_PROVIDER_KEY:
         try:
-            normalize_qwencloud_base_url(normalized_endpoint)
+            base_url = _qwencloud_base_url(normalized_endpoint)
         except QwenCloudBaseURLValidationError:
             return False
-        return True
+        return _host_follows_contract(urlparse(base_url))
 
     parsed = _parse_endpoint(normalized_endpoint)
     if parsed is None:
         return False
 
+    if provider_key == _KOBOLDCPP_PROVIDER_KEY:
+        return connection_probe_availability(provider_key, normalized_endpoint) is (
+            ConnectionProbeAvailability.MODELS_ROUTE
+        )
     path = _normalized_path(parsed)
     native_paths = _NATIVE_ENDPOINT_PATHS_BY_PROVIDER.get(provider_key, frozenset())
     if path in native_paths:
@@ -453,7 +533,7 @@ def build_models_url(endpoint: str, provider_identity: str) -> str:
     """Return the OpenAI-compatible models endpoint for a configured URL."""
     if _normalized_provider_identity(provider_identity) == _QWENCLOUD_PROVIDER_KEY:
         try:
-            base_url = normalize_qwencloud_base_url(endpoint)
+            base_url = _qwencloud_base_url(endpoint)
         except QwenCloudBaseURLValidationError:
             return fingerprint_endpoint(endpoint)
         return f"{base_url}/models"
@@ -462,6 +542,9 @@ def build_models_url(endpoint: str, provider_identity: str) -> str:
     if parsed is None:
         return str(endpoint or "").strip()
 
+    kobold = _kobold_contract(provider_identity, endpoint)
+    if kobold is not None and kobold.models_url is not None:
+        return kobold.models_url
     path = _normalized_path(parsed)
     if path in {"/completion", "/completions"}:
         base_url = normalize_llamacpp_base_url(endpoint)
@@ -484,8 +567,20 @@ def build_models_url(endpoint: str, provider_identity: str) -> str:
 
 
 def fingerprint_endpoint(endpoint: str) -> str:
-    """Return a safe endpoint fingerprint without secrets or query details."""
+    """Return a safe endpoint fingerprint without secrets or query details.
+
+    TASK-38963 review r10e-rev3: an endpoint discovery and the contract both
+    refuse may be a key pasted into the field (``sk-abc/def``, 64 hex), and
+    its ``http://<key>/`` fingerprint reached the auto-refresh log. It gets
+    the sentinel, keeping only a typed http(s)/ftp scheme.
+    """
     parsed = _parse_endpoint(endpoint)
+    if parsed is None and resolve_provider_endpoint("custom", endpoint).errors:
+        scheme, separator, _rest = str(endpoint or "").strip().partition("://")
+        typed = scheme.lower() if scheme.lower() in {"http", "https", "ftp"} else ""
+        return f"{typed}://[invalid-endpoint]" if separator and typed else (
+            "[invalid-endpoint]"
+        )
     if parsed is None:
         display_parsed = _parse_endpoint_for_fingerprint(endpoint)
         if display_parsed is not None:
@@ -549,6 +644,11 @@ def _scrub_model_metadata_value(
                 raise ValueError("Invalid models response: metadata key is invalid")
             if _is_sensitive_metadata_key(key):
                 continue
+            if type(nested_value) is str and len(nested_value) > MODEL_METADATA_MAX_VALUE_CHARS:
+                # Drop the field, keep the model: Together ships chat templates
+                # up to 16 KB in config.chat_template, and rejecting them
+                # listed nothing for every Together user (TASK-34361).
+                continue
             result[key] = _scrub_model_metadata_value(
                 nested_value,
                 depth=depth + 1,
@@ -594,6 +694,77 @@ def _safe_model_metadata(model_payload: Mapping[str, Any]) -> dict[str, Any]:
     return metadata
 
 
+def _bounded_model_metadata(model_payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a model's safe metadata, dropping only what breaks a bound.
+
+    One model's oversized details must not cost the user the whole list:
+    Vercel's tiered pricing (270 items against a 256-item bound) listed none
+    of its 407 models (TASK-34363). A top-level field that breaks a bound on
+    its own is dropped first; if the rest together still exceed a bound, the
+    largest fields go, biggest first, until they fit, and a field the
+    capability inference reads goes only after every other. Nothing unbounded is
+    ever kept. The work is bounded: a model with more top-level fields than
+    the item bound cannot fit and gets no metadata, each field is measured
+    once on its own, and the number to drop is found by bisection (about
+    nine measurements of the record, however many fields it has).
+
+    Args:
+        model_payload: One model object from a ``/models`` response.
+
+    Returns:
+        The model's metadata within every bound; empty when no field fits.
+    """
+    try:
+        return _safe_model_metadata(model_payload)
+    except ValueError:
+        pass
+    if len(model_payload) > MODEL_METADATA_MAX_ITEMS:
+        return {}
+    kept: dict[str, Any] = {}
+    for key, value in model_payload.items():
+        try:
+            _safe_model_metadata({key: value})
+        except ValueError:
+            continue
+        kept[key] = value
+    # Largest first, but the fields capability inference reads go last
+    # (TASK-34402): shrinking a listing should not cost the model its hint.
+    largest_first = sorted(
+        kept,
+        key=lambda name: (
+            name not in CAPABILITY_HINT_KEYS,
+            len(json.dumps(kept[name])),
+        ),
+        reverse=True,
+    )
+    # Every kept field passed on its own, so what remains can only break a
+    # total (items or serialized bytes), and removing a field never raises
+    # either: whether the record fits is monotone in how many fields are gone.
+    # Bisect for the fewest evictions. Re-measuring after each one scrubbed a
+    # record of 255 small fields 255 times, minutes of CPU for a large listing.
+    measured: dict[int, dict[str, Any] | None] = {}
+
+    def without(evicted: int) -> dict[str, Any] | None:
+        if evicted not in measured:
+            gone = set(largest_first[:evicted])
+            try:
+                measured[evicted] = _safe_model_metadata(
+                    {name: value for name, value in kept.items() if name not in gone}
+                )
+            except ValueError:
+                measured[evicted] = None
+        return measured[evicted]
+
+    fewest, most = 0, len(largest_first)
+    while fewest < most:
+        middle = (fewest + most) // 2
+        if without(middle) is None:
+            fewest = middle + 1
+        else:
+            most = middle
+    return without(fewest) or {}
+
+
 def normalize_models_response(
     payload: Mapping[str, Any],
     *,
@@ -634,7 +805,7 @@ def normalize_models_response(
                 source="runtime_discovered",
                 endpoint_fingerprint=endpoint_fingerprint,
                 discovered_at=now_iso,
-                metadata_raw_safe=_safe_model_metadata(item),
+                metadata_raw_safe=_bounded_model_metadata(item),
             )
         )
 
@@ -656,12 +827,14 @@ def _discovery_error(
     )
 
 
-def _transport_category(error: httpx.HTTPError) -> str:
-    """Name a failed request's bounded category (TASK-33005.4 AC#4)."""
-    if isinstance(error, httpx.TimeoutException):
-        return "timeout"
-    if isinstance(error, httpx.ConnectError) and connect_error_is_refused(error):
-        return "connection_refused"
+async def _transport_category(error: httpx.HTTPError) -> str:
+    """Name a failed request's bounded category (TASK-33005.4 AC#4).
+
+    TASK-34100.6: certificate and plain-HTTP failures are named too, by the
+    classifier the Settings check shares.
+    """
+    if isinstance(error, (httpx.TimeoutException, httpx.ConnectError)):
+        return await classify_transport_failure(error)
     return "connection_error"
 
 
@@ -795,7 +968,9 @@ async def discover_openai_compatible_models(
                     status="error",
                     error=_discovery_error(
                         "request_failed",
-                        "Model discovery request failed.",
+                        # TASK-34100.6 review round 1 (live F7): the code says
+                        # the server answered, so no 'is it running?' copy.
+                        f"The models endpoint answered HTTP {exc.response.status_code}.",
                         "Check the endpoint URL, server availability, and credentials.",
                         "http_status",
                     ),
@@ -810,7 +985,7 @@ async def discover_openai_compatible_models(
                         "request_failed",
                         "Model discovery request failed.",
                         "Check the endpoint URL, server availability, and credentials.",
-                        _transport_category(exc),
+                        await _transport_category(exc),
                     ),
                 )
             if body is None:
@@ -840,6 +1015,10 @@ async def discover_openai_compatible_models(
                         "Use an endpoint that returns a JSON object with a data array of model IDs.",
                     ),
                 )
+            if type(payload) is list:
+                # Together answers /models with the bare array, no envelope
+                # (TASK-34361, Tests/fixtures/cloud_live/together.json).
+                payload = {"data": payload}
             if type(payload) is not dict or type(payload.get("data")) is not list:
                 return None, ModelDiscoveryResult(
                     provider=provider,
@@ -908,7 +1087,8 @@ async def discover_openai_compatible_models(
         else:
             async with _provider_recovery.discovery_native_context(
                 build_httpx_async_client(
-                    timeout=timeout_seconds, **_provider_recovery.discovery_client_options()
+                    timeout=timeout_seconds,
+                    **_provider_recovery.discovery_client_options(),
                 )
             ) as active_client:
                 payloads, request_error = await _request_payloads(active_client)
@@ -922,7 +1102,7 @@ async def discover_openai_compatible_models(
                 "request_failed",
                 "Model discovery request failed.",
                 "Check the endpoint URL, server availability, and credentials.",
-                _transport_category(exc),
+                await _transport_category(exc),
             ),
         )
     if request_error is not None:
@@ -948,7 +1128,11 @@ async def discover_openai_compatible_models(
         datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     )
     try:
-        models = normalize_models_response(
+        # Off the event loop, like the JSON decode above: bounding a listing's
+        # metadata is CPU work that grows with the response (a record whose
+        # fields only overflow together is re-measured once per dropped field).
+        models = await asyncio.to_thread(
+            normalize_models_response,
             {"data": combined_data},
             provider=provider,
             provider_list_key=provider_list_key,

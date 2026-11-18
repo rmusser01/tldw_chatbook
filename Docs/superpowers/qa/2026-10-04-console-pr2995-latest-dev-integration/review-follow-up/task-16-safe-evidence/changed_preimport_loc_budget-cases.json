@@ -1,0 +1,14 @@
+{
+  "actual_cases": 1,
+  "cases": [
+    {
+      "classname": "Tests.Performance.test_screen_preimport_payload_budget",
+      "name": "test_preimport_pass_payload_stays_within_budget",
+      "outcome": "passed",
+      "time": "2.497"
+    }
+  ],
+  "outcomes": {
+    "passed": 1
+  }
+}

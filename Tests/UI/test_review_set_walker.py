@@ -1166,6 +1166,9 @@ def _auto_resume_fake(service, *, live_ids=None):
     fake._library_selected_row_id = "browse-media"
     fake._media_state.view = "list"
     fake.is_current = True
+    # TASK-34000.22 fix round 2 (R2-1): the ambient resume is gated on the
+    # Media authoring forms' dirty predicate; "" = no form holds text.
+    fake._library_media_editor_dirty = lambda: ""
     for name in (
         "_auto_resume_review_set_worker",
         "_resolve_active_review_set_landing",
@@ -1560,10 +1563,11 @@ def test_create_keeps_the_cap_warning_the_banner_cannot_carry(tmp_path):
 
 
 class _ReviewSelectedControllerFake:
-    """The one production hop the "Review selected" delegator makes.
+    """The controller seam the "Review selected" tests call directly.
 
     (wave-7 round-2 merge) ``handle_library_media_review_selected`` lives on
-    ``LibraryMediaController``; the screen keeps a one-line delegator. The
+    ``LibraryMediaController``. The screen's one-line delegator is gone
+    (Phase C task 3 moved the ``@on`` row to ``LibraryMediaCanvas``). The
     controller reaches the two state fields through its GENERATED shims, the
     worker through a group-(e) late-binding property, and ``run_worker`` as a
     framework service -- all three reproduced here so the REAL controller body
@@ -1586,6 +1590,12 @@ class _ReviewSelectedControllerFake:
     @property
     def _review_selected_worker(self):
         return self._screen._review_selected_worker
+
+    # TASK-34000.22 fix round 1 (C-1 audit): the handler refuses while a
+    # Media authoring form holds unsaved text; "" = clean, so the real body
+    # runs on to the id coercion these tests pin.
+    def _library_media_editor_dirty(self):
+        return ""
 
     @property
     def run_worker(self):
@@ -1628,11 +1638,11 @@ def test_review_selected_handler_shares_the_one_id_coercion():
         _review_selected_worker=worker,
         run_worker=lambda work, **kwargs: started.append({"work": work, **kwargs}),
     )
-    fake._media_controller = _ReviewSelectedControllerFake(fake)
+    # TASK-36952.2: the controller seam is called directly, not through an
+    # attribute on the fake screen.
+    controller = _ReviewSelectedControllerFake(fake)
 
-    fake._media_controller.handle_library_media_review_selected(
-        SimpleNamespace(stop=lambda: None)
-    )
+    controller.handle_library_media_review_selected(SimpleNamespace(stop=lambda: None))
 
     assert captured["ids"] == (7, 3)
     assert len(started) == 1, started
@@ -1653,10 +1663,10 @@ def test_review_selected_handler_starts_nothing_when_no_id_coerces():
         _review_selected_worker=lambda backing_ids: "unused",
         run_worker=lambda work, **kwargs: started.append({"work": work, **kwargs}),
     )
-    fake._media_controller = _ReviewSelectedControllerFake(fake)
+    # TASK-36952.2: the controller seam is called directly, not through an
+    # attribute on the fake screen.
+    controller = _ReviewSelectedControllerFake(fake)
 
-    fake._media_controller.handle_library_media_review_selected(
-        SimpleNamespace(stop=lambda: None)
-    )
+    controller.handle_library_media_review_selected(SimpleNamespace(stop=lambda: None))
 
     assert started == []

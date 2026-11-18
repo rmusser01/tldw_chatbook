@@ -57,9 +57,7 @@ class _WorkbenchApp(App[None]):
     def on_region_layout_applied(self, message: RegionLayoutApplied) -> None:
         self.layout_events.append(message)
 
-    def on_region_layout_apply_failed(
-        self, message: RegionLayoutApplyFailed
-    ) -> None:
+    def on_region_layout_apply_failed(self, message: RegionLayoutApplyFailed) -> None:
         self.layout_events.append(message)
 
 
@@ -100,9 +98,7 @@ class _BoundaryGeometryApp(App[None]):
         )
 
 
-def _expected_boundary_child_ids(
-    layout: RegionLayout, *, read_mode: bool
-) -> list[str]:
+def _expected_boundary_child_ids(layout: RegionLayout, *, read_mode: bool) -> list[str]:
     expected: list[str] = []
     if not layout.is_collapsed(Region.LEFT_RAIL):
         expected.append("wl-region-left_rail")
@@ -206,9 +202,7 @@ def _assert_real_bundle_geometry(
     assert workbench.has_class("watchlists-has-expanded-side-pane") is (
         has_expanded_side_pane
     )
-    assert centre.styles.min_width.value == (
-        44 if has_expanded_side_pane else 0
-    )
+    assert centre.styles.min_width.value == (44 if has_expanded_side_pane else 0)
     assert centre.region.width == body.content_region.width - sum(
         child.region.width for child in children if child is not centre
     )
@@ -376,9 +370,7 @@ async def test_read_collapses_only_side_body_and_keeps_its_grip(
 
 @pytest.mark.asyncio
 async def test_legacy_content_collapse_cannot_unmount_reader_in_read() -> None:
-    app = _WorkbenchApp(
-        RegionLayout(collapsed=frozenset({Region.CONTENT}))
-    )
+    app = _WorkbenchApp(RegionLayout(collapsed=frozenset({Region.CONTENT})))
     async with app.run_test():
         assert app.query("#wl-region-content")
         assert not app.query("#wl-grip-content")
@@ -446,9 +438,7 @@ async def test_side_toggle_preserves_unaffected_bodies_all_grips_and_reader() ->
 
 @pytest.mark.asyncio
 async def test_expanding_inspector_mounts_body_after_permanent_grip() -> None:
-    app = _WorkbenchApp(
-        RegionLayout(collapsed=frozenset({Region.RIGHT_RAIL}))
-    )
+    app = _WorkbenchApp(RegionLayout(collapsed=frozenset({Region.RIGHT_RAIL})))
     async with app.run_test() as pilot:
         workbench = app.query_one(WatchlistsWorkbench)
         grip = app.query_one("#wl-grip-right_rail")
@@ -577,7 +567,9 @@ async def test_layout_requests_acknowledge_same_layout_with_exact_token() -> Non
         await pilot.pause()
 
         applied = [
-            event for event in app.layout_events if isinstance(event, RegionLayoutApplied)
+            event
+            for event in app.layout_events
+            if isinstance(event, RegionLayoutApplied)
         ]
         assert [event.token for event in applied] == [41, 42]
         assert all(event.previous == layout == event.layout for event in applied)
@@ -980,7 +972,9 @@ class _ReadGeometryApp(App[None]):
 
 
 @pytest.mark.asyncio
-async def test_reader_body_scroll_preserves_local_actions_footer_and_neighbours() -> None:
+async def test_reader_body_scroll_preserves_local_actions_footer_and_neighbours() -> (
+    None
+):
     app = _ReadGeometryApp()
     async with app.run_test(size=(180, 50)) as pilot:
         await pilot.pause()

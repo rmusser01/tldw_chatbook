@@ -1,0 +1,4178 @@
+[
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 1,
+    "label": "completed_display",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'NoneType'>",
+    "result": null,
+    "requested": false,
+    "progress": false
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 8,
+    "label": "completed_display",
+    "task": "set_interval#1",
+    "poll": true,
+    "value": "<class '_asyncio.Future'>",
+    "result": null,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 8,
+    "label": "completed_display",
+    "task": "set_interval#1",
+    "poll": true,
+    "value": "<class 'NoneType'>",
+    "result": null,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 4,
+    "label": "completed_display",
+    "task": "set_interval#1",
+    "poll": true,
+    "value": "<class 'bool'>",
+    "result": true,
+    "requested": false,
+    "progress": false
+  },
+  {
+    "stack": [
+      [
+        "image.py",
+        "_sync_native_console_chat_ui",
+        200
+      ],
+      [
+        "image.py",
+        "_load_recovered_images",
+        396
+      ],
+      [
+        "worker.py",
+        "_run_async",
+        341
+      ],
+      [
+        "worker.py",
+        "run",
+        354
+      ],
+      [
+        "worker.py",
+        "_run",
+        370
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ],
+      [
+        "runners.py",
+        "run",
+        118
+      ],
+      [
+        "plugin.py",
+        "inner",
+        721
+      ],
+      [
+        "python.py",
+        "pytest_pyfunc_call",
+        157
+      ]
+    ],
+    "kind": 1,
+    "label": "full",
+    "task": "Task-1845",
+    "poll": false,
+    "value": "<class 'NoneType'>",
+    "result": null,
+    "requested": false,
+    "progress": false
+  },
+  {
+    "stack": [
+      [
+        "chat_screen.py",
+        "_sync_console_native_session_tabs",
+        18005
+      ],
+      [
+        "chat_screen.py",
+        "_sync_native_console_chat_ui",
+        17756
+      ],
+      [
+        "image.py",
+        "_sync_native_console_chat_ui",
+        200
+      ],
+      [
+        "image.py",
+        "_load_recovered_images",
+        396
+      ],
+      [
+        "worker.py",
+        "_run_async",
+        341
+      ],
+      [
+        "worker.py",
+        "run",
+        354
+      ],
+      [
+        "worker.py",
+        "_run",
+        370
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ],
+      [
+        "runners.py",
+        "run",
+        118
+      ]
+    ],
+    "kind": 1,
+    "label": "surface",
+    "task": "Task-1845",
+    "poll": false,
+    "value": "<class 'NoneType'>",
+    "result": null,
+    "requested": null,
+    "progress": null
+  },
+  {
+    "stack": [
+      [
+        "chat_screen.py",
+        "_sync_console_native_session_tabs",
+        18005
+      ],
+      [
+        "chat_screen.py",
+        "_sync_native_console_chat_ui",
+        17756
+      ],
+      [
+        "image.py",
+        "_sync_native_console_chat_ui",
+        200
+      ],
+      [
+        "image.py",
+        "_load_recovered_images",
+        396
+      ],
+      [
+        "worker.py",
+        "_run_async",
+        341
+      ],
+      [
+        "worker.py",
+        "run",
+        354
+      ],
+      [
+        "worker.py",
+        "_run",
+        370
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ],
+      [
+        "runners.py",
+        "run",
+        118
+      ]
+    ],
+    "kind": 8,
+    "label": "surface",
+    "task": "Task-1845",
+    "poll": false,
+    "value": "<class '_asyncio.Future'>",
+    "result": null,
+    "requested": null,
+    "progress": null
+  },
+  {
+    "stack": [
+      [
+        "image.py",
+        "_sync_native_console_chat_ui",
+        200
+      ],
+      [
+        "image.py",
+        "_load_recovered_images",
+        396
+      ],
+      [
+        "worker.py",
+        "_run_async",
+        341
+      ],
+      [
+        "worker.py",
+        "run",
+        354
+      ],
+      [
+        "worker.py",
+        "_run",
+        370
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ],
+      [
+        "runners.py",
+        "run",
+        118
+      ],
+      [
+        "plugin.py",
+        "inner",
+        721
+      ],
+      [
+        "python.py",
+        "pytest_pyfunc_call",
+        157
+      ]
+    ],
+    "kind": 8,
+    "label": "full",
+    "task": "Task-1845",
+    "poll": false,
+    "value": "<class '_asyncio.Future'>",
+    "result": null,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 1,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'NoneType'>",
+    "result": null,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 4,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'bool'>",
+    "result": false,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 1,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'NoneType'>",
+    "result": null,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 4,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'bool'>",
+    "result": false,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 1,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'NoneType'>",
+    "result": null,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 4,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'bool'>",
+    "result": false,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 1,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'NoneType'>",
+    "result": null,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 4,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'bool'>",
+    "result": false,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 1,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'NoneType'>",
+    "result": null,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 4,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'bool'>",
+    "result": false,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 1,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'NoneType'>",
+    "result": null,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 4,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'bool'>",
+    "result": false,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 1,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'NoneType'>",
+    "result": null,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 4,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'bool'>",
+    "result": false,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 1,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'NoneType'>",
+    "result": null,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 4,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'bool'>",
+    "result": false,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 1,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'NoneType'>",
+    "result": null,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 4,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'bool'>",
+    "result": false,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 1,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'NoneType'>",
+    "result": null,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 4,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'bool'>",
+    "result": false,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 1,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'NoneType'>",
+    "result": null,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 4,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'bool'>",
+    "result": false,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 1,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'NoneType'>",
+    "result": null,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 4,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'bool'>",
+    "result": false,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 1,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'NoneType'>",
+    "result": null,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 4,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'bool'>",
+    "result": false,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 1,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'NoneType'>",
+    "result": null,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 4,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'bool'>",
+    "result": false,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 1,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'NoneType'>",
+    "result": null,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 4,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'bool'>",
+    "result": false,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 1,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'NoneType'>",
+    "result": null,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 4,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'bool'>",
+    "result": false,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 1,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'NoneType'>",
+    "result": null,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 4,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'bool'>",
+    "result": false,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 1,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'NoneType'>",
+    "result": null,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 4,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'bool'>",
+    "result": false,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 1,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'NoneType'>",
+    "result": null,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 4,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'bool'>",
+    "result": false,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 1,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'NoneType'>",
+    "result": null,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 4,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'bool'>",
+    "result": false,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 1,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'NoneType'>",
+    "result": null,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 4,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'bool'>",
+    "result": false,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 1,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'NoneType'>",
+    "result": null,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 4,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'bool'>",
+    "result": false,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 1,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'NoneType'>",
+    "result": null,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 4,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'bool'>",
+    "result": false,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 1,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'NoneType'>",
+    "result": null,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 4,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'bool'>",
+    "result": false,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 1,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'NoneType'>",
+    "result": null,
+    "requested": false,
+    "progress": true
+  },
+  {
+    "stack": [
+      [
+        "composer_run_controls.py",
+        "sync_poll_display_ui",
+        1474
+      ],
+      [
+        "config_sync.py",
+        "run_periodic_console_sync",
+        267
+      ],
+      [
+        "chat_screen.py",
+        "_poll_transcript",
+        18091
+      ],
+      [
+        "_callback.py",
+        "_invoke",
+        58
+      ],
+      [
+        "_callback.py",
+        "invoke",
+        96
+      ],
+      [
+        "timer.py",
+        "_tick",
+        189
+      ],
+      [
+        "timer.py",
+        "_run",
+        176
+      ],
+      [
+        "timer.py",
+        "_run_timer",
+        146
+      ],
+      [
+        "events.py",
+        "_run",
+        88
+      ],
+      [
+        "base_events.py",
+        "_run_once",
+        1999
+      ],
+      [
+        "base_events.py",
+        "run_forever",
+        645
+      ],
+      [
+        "base_events.py",
+        "run_until_complete",
+        678
+      ]
+    ],
+    "kind": 4,
+    "label": "full",
+    "task": "set_interval#1",
+    "poll": false,
+    "value": "<class 'bool'>",
+    "result": false,
+    "requested": false,
+    "progress": true
+  }
+]

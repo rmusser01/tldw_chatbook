@@ -1,0 +1,50 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console ! │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                            Speak replies   ▌   Hands-free   ▌     Ready · not tested
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                  │ Conversation | Chat 5                                                                                                                                    │
+                       Context ◂  │   Reply with just: hi  ✕ ◆ Reply with just: hi ✕  Reply with just: hi  ✕  Reply with just: hi  ✕        Chat 5         ✕    New tab     Temporary        │
+ 0 other agents running, 1        │                                                                                                                                                          │
+ waiting for approval.            │ Each tab runs its own agent — up to 3 in parallel (change in Settings > Console Behavior).                                                            ✕  │
+   Terminal                       │                                                                                                                                                          │
+ ───────────────────────────────  │                                                                                                                                                          │
+ Workspaces                  ▸    │                                                                                                                                                          │
+ ───────────────────────────────  │                                                                                                                                                          │
+ Conversations               ▾    │                                                                                                                                                          │
+       Archive this chat          │                                                                                                                                                          │
+         Archived chats           │                                                                                                                                                          │
+       Search all chats…          │                                                                                                                                                          │
+   Chat 5                         │                                                                                                                                                          │
+                                  │                                                                                                                                                          │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear╭─ Switch model · now: OpenAI · gpt-4.1-nano ──────────────────────────────────────────────────────────────────────────────────────────────╮                   │
+  ▊  Filter visible   ▎       │ Find gpt-5.6-terra                                                                                                                       │                   │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎       │ READY PROVIDERS · matches from every provider's catalog                                                                                  │                   │
+                              │ ▶ gpt-5.6-terra                OpenAI                 ~4k  Ready · not tested                                                            │                   │
+  Chats                      ▾│ Values for gpt-5.6-terra · OpenAI                                                                                                        │                   │◂ Inspect
+   Chat 5                   💬│ Temperature 0.6      Console Behavior  Max tokens 4096     provider          Streaming Off   ▼  provider                                 │                   │
+   Reply with just: hi      💬│  Enter apply to this chat  · Tab edit values ·  Ctrl+N default for new chats  ·  Ctrl+O chat settings  · Esc cancel                      │                   │
+   Reply with just: hi      💬│  Save as model default  saves Temperature, Max tokens, Streaming                                             Applies to: this chat only  │                   │
+   [1 Sub-Agents]             ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯                   │
+   Reply with just: hi      ✋    │                                                                                                                                                          │
+   Approval required              │                                                                                                                                                          │
+   Reply with just: hi      💬    │                                                                                                                                                          │
+                                  │                                                                                                                                                          │
+ ───────────────────────────────  │                                                                                                                                                          │
+ Character · No chats        ▸    │                                                                                                                                                          │
+ ───────────────────────────────  │                                                                                                                                                          │
+ Model                       ▸    │                                                                                                                                                          │
+ ───────────────────────────────  │                                                                                                                                                          │
+ Agent                       ▾  ▄ │                                                                                                                                                          │
+  Agent: idle                     │                                                                                                                                                          │
+                                  │                                                                                                                                                          │
+                                  │                                                                                                                                                          │
+ ▼ Details                        │                                                                                                                                                          │
+                                  │                                                                                                                                                          │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: OpenAI     Model: gpt-4.1-nano     System Prompt: off     Assistant: General     Sources: 0     Tools: 6 ready     Approvals: 0 pending
+
+█  Composer ▾  Menu  ▌Ask, command, or paste task...                                                                         Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Ctrl+P · Ctrl+Q

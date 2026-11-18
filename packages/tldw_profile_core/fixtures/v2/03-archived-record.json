@@ -1,0 +1,100 @@
+{
+  "fixture_version": 1,
+  "model": "ProfileRecordV2",
+  "valid": true,
+  "structurally_valid": true,
+  "data": {
+    "schema_version": 2,
+    "profile_id": "p1",
+    "record_id": "r1",
+    "scope_id": "s1",
+    "kind": "preference",
+    "payload": {
+      "kind": "preference",
+      "polarity": "like",
+      "schema_version": 1,
+      "subject": "replies",
+      "value": "concise"
+    },
+    "semantic_key": null,
+    "state": "archived",
+    "controls": {
+      "sync_mode": "device_only",
+      "agent_visibility": "agent_visible",
+      "model_disclosure": {
+        "kind": "deny"
+      }
+    },
+    "provenance": {
+      "source": "manual",
+      "actor": "user",
+      "reason_code": "authored",
+      "derived_from_record_id": null
+    },
+    "claim": {
+      "claim_basis": "direct_user_assertion",
+      "temporal_validity": {
+        "basis": {
+          "kind": "user_reviewed"
+        },
+        "kind": "standing"
+      },
+      "relations": [],
+      "claim_digest": "4d91768974a491f84e8ef67d9b8577975e8615c47065cd97a16260a7f4c28593",
+      "evidence_bindings": [
+        {
+          "authority_id": "synthetic-authority-01",
+          "authority_kind": "local_profile",
+          "binding_id": "synthetic-binding-01",
+          "captured_at": "2026-09-26T16:00:00.000Z",
+          "component_version": 1,
+          "governance_scope_id": "synthetic-scope-01",
+          "offset_unit": "unicode_codepoint",
+          "representation_id": "message_content_text_v1",
+          "representation_sha256": "bdd355f021e0095bbd9ce9da729cfd0b9556b01bc01c5b59461ebc4e12e55bef",
+          "source_container_id": "synthetic-conversation-01",
+          "source_kind": "conversation_message",
+          "source_object_id": "synthetic-message-01",
+          "source_role": "direct_user_message",
+          "source_version_id": "synthetic-revision-01",
+          "span_end": 11,
+          "span_sha256": "850f7dc43910ff890f8879c0ed26fe697c93a067ad93a7d50f466a7028a9bf4e",
+          "span_start": 7,
+          "version_kind": "owner_immutable"
+        }
+      ],
+      "support_assessments": [
+        {
+          "binding_id": "synthetic-binding-01",
+          "binding_digest": "dae4dd8a13189b7bf86559f7adaab2d6992fe3040a1d255b2c212dc7b15801fb",
+          "claim_digest": "4d91768974a491f84e8ef67d9b8577975e8615c47065cd97a16260a7f4c28593",
+          "status": "supports",
+          "origin": {
+            "actor": "user",
+            "actor_id": null,
+            "method": "manual-review"
+          },
+          "assessed_at": "2026-09-26T17:00:00.000Z"
+        }
+      ],
+      "approval_receipt": {
+        "action": "authored",
+        "claim_digest": "4d91768974a491f84e8ef67d9b8577975e8615c47065cd97a16260a7f4c28593",
+        "record_version_id": "v1",
+        "acted_at": "2026-09-26T17:00:00.000Z"
+      },
+      "confidence_estimate": null,
+      "salience_hint": null,
+      "hold_reason": null
+    },
+    "version_id": "v1",
+    "parent_version_id": null,
+    "created_at": "2026-09-26T15:00:00.000Z",
+    "updated_at": "2026-09-26T17:00:00.000Z",
+    "expires_at": null,
+    "no_expiry": false
+  },
+  "canonical_utf8": "{\"claim\":{\"approval_receipt\":{\"acted_at\":\"2026-09-26T17:00:00.000Z\",\"action\":\"authored\",\"claim_digest\":\"4d91768974a491f84e8ef67d9b8577975e8615c47065cd97a16260a7f4c28593\",\"record_version_id\":\"v1\"},\"claim_basis\":\"direct_user_assertion\",\"claim_digest\":\"4d91768974a491f84e8ef67d9b8577975e8615c47065cd97a16260a7f4c28593\",\"confidence_estimate\":null,\"evidence_bindings\":[{\"authority_id\":\"synthetic-authority-01\",\"authority_kind\":\"local_profile\",\"binding_id\":\"synthetic-binding-01\",\"captured_at\":\"2026-09-26T16:00:00.000Z\",\"component_version\":1,\"governance_scope_id\":\"synthetic-scope-01\",\"offset_unit\":\"unicode_codepoint\",\"representation_id\":\"message_content_text_v1\",\"representation_sha256\":\"bdd355f021e0095bbd9ce9da729cfd0b9556b01bc01c5b59461ebc4e12e55bef\",\"source_container_id\":\"synthetic-conversation-01\",\"source_kind\":\"conversation_message\",\"source_object_id\":\"synthetic-message-01\",\"source_role\":\"direct_user_message\",\"source_version_id\":\"synthetic-revision-01\",\"span_end\":11,\"span_sha256\":\"850f7dc43910ff890f8879c0ed26fe697c93a067ad93a7d50f466a7028a9bf4e\",\"span_start\":7,\"version_kind\":\"owner_immutable\"}],\"hold_reason\":null,\"relations\":[],\"salience_hint\":null,\"support_assessments\":[{\"assessed_at\":\"2026-09-26T17:00:00.000Z\",\"binding_digest\":\"dae4dd8a13189b7bf86559f7adaab2d6992fe3040a1d255b2c212dc7b15801fb\",\"binding_id\":\"synthetic-binding-01\",\"claim_digest\":\"4d91768974a491f84e8ef67d9b8577975e8615c47065cd97a16260a7f4c28593\",\"origin\":{\"actor\":\"user\",\"actor_id\":null,\"method\":\"manual-review\"},\"status\":\"supports\"}],\"temporal_validity\":{\"basis\":{\"kind\":\"user_reviewed\"},\"kind\":\"standing\"}},\"controls\":{\"agent_visibility\":\"agent_visible\",\"model_disclosure\":{\"kind\":\"deny\"},\"sync_mode\":\"device_only\"},\"created_at\":\"2026-09-26T15:00:00.000Z\",\"expires_at\":null,\"kind\":\"preference\",\"no_expiry\":false,\"parent_version_id\":null,\"payload\":{\"kind\":\"preference\",\"polarity\":\"like\",\"schema_version\":1,\"subject\":\"replies\",\"value\":\"concise\"},\"profile_id\":\"p1\",\"provenance\":{\"actor\":\"user\",\"derived_from_record_id\":null,\"reason_code\":\"authored\",\"source\":\"manual\"},\"record_id\":\"r1\",\"schema_version\":2,\"scope_id\":\"s1\",\"semantic_key\":null,\"state\":\"archived\",\"updated_at\":\"2026-09-26T17:00:00.000Z\",\"version_id\":\"v1\"}",
+  "sha256": "8d97b7975ccd6213fd38c1df46e743f50a4377ab315c876ef183cda6aa3eebae",
+  "integrity_tag": "hmac-sha256-v1:365502469410ad482f1be3f461d2e4b3d995228ebd284fbebf7e82d315c49d26"
+}

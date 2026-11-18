@@ -22,6 +22,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from ..Utils.egress import address_is_fetchable
 from .skill_package_inspection import (
     SkillPackageInspection,
     SkillPackageKind,
@@ -108,7 +109,11 @@ def classify_skill_source_url(url: str) -> GitHubZipSource | DirectZipSource:
     segments = tuple(s for s in path.split("/") if s)
 
     if host == "github.com":
-        if len(segments) >= 4 and segments[2] == "releases" and segments[3] == "download":
+        if (
+            len(segments) >= 4
+            and segments[2] == "releases"
+            and segments[3] == "download"
+        ):
             if not path.lower().endswith(".zip"):
                 raise RemoteSkillError("Only .zip release assets are supported.")
             return DirectZipSource(
@@ -177,10 +182,12 @@ async def resolve_ref_and_subdir(
     joined = "/".join(tail)
     best = ""
     for branch in branches:
-        if (joined == branch or joined.startswith(branch + "/")) and len(branch) > len(best):
+        if (joined == branch or joined.startswith(branch + "/")) and len(branch) > len(
+            best
+        ):
             best = branch
     if best:
-        subdir = joined[len(best):].strip("/")
+        subdir = joined[len(best) :].strip("/")
         return best, subdir
     return tail[0], "/".join(tail[1:])
 
@@ -190,8 +197,12 @@ REMOTE_FETCH_MAX_HOPS = 3
 REMOTE_FETCH_TOTAL_DEADLINE_SECONDS = 60.0
 _FETCH_CHUNK = 65536
 GITHUB_AUTH_HOSTS = frozenset(
-    {"github.com", "api.github.com", "codeload.github.com",
-     "objects.githubusercontent.com"}
+    {
+        "github.com",
+        "api.github.com",
+        "codeload.github.com",
+        "objects.githubusercontent.com",
+    }
 )
 
 
@@ -201,7 +212,30 @@ def _default_resolver(host: str) -> list[str]:
 
 
 def _assert_host_allowed(host: str, resolver) -> None:
-    """Reject unless EVERY resolved address is public (mixed sets reject)."""
+    """Reject unless EVERY resolved address is fetchable (mixed sets reject).
+
+    The per-address verdict is ``Utils.egress.address_is_fetchable`` -- the
+    ONE shared SSRF classification predicate (task-609), also used by
+    egress's own policy pipeline -- so this layer and the egress layer cannot
+    drift on which address categories are rejected (private/loopback/
+    link-local/reserved/unspecified/multicast/CGNAT/metadata all reject,
+    and a NAT64 or IPv4-mapped address gets the verdict of the IPv4 it
+    embeds; see that function's docstring for the full taxonomy). This layer
+    stays deliberately stricter than egress AROUND the predicate: https-only
+    per hop (enforced in fetch_zip_bytes), no trusted_origins, no config
+    allowlist.
+
+    TASK-38598: TLS is what anchors the validated hostname to the host that
+    actually serves the response -- httpx verifies the certificate against
+    the URL hostname, so a DNS-rebind to a different server fails the
+    handshake. That is also why plain ``http://`` is rejected outright
+    (classification AND per redirect hop): with no TLS there is nothing to
+    anchor identity, and this layer deliberately has no allowlist machinery
+    to admit exceptions -- fail closed. The residual rebinding window (a
+    public-validated hostname re-resolving to a private address inside
+    httpx's own connection) is closed post-connect in ``fetch_zip_bytes``
+    by re-validating the connected peer address when httpx exposes it.
+    """
     try:
         literal = ipaddress.ip_address(host)
         addresses = [str(literal)]
@@ -213,9 +247,37 @@ def _assert_host_allowed(host: str, resolver) -> None:
     if not addresses:
         raise RemoteSkillError(f"Could not resolve {host}.")
     for raw in addresses:
-        addr = ipaddress.ip_address(raw.split("%", 1)[0])
-        if (addr.is_private or addr.is_loopback or addr.is_link_local
-                or addr.is_reserved or addr.is_multicast or addr.is_unspecified):
+        if not address_is_fetchable(raw.split("%", 1)[0]):
+            raise RemoteSkillError("That host is not reachable from here.")
+
+
+def _connected_peer_addresses(response: httpx.Response) -> list[str]:
+    """Best-effort connected peer IPs for an in-flight httpx stream response.
+
+    httpx (httpcore) exposes the underlying network stream as
+    ``response.extensions["network_stream"]``; its raw socket's
+    ``getpeername()`` is the address this connection actually dialed. Not
+    every transport exposes a socket (TLS-wrapped streams, custom test
+    transports), so an unavailable peer yields ``[]`` -- callers treat that
+    as "cannot revalidate", never as "allowed".
+    """
+    stream = (getattr(response, "extensions", None) or {}).get("network_stream")
+    if stream is None or not hasattr(stream, "get_extra_info"):
+        return []
+    sock = stream.get_extra_info("socket")
+    try:
+        peer = sock.getpeername()
+    except (AttributeError, OSError):
+        return []
+    if isinstance(peer, tuple) and peer:
+        return [str(peer[0])]
+    return [str(peer)] if peer else []
+
+
+def _assert_peers_fetchable(response: httpx.Response) -> None:
+    """Re-validate the connected address(es) through the shared predicate."""
+    for raw in _connected_peer_addresses(response):
+        if not address_is_fetchable(raw.split("%", 1)[0]):
             raise RemoteSkillError("That host is not reachable from here.")
 
 
@@ -259,7 +321,14 @@ async def fetch_zip_bytes(
     try:
         async with asyncio.timeout(total_deadline):
             async with httpx.AsyncClient(
-                transport=transport, timeout=timeout, follow_redirects=False
+                transport=transport,
+                timeout=timeout,
+                follow_redirects=False,
+                # TASK-38598: with HTTP(S)_PROXY honored, the proxy does its
+                # own DNS and connects on this process's behalf, bypassing
+                # _assert_host_allowed entirely. Same policy as the MCP
+                # streamable_http transport (trust_env=False, no redirects).
+                trust_env=False,
             ) as client:
                 for _hop in range(REMOTE_FETCH_MAX_HOPS + 1):
                     if not validate_url(current):
@@ -290,6 +359,13 @@ async def fetch_zip_bytes(
                                 raise RemoteSkillError(
                                     f"Download failed (HTTP {response.status_code})."
                                 )
+                            # TASK-38598: close the check-then-connect gap --
+                            # DNS may rebind between _assert_host_allowed's
+                            # resolution and httpx's own dial, so the
+                            # connected peer is revalidated through the same
+                            # fetchable predicate (no-op when the transport
+                            # does not expose the peer address).
+                            _assert_peers_fetchable(response)
                             chunks: list[bytes] = []
                             received = 0
                             async for chunk in response.aiter_bytes(_FETCH_CHUNK):
@@ -376,11 +452,11 @@ def re_root_skill_zip(
         if (skill_root + "SKILL.md") not in names:
             # Depth-limited candidate scan under the current base.
             candidates = sorted(
-                n[len(base):-len("/SKILL.md")]
+                n[len(base) : -len("/SKILL.md")]
                 for n in names
                 if n.startswith(base)
                 and n.endswith("/SKILL.md")
-                and n[len(base):].count("/") <= _CANDIDATE_SCAN_DEPTH
+                and n[len(base) :].count("/") <= _CANDIDATE_SCAN_DEPTH
             )
             if not candidates:
                 raise RemoteSkillError("No SKILL.md found in that archive.")
@@ -398,7 +474,8 @@ def re_root_skill_zip(
         from .skill_trust_scanner import SUPPORTING_JUNK_DIRS, _is_junk
 
         raw_members = [
-            m for m in archive.infolist()
+            m
+            for m in archive.infolist()
             if not m.is_dir() and m.filename.startswith(skill_root)
         ]
 
@@ -417,13 +494,13 @@ def re_root_skill_zip(
         for member in raw_members:
             mode = (member.external_attr >> 16) & 0xFFFF
             if stat.S_ISLNK(mode):
-                continue                       # symlink member: skip-not-fail, matches the importer
-            relative = member.filename[len(skill_root):]
+                continue  # symlink member: skip-not-fail, matches the importer
+            relative = member.filename[len(skill_root) :]
             if not relative:
                 continue
             parts = relative.split("/")
             if any(p in SUPPORTING_JUNK_DIRS for p in parts) or _is_junk(parts[-1]):
-                continue                       # junk pruned, matches the importer
+                continue  # junk pruned, matches the importer
             try:
                 LocalSkillsService._validate_archive_member(relative)
             except ValueError as exc:
@@ -440,9 +517,7 @@ def re_root_skill_zip(
         with _zipfile.ZipFile(out, "w", compression=_zipfile.ZIP_DEFLATED) as dest:
             for member, relative in pruned:
                 if member.file_size > MAX_SUPPORTING_FILE_BYTES:
-                    raise RemoteSkillError(
-                        f"File too large in bundle: {relative}"
-                    )
+                    raise RemoteSkillError(f"File too large in bundle: {relative}")
                 try:
                     data = LocalSkillsService._read_zip_member_bounded(
                         archive, member, relative, MAX_SUPPORTING_FILE_BYTES
@@ -538,7 +613,9 @@ async def inspect_skill_from_url(
             message = "That URL is malformed or unsupported."
         else:
             kind = SkillPackageKind.FETCH_OR_AUTH_FAILURE
-            message = "Could not fetch that skill package. Retry when access is available."
+            message = (
+                "Could not fetch that skill package. Retry when access is available."
+            )
         return RemoteSkillPackage(
             SkillPackageInspection(kind, message=message),
             failure_category=exc.category,
@@ -566,11 +643,17 @@ async def import_inspected_skill(
 ) -> dict:
     """Import one explicit candidate from the exact retained archive bytes."""
     zip_bytes = package.archive_bytes
-    if zip_bytes is None or hashlib.sha256(zip_bytes).hexdigest() != package.archive_sha256:
+    if (
+        zip_bytes is None
+        or hashlib.sha256(zip_bytes).hexdigest() != package.archive_sha256
+    ):
         raise RemoteSkillError("The inspected skill package is no longer available.")
     candidates = package.inspection.candidates
     if candidate is None:
-        if package.inspection.kind is not SkillPackageKind.ROOT_SKILL or len(candidates) != 1:
+        if (
+            package.inspection.kind is not SkillPackageKind.ROOT_SKILL
+            or len(candidates) != 1
+        ):
             raise RemoteSkillError("Choose one installable skill first.")
         candidate = candidates[0]
     if candidate not in candidates:

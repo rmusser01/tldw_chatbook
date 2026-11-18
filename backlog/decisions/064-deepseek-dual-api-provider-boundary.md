@@ -88,3 +88,22 @@ introducing server-side response state.
 - [ADR-020: Automatic Model Catalog Refresh](020-automatic-model-catalog-refresh.md)
 - [ADR-045: QwenCloud Dual-API Provider Boundary](045-qwencloud-dual-api-provider-boundary.md)
 - [ADR-063: Hosted Wire and Durable Tool Continuation](063-hosted-provider-wire-and-durable-tool-continuation.md)
+
+
+## 2026-10-12 installed Chat-Completions compatibility amendment
+
+The current adapter remains Chat-Completions-only; the dual-API decision above is
+retained architectural intent, not a claim that Responses is implemented. Explicit
+Responses selection now refuses before dispatch instead of mislabelling a Chat
+request. No Responses translation or server-managed state is introduced here.
+
+The documented current models `deepseek-flash` and `deepseek-v4-pro` accept explicit
+`reasoning_effort` values `none`, `low`, `high`, and `max`. `none` is a distinct
+non-thinking mode, not an alias. The existing captured session/configuration field
+crosses both ordinary and native-helper paths unchanged to the provider adapter;
+omitted effort preserves the provider default and all helper/output/lifetime caps.
+Unknown values or unsupported model selections fail locally. Registry/editor
+capabilities must agree with the provider allowlist. ADR062/063 retains neutral
+transport ownership; no broad kwargs passthrough or helper-only prompt/wire override.
+
+Reference: https://api-docs.deepseek.com/api/create-chat-completion/ (2026-10-12).

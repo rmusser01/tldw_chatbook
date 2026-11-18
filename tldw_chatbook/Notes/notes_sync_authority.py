@@ -261,9 +261,7 @@ class NotesScopeSyncAuthority:
             ) from None
         return self._snapshot(record, expected_note_id=note_id)
 
-    async def observe_versions(
-        self, note_ids: tuple[str, ...]
-    ) -> Mapping[str, int]:
+    async def observe_versions(self, note_ids: tuple[str, ...]) -> Mapping[str, int]:
         """Read only the live version of each given note, in one snapshot.
 
         TASK-23027: the change signal behind observation reuse. Every notes

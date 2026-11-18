@@ -30,7 +30,9 @@ def test_persists_full_column_set(db, source_id):
         "alert_matches": [7],
     }
     with db.transaction() as conn:
-        persist_subscription_item(conn, source_id, item, run_id=42, now="2026-07-25T00:00:00Z")
+        persist_subscription_item(
+            conn, source_id, item, run_id=42, now="2026-07-25T00:00:00Z"
+        )
 
     row = db.conn.execute(
         "SELECT content, content_kind, content_format, status, run_id, alert_matches, "
@@ -71,7 +73,9 @@ def test_empty_containers_persist_as_null_not_empty_json(db, source_id):
         "enclosures": [],
     }
     with db.transaction() as conn:
-        persist_subscription_item(conn, source_id, item, run_id=1, now="2026-07-25T00:00:00Z")
+        persist_subscription_item(
+            conn, source_id, item, run_id=1, now="2026-07-25T00:00:00Z"
+        )
 
     row = db.conn.execute(
         "SELECT categories, enclosures FROM subscription_items WHERE url = ?",
@@ -91,7 +95,9 @@ def test_non_empty_containers_still_round_trip_as_json(db, source_id):
         "enclosures": [{"url": "https://a.example/audio.mp3"}],
     }
     with db.transaction() as conn:
-        persist_subscription_item(conn, source_id, item, run_id=1, now="2026-07-25T00:00:00Z")
+        persist_subscription_item(
+            conn, source_id, item, run_id=1, now="2026-07-25T00:00:00Z"
+        )
 
     row = db.conn.execute(
         "SELECT categories, enclosures FROM subscription_items WHERE url = ?",
@@ -115,11 +121,25 @@ def test_returns_the_real_row_id_on_upsert_not_lastrowid(db, source_id):
     through, and the upsert resolves as an UPDATE on a row that is not the
     most recently inserted one on that connection.
     """
-    item_a = {"url": "https://a.example/1", "title": "A", "content_hash": "h1", "content": "a"}
-    item_b = {"url": "https://a.example/2", "title": "B", "content_hash": "h2", "content": "b"}
+    item_a = {
+        "url": "https://a.example/1",
+        "title": "A",
+        "content_hash": "h1",
+        "content": "a",
+    }
+    item_b = {
+        "url": "https://a.example/2",
+        "title": "B",
+        "content_hash": "h2",
+        "content": "b",
+    }
     with db.transaction() as conn:
-        id_a = persist_subscription_item(conn, source_id, item_a, run_id=1, now="2026-07-25T00:00:00Z")
-        id_b = persist_subscription_item(conn, source_id, item_b, run_id=1, now="2026-07-25T00:00:00Z")
+        id_a = persist_subscription_item(
+            conn, source_id, item_a, run_id=1, now="2026-07-25T00:00:00Z"
+        )
+        id_b = persist_subscription_item(
+            conn, source_id, item_b, run_id=1, now="2026-07-25T00:00:00Z"
+        )
         assert id_b != id_a  # sanity: two distinct rows exist
 
         reupsert_id = persist_subscription_item(
@@ -146,17 +166,27 @@ def test_upsert_preserves_status_from_user_action(db, source_id, preserved_statu
     to ``new`` and resurface as unread just because a scheduled re-fetch
     happened to touch the row.
     """
-    item = {"url": "https://a.example/1", "title": "T", "content_hash": "h", "content": "body"}
+    item = {
+        "url": "https://a.example/1",
+        "title": "T",
+        "content_hash": "h",
+        "content": "body",
+    }
     with db.transaction() as conn:
-        persist_subscription_item(conn, source_id, item, run_id=1, now="2026-07-25T00:00:00Z")
+        persist_subscription_item(
+            conn, source_id, item, run_id=1, now="2026-07-25T00:00:00Z"
+        )
         conn.execute(
             "UPDATE subscription_items SET status = ? WHERE url = ?",
             (preserved_status, "https://a.example/1"),
         )
-        persist_subscription_item(conn, source_id, item, run_id=2, now="2026-07-25T01:00:00Z")
+        persist_subscription_item(
+            conn, source_id, item, run_id=2, now="2026-07-25T01:00:00Z"
+        )
 
     row = db.conn.execute(
-        "SELECT status, run_id FROM subscription_items WHERE url = ?", ("https://a.example/1",)
+        "SELECT status, run_id FROM subscription_items WHERE url = ?",
+        ("https://a.example/1",),
     ).fetchone()
     assert row[0] == preserved_status
     assert row[1] == 2
@@ -164,17 +194,27 @@ def test_upsert_preserves_status_from_user_action(db, source_id, preserved_statu
 
 def test_upsert_resets_error_status_to_new(db, source_id):
     """``error`` is not a user action -- a successful re-fetch should clear it."""
-    item = {"url": "https://a.example/1", "title": "T", "content_hash": "h", "content": "body"}
+    item = {
+        "url": "https://a.example/1",
+        "title": "T",
+        "content_hash": "h",
+        "content": "body",
+    }
     with db.transaction() as conn:
-        persist_subscription_item(conn, source_id, item, run_id=1, now="2026-07-25T00:00:00Z")
+        persist_subscription_item(
+            conn, source_id, item, run_id=1, now="2026-07-25T00:00:00Z"
+        )
         conn.execute(
             "UPDATE subscription_items SET status = 'error' WHERE url = ?",
             ("https://a.example/1",),
         )
-        persist_subscription_item(conn, source_id, item, run_id=2, now="2026-07-25T01:00:00Z")
+        persist_subscription_item(
+            conn, source_id, item, run_id=2, now="2026-07-25T01:00:00Z"
+        )
 
     row = db.conn.execute(
-        "SELECT status, run_id FROM subscription_items WHERE url = ?", ("https://a.example/1",)
+        "SELECT status, run_id FROM subscription_items WHERE url = ?",
+        ("https://a.example/1",),
     ).fetchone()
     assert row[0] == "new"
     assert row[1] == 2
@@ -190,4 +230,6 @@ def test_rejects_invalid_kind_format_pairing(db, source_id):
     }
     with pytest.raises(ValueError, match="content_kind"):
         with db.transaction() as conn:
-            persist_subscription_item(conn, source_id, item, run_id=1, now="2026-07-25T00:00:00Z")
+            persist_subscription_item(
+                conn, source_id, item, run_id=1, now="2026-07-25T00:00:00Z"
+            )

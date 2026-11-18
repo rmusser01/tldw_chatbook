@@ -1,0 +1,14 @@
+{
+  "commit": "bea503a7e3e64dffe313b2bc5b22196a3b8da5aa",
+  "subject": "test: qualify native shared-worktree workflows and recovery",
+  "owned_paths": 489,
+  "commit_exact_owned_set": true,
+  "owned_worktree_clean": true,
+  "protected_paths": 279,
+  "protected_unchanged": true,
+  "staged_paths": 61,
+  "staged_binary_sha256": "c5fcb00eab4ea09c49d1797567cbd4cc9f0eb9bb8d99cc2355f764638aaa7248",
+  "rulings_excluded": true,
+  "git_message": "Commit printed automatic background packing notice and preexisting gc.log/unreachable-object warnings. No separate Git maintenance command was issued; automatic outcome remains for root audit.",
+  "postcommit_process_scan": "ps -ef filtered Git gc/maintenance/repack/pack-objects returned no matches"
+}

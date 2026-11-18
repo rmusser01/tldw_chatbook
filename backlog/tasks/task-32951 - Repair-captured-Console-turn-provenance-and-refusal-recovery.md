@@ -1,0 +1,128 @@
+---
+id: TASK-32951
+title: Repair captured Console turn provenance and refusal recovery
+status: Done
+assignee:
+  - '@codex'
+created_date: '2026-09-25 16:16'
+updated_date: '2026-10-10 20:22'
+labels: []
+dependencies: []
+references:
+  - 'https://github.com/rmusser01/tldw_chatbook/issues/2829'
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+Investigate and address GitHub issue #2829 so captured sends preserve durable message identity and refused accepted turns remain recoverable.
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [x] #1 Captured saved assistant history with verified thinking sidecars retains revision ownership, and stopped tool-run successors send without rewriting earlier trace content.
+- [x] #2 Surface refusals retain fail-closed checks and expose content-free counts, domains, span, and refusal-kind diagnostics.
+- [x] #3 Accepted refused sends expose existing explicit recovery without duplicating accepted messages; explicit Cancel retains the existing durable soft-delete semantics.
+- [x] #4 Unsaved effective system prompts and lease-free RAG callbacks follow the captured-send contracts without provenance or missing-argument failures.
+- [x] #5 Targeted regressions cover the defects, immutable prior traces, and mismatched saved-source rejection; checks and self-review are recorded.
+<!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no
+ADR path: backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md
+Reason: Repair recording and recovery within the existing revision, sidecar, frozen projection, and explicit capture bypass contracts; do not widen surface replacement permissions.
+
+1. Reproduce thinking identity loss and companion captured-send failures with real SQLite/controller/provider-boundary tests.
+2. Preserve exact saved message ownership for verified sidecar attachment; classify rendered system context correctly and honor the frozen RAG launch callback signature.
+3. Add safe structural refusal diagnostics at both existing surface fences without storing content or private identifiers.
+4. Exercise existing refusal recovery and stopped-tool successors, asserting one accepted user and immutable historical traces; coordinate mounted recovery coverage with the parallel recovery investigation.
+5. Run only related test modules and targeted static checks, review the delta against the pre-existing working tree, then record findings and limitations.
+
+Review follow-up (2026-10-10):
+1. Restore private thinking-owner marker spelling comparison without changing owner/content identity; repair structural diagnostic field types and consume the verified recovery boundary in controller rebinding; retain new dev failed-call guards during rebase.
+2. Reproduce defects before fixing, run targeted trace/recovery/privacy tests and required preflight, then obtain independent final review.
+ADR required: no
+ADR path: backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md (32951); backlog/decisions/079-console-library-conversation-authority.md (32953)
+Reason: restore existing refusal ownership, safe diagnostics, and callback contracts without changing boundaries or storage.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Captured assistant history now retains its saved revision when agent transport
+renames the private thinking-owner marker. The controller already preserved the
+revision at admission: the demonstrated loss occurred in
+`ConsoleAgentTraceRequestFactory.build`. Normalize only the marker spelling;
+owner values, other message fields, and frozen historical projections remain
+exact. Changed content or a changed owner cannot reuse the saved descriptor.
+
+- `console_agent_bridge.py` preserves admitted revision identity through the
+  private marker rename. Real SQLite tests cover failed tool loops, exhausted
+  model-turn budgets with a failed wrap-up, warm/cold successors, and immutable
+  previously captured requests.
+- `console_chat_controller.py` classifies unsaved system rows as rendered system
+  context and calls the actual runtime RAG callback with explicit `launch=None`
+  for lease-free sends. No later staged evidence is silently substituted.
+- `console_trace_service.py` emits safe counts, domains, replacement span, and
+  refusal kind at the existing count/span and sequence-gap fences;
+  `persistent_diagnostics.py` admits those structural fields. Tests read actual
+  diagnostic sinks and both Logs copy projections and reject content canaries.
+- `console_trace_errors.py`, `console_trace_runtime.py`, and
+  `console_provider_gateway.py` classify only a known surface refusal before
+  reservation, after successful transaction unwinding. The ValueError/token
+  contract is retained. Capture retry consumes the same single-use live first-call
+  ownership proof; controller rebinding removes the exception placeholder.
+  Unknown failures, foreign owners/gateways, forged errors, rebound scopes, later
+  calls, and tool-loop calls still cannot authorize Capture-On recovery.
+- The mounted 80×24 production-stylesheet test exercises Retry capture, Send
+  without capture, and Cancel send with zero initial provider entries. Sending
+  retains the exact accepted user; Cancel follows existing Discard semantics by
+  removing the pending branch and retaining its one durable soft-deleted row.
+
+Historical limitation: existing wrongly recorded ACTIVE_REQUEST artifacts are
+not migrated or reinterpreted. A real persisted legacy ledger can still refuse
+its successor, including repeated Retry. Explicit Send without capture sends
+the same accepted turn once; Cancel safely discards it. Both leave prior trace
+reconstruction unchanged. No surface fence was widened.
+
+Verification:
+
+- Pre-fix regressions demonstrated wrong artifact ownership in real agent
+  requests, rejected unsaved system provenance, the missing runtime RAG launch
+  argument, absent structural refusal diagnostics, and inert/refused Retry and
+  Cancel after a first surface failure. A final pre-edit snapshot replay confirms
+  all six identity/system/RAG cases fail for those exact causes:
+  `/tmp/tldw-2829-red-proof.log`.
+- 127 passed: trace runtime, discarded tool-run history, new known-refusal
+  ownership matrix, and existing mounted constructor-failure recovery. Log:
+  `/tmp/tldw-2829-final-guards.log`.
+- 15 passed: new identity/legacy-history, refusal diagnostics, and mounted surface
+  recovery tests. Log: `/tmp/tldw-2829-final-new-2.log`.
+- The broader targeted run was 174 passed / 19 failed: 18 existing stale dictionary
+  callback fixture failures in sidecar/current-turn tests and one existing MCP
+  diagnostic guard failure. Loading the pre-edit source snapshots reproduces
+  the exact same 18 dictionary failures (43 passed), recorded in
+  `/tmp/tldw-2829-baseline-all.log`; the MCP diagnostic failure was independently
+  confirmed unchanged from HEAD. These unrelated failures were not repaired.
+- Four new test files pass Ruff check and formatting. All touched Python sources
+  compile; comparison against pre-edit snapshots finds no new Ruff diagnostics.
+  Whole-file source lint has inherited failures; broad reformatting was avoided.
+- Self-review and an independent read-only review completed. No external live
+  provider was contacted: real SQLite/runtime/mounted UI used deterministic
+  provider adapters. No full test sweep was run.
+
+ADR required: no new ADR. This implements existing
+`backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md` contracts.
+The owner-marker incident is recorded in
+`backlog/docs/lessons-console-wiring.md`. Pre-edit snapshots and isolated diffs
+are under `/tmp/tldw-2829-baseline/`; pre-existing workspace changes are preserved.
+
+Review follow-up (2026-10-10): restored exact recovery-boundary rebinding and private thinking-owner marker comparison, safe numeric/list refusal diagnostics, token-guarded recovery completion and synchronous exception release. Rebase preserves dev's failed-call retry fences and bootstrap imports. Added stale-completion/exception controls; callback assertions now inspect the completion argument. Real mounted tests use the existing per-case private-profile owner, and the trace identity module retains its collection-bound private config source. Fixture drafts survive authoritative projection refresh, and callout assertions wait for actual visible paint.
+
+Defects were reproduced before repair. Final affected identity and mounted surface/dispatch cases: 15 passed. The earlier trace/recovery run passed 39 cases and exposed six later repaired cases; these separate receipts are retained without relabelling them as one green run. Undefined-name checks and scoped diff whitespace checks pass; all derived-artifact preflight checks passed on the rebased branch. Final rebased targeted verification and protected CI remain integration gates. Independent review cleared the prior five repairs; the added owner-marker fix receives a final read before merge. No full suite or live external provider was used. ADR required: no new ADR; existing ADR-097/ADR-079 contracts apply.
+
+Final current-dev review verification (2026-10-10, dev cc46cc7300): the combined nine-file trace/model-retry and mounted recovery selection passes all 45 tests in 125.35 seconds. Derived-artifact preflight and undefined-name checks pass. Independent final review also clears the thinking-owner normalization and its changed-content/changed-owner refusal controls. No full suite or live paid provider. Protected merge remains contingent on exact-head required CI.
+Final pre-integration verification (2026-10-10, dev 6ef97bdbd059): all 45 affected tests pass in 91.94 seconds, derived-artifact preflight passes, and all six historical review threads are resolved. Independent review is complete. Final integration still requires the protected CI checks after the preceding PR merges.
+<!-- SECTION:NOTES:END -->

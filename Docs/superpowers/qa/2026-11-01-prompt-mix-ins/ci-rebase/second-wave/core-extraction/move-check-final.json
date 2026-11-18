@@ -1,0 +1,250 @@
+[
+  {
+    "name": "_run_agent_reply",
+    "implementation_ast_equal_after_documented_normalization": true,
+    "wrapper_arguments_equal": true,
+    "wrapper_decorators_equal": true,
+    "self_state_accesses_equal": true,
+    "destination": "tldw_chatbook/Chat/console_agent_reply.py"
+  },
+  {
+    "name": "persist_console_settings_commit_serialized",
+    "implementation_ast_equal_after_documented_normalization": true,
+    "wrapper_arguments_equal": true,
+    "wrapper_decorators_equal": true,
+    "self_state_accesses_equal": true,
+    "destination": "tldw_chatbook/Chat/console_settings_persistence.py"
+  },
+  {
+    "name": "_console_settings_policy_failure_label",
+    "implementation_ast_equal_after_documented_normalization": true,
+    "wrapper_arguments_equal": true,
+    "wrapper_decorators_equal": true,
+    "self_state_accesses_equal": true,
+    "destination": "tldw_chatbook/Chat/console_settings_persistence.py"
+  },
+  {
+    "name": "retry_console_settings_persistence",
+    "implementation_ast_equal_after_documented_normalization": true,
+    "wrapper_arguments_equal": true,
+    "wrapper_decorators_equal": true,
+    "self_state_accesses_equal": true,
+    "destination": "tldw_chatbook/Chat/console_settings_persistence.py"
+  },
+  {
+    "name": "_join_console_settings_persistence_drain",
+    "implementation_ast_equal_after_documented_normalization": true,
+    "wrapper_arguments_equal": true,
+    "wrapper_decorators_equal": true,
+    "self_state_accesses_equal": true,
+    "destination": "tldw_chatbook/Chat/console_settings_persistence.py"
+  },
+  {
+    "name": "_retire_console_settings_persistence_drain",
+    "implementation_ast_equal_after_documented_normalization": true,
+    "wrapper_arguments_equal": true,
+    "wrapper_decorators_equal": true,
+    "self_state_accesses_equal": true,
+    "destination": "tldw_chatbook/Chat/console_settings_persistence.py"
+  },
+  {
+    "name": "_run_console_settings_persistence_drain",
+    "implementation_ast_equal_after_documented_normalization": true,
+    "wrapper_arguments_equal": true,
+    "wrapper_decorators_equal": true,
+    "self_state_accesses_equal": true,
+    "destination": "tldw_chatbook/Chat/console_settings_persistence.py"
+  },
+  {
+    "name": "_persist_console_settings_components_locked",
+    "implementation_ast_equal_after_documented_normalization": true,
+    "wrapper_arguments_equal": true,
+    "wrapper_decorators_equal": true,
+    "self_state_accesses_equal": true,
+    "destination": "tldw_chatbook/Chat/console_settings_persistence.py"
+  },
+  {
+    "name": "_context_write_result",
+    "implementation_ast_equal_after_documented_normalization": true,
+    "wrapper_arguments_equal": true,
+    "wrapper_decorators_equal": true,
+    "self_state_accesses_equal": true,
+    "destination": "tldw_chatbook/Chat/console_settings_persistence.py"
+  },
+  {
+    "name": "_console_settings_drain_identity_matches",
+    "implementation_ast_equal_after_documented_normalization": true,
+    "wrapper_arguments_equal": true,
+    "wrapper_decorators_equal": true,
+    "self_state_accesses_equal": true,
+    "destination": "tldw_chatbook/Chat/console_settings_persistence.py"
+  },
+  {
+    "name": "_console_settings_identity_matches",
+    "implementation_ast_equal_after_documented_normalization": true,
+    "wrapper_arguments_equal": true,
+    "wrapper_decorators_equal": true,
+    "self_state_accesses_equal": true,
+    "destination": "tldw_chatbook/Chat/console_settings_persistence.py"
+  },
+  {
+    "name": "_record_console_settings_failure",
+    "implementation_ast_equal_after_documented_normalization": true,
+    "wrapper_arguments_equal": true,
+    "wrapper_decorators_equal": true,
+    "self_state_accesses_equal": true,
+    "destination": "tldw_chatbook/Chat/console_settings_persistence.py"
+  },
+  {
+    "name": "_fork_conversation_kwargs",
+    "implementation_ast_equal_after_documented_normalization": true,
+    "wrapper_arguments_equal": true,
+    "wrapper_decorators_equal": true,
+    "self_state_accesses_equal": true,
+    "destination": "tldw_chatbook/Chat/console_chat_fork.py"
+  },
+  {
+    "name": "_validate_console_fork_persistence_input",
+    "implementation_ast_equal_after_documented_normalization": true,
+    "wrapper_arguments_equal": true,
+    "wrapper_decorators_equal": true,
+    "self_state_accesses_equal": true,
+    "destination": "tldw_chatbook/Chat/console_chat_fork.py"
+  },
+  {
+    "name": "SurfaceReferenceKey",
+    "pure_ast_equal": true,
+    "destination": "tldw_chatbook/Chat/console_trace_models.py"
+  },
+  {
+    "name": "_SequenceNode",
+    "pure_ast_equal": true,
+    "destination": "tldw_chatbook/Chat/console_trace_models.py"
+  },
+  {
+    "name": "_sequence_priority",
+    "pure_ast_equal": true,
+    "destination": "tldw_chatbook/Chat/console_trace_models.py"
+  },
+  {
+    "name": "_sequence_size",
+    "pure_ast_equal": true,
+    "destination": "tldw_chatbook/Chat/console_trace_models.py"
+  },
+  {
+    "name": "_sequence_pull",
+    "pure_ast_equal": true,
+    "destination": "tldw_chatbook/Chat/console_trace_models.py"
+  },
+  {
+    "name": "_sequence_merge",
+    "pure_ast_equal": true,
+    "destination": "tldw_chatbook/Chat/console_trace_models.py"
+  },
+  {
+    "name": "_sequence_split",
+    "pure_ast_equal": true,
+    "destination": "tldw_chatbook/Chat/console_trace_models.py"
+  },
+  {
+    "name": "_sequence_rank",
+    "pure_ast_equal": true,
+    "destination": "tldw_chatbook/Chat/console_trace_models.py"
+  },
+  {
+    "name": "_sequence_delete",
+    "pure_ast_equal": true,
+    "destination": "tldw_chatbook/Chat/console_trace_models.py"
+  },
+  {
+    "name": "_sequence_insert",
+    "pure_ast_equal": true,
+    "destination": "tldw_chatbook/Chat/console_trace_models.py"
+  },
+  {
+    "name": "_sequence_entries",
+    "pure_ast_equal": true,
+    "destination": "tldw_chatbook/Chat/console_trace_models.py"
+  },
+  {
+    "name": "_SequenceValue",
+    "pure_ast_equal": true,
+    "destination": "tldw_chatbook/Chat/console_trace_models.py"
+  },
+  {
+    "name": "_PersistentSequenceNode",
+    "pure_ast_equal": true,
+    "destination": "tldw_chatbook/Chat/console_trace_models.py"
+  },
+  {
+    "name": "_persistent_size",
+    "pure_ast_equal": true,
+    "destination": "tldw_chatbook/Chat/console_trace_models.py"
+  },
+  {
+    "name": "_persistent_merge",
+    "pure_ast_equal": true,
+    "destination": "tldw_chatbook/Chat/console_trace_models.py"
+  },
+  {
+    "name": "_persistent_split",
+    "pure_ast_equal": true,
+    "destination": "tldw_chatbook/Chat/console_trace_models.py"
+  },
+  {
+    "name": "_persistent_first_position_in_range",
+    "pure_ast_equal": true,
+    "destination": "tldw_chatbook/Chat/console_trace_models.py"
+  },
+  {
+    "name": "_persistent_without_sequence_range",
+    "pure_ast_equal": true,
+    "destination": "tldw_chatbook/Chat/console_trace_models.py"
+  },
+  {
+    "name": "_persistent_insert_entries",
+    "pure_ast_equal": true,
+    "destination": "tldw_chatbook/Chat/console_trace_models.py"
+  },
+  {
+    "name": "_persistent_iter",
+    "pure_ast_equal": true,
+    "destination": "tldw_chatbook/Chat/console_trace_models.py"
+  },
+  {
+    "name": "_persistent_domain_count_before",
+    "pure_ast_equal": true,
+    "destination": "tldw_chatbook/Chat/console_trace_models.py"
+  },
+  {
+    "name": "CONSOLE_SUMMARY_BANNER_COPY",
+    "pure_ast_equal": true,
+    "destination": "tldw_chatbook/Chat/console_memory_banner.py"
+  },
+  {
+    "name": "ConsoleMemoryBannerPresentation",
+    "pure_ast_equal": true,
+    "destination": "tldw_chatbook/Chat/console_memory_banner.py"
+  },
+  {
+    "name": "derive_console_memory_banner_presentation",
+    "pure_ast_equal": true,
+    "destination": "tldw_chatbook/Chat/console_memory_banner.py"
+  },
+  {
+    "name": "schedule_prompt_mixin_preferences_save",
+    "implementation_ast_equal_after_documented_normalization": true,
+    "wrapper_arguments_equal": true,
+    "wrapper_decorators_equal": true,
+    "self_state_accesses_equal": true,
+    "destination": "tldw_chatbook/Chat/console_settings_persistence.py"
+  },
+  {
+    "name": "persist_prompt_mixin_preferences",
+    "implementation_ast_equal_after_documented_normalization": true,
+    "wrapper_arguments_equal": true,
+    "wrapper_decorators_equal": true,
+    "self_state_accesses_equal": true,
+    "destination": "tldw_chatbook/Chat/console_settings_persistence.py"
+  }
+]

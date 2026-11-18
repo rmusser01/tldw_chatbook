@@ -1,0 +1,8 @@
+...                                                                      [100%]
+============================= slowest 25 durations =============================
+2.61s setup    Tests/Chat/test_console_chat_start.py::test_v2_edit_or_clear_survives_reopen[edited opening]
+1.48s setup    Tests/Chat/test_console_chat_start.py::test_v2_edit_or_clear_survives_reopen[human-edit-over-tool-cap]
+1.33s setup    Tests/Chat/test_console_chat_start.py::test_v2_edit_or_clear_survives_reopen[]
+
+(6 durations < 1s hidden.)
+3 passed, 70 deselected in 7.14s

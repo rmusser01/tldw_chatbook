@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Providers & Models
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Applies to new and unused open chats · used chats keep theirs (Console: Alt+M)               │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │                                                                                                                            │  │  │                                         │
+│  category search             │  │  │  Providers & Models                                                                                                        │  │  │ Selected category: Providers & Models   │
+│                              │  │  │ ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  │  │ No unsaved changes                      │
+│  Core                        │  │  │ │ ╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │  │  │  │  Guided edits: change a field first.    │
+│      Overview (view)         │  │  │ │ │  ▶ Prompt-cache snapshots                                                                                         │ │  │  │  │  Save (s) — no changes                  │
+│    > Providers & Models      │  │  │ │ │                                                                                                                   │ │  │  │  │  Revert (r) — no changes                │
+│      Web Search              │  │  │ │ ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │  │  │  │ Local-only: saves write your config     │
+│      Speech & TTS            │  │  │ │                                                                                                                       │  │  │  │ file.                                   │
+│  Interface                   │  │  │ │  Connect                                                                                                              │  │  │  │  ▼ config key                           │
+│      Appearance              │  │  │ │ Provider                │ llama.cpp                          new-chat default configured: llama.cpp · 59 more         │  │  │  │   Saved as: chat_defaults.model         │
+│      Theme                   │  │  │ │ API key                 │ No credential required     Clear   not required     this provider needs no key              │▁ │  │  │   Endpoint key:                         │
+│      Splash Screen           │  │  │ │ Env var                 │ No credential required             not used         safer: keeps keys out of config.toml    │  │  │  │   api_settings.llama_cpp.api_url        │
+│      Console Behavior        │  │  │ │ Endpoint                │ http://127.0.0.1:18767             config           required: the server's base URL         │  │  │  │   Provider catalog | Cloud:           ▂ │
+│  Data & Privacy              │  │  │ │ Key check                Ready · not tested                                                                Test (t)   │  │  │  │   Anthropic, Arcee AI, Azure OpenAI,    │
+│      Storage                 │  │  │ │  Provider settings saved: new chats and open chats nobody has used yet take them; chats with work keep their own      │  │  │  │   Baidu Qianfan, Baseten, ByteDance     │
+│      Workspaces              │  │  │ │  settings (change them in Console with Alt+M).                                                                        │  │  │  │   Seed (BytePlus), Cerebras,            │
+│      Tool Profiles           │  │  │ │                                                                                                                       │  │  │  │   Cloudflare Workers AI, Cohere,        │
+│      Privacy & Security      │  │  │ │  Default model for new chats                                                                                          │  │  │  │   Command Code, Databricks,             │
+│      Network                 │  │  │ │ Model                   │ mistral-7b-instruct-q5             new-chat default type to search · Custom ID for others   │  │  │  │   DeepInfra, DeepSeek, Fireworks, GMI   │
+│      My Profile              │  │  │ │ Applies to               new chats (Ctrl+T, temporary, workspace). Open chat “Keep my settings please” keeps          │  │  │  │   Cloud, Google Gemini, Groq, Hugging   │
+│  Troubleshooting             │  │  │ │                          llama.cpp · qwen3-8b-q4.                                                                     │  │  │  │   Face, Kilo Gateway, Meta (Muse        │
+│      Diagnostics (view)      │  │  │ │                                                                                                                       │  │  │  │   Spark), MiniMax, Mistral AI,          │
+│      About (view)            │  │  │ │  Context capacity                                                                                                     │  │  │  │   Moonshot AI, Nebius Token Factory,    │
+│      Agents                  │  │  │ │  Context window unknown. Enter the provider's documented token limit so Automatic conversation budgets can be         │  │  │  │   Nous Research, Novita AI, NVIDIA      │
+│  Expert                      │  │  │ │  verified.                                                                                                            │  │  │  │   NIM, Ollama Cloud, OpenAI, OpenCode   │
+│      Hooks                   │  │  │ │ Context window          │ tokens (required when unknown)                                                              │  │  │  │   Zen, OpenRouter, QwenCloud,           │
+│      Internal Prompts        │  │  │ │                          Reset to detected                                                                            │  │  │  │   SambaNova, SiliconFlow, StepFun,      │
+│      Advanced Config         │  │  │ │  This is the model's total token capacity, not a conversation length preference. Repairs update the existing          │  │  │  │   Tencent TokenHub, Together,           │
+│   Domain Defaults ▸ (11)     │  │  │ │  model-capability registry used by request safety checks.                                                             │  │  │  │   Upstage, Venice, Vercel AI Gateway,   │
+│                              │  │  │ │                                                                                                                       │  │  │  │   W&B Inference (CoreWeave), Xiaomi     │
+│                              │  │  │ │  Model discovery                                                                                                      │  │  │  │   MiMo, Z.ai, ZenMux | Local:           │
+│                              │  │  │ │  Discover models from configured endpoint                                                                             │  │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  s save category | r revert category | t test provider | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

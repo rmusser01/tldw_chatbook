@@ -46,15 +46,14 @@ class _AgenticFamilySources:
         ROOT / "tldw_chatbook/css/features/_console_panels.tcss",
         ROOT / "tldw_chatbook/css/features/_library.tcss",
         ROOT / "tldw_chatbook/css/features/_library_panels.tcss",
+        ROOT / "tldw_chatbook/css/features/_library_notes_panels.tcss",
         ROOT / "tldw_chatbook/css/features/_settings.tcss",
         ROOT / "tldw_chatbook/css/features/_home.tcss",
         ROOT / "tldw_chatbook/css/layout/_destination.tcss",
     )
 
     def read_text(self, encoding: str = "utf-8") -> str:
-        return _detok(
-            "\n".join(p.read_text(encoding=encoding) for p in self._PATHS)
-        )
+        return _detok("\n".join(p.read_text(encoding=encoding) for p in self._PATHS))
 
 
 AGENTIC = _AgenticFamilySources()
@@ -81,16 +80,15 @@ _SPLIT_SHEETS = tuple(
 
 def _bundle_union_text() -> str:
     return _detok(
-        "\n".join(
-            path.read_text(encoding="utf-8") for path in (BUNDLE, *_SPLIT_SHEETS)
-        )
+        "\n".join(path.read_text(encoding="utf-8") for path in (BUNDLE, *_SPLIT_SHEETS))
     )
+
+
 CODING = ROOT / "tldw_chatbook/css/features/_coding.tcss"
 CODE_REPO = ROOT / "tldw_chatbook/css/features/_code_repo.tcss"
 CONFIG_SEARCH = ROOT / "tldw_chatbook/css/features/config_search.tcss"
 FEATURE_ALERTS = ROOT / "tldw_chatbook/css/features/feature_alerts.tcss"
 NEW_INGEST = ROOT / "tldw_chatbook/css/features/_new_ingest.tcss"
-UNIFIED_SIDEBAR = ROOT / "tldw_chatbook/css/components/_unified_sidebar.tcss"
 WIZARDS = ROOT / "tldw_chatbook/css/features/_wizards.tcss"
 #: ADR-161 task 8a: the wizard status-item rules (base + completed/active/
 #: error) promote bare into the status family's owning sheet; the wizard
@@ -99,12 +97,10 @@ STATUS = ROOT / "tldw_chatbook/css/components/_status.tcss"
 EVALUATION_UNIFIED = ROOT / "tldw_chatbook/css/features/_evaluation_unified.tcss"
 EMBEDDINGS = ROOT / "tldw_chatbook/css/features/_embeddings.tcss"
 INGEST = ROOT / "tldw_chatbook/css/features/_ingest.tcss"
-TOOLS_SETTINGS = ROOT / "tldw_chatbook/css/features/_tools-settings.tcss"
+SETTINGS = ROOT / "tldw_chatbook/css/features/_settings.tcss"
 TAB_DROPDOWN = ROOT / "tldw_chatbook/css/features/_tab_dropdown.tcss"
 LLM_MANAGEMENT = ROOT / "tldw_chatbook/css/features/_llm-management.tcss"
 MEDIA = ROOT / "tldw_chatbook/css/features/_media.tcss"
-MEDIA_NAVIGATION_PANEL = ROOT / "tldw_chatbook/Widgets/Media/media_navigation_panel.py"
-MEDIA_LIST_PANEL = ROOT / "tldw_chatbook/Widgets/Media/media_list_panel.py"
 REPO_TREE_WIDGETS = ROOT / "tldw_chatbook/Widgets/Coding_Widgets/repo_tree_widgets.py"
 CHATBOOKS_IMPROVED = ROOT / "tldw_chatbook/css/features/_chatbooks_improved.tcss"
 CHATBOOKS_WINDOW_IMPROVED = ROOT / "tldw_chatbook/UI/Chatbooks_Window_Improved.py"
@@ -124,14 +120,14 @@ BUNDLED_RESIDUAL_ACTIVE_SELECTED_CONTRACTS = (
     (TAB_DROPDOWN, "#tab-dropdown-select SelectOverlay Option.-selected"),
 )
 
-SOURCE_ONLY_CSS_MODULES = (
-    NEW_INGEST,
-    UNIFIED_SIDEBAR,
-)
+SOURCE_ONLY_CSS_MODULES = (NEW_INGEST,)
 
+#: TASK-33003.17, rewritten on purpose: `.selection-list--button-highlighted`
+#: left this tuple and the two selector lists below. It is the unchecked box
+#: under the cursor, not a selected state; the contract painted its X like a
+#: checked one (Tests/UI/test_settings_discovered_model_toggle.py renders it).
 NATIVE_CHOICE_SELECTED_MARKERS = (
     ".option-list--option-highlighted",
-    ".selection-list--button-highlighted",
     ".selection-list--button-selected",
     ".selection-list--button-selected-highlighted",
     ".tree--cursor",
@@ -161,6 +157,12 @@ NATIVE_CHOICE_HIGH_CONTRAST_OVERRIDES = (
     "#settings-discovered-models-list .selection-list--button-selected-highlighted",
 )
 
+NATIVE_CHOICE_SETTINGS_OVERRIDES = (
+    "#settings-workspace-persona-picker:focus > .option-list--option-highlighted",
+    "#settings-workspace-profile-picker:focus > .option-list--option-highlighted",
+    "#console-workspace-tree:focus > .tree--cursor",
+)
+
 # TASK-33065 / TASK-33003.6: where a list's highlighted row must read at 3:1
 # against the other rows (the shared $surface highlight measured 1.0-1.12:1),
 # it is an inverted bar -- the AA-pinned primary text tint as the fill, the
@@ -171,8 +173,31 @@ NATIVE_CHOICE_BAR_OVERRIDES = (
     "#settings-theme-list > .option-list--option-highlighted",
     "ConsoleSettingsModal OptionList > .option-list--option-highlighted",
     "ConsoleSettingsModal OptionList:focus > .option-list--option-highlighted",
+    "ConsoleModelPopover OptionList > .option-list--option-highlighted",
     "#settings-providers-models-card OptionList > .option-list--option-highlighted",
 )
+
+
+#: Compact native lists that drop the global focus outline put the focus cue
+#: on the focused row instead (TASK-28226's two-row Console workspace tree;
+#: #2707's Settings workspace pickers). The base highlighted rule still gives
+#: the row its text style.
+NATIVE_CHOICE_FOCUS_CUE_OVERRIDES = (
+    # The inspector removes its outline; the focused cursor carries the cue.
+    ".inspector-section-list:focus > .option-list--option-highlighted",
+    "#console-workspace-tree:focus > .tree--cursor",
+    "#settings-workspace-persona-picker:focus > .option-list--option-highlighted",
+    "#settings-workspace-profile-picker:focus > .option-list--option-highlighted",
+)
+
+
+def assert_native_choice_focus_cue_contract(block: str) -> None:
+    assert "outline: heavy" not in block
+    assert "reverse" not in block
+    assert "$primary" not in block
+    assert "$accent" not in block
+    assert "background: $ds-focus-bg;" in block
+    assert "color: $ds-focus-fg;" in block
 
 
 def assert_native_choice_bar_contract(block: str) -> None:
@@ -241,8 +266,8 @@ def css_int_declaration(block: str, property_name: str) -> int:
         AssertionError: If the property is missing or not an integer declaration.
     """
     match = re.search(
-        rf"^\s*{re.escape(property_name)}\s*:\s*(?P<value>\d+)\s*;",
-        block,
+        rf"^\s*{re.escape(property_name)}\s*:\s*(?P<value>\d+)\s*(?:!important\s*)?;",
+        _detok(block),
         flags=re.MULTILINE,
     )
     if match is None:
@@ -390,10 +415,12 @@ def assert_native_row_hover_state_contract(block: str) -> None:
     assert "$accent" not in block
     assert "$warning" not in block
     assert "$error" not in block
-    assert (
-        "background: $surface;" in block or "background: $surface-lighten-1;" in block
-    )
-    assert "color: $text;" in block
+    # ADR-150's $ds-hover-bg/$ds-hover-fg are $surface-lighten-1/$text
+    # (pinned in test_shared_button_hover_uses_non_obscuring_surface_contract).
+    assert re.search(
+        r"background: \$(surface|surface-lighten-1|ds-hover-bg);", block
+    ), block
+    assert re.search(r"color: \$(text|ds-hover-fg);", block), block
 
 
 def assert_all_native_choice_selectors_follow_contracts(text: str) -> None:
@@ -402,12 +429,15 @@ def assert_all_native_choice_selectors_follow_contracts(text: str) -> None:
         for selector in css_selectors(text)
         if any(marker in selector for marker in NATIVE_CHOICE_SELECTED_MARKERS)
         and selector not in NATIVE_CHOICE_HIGH_CONTRAST_OVERRIDES
+        and selector not in NATIVE_CHOICE_SETTINGS_OVERRIDES
     ]
     assert selected_selectors
     for selector in selected_selectors:
         for block in css_blocks(text, selector):
             if selector in NATIVE_CHOICE_BAR_OVERRIDES:
                 assert_native_choice_bar_contract(block)
+            elif selector in NATIVE_CHOICE_FOCUS_CUE_OVERRIDES:
+                assert_native_choice_focus_cue_contract(block)
             else:
                 assert_native_row_selected_state_contract(block)
 
@@ -581,6 +611,10 @@ def test_global_button_focus_uses_two_non_obscuring_cues():
 
 
 def test_shared_button_hover_uses_non_obscuring_surface_contract():
+    variables = VARIABLES.read_text(encoding="utf-8")
+    assert "$ds-hover-bg: $surface-lighten-1;" in variables
+    assert "$ds-hover-fg: $ds-text-primary;" in variables
+    assert "$ds-text-primary: $text;" in variables
     for label, text in (
         ("components/_buttons.tcss", BUTTONS.read_text(encoding="utf-8")),
         ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
@@ -675,29 +709,29 @@ def test_bundled_compact_focus_outline_opt_outs_match_source_contracts():
         ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
     ):
         toggle_focus = css_block(text, "ToggleButton:focus")
-        assert "outline: none;" in toggle_focus, (
-            f"{label} ToggleButton:focus is missing outline: none"
-        )
+        assert (
+            "outline: none;" in toggle_focus
+        ), f"{label} ToggleButton:focus is missing outline: none"
         assert "outline: solid" not in toggle_focus
 
         compact_toggle_focus = css_block(text, "ToggleButton.-textual-compact:focus")
-        assert "outline: none;" in compact_toggle_focus, (
-            f"{label} ToggleButton.-textual-compact:focus is missing outline: none"
-        )
-        assert "border: none;" in compact_toggle_focus, (
-            f"{label} ToggleButton.-textual-compact:focus is missing border: none"
-        )
+        assert (
+            "outline: none;" in compact_toggle_focus
+        ), f"{label} ToggleButton.-textual-compact:focus is missing outline: none"
+        assert (
+            "border: none;" in compact_toggle_focus
+        ), f"{label} ToggleButton.-textual-compact:focus is missing border: none"
 
         compact_input_focus = css_block(text, "Input.-textual-compact:focus")
-        assert "outline: none;" in compact_input_focus, (
-            f"{label} Input.-textual-compact:focus is missing outline: none"
-        )
-        assert "border: none;" in compact_input_focus, (
-            f"{label} Input.-textual-compact:focus is missing border: none"
-        )
-        assert "background: $ds-focus-bg;" in compact_input_focus, (
-            f"{label} Input.-textual-compact:focus is missing its recolour cue"
-        )
+        assert (
+            "outline: none;" in compact_input_focus
+        ), f"{label} Input.-textual-compact:focus is missing outline: none"
+        assert (
+            "border: none;" in compact_input_focus
+        ), f"{label} Input.-textual-compact:focus is missing border: none"
+        assert (
+            "background: $ds-focus-bg;" in compact_input_focus
+        ), f"{label} Input.-textual-compact:focus is missing its recolour cue"
 
 
 def test_console_and_library_visible_offenders_do_not_obscure_labels():
@@ -740,22 +774,22 @@ def test_library_list_row_focus_uses_readable_non_obscuring_contract():
 
 
 def test_console_selected_message_actions_keep_clickable_hit_targets():
-    # The union's FIRST css_block match for these selectors is a weaker
-    # non-agentic rule; the generated home of the console-owned rules is the
-    # console sheet, which is also the copy that wins at runtime (parsed
-    # after the bundle).
+    # The console sheet was dissolved (ADR-161 task 10): the console-owned
+    # rules ride the boot bundle.
     for text in (
         AGENTIC.read_text(encoding="utf-8"),
-        _SPLIT_SHEETS[0].read_text(encoding="utf-8"),
+        _detok(BUNDLE.read_text(encoding="utf-8")),
     ):
-        action_row = css_block(text, ".console-transcript-action-row")
-        action_button = css_block(text, ".console-transcript-action-button")
+        action_row = css_blocks(text, ".console-transcript-action-row")[-1]
+        action_button = css_blocks(text, ".console-transcript-action-button")[-1]
 
         assert css_int_declaration(action_row, "height") >= 3
         assert css_int_declaration(action_row, "min-height") >= 3
         assert css_int_declaration(action_button, "height") >= 3
         assert css_int_declaration(action_button, "min-height") >= 3
-        assert css_int_declaration(action_button, "min-width") >= 5
+        # PR #2152 (fork from message) chose min-width 4 with no padding over
+        # 5 with `0 1` padding: one cell narrower, one more cell of label.
+        assert css_int_declaration(action_button, "min-width") >= 4
 
 
 def test_console_modal_headers_are_decoupled_from_transcript_action_rows():
@@ -913,7 +947,7 @@ def test_console_composer_focus_uses_thin_input_treatment():
     text = AGENTIC.read_text(encoding="utf-8")
     block = css_block(text, "#console-native-composer.console-composer-focused")
     assert "border: heavy" not in block
-    assert "border-left: thick $ds-action-focus;" in block
+    assert "border-left: thick $ds-active-fg;" in block
     assert "background: $ds-input-focus-bg;" in block
     assert "border: solid" not in block
     assert "border-bottom:" not in block
@@ -1267,9 +1301,9 @@ def test_library_rag_collapsible_header_hover_uses_non_obscuring_surface_contrac
         )
         assert "background: $surface-lighten-1;" in base
         assert blocks, f"{label} is missing Collapsible header hover"
-        assert len(blocks) == 1, (
-            f"{label} should define exactly one Collapsible header hover"
-        )
+        assert (
+            len(blocks) == 1
+        ), f"{label} should define exactly one Collapsible header hover"
         assert "background: $surface;" in blocks[0]
         assert_native_row_hover_state_contract(blocks[0])
 
@@ -1326,7 +1360,7 @@ def test_chat_rag_focus_within_uses_non_semantic_container_cue():
     assert "$accent" not in block
     assert "$boost" not in block
     assert "border: round $ds-focus-accent;" in block
-    assert "background: $panel;" in block
+    assert "background: $ds-surface-panel;" in block  # $ds-surface-panel: $panel
 
 
 def test_layout_tab_active_states_use_underlined_selected_contracts():
@@ -1435,9 +1469,7 @@ def test_wizard_progress_default_css_matches_active_state_contract():
     # TASK-16811: the .active states moved into css/features/_wizards.tcss
     # (widget-local `$ds-*:` fallbacks shadowed the bundle tokens); the
     # DEFAULT_CSS must stay free of local $ds declarations.
-    assert "$ds-" not in WizardProgress.DEFAULT_CSS.replace(
-        "$ds-focus-* tokens", ""
-    )
+    assert "$ds-" not in WizardProgress.DEFAULT_CSS.replace("$ds-focus-* tokens", "")
     assert_wizard_progress_active_contracts(
         WIZARDS.read_text(encoding="utf-8"), scope="WizardProgress"
     )
@@ -1447,9 +1479,7 @@ def test_wizard_selection_states_are_readable_without_dominant_fill():
     assert_wizard_selection_active_contracts(
         # The status-item rules live in the status owning sheet since
         # ADR-161 task 8a; the card/tree selectors stay in the wizards sheet.
-        WIZARDS.read_text(encoding="utf-8")
-        + "\n"
-        + STATUS.read_text(encoding="utf-8")
+        WIZARDS.read_text(encoding="utf-8") + "\n" + STATUS.read_text(encoding="utf-8")
     )
 
 
@@ -1501,9 +1531,10 @@ def test_feature_navigation_active_and_dropdown_focus_states_follow_contracts():
         css_block(ingest_text, ".ingest-nav-pane .ingest-nav-button.active")
     )
 
-    tools_text = TOOLS_SETTINGS.read_text(encoding="utf-8")
+    # ADR-240 moved Tools & MCP into the canonical Settings category rail.
+    tools_text = SETTINGS.read_text(encoding="utf-8")
     assert_feature_nav_active_contract(
-        css_block(tools_text, ".tools-nav-pane .ts-nav-button.active-nav")
+        css_block(tools_text, "Button.settings-category-button.settings-active-section")
     )
 
 
@@ -1526,7 +1557,6 @@ def test_tab_dropdown_option_hover_uses_neutral_readable_surface():
     (
         (MEDIA, ".media-nav-pane .media-nav-button:hover"),
         (LLM_MANAGEMENT, ".llm-nav-pane .llm-nav-button:hover"),
-        (TOOLS_SETTINGS, ".tools-nav-pane .ts-nav-button:hover"),
         (INGEST, ".ingest-nav-pane .ingest-nav-button:hover"),
         (CODING, ".coding-nav-button:hover"),
     ),
@@ -1542,9 +1572,9 @@ def test_feature_navigation_hover_states_use_neutral_readable_surface(
 
     bundled_blocks = css_blocks(_bundle_union_text(), selector)
     assert bundled_blocks, f"tldw_cli_modular.tcss is missing {selector}"
-    assert len(bundled_blocks) == 1, (
-        f"tldw_cli_modular.tcss should define exactly one {selector}"
-    )
+    assert (
+        len(bundled_blocks) == 1
+    ), f"tldw_cli_modular.tcss should define exactly one {selector}"
     assert_native_row_hover_state_contract(bundled_blocks[0])
 
 
@@ -1558,8 +1588,36 @@ def test_bundled_feature_navigation_states_match_source_contracts():
         css_block(text, ".ingest-nav-pane .ingest-nav-button.active")
     )
     assert_feature_nav_active_contract(
-        css_block(text, ".tools-nav-pane .ts-nav-button.active-nav")
+        css_block(text, "Button.settings-category-button.settings-active-section")
     )
+
+
+def test_settings_category_hover_preserves_selected_state():
+    """The Tools & MCP category uses the same rail state as other Settings."""
+    selector = "Button.settings-category-button.settings-active-section:hover"
+    for text in (SETTINGS.read_text(encoding="utf-8"), _bundle_union_text()):
+        assert_feature_nav_active_contract(css_block(text, selector))
+
+
+def test_native_choice_overrides_keep_their_explicit_readable_contracts():
+    """Scoped exceptions must still assert their contrast treatment explicitly."""
+    for text in (LISTS.read_text(encoding="utf-8"), _bundle_union_text()):
+        assert_native_choice_bar_contract(
+            css_block(
+                text,
+                "ConsoleModelPopover OptionList > .option-list--option-highlighted",
+            )
+        )
+    for text in (SETTINGS.read_text(encoding="utf-8"), _bundle_union_text()):
+        for selector in NATIVE_CHOICE_SETTINGS_OVERRIDES[:2]:
+            block = css_block(text, selector)
+            assert "background: $ds-focus-bg;" in block
+            assert "color: $ds-focus-fg;" in block
+            assert_no_dominant_selected_geometry(block)
+    for text in (AGENTIC.read_text(encoding="utf-8"), _bundle_union_text()):
+        assert_readable_selected_state_contract(
+            css_block(text, "#console-workspace-tree:focus > .tree--cursor")
+        )
 
 
 def test_ingest_selected_files_list_uses_non_obscuring_container_cue():
@@ -1694,7 +1752,6 @@ def test_native_choice_and_tree_states_follow_shared_contracts():
     for selector in (
         "OptionList > .option-list--option-highlighted",
         "OptionList:focus > .option-list--option-highlighted",
-        "SelectionList > .selection-list--button-highlighted",
         "SelectionList > .selection-list--button-selected",
         "SelectionList > .selection-list--button-selected-highlighted",
         "Tree > .tree--cursor",
@@ -1718,7 +1775,6 @@ def test_bundled_native_choice_and_tree_states_match_source_contracts():
     for selector in (
         "OptionList > .option-list--option-highlighted",
         "OptionList:focus > .option-list--option-highlighted",
-        "SelectionList > .selection-list--button-highlighted",
         "SelectionList > .selection-list--button-selected",
         "SelectionList > .selection-list--button-selected-highlighted",
         "Tree > .tree--cursor",
@@ -1733,6 +1789,19 @@ def test_bundled_native_choice_and_tree_states_match_source_contracts():
         assert_native_row_hover_state_contract(css_block(text, selector))
 
     assert_all_native_choice_selectors_follow_contracts(text)
+
+
+def test_inspector_section_cursor_keeps_its_content_safe_focus_cue():
+    for text in (
+        (CSS_DIR / "features/_console_panels.tcss").read_text(encoding="utf-8"),
+        _bundle_union_text(),
+    ):
+        assert "outline: none;" in css_block(text, ".inspector-section-list:focus")
+        block = css_block(
+            text, ".inspector-section-list:focus > .option-list--option-highlighted"
+        )
+        assert_native_choice_focus_cue_contract(block)
+        assert "text-style: bold underline;" in block
 
 
 def test_file_notes_tree_cursor_uses_readable_high_contrast_focus_contract():
@@ -1778,21 +1847,9 @@ def test_media_selected_and_active_states_follow_shared_contracts():
     ):
         assert_readable_selected_state_contract(css_block(media_text, selector))
 
-    nav_text = MEDIA_NAVIGATION_PANEL.read_text(encoding="utf-8")
-    assert_native_row_hover_state_contract(
-        css_block(nav_text, "MediaNavigationPanel .media-type-button:hover")
-    )
-    assert_readable_inline_selected_state_contract(
-        css_block(nav_text, "MediaNavigationPanel .media-type-button.active")
-    )
-
-    list_text = MEDIA_LIST_PANEL.read_text(encoding="utf-8")
-    assert_native_row_hover_state_contract(
-        css_block(list_text, "MediaListPanel .media-item:hover")
-    )
-    assert_readable_inline_selected_state_contract(
-        css_block(list_text, "MediaListPanel .media-item.selected")
-    )
+    # (The MediaNavigationPanel/MediaListPanel DEFAULT_CSS contract
+    # assertions were removed with the Widgets/Media package,
+    # TASK-38605 dead-code purge.)
 
 
 def test_bundled_media_selected_states_match_source_contracts():
@@ -1840,9 +1897,9 @@ def test_media_review_item_styles_are_scoped_to_media_review_list(selector: str)
         ("_media.tcss", MEDIA.read_text(encoding="utf-8")),
         ("tldw_cli_modular.tcss + split sheets", _bundle_union_text()),
     ):
-        assert css_blocks(text, selector) == [], (
-            f"{label} should not define unscoped {selector}"
-        )
+        assert (
+            css_blocks(text, selector) == []
+        ), f"{label} should not define unscoped {selector}"
 
 
 def test_repo_tree_widget_states_match_code_repo_contract():
@@ -1857,9 +1914,7 @@ def test_repo_tree_widget_states_match_code_repo_contract():
     # tokens; _code_repo.tcss is the single owner now.
     assert "$ds-focus-bg:" not in TreeNode.DEFAULT_CSS
     assert ".tree-node-selected {" not in TreeNode.DEFAULT_CSS
-    selected = css_block(
-        CODE_REPO.read_text(encoding="utf-8"), ".tree-node-selected"
-    )
+    selected = css_block(CODE_REPO.read_text(encoding="utf-8"), ".tree-node-selected")
     assert_native_row_hover_state_contract(hover)
     assert_native_row_hover_state_contract(source_hover)
     assert_readable_selected_state_contract(selected)
@@ -1944,9 +1999,7 @@ def test_tamagotchi_focus_uses_non_obscuring_custom_widget_contract():
     # (the widget-local `$ds-*:` fallbacks shadowed the bundle tokens); the
     # DEFAULT_CSS must stay free of local $ds declarations.
     assert "$ds-focus-bg:" not in text
-    focus = css_block(
-        WIDGETS.read_text(encoding="utf-8"), "BaseTamagotchi:focus"
-    )
+    focus = css_block(WIDGETS.read_text(encoding="utf-8"), "BaseTamagotchi:focus")
     assert_custom_widget_focus_contract(focus)
 
 
@@ -2050,9 +2103,9 @@ def test_bundled_sidebar_inputs_keep_stable_effective_geometry(selector: str):
 def test_sidebar_hover_states_use_neutral_readable_surface(selector: str):
     source_blocks = css_blocks(SIDEBARS.read_text(encoding="utf-8"), selector)
     assert source_blocks, f"layout/_sidebars.tcss is missing {selector}"
-    assert len(source_blocks) == 1, (
-        f"layout/_sidebars.tcss should define exactly one {selector}"
-    )
+    assert (
+        len(source_blocks) == 1
+    ), f"layout/_sidebars.tcss should define exactly one {selector}"
     assert_native_row_hover_state_contract(source_blocks[0])
 
     bundled_blocks = css_blocks(_bundle_union_text(), selector)
@@ -2066,7 +2119,6 @@ def test_library_notes_focus_cues_are_visible_without_obscuring_content():
         AGENTIC.read_text(encoding="utf-8"),
         _bundle_union_text(),
     ):
-
         for selector in (
             "#library-note-preview-region:focus",
             "#library-note-context-region:focus",

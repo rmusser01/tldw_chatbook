@@ -1,0 +1,27 @@
+{
+  "captured_utc": "2026-11-05T05:26:45.950993+00:00",
+  "head": "1b5db03c8eee8903cf4fb0e109bade41f49c0b4f",
+  "parent": "bea503a7e3e64dffe313b2bc5b22196a3b8da5aa",
+  "exact4_metadata_commit_index_worktree": {
+    "Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md": {
+      "sha256": "73681c1b1b604b7991bb94c5351f7f4b27755c7d79f6e2ce3e9a9a8734299fff",
+      "bytes": 262402
+    },
+    "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/README.md": {
+      "sha256": "6e11a1c17e9a43eef14ffe69e52e5f6d5fca267ff787708d97df85d3e2545279",
+      "bytes": 6583
+    },
+    "backlog/decisions/285-native-phased-agent-workflows.md": {
+      "sha256": "ae25290e6f2794a9652eb1d31e7c9f725fc3a29469ad184255fca316d52d109e",
+      "bytes": 240830
+    },
+    "backlog/tasks/task-38533 - Qualify-shared-worktree-workflows-across-execution-and-restart.md": {
+      "sha256": "0f0ed00660ab0950a9c63d0432cf9ea598b6bc8ec5158429b919e4e18a730e5d",
+      "bytes": 14756
+    }
+  },
+  "original_cached61_c5_protected279_preserved": true,
+  "task38533": "Done/all3AC viaBacklog",
+  "review_sha256": "310931472fb9e279a490058f4b15aa8b2cc40c65216ab35f91d910c6d9865965",
+  "scope": "metadata byte/Git check; no product/native/static replay"
+}

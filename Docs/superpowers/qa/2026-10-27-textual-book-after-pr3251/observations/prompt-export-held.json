@@ -1,0 +1,13 @@
+{
+  "held": true,
+  "source": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\tldw_chatbook\\UI\\Library_Modules\\library_file_export.py",
+  "source_sha256": "496ea6a3a1371f7b18d28c70efd8c1f8b52eaad93b49dcd68ab9b2acb36853b8",
+  "main_thread": 114020,
+  "writer_threads": [
+    114020
+  ],
+  "dispatched_before_release": false,
+  "file_written": true,
+  "database_unchanged": true,
+  "eventually_dispatched": true
+}

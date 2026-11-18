@@ -4,7 +4,7 @@ Pilot-driven per the repo's Textual test patterns; snapshots come from the
 REAL projection (``derive_trajectory``) fed the same duck-typed row
 stand-ins as ``Tests/Chat/test_trajectory_projection.py``, so the screen
 is tested against the exact shape Task 3 produces -- never a
-fixture-invented one. Keybinding/footer assertions follow the ADR-031
+fixture-invented one. Keybinding/footer assertions follow the ADR-299
 governance suite pattern (``test_schedules_ux_fixes.py``).
 """
 
@@ -724,7 +724,7 @@ async def test_stale_worker_render_is_dropped() -> None:
 
 
 # ---------------------------------------------------------------------------
-# ADR-031 governance (pattern: Tests/UI/test_schedules_ux_fixes.py)
+# ADR-299 governance (pattern: Tests/UI/test_schedules_ux_fixes.py)
 # ---------------------------------------------------------------------------
 
 _FORBIDDEN_KEYS = {

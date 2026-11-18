@@ -41,6 +41,33 @@ archive **Partial**, even when every selected file is included. Review and expli
 acknowledge Partial creation. Partial archives support validated isolated recovery
 and file extraction; they cannot replace existing installation data.
 
+**Plugins** belong to the **Tools and skills** group. A backup holds the plugin
+folder: the plugin registry, installed package bytes, every plugin's saved data,
+and each repository fetch's checked snapshot and fetch record, which recovery
+needs to re-verify a plugin installed from a repository. Left out, and shown as
+excluded in the review: the plugin runtime lock file, the plugin change list
+(`authority-changes.json`, which a later restore keeps so recovery can name the
+changes it undoes), every `reset-…` folder that setting plugin authority up
+again after a reset sets plugin files aside in (after a restore: the restored
+registry, downloads and package files; otherwise: downloads made under the old
+authority; a later restore keeps it),
+and everything else in each fetch folder, such as the copies of your git and SSH configuration the fetch used
+(they can hold credential helpers), its git object store (`repository.git`) and
+its working copy (`content/`). Each is one excluded entry; Chatbook does not look
+inside it. Plugins in use are not copied: while a plugin process may still be
+running, or Chatbook's plugin service is active, the review lists
+`plugin_writers_active` with an explanation and shows the plugin folder as
+unavailable. A partial backup then leaves plugins out, and a backup of groups
+without **Tools and skills** is unaffected. Chatbook keeps its plugin service
+running from the first plugin use, in Plugins or in a Console chat that uses a
+plugin, until you quit. For a complete backup after using plugins, quit Chatbook,
+reopen it and back up before using plugins. If the review still lists
+`plugin_writers_active` after reopening, an earlier session left a plugin process
+recorded as running: open **Plugins → Authority…** and unlock plugin authority
+(or recover it if already unlocked); if that session stopped unexpectedly, also
+review the plugin's reboot reconciliation. Then quit, reopen and back up before
+using plugins.
+
 Keep the password separately. Chatbook does not retain it, and a lost password
 cannot be recovered. Encryption does not eliminate plaintext working files:
 capture, decryption, validation, and restore use private local staging with
@@ -136,6 +163,12 @@ replacement** before returning to inspection, choosing the explicit omission
 acknowledgements, and creating a fresh reviewed plan. Do not treat an omission as
 covered by the credential-recovery guarantee.
 
+A **Replace** restore keeps credentials it cannot install in an encrypted archive and
+asks you to accept that retention before anything is replaced. When the only such
+credential is a Personal Context key that the restore installs itself, the review
+says so instead of asking for manual recovery; a copy of the key also stays in the
+encrypted archive.
+
 Target changes invalidate review. Re-inspect and review the actual current state
 instead of trying to reuse a stale confirmation.
 
@@ -228,6 +261,87 @@ refresh. Use the owning feature's explicit recovery review when available; one
 feature's approval does not approve another. Unavailable review controls leave the
 corresponding capability inactive.
 
+Restored settings have their own review. Until you approve them, model-catalog
+auto-refresh and workspace change tracking stay off: **Current profile** lists
+**Profile settings** under **Needs setup**, followed by a **Settings review** note and
+**Approve settings**. Approving records the review for the generation shown, which
+covers every profile that recovery restored, and turns both back on: workspace change
+tracking at once, model-catalog auto-refresh from the next start. Local model files
+(downloading, installing, activating or using them) and speech start-up also need
+these settings, but each needs its own review as well, so approving settings alone
+does not turn them on. It approves nothing else, and it does not resume server
+sync: sync calls stay refused (`sync_activation_required`) until the restored sync
+identity is reviewed separately. If the current profile changed after the summary was
+shown, approval is refused; open **Restored profiles** again and review the new
+summary.
+
+Restored voices and voice profiles have their own review as well. Until you approve
+them, speech start-up stays off: **Current profile** lists **Voice profiles** and
+**Saved voices** under **Needs setup**, followed by a **Speech review** note and
+**Approve voices**. Approving records the review for the generation shown, which
+covers every profile that recovery restored, and approves only those two. Speech
+also needs the restored settings (**Approve settings**) and model files (**Approve
+model files**) approved; it starts from the next start once all three are.
+
+Restored model files have their own review too. Until you approve them, local model
+files (downloading, installing, activating or using them), speech start-up and a
+restored local embedding model stay off: **Current profile** lists
+**Model files** under **Needs setup**, followed by a **Model files review** note
+and **Approve model files**. Approving records the review for the generation shown,
+which covers every profile that recovery restored, and approves only the model files.
+A local embedding model for RAG also keeps its own review in **Settings →
+Library/RAG** (below), which checks its exact files; RAG needs both.
+
+Server sync has its own review too, beside **Approve settings**. A restore brings
+back the old device's sync identity, so server sync (Notes, Chat and Personal
+Context) stays off: otherwise it would act as the device the backup came from.
+While a restored generation awaits it, **Current profile** shows a **Sync identity
+review** that counts what it will clear: device ids, dataset bindings and cursors,
+pull cursors, remote heads, Personal Context links, unsent changes and saved Prepare
+results. **Clear sync identity and approve sync** clears all of them for every
+server profile, then approves the profile settings and the sync state together.
+Then prepare sync again: in Settings > Overview > **Advanced / Diagnostics**, choose
+**Switch Source / Server**, then **Activate Server** with the same server. That
+registers this device as a new one and downloads again (sync refuses to run until
+then). Changes that were queued
+but never sent are dropped from the queue (they stay in your local data). If the
+counts changed after they were shown, nothing is cleared; open **Restored
+profiles** again and review the new counts. If the sync state cannot be read, the
+review says so and nothing changes. The old device stays registered on the server;
+remove it there if it is lost.
+
+Plugins restore only onto the profile and data folder they came from: their
+registry and authority record those folder paths, so restoring them into a
+separate profile, or after the profile's data folder moved, is refused with
+`owner_relocation_unverified`. Choose groups without **Tools and skills** to
+restore the rest of such a backup. Plugins downloaded from a
+repository since the backup (a source refresh, an update check, an install or an
+update) each leave a download folder the backup does not have, holding files a
+backup never includes. **Review restore** lists those folders and the files that
+removing them deletes, and offers **Remove newer plugin downloads**. Before you
+press it, the review says what it does: it deletes each folder's git copy
+(`repository.git`, `content`) and the copies of your git and SSH settings the
+download made (`host-git-config`, `host-ssh-*`) now, with no safety copy, so a
+rollback cannot bring them back; your own git configuration and `~/.ssh` are not
+touched. Each folder's `snapshot` and its download record stay until you start
+the restore, which moves them into the before-replacement safety copy with the
+rest of your current data. Installed plugins keep working. The review then runs
+again. `tldw-cli recovery restore` lists the same folders, files and warning,
+then refuses (`plugin_fetch_removal_required`) unless you add
+`--remove-newer-plugin-downloads`; with it, typing `remove` deletes them the same
+way and the restore is reviewed again. (Uninstalling a plugin does not remove
+these folders. Restoring without **Tools and skills** leaves them alone.) After a restore, plugins stay off until plugin
+authority recovery completes: open **Plugins → Authority…** and unlock with the
+plugin passphrase the backup was made with. With plugins unchanged since the
+backup on the same computer, unlocking recovers them. On another computer at the
+same paths, after the OS keyring was reset (the protected marker lives in the OS
+keyring and is never in a backup), or after plugins changed since the backup,
+the same passphrase opens **Recover plugins from this backup**, which lists what
+recovery undoes before you confirm it. Restored folders with a new identity are
+each reviewed on their own, and a lost passphrase falls back to a reset that keeps
+saved data. See
+[Managed plugin operations](Plugins/operations.md#after-restoring-a-backup).
+
 Re-enter missing credentials, review external-folder bindings against their current
 local contents, and explicitly rebuild derived indexes when required. Missing model
 files are setup requirements; restore does not automatically download them. Historic
@@ -252,8 +366,12 @@ For an existing local HF embedding model, use **Settings → Library/RAG** with 
 active RAG profile selected and any draft changes saved or discarded:
 
 1. Choose **Review local model**. Check the displayed model directory, file count,
-   and recovery generations, then choose **Approve local model**. This records
-   only the model review; it does not load or download a model or rebuild an index.
+   and recovery generations, then choose **Record review**. This records only the
+   review of that model's exact files; it does not load or download a model or
+   rebuild an index. The restored model files also need **Approve model files** in
+   **Backup & Restore → Restored profiles**, in either order. If the folder is also
+   part of another restored profile, the review names that profile's generation:
+   its model files need their own **Approve model files** too, or RAG stays off.
 2. Choose **Review recovery**, inspect the RAG owners, sources, and prerequisites,
    then choose **Approve RAG owners**. Model permission and RAG permission are
    separate; neither approval completes index validation.

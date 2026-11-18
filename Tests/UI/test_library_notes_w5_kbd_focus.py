@@ -341,6 +341,7 @@ async def test_g_jumps_to_the_folder_tree_from_the_notes_toolbar():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile  # TASK-39130: _build_test_app reads config
 async def test_e_runs_export_selected_only_once_something_is_selected():
     """task-32607 AC#5: "e export selected" appears with the live key.
 
@@ -361,16 +362,48 @@ async def test_e_runs_export_selected_only_once_something_is_selected():
         assert "e" not in _chips(screen), _chips(screen)
         assert not screen.check_action("library_notes_export_selected", ())
 
-        screen.query_one("#library-notes-select-all", Button).press()
+        # TASK-39130: the user's own path -- Select all has focus when it is
+        # pressed (a click or Enter puts it there). Its press rebuilds the
+        # canvas; focus must come back to the new Select all, not fall to
+        # the filter, where `e` would type instead of exporting.
+        select_all = screen.query_one("#library-notes-select-all", Button)
+        select_all.focus()
+        await pilot.pause()
+        select_all.press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._notes_state.row_selection.count > 0,
-            message="Select all never selected a row",
+            lambda: (
+                screen._notes_state.row_selection.count > 0
+                and screen.query_one("#library-notes-select-all", Button)
+                is not select_all
+            ),
+            message="Select all never selected a row and rebuilt the strip",
         )
-        screen.query_one("#library-notes-select-all", Button).focus()
         await pilot.pause()
+        assert screen.focused is screen.query_one(
+            "#library-notes-select-all", Button
+        ), screen.focused
         assert _chips(screen).get("e") == "export selected", _chips(screen)
         assert screen.check_action("library_notes_export_selected", ())
+
+        # Clear rebuilds the same strip and keeps its focus the same way.
+        clear = screen.query_one("#library-notes-select-clear", Button)
+        clear.focus()
+        await pilot.pause()
+        clear.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._notes_state.row_selection.count == 0
+                and screen.query_one("#library-notes-select-clear", Button) is not clear
+            ),
+            message="Clear never cleared the selection and rebuilt the strip",
+        )
+        await pilot.pause()
+        assert screen.focused is screen.query_one(
+            "#library-notes-select-clear", Button
+        ), screen.focused
+        assert "e" not in _chips(screen), _chips(screen)
 
 
 # --- task-32609 AC#1/#3/#4: where "/" goes -------------------------------

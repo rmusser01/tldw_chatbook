@@ -1,0 +1,70 @@
+{
+  "outcome": "Interrupted actual-app observations; no pass claim",
+  "limit": "Missing stdout during Textual capture was incorrectly treated as no dispatch. Session Ctrl+C terminated these probes before final receipt writing. Persisted private SQLite proves accepted agent work; it does not establish a provider or startup defect. In-process original-profile before/after assertions were not saved for these two interrupted probes.",
+  "observations": [
+    {
+      "ordinal": 1,
+      "persisted_agent_statuses": [
+        "running"
+      ],
+      "step_kind_counts": {
+        "model": 3,
+        "tool_call": 3,
+        "tool_result": 2,
+        "context_attached": 1,
+        "context_injected": 1,
+        "model_request_started": 3,
+        "model_response_completed": 3,
+        "tool_proposed": 3,
+        "approval_requested": 3,
+        "approval_approved": 3,
+        "tool_execution_started": 3,
+        "tool_succeeded": 2,
+        "agent_run_created": 1,
+        "agent_run_started": 1
+      },
+      "persisted_messages": [
+        {
+          "role": "user",
+          "content_length": 22
+        },
+        {
+          "role": "assistant",
+          "content_length": 0
+        }
+      ]
+    },
+    {
+      "ordinal": 2,
+      "persisted_agent_statuses": [
+        "running"
+      ],
+      "step_kind_counts": {
+        "model": 3,
+        "tool_call": 3,
+        "tool_result": 2,
+        "context_attached": 1,
+        "context_injected": 1,
+        "model_request_started": 3,
+        "model_response_completed": 3,
+        "tool_proposed": 3,
+        "approval_requested": 3,
+        "approval_approved": 3,
+        "tool_execution_started": 3,
+        "tool_succeeded": 3,
+        "agent_run_created": 1,
+        "agent_run_started": 1
+      },
+      "persisted_messages": [
+        {
+          "role": "user",
+          "content_length": 22
+        },
+        {
+          "role": "assistant",
+          "content_length": 0
+        }
+      ]
+    }
+  ]
+}

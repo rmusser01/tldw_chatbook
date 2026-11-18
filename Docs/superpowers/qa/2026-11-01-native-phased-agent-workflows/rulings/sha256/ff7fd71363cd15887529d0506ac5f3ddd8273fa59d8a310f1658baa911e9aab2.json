@@ -1,0 +1,27 @@
+{
+  "base": "7d1a5ef849dfadb73cbdf16a3813cb583c8695ca",
+  "checks": [
+    {
+      "path": "tldw_chatbook/Agents/legacy_hook_ownership.py",
+      "class": "_EventCustody",
+      "function": "reconcile",
+      "byte_equal_source_span": true,
+      "sha256": "f8529016fe73ef1e30ca9a4a5573b361804cd519c0cf2f8f697c17aead55b28a"
+    },
+    {
+      "path": "tldw_chatbook/Agents/legacy_hook_ownership.py",
+      "class": "_EventCustody",
+      "function": "_reconcile_active",
+      "byte_equal_source_span": true,
+      "sha256": "6ecb433f76e7fe943486b456afe5b1eff23687b9e215c21922ba791c8ffabc66"
+    },
+    {
+      "path": "tldw_chatbook/Agents/execution_capacity.py",
+      "class": "OwnedOperation",
+      "function": "finish",
+      "byte_equal_source_span": true,
+      "sha256": "11b3d91d5ee745ea427f83c8b69c111517046f5b6b353fcc1080bf9ab5b381b0"
+    }
+  ],
+  "scope": "three unchanged actual source spans, not BASE execution or global failure exoneration"
+}

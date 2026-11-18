@@ -31,8 +31,6 @@ def main():
         choices=[
             "all",
             "unit",
-            "widgets",
-            "activity",
             "coverage",
         ],
         help="Test suite to run",
@@ -68,17 +66,6 @@ def main():
         cmd.append(str(test_dir))
     elif args.suite == "unit":
         cmd.extend([str(test_dir), "-m", "not integration"])
-    elif args.suite == "widgets":
-        # Run all widget tests (test_toast_notifications.py and
-        # test_detailed_progress.py were removed with their dead widgets --
-        # ADR-161 task 2.)
-        cmd.extend(
-            [
-                str(test_dir / "test_activity_log.py"),
-            ]
-        )
-    elif args.suite == "activity":
-        cmd.append(str(test_dir / "test_activity_log.py"))
     elif args.suite == "coverage":
         # Run with coverage
         cmd.extend(

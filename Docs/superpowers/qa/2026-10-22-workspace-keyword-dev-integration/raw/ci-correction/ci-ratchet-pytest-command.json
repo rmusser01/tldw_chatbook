@@ -1,0 +1,23 @@
+{
+  "command": [
+    "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-m",
+    "pytest",
+    "Tests/Architecture/test_module_size_ratchet.py",
+    "Tests/UI/test_workspace_project_index_settings.py::test_actual_settings_card_enable_build_clear_preserves_library",
+    "Tests/UI/test_workspace_project_index_settings.py::test_saved_policy_and_stale_actions",
+    "Tests/UI/test_settings_configuration_hub.py::test_settings_ownership_records_cover_categories_and_runtime_boundaries",
+    "Tests/UI/test_settings_configuration_hub.py::test_settings_overview_ownership_rows_are_sourced_from_record",
+    "-q",
+    "--tb=short",
+    "--show-capture=no",
+    "--no-showlocals"
+  ],
+  "cwd": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui",
+  "temp": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase",
+  "profile": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\ci-ratchet-profile",
+  "started_unix": 1792652700.1869366,
+  "elapsed_seconds": 216.1020736694336,
+  "exit_code": 1,
+  "timed_out": false
+}

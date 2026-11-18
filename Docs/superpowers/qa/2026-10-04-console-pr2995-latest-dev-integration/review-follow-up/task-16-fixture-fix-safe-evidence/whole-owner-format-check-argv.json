@@ -1,0 +1,19 @@
+{
+  "HEAD": "b084d720e98e4c2a7aaaf17ab5c8386c84495aa9",
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "ruff",
+    "format",
+    "--check",
+    "--diff",
+    "Tests/UI/test_console_ask_user_typed_answers.py",
+    "Tests/UI/test_personas_workbench.py"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "environment_overrides": {},
+  "source_sha256": {
+    "Tests/UI/test_console_ask_user_typed_answers.py": "5a03c3b5a041c5d0aa5a0e355060448860b468249c31a831765d21239175230e",
+    "Tests/UI/test_personas_workbench.py": "a8378c3d429769052198a44c6f9615ac2aeeb9a414deea7ce1013402334975ce"
+  }
+}

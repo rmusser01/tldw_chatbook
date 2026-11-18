@@ -177,7 +177,14 @@ def preview_inert_extraction(
     if checked != archive.manifest_bytes:
         raise ValueError("sealed_changed")
     reader.verify_sealed(archive, cancel)
-    by_group = {row.group_id: row for row in doc.dependency_groups}
+    # TASK-40134: credential material (server credentials, the Personal Context
+    # profile key) never leaves an archive through manual extraction.
+    secret = {row.logical_id for row in doc.files if row.owner_id == "recovery.credentials"}
+    by_group = {
+        row.group_id: row
+        for row in doc.dependency_groups
+        if not secret.intersection(row.members)
+    }
     if not set(group_ids) <= by_group.keys():
         raise ValueError("extraction_group_unknown")
     groups = tuple(by_group[key] for key in sorted(group_ids))

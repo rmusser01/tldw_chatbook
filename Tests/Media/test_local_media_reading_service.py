@@ -14,6 +14,7 @@ from loguru import logger
 from tldw_chatbook.DB.Client_Media_DB_v2 import DatabaseError as MediaDatabaseError
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase as Database
 from tldw_chatbook.Media.media_reading_scope_service import MediaReadingScopeService
+from tldw_chatbook.Utils.egress import UrlProvenance
 
 
 _MODULE_PATH = (
@@ -271,9 +272,7 @@ def test_local_service_library_media_summary_uses_exact_db_offset_and_projection
         (20, 2**63),
     ],
 )
-def test_local_service_library_media_summary_rejects_invalid_coordinates(
-    limit, offset
-):
+def test_local_service_library_media_summary_rejects_invalid_coordinates(limit, offset):
     db = LibrarySummaryRecordingDb()
 
     with pytest.raises(ValueError):
@@ -1824,6 +1823,9 @@ def test_local_service_processes_audio_and_video_without_persisting(
         {
             "inputs": [str(video_path)],
             "download_video_flag": False,
+            # (TASK-20973) The provenance threads explicitly to the video
+            # processor; the service seam's default is fail-closed UNKNOWN.
+            "url_provenance": UrlProvenance.UNKNOWN,
             "transcription_model": "tiny",
             "perform_analysis": False,
         },
@@ -2774,7 +2776,6 @@ def test_local_service_dispatches_cancelled_ingest_job_notifications(memory_db_f
     ]
 
 
-
 # ---------------------------------------------------------------------------
 # Library query seams (task-1337 plan Task 2)
 # ---------------------------------------------------------------------------
@@ -2885,7 +2886,9 @@ def test_library_media_page_projection_is_safe_and_bounded(memory_db_factory):
     assert item["keywords_truncated"] is False
     for forbidden in ("content", "vector_embedding", "url", "path", "file_path"):
         assert forbidden not in item
-    assert all(not isinstance(value, (bytes, bytearray)) for value in _walk_values(payload))
+    assert all(
+        not isinstance(value, (bytes, bytearray)) for value in _walk_values(payload)
+    )
 
 
 def test_library_media_page_keywords_capped_with_exact_total(memory_db_factory):
@@ -2931,7 +2934,9 @@ def test_library_media_search_exact_title_first_and_distinct_total(memory_db_fac
     assert "content" in content_item["matched_fields"]
 
 
-def test_library_media_search_treats_wildcards_and_operators_literally(memory_db_factory):
+def test_library_media_search_treats_wildcards_and_operators_literally(
+    memory_db_factory,
+):
     db = memory_db_factory()
     target_id, _ = _seed_active_media(db, title="100% ready_now", content="plain")
     _seed_active_media(db, title="readyXnow decoy", content="plain decoy body")
@@ -2952,9 +2957,7 @@ def test_library_media_search_treats_wildcards_and_operators_literally(memory_db
 
 def test_library_media_search_matches_quotes_in_content(memory_db_factory):
     db = memory_db_factory()
-    media_id, _ = _seed_active_media(
-        db, title="Quotes", content="it's a test body"
-    )
+    media_id, _ = _seed_active_media(db, title="Quotes", content="it's a test body")
 
     service = LocalMediaReadingService(db)
     payload = service.search_library_media(query="it's", limit=10, offset=0)
@@ -2987,7 +2990,9 @@ def test_library_media_detail_windows_text_and_hides_blobs(memory_db_factory):
     assert detail["text"] == content[1200:3200]
     for forbidden in ("content", "vector_embedding", "url", "path", "file_path"):
         assert forbidden not in detail
-    assert all(not isinstance(value, (bytes, bytearray)) for value in _walk_values(detail))
+    assert all(
+        not isinstance(value, (bytes, bytearray)) for value in _walk_values(detail)
+    )
 
     tail = service.get_library_media_text(media_uuid, start=5000, max_chars=2000)
     assert tail["text"] == content[5000:]
@@ -2998,7 +3003,9 @@ def test_library_media_detail_windows_text_and_hides_blobs(memory_db_factory):
 def test_library_media_detail_returns_none_for_missing_uuid(memory_db_factory):
     db = memory_db_factory()
     service = LocalMediaReadingService(db)
-    assert service.get_library_media_text("no-such-uuid", start=0, max_chars=100) is None
+    assert (
+        service.get_library_media_text("no-such-uuid", start=0, max_chars=100) is None
+    )
 
 
 def test_library_media_detail_read_runs_inside_transaction(memory_db_factory):

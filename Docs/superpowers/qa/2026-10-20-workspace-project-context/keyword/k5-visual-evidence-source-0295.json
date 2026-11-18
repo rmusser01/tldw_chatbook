@@ -1,0 +1,48 @@
+{
+  "description": "Historical source0295 pre-fix mounted Settings render pairs, previously inspected by root/task reviewer. I1 later changes dispatch only; latest post-fix images supersede these for final source. Old byte-hash receipt remains reproducible at these versioned paths.",
+  "rendered_utc": "2026-10-21T23:55:07.944558+00:00",
+  "renderer": "existing Playwright + installed Edge; HTTP(S) aborted; local SVG only",
+  "mounted_evidence": "pytest-163 actual Settings children dark80 89.496s and light170 95.415s both passed; theme asserted after startup and before screenshot, focus/painting plus stable no-poll loop assertions",
+  "files": [
+    {
+      "file": "visuals/source-0295/k5-settings-clear-textual-dark-80.svg",
+      "sha256": "6e7c2faf47eb5ac2ab0ba78ea1e4393397020dd56dc654a94562253372e05270",
+      "bytes": 77975
+    },
+    {
+      "file": "visuals/source-0295/k5-settings-clear-textual-dark-80.png",
+      "sha256": "ea664a744f8fdc8798f455078be9d57f3bef884aa83d675aea335130b8edfeaf",
+      "bytes": 205186
+    },
+    {
+      "file": "visuals/source-0295/k5-settings-clear-textual-light-170.svg",
+      "sha256": "5d7547e55a1630b1b7ed90de65dc081c3acb35d9b5a0d9cbbfbf649ba26d824d",
+      "bytes": 221167
+    },
+    {
+      "file": "visuals/source-0295/k5-settings-clear-textual-light-170.png",
+      "sha256": "f76b87037e89df53442170f6ab886a7a70bfc28549ff64a579c52d2a66951ecb",
+      "bytes": 217467
+    },
+    {
+      "file": "visuals/source-0295/k5-settings-textual-dark-80.svg",
+      "sha256": "8644c5c4fec9eff14bea7fb1ab8b671d43b2dddf31ff80dd8f451fb9cd9fcbcd",
+      "bytes": 78086
+    },
+    {
+      "file": "visuals/source-0295/k5-settings-textual-dark-80.png",
+      "sha256": "c5e17560fa389504a126095d313dfb40edd100b5d52e7c58f245922b519fed2b",
+      "bytes": 203602
+    },
+    {
+      "file": "visuals/source-0295/k5-settings-textual-light-170.svg",
+      "sha256": "3d7cf57c0a12120744b64cf38b36dd4c04e62ce97c61de588cfd04e0d4ee7748",
+      "bytes": 218886
+    },
+    {
+      "file": "visuals/source-0295/k5-settings-textual-light-170.png",
+      "sha256": "03c7d545640295bdd159330bf3774d419c09e69ea8e7c15cea9b8e8b5beafbb4",
+      "bytes": 216405
+    }
+  ]
+}

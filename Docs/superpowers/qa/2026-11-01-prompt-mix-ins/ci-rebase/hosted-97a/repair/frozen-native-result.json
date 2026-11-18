@@ -1,0 +1,17 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/UI/test_console_archive_recovery_cards.py",
+    "Tests/UI/test_console_partial_resize.py",
+    "Tests/UI/test_console_archive_recovery_flow.py::test_pending_source_remount_expiry_and_detach_fail_closed",
+    "Tests/UI/test_console_archive_recovery_flow.py::test_restore_as_requires_fresh_final_name_confirmation",
+    "Tests/UI/test_console_archive_recovery_flow.py::test_compact_confirmation_focus_shows_exact_target",
+    "-q",
+    "--basetemp=/private/tmp/mixins-97a-archive-fix/pytest-frozen-native",
+    "--junitxml=/private/tmp/mixins-97a-archive-fix/frozen-native.xml"
+  ],
+  "exit_code": 0,
+  "duration_seconds": 54.7794229160063
+}

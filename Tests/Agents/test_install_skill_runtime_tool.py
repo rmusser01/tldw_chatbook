@@ -7,8 +7,15 @@ runtime_schemas (never disclosure-gated) only for the top-level agent
 """
 
 import json
+from dataclasses import replace as _replace
+from types import SimpleNamespace
+
+import pytest
 
 from tldw_chatbook.Agents.agent_models import (
+    STEP_SPAWN,
+    STEP_TOOL_CALL,
+    ToolCall,
     CHECK_AGENTS_TOOL_NAME,
     INSTALL_SKILL_TOOL_NAME,
     RUNTIME_TOOL_NAMES,
@@ -27,48 +34,67 @@ from tldw_chatbook.Agents.agent_models import (
     AgentConfig,
     ModelTurn,
     RUN_DONE,
+    RUN_STUCK,
+    STEP_ERROR,
+    STEP_MODEL_ERROR,
     RunBudget,
     ToolCatalogEntry,
     ToolLoadSelection,
     ToolResult,
     ToolSchema,
     READ_AGENT_MESSAGES_TOOL_NAME,
+    LIST_PEER_AGENTS_TOOL_NAME,
+    SEND_TO_PEER_TOOL_NAME,
     REPORT_TO_SUPERVISOR_TOOL_NAME,
     PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
     DISCARD_AGENT_WORKTREE_TOOL_NAME,
     MERGE_AGENT_WORKTREE_TOOL_NAME,
 )
 from tldw_chatbook.Agents.tool_catalog import INSTALL_SKILL_TOOL_SCHEMA
-from tldw_chatbook.Agents.agent_runtime import LoopDeps, run_agent_loop
+from tldw_chatbook.Agents.agent_runtime import (
+    EMPTY_TURN_LIMIT,
+    NEXT_TURN,
+    ORDINARY_TOOL,
+    SPECIAL_TOOL_HANDLERS,
+    LoopDeps,
+    LoopState,
+    _phase_denial_breaker,
+    _phase_settle_text_turn,
+    run_agent_loop,
+)
 
 from Tests.Agents.test_agent_service import FleetChat, verbatim
 
 
 def test_install_skill_name_in_runtime_tool_names():
     assert INSTALL_SKILL_TOOL_NAME == "install_skill"
-    assert RUNTIME_TOOL_NAMES == {        # ADR-150 chat fork/spawn + dev-baseline completion (fleet message/
-        # worktree constants were in RUNTIME_TOOL_NAMES but unlisted here).
-        MERGE_AGENT_WORKTREE_TOOL_NAME,
-        DISCARD_AGENT_WORKTREE_TOOL_NAME,
-        PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
-        REPORT_TO_SUPERVISOR_TOOL_NAME,
-        READ_AGENT_MESSAGES_TOOL_NAME,
-
-        SPAWN_TOOL_NAME,
-        FIND_TOOLS_NAME,
-        LOAD_TOOLS_NAME,
-        SKILL_FILE_TOOL_NAME,
-        INSTALL_SKILL_TOOL_NAME,
-        RUN_SKILL_SCRIPT_TOOL_NAME,
-        SEARCH_RUN_LOG_TOOL_NAME,
-        RUN_LOG_STATS_TOOL_NAME,
-        RUN_LOG_SLICE_TOOL_NAME,
-        WAIT_AGENTS_TOOL_NAME,
-        CHECK_AGENTS_TOOL_NAME,
-        SEND_TO_AGENT_TOOL_NAME,
-        FORK_CHAT_TOOL_NAME,
-        NEW_CHAT_TOOL_NAME,
-    }
+    assert (
+        RUNTIME_TOOL_NAMES
+        == {  # ADR-348 chat fork/spawn + dev-baseline completion (fleet message/
+            # worktree constants were in RUNTIME_TOOL_NAMES but unlisted here).
+            MERGE_AGENT_WORKTREE_TOOL_NAME,
+            DISCARD_AGENT_WORKTREE_TOOL_NAME,
+            PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME,
+            REPORT_TO_SUPERVISOR_TOOL_NAME,
+            READ_AGENT_MESSAGES_TOOL_NAME,
+            LIST_PEER_AGENTS_TOOL_NAME,
+            SEND_TO_PEER_TOOL_NAME,
+            SPAWN_TOOL_NAME,
+            FIND_TOOLS_NAME,
+            LOAD_TOOLS_NAME,
+            SKILL_FILE_TOOL_NAME,
+            INSTALL_SKILL_TOOL_NAME,
+            RUN_SKILL_SCRIPT_TOOL_NAME,
+            SEARCH_RUN_LOG_TOOL_NAME,
+            RUN_LOG_STATS_TOOL_NAME,
+            RUN_LOG_SLICE_TOOL_NAME,
+            WAIT_AGENTS_TOOL_NAME,
+            CHECK_AGENTS_TOOL_NAME,
+            SEND_TO_AGENT_TOOL_NAME,
+            FORK_CHAT_TOOL_NAME,
+            NEW_CHAT_TOOL_NAME,
+        }
+    )
 
 
 def test_install_skill_schema_shape():
@@ -83,7 +109,9 @@ def test_install_skill_schema_shape():
 
 
 _CALC = ToolSchema(
-    id="builtin:calculator", name="calculator", description="math",
+    id="builtin:calculator",
+    name="calculator",
+    description="math",
     parameters={"type": "object"},
 )
 
@@ -100,7 +128,8 @@ def _deps(turns, *, install_skill=None, invoke=None):
 
     return LoopDeps(
         call_model=call_model,
-        invoke_tool=invoke or (lambda c: ToolResult(ok=False, error=f"Tool not permitted: {c.name}")),
+        invoke_tool=invoke
+        or (lambda c: ToolResult(ok=False, error=f"Tool not permitted: {c.name}")),
         spawn=lambda task: ToolResult(ok=True, content="sub"),
         find_tools=lambda q: [],
         load_schemas=lambda _ids, _messages, _call: ToolLoadSelection(),
@@ -126,7 +155,9 @@ def test_install_skill_dispatches_to_deps_when_wired():
         [_CALC],
         _deps(
             [
-                ModelTurn(text=_fence("install_skill", {"url": "https://github.com/o/r"})),
+                ModelTurn(
+                    text=_fence("install_skill", {"url": "https://github.com/o/r"})
+                ),
                 ModelTurn(text="done"),
             ],
             install_skill=installer,
@@ -134,7 +165,9 @@ def test_install_skill_dispatches_to_deps_when_wired():
     )
     assert out.status == RUN_DONE
     assert seen == ["https://github.com/o/r"]
-    assert any(s.kind == "tool_result" and "installed" in (s.result or "") for s in out.steps)
+    assert any(
+        s.kind == "tool_result" and "installed" in (s.result or "") for s in out.steps
+    )
 
 
 def test_install_skill_falls_through_when_not_wired():
@@ -144,7 +177,9 @@ def test_install_skill_falls_through_when_not_wired():
         [_CALC],
         _deps(
             [
-                ModelTurn(text=_fence("install_skill", {"url": "https://github.com/o/r"})),
+                ModelTurn(
+                    text=_fence("install_skill", {"url": "https://github.com/o/r"})
+                ),
                 ModelTurn(text="done"),
             ],
             install_skill=None,  # not wired -> generic invoke_tool path
@@ -190,8 +225,10 @@ def test_top_level_agent_dispatches_install_skill(tmp_path):
         conversation_id="c1",
         messages=[{"role": "user", "content": "install it"}],
         config=AgentConfig(
-            model="m", system_prompt="s",
-            allowed_tools=("calculator",), budget=RunBudget(),
+            model="m",
+            system_prompt="s",
+            allowed_tools=("calculator",),
+            budget=RunBudget(),
         ),
         api_endpoint="llama_cpp",
     )
@@ -212,7 +249,7 @@ def test_subagent_cannot_call_install_skill(tmp_path):
     # per agent instead; the replies themselves are unchanged.
     chat = FleetChat(
         [
-            _svc_fence(SPAWN_TOOL_NAME, {"task": "native task"}),   # parent spawns
+            _svc_fence(SPAWN_TOOL_NAME, {"task": "native task"}),  # parent spawns
             {"choices": [{"message": {"content": "final"}}]},
         ],
         {
@@ -230,8 +267,10 @@ def test_subagent_cannot_call_install_skill(tmp_path):
         conversation_id="c1",
         messages=[{"role": "user", "content": "go"}],
         config=AgentConfig(
-            model="m", system_prompt="s",
-            allowed_tools=("calculator", SPAWN_TOOL_NAME), budget=RunBudget(),
+            model="m",
+            system_prompt="s",
+            allowed_tools=("calculator", SPAWN_TOOL_NAME),
+            budget=RunBudget(),
         ),
         api_endpoint="llama_cpp",
     )
@@ -243,3 +282,287 @@ def test_subagent_cannot_call_install_skill(tmp_path):
         s["result"] for s in child_runs[0]["steps"] if s["kind"] == "tool_result"
     ]
     assert any("Tool not permitted: install_skill" in r for r in tool_results)
+
+
+# -- TASK-36950.1: each special-tool handler runs without the loop -----------
+
+
+def _state(config=_CFG, **deps):
+    """A LoopState whose `add` records (kind, kwargs) instead of persisting."""
+    steps = []
+
+    def add(kind, **kw):
+        steps.append((kind, kw))
+        return SimpleNamespace(index=len(steps) + 40)
+
+    state = LoopState(
+        config=config,
+        deps=_replace(_deps([]), **deps),
+        add=add,
+        messages=[{"role": "user", "content": "hi"}],
+        active=[_CALC],
+        current_call_correlation="corr-1",
+        display_call_arguments={"shown": "display"},
+    )
+    return state, steps
+
+
+def _dispatch(name, args, state):
+    return SPECIAL_TOOL_HANDLERS[name](ToolCall(name=name, args=args), state)
+
+
+def test_every_runtime_tool_is_dispatched_through_the_table():
+    assert set(SPECIAL_TOOL_HANDLERS) == RUNTIME_TOOL_NAMES | {
+        "search_archived_conversations",
+        "request_conversation_restore",
+    }
+
+
+_GATED = {
+    WAIT_AGENTS_TOOL_NAME: "wait_agents",
+    CHECK_AGENTS_TOOL_NAME: "check_agents",
+    MERGE_AGENT_WORKTREE_TOOL_NAME: "merge_agent_worktree",
+    DISCARD_AGENT_WORKTREE_TOOL_NAME: "discard_agent_worktree",
+    SKILL_FILE_TOOL_NAME: "read_skill_file",
+    INSTALL_SKILL_TOOL_NAME: "install_skill",
+    RUN_SKILL_SCRIPT_TOOL_NAME: "run_skill_script",
+    "search_archived_conversations": "search_archived_conversations",
+    "request_conversation_restore": "request_conversation_restore",
+    FORK_CHAT_TOOL_NAME: "fork_chat",
+    NEW_CHAT_TOOL_NAME: "new_chat",
+    SEARCH_RUN_LOG_TOOL_NAME: "search_run_log",
+    RUN_LOG_STATS_TOOL_NAME: "run_log_stats",
+    RUN_LOG_SLICE_TOOL_NAME: "run_log_slice",
+}
+
+
+@pytest.mark.parametrize("name", sorted(_GATED))
+def test_unwired_gated_handler_defers_to_the_ordinary_path(name):
+    state, steps = _state(**{_GATED[name]: None})
+    assert _dispatch(name, {}, state) is ORDINARY_TOOL
+    assert steps == []
+
+
+# name -> (wired dep, call args, args the dep must receive, step args recorded)
+_WIRED = {
+    CHECK_AGENTS_TOOL_NAME: ("check_agents", {"x": 1}, (), "display"),
+    DISCARD_AGENT_WORKTREE_TOOL_NAME: (
+        "discard_agent_worktree",
+        {"handle_id": 9},
+        ("9",),
+        "display",
+    ),
+    SKILL_FILE_TOOL_NAME: (
+        "read_skill_file",
+        {"skill_name": "s", "path": 3},
+        ("s", "3"),
+        "display",
+    ),
+    INSTALL_SKILL_TOOL_NAME: ("install_skill", {}, ("",), "display"),
+    "search_archived_conversations": (
+        "search_archived_conversations",
+        {"q": "x"},
+        ({"q": "x"},),
+        "raw",
+    ),
+    NEW_CHAT_TOOL_NAME: ("new_chat", {"t": "x"}, ({"t": "x"},), "raw"),
+    SEARCH_RUN_LOG_TOOL_NAME: ("search_run_log", {"q": 1}, ({"q": 1},), "display"),
+    RUN_LOG_SLICE_TOOL_NAME: ("run_log_slice", {"n": 2}, ({"n": 2},), "display"),
+}
+
+
+@pytest.mark.parametrize("name", sorted(_WIRED))
+def test_wired_handler_records_the_call_then_returns_its_dependency_result(name):
+    dep, args, expected_args, step_args = _WIRED[name]
+    calls, answer = [], ToolResult(ok=True, content=f"{name} ran")
+    # Each call notes how many steps were recorded so far: the step comes first.
+    state, steps = _state(**{dep: lambda *a: calls.append((a, len(steps))) or answer})
+    assert _dispatch(name, args, state) is answer
+    assert calls == [(expected_args, 1)]
+    recorded = {"shown": "display"} if step_args == "display" else args
+    assert steps == [(STEP_TOOL_CALL, {"tool_name": name, "args": recorded})]
+
+
+def test_display_args_handler_records_display_args_and_passes_raw_args():
+    seen = []
+    state, steps = _state(
+        run_log_stats=lambda args: seen.append(args) or ToolResult(ok=True, content="s")
+    )
+    result = _dispatch(RUN_LOG_STATS_TOOL_NAME, {"q": 1}, state)
+    assert result.content == "s" and seen == [{"q": 1}]
+    assert steps == [
+        (STEP_TOOL_CALL, {"tool_name": RUN_LOG_STATS_TOOL_NAME, "args": {"shown": "display"}})
+    ]
+
+
+def test_raw_args_handler_records_and_passes_the_call_args():
+    state, steps = _state(fork_chat=lambda args: ToolResult(ok=True, content=str(args)))
+    assert _dispatch(FORK_CHAT_TOOL_NAME, {"t": "x"}, state).content == "{'t': 'x'}"
+    assert steps == [(STEP_TOOL_CALL, {"tool_name": FORK_CHAT_TOOL_NAME, "args": {"t": "x"}})]
+
+
+def test_correlation_handlers_bind_the_current_call_id():
+    from tldw_chatbook.Agents.run_context import current_tool_call_id
+
+    state, _ = _state(
+        request_conversation_restore=lambda args, call_id: ToolResult(
+            ok=True, content=call_id
+        ),
+        prepare_managed_skill_promotion=lambda args: ToolResult(
+            ok=True, content=current_tool_call_id()
+        ),
+    )
+    assert _dispatch("request_conversation_restore", {}, state).content == "corr-1"
+    assert (
+        _dispatch(PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME, {}, state).content
+        == "corr-1"
+    )
+
+
+def test_unwired_promotion_is_blocked_not_deferred():
+    state, steps = _state(prepare_managed_skill_promotion=None)
+    result = _dispatch(PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME, {}, state)
+    assert result is not ORDINARY_TOOL and not result.ok
+    assert len(steps) == 1
+
+
+def test_coercing_handlers_normalize_model_arguments():
+    waited, merged = [], []
+    state, _ = _state(
+        wait_agents=lambda ids: waited.append(ids) or ToolResult(ok=True),
+        merge_agent_worktree=lambda handle, mode: merged.append((handle, mode))
+        or ToolResult(ok=True),
+    )
+    _dispatch(WAIT_AGENTS_TOOL_NAME, {"ids": "a1"}, state)
+    _dispatch(WAIT_AGENTS_TOOL_NAME, {"ids": []}, state)
+    _dispatch(MERGE_AGENT_WORKTREE_TOOL_NAME, {"handle_id": 7}, state)
+    assert waited == [["a1"], None]
+    assert merged == [("7", "apply")]
+
+
+def test_send_to_agent_steers_at_its_step_or_refuses_when_unwired():
+    state, _ = _state(
+        send_to_agent=lambda target, message: ToolResult(ok=True),
+        send_to_agent_at_step=lambda target, message, index: ToolResult(
+            ok=True, content=f"{target}|{message}|{index}"
+        ),
+    )
+    result = _dispatch(SEND_TO_AGENT_TOOL_NAME, {"id": 3, "message": None}, state)
+    assert result.content == "3||41"
+    state, steps = _state(send_to_agent=None)
+    result = _dispatch(SEND_TO_AGENT_TOOL_NAME, {"id": "a"}, state)
+    assert result.error == "Tool not permitted: send_to_agent"
+    assert result.dispatch_state == "not_started"
+    assert steps == [(STEP_TOOL_CALL, {"tool_name": SEND_TO_AGENT_TOOL_NAME, "args": {}})]
+
+
+def test_message_tool_handler_picks_its_callback_or_refuses():
+    state, _ = _state(
+        read_agent_messages=lambda args: ToolResult(ok=True, content="inbox")
+    )
+    assert _dispatch(READ_AGENT_MESSAGES_TOOL_NAME, {}, state).content == "inbox"
+    result = _dispatch(SEND_TO_PEER_TOOL_NAME, {}, state)
+    assert not result.ok and result.dispatch_state == "not_started"
+
+
+def test_find_tools_formats_the_catalog():
+    entry = ToolCatalogEntry(
+        id="builtin:calculator", name="calculator", one_line_description="math", source="b"
+    )
+    state, _ = _state(find_tools=lambda query: [entry] if query == "calc" else [])
+    result = _dispatch(FIND_TOOLS_NAME, {"query": "calc"}, state)
+    assert result.content == "builtin:calculator — calculator: math"
+
+
+def test_load_tools_replaces_the_working_set_only_when_alone_in_its_batch():
+    new = ToolSchema(id="builtin:clock", name="clock", description="t", parameters={})
+    committed = []
+    state, _ = _state(
+        load_schemas=lambda ids, messages, call: ToolLoadSelection(accepted=(new,)),
+        replace_disclosed_names=committed.append,
+    )
+    refused = _dispatch(LOAD_TOOLS_NAME, {"ids": "builtin:clock"}, state)
+    assert refused.error == "call load_tools alone in its own tool batch"
+    assert state.active == [_CALC]
+    state.load_batch_exclusive = True
+    assert _dispatch(LOAD_TOOLS_NAME, {"ids": "builtin:clock"}, state).ok
+    assert state.active == [new] and committed == [frozenset({"clock"})]
+
+
+def test_run_skill_script_binds_the_output_observer():
+    from tldw_chatbook.Agents.tool_output import current_tool_output_sink
+
+    state, _ = _state(
+        run_skill_script=lambda skill, path, args: ToolResult(
+            ok=True, content=f"{current_tool_output_sink() is not None} {args}"
+        )
+    )
+    state.output_observer = lambda text: None
+    result = _dispatch(RUN_SKILL_SCRIPT_TOOL_NAME, {"args": 5}, state)
+    assert result.content == "True ['5']"
+
+
+def test_spawn_counts_admitted_children_on_the_state():
+    config = AgentConfig(
+        model="m",
+        system_prompt="s",
+        allowed_tools=(SPAWN_TOOL_NAME,),
+        budget=RunBudget(max_subagents=1),
+    )
+    state, steps = _state(config)
+    assert _dispatch(SPAWN_TOOL_NAME, {"task": "t"}, state).ok
+    assert state.spawned == 1
+    assert [kind for kind, _ in steps] == [STEP_SPAWN]
+    exhausted = _dispatch(SPAWN_TOOL_NAME, {"task": "t2"}, state)
+    assert exhausted.error == "sub-agent budget exhausted"
+    assert state.spawned == 1 and len(steps) == 1
+
+
+# --- TASK-36950.2: loop phases run on a bare LoopState, without the loop. ---
+
+
+def test_denial_breaker_phase_keeps_every_settled_reply_and_ends_stuck():
+    config = AgentConfig(
+        model="m",
+        system_prompt="s",
+        allowed_tools=("calculator",),
+        budget=RunBudget(denial_circuit_breaker_limit=2),
+    )
+    state, steps = _state(config)
+    state.messages.append({"role": "tool", "tool_call_id": "c1", "content": "no"})
+    state.coherent_len = 1  # the loop-top boundary, before this batch's reply
+    state.consecutive_denials = 1
+    assert _phase_denial_breaker(state) is None
+    assert steps == []
+
+    state.consecutive_denials = 2
+    outcome = _phase_denial_breaker(state)
+    assert outcome.status == RUN_STUCK
+    assert outcome.denial_count == 2
+    # The breaker moves the boundary past the batch: the denied reply survives.
+    assert outcome.final_messages == state.messages
+    assert [kind for kind, _ in steps] == [STEP_ERROR]
+    assert "2 consecutive tool calls were denied" in steps[0][1]["summary"]
+
+
+def test_empty_text_turn_phase_restarts_the_turn_until_the_limit():
+    traces = []
+    state, steps = _state()
+    state.deps = _replace(state.deps, on_trace_step=traces.append)
+    state.turn = ModelTurn(text="  ")
+    state.calls = []
+    state.model_request_step = SimpleNamespace(index=7)
+    results = [_phase_settle_text_turn(state) for _ in range(EMPTY_TURN_LIMIT)]
+    assert results[:-1] == [NEXT_TURN] * (EMPTY_TURN_LIMIT - 1)
+    assert [step.kind for step in traces] == [STEP_MODEL_ERROR] * (EMPTY_TURN_LIMIT - 1)
+    assert traces[0].parent_step_index == 7
+    assert results[-1].status == RUN_STUCK
+    assert state.consecutive_empty_turns == EMPTY_TURN_LIMIT
+    assert [kind for kind, _ in steps] == [STEP_ERROR]
+
+    state.turn = ModelTurn(text="an answer")
+    state.consecutive_empty_turns = 0
+    assert _phase_settle_text_turn(state) is None
+    state.calls = [SimpleNamespace(name="calculator")]
+    assert _phase_settle_text_turn(state) is None
+    assert state.consecutive_empty_turns == 0

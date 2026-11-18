@@ -736,7 +736,14 @@ def plan_restore(
             for issue in acknowledged_credential_issues
         )
         or mode != "replace"
-        and (safety_scope or acknowledged_credential_issues)
+        and (
+            safety_scope
+            # TASK-40136: an isolated restore acknowledges only its locked cases.
+            or any(
+                not issue.startswith("credential_personal_context_restore_locked:")
+                for issue in acknowledged_credential_issues
+            )
+        )
     ):
         raise ValueError("invalid_replacement_review")
     if (
@@ -1175,6 +1182,10 @@ def plan_restore(
             producer[key].owner_id for key in selected if key in producer
         }
         selected_owners.update(item.owner for item in target.items if item.logical_id in absent_ids)
+        if mode == "replace" and "plugins" in selected_owners:
+            from tldw_chatbook.Plugins.backup import refuse_added_fetch_folders
+
+            refuse_added_fetch_folders(target.items, producer)
         by_target_id = {item.logical_id: item for item in target.items}
         for item in target.items:
             if item.path is None:
@@ -1308,9 +1319,25 @@ def plan_restore(
             if path.exists() and path not in declared:
                 raise ValueError("target_unverified")
         # Unknown children are never inferred garbage inside a managed directory.
+        # A directory both the target and the archive exclude (an owner's whole
+        # excluded subtree, never listed: TASK-40132) is left as it is, so its
+        # children are left with it. One the archive lacks stays refused here.
+        kept = {
+            path
+            for key, path in preserve
+            if by_target_id[key].status == "intentionally_excluded"
+            and getattr(producer.get(key), "status", None) == "intentionally_excluded"
+        }
+        if "plugins" in selected_owners:
+            # A reset's set-aside plugin state is kept whole even when the
+            # archive predates it (TASK-40308).
+            from tldw_chatbook.Plugins.backup import kept_whole
+
+            kept |= kept_whole(target.items) & {path for _, path in preserve}
         for item in target.items:
             if (
                 item.path
+                and item.path not in kept
                 and item.path.is_dir()
                 and (item.logical_id in absent_ids or any(
                     not roots[key].synthetic
@@ -1382,6 +1409,27 @@ def plan_restore(
         ["owner_setup_required:" + owner for owner in sorted(deferred_selected)]
         + sorted(set(projection_issues)),
     )
+    from tldw_chatbook.Personal_Context.recovery import restore_plan_issue
+
+    owners_by_id = {row.logical_id: row.owner_id for row in doc.files}
+    # TASK-40135/40136: how each restored repository ends, said first. A later
+    # rollback names a new account only when its own is gone (TASK-41122).
+    issues += [
+        issue
+        for key, path in plan.restore
+        if owners_by_id.get(key) == "personal_context.repository"
+        and (
+            issue := restore_plan_issue(
+                archive,
+                doc,
+                key,
+                path,
+                isolated=mode == "isolated",
+                rollback=local_snapshot is not None,
+            )
+        )
+        is not None
+    ]
     restored_ids = {key for key, _ in restore}
     for record in records:
         if record.logical_id not in restored_ids:

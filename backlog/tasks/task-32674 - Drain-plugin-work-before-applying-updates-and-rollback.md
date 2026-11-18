@@ -31,6 +31,8 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 - [x] #2 Users can wait, cancel before commitment or explicitly cancel affected work; updates publish only after confirmed drain and cleanup.
 - [x] #3 Rollback uses the same review and commit gates with current disables, mappings and grants; shared-data and external-effect rollback remain explicitly unsupported.
 - [x] #4 New or newly supported components stay unselected, immutable prior packages remain available for comparison, and quota/retention protects live and recovery material.
+- [x] #5 Exact managed-plugin archived resumption checks the pinned revision, component definitions, current authority and applicable data generation through the actual resume owner; incompatible resumption refuses without silently substituting revisions, while ordinary new runs and standalone continuation remain usable.
+- [x] #6 Retained retries return the original outcome; expired or changed requests never replay, and bounded evidence pruning and legacy cutover preserve refusal of unresolved newer commits and reconstruction from older valid registry backups without delaying live revocation.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -49,4 +51,6 @@ Reason: implements accepted revision drains, authenticated bounded retention, is
 
 <!-- SECTION:NOTES:BEGIN -->
 Integrated reviewed F7 revision drains, immutable update/rollback, authenticated bounded retention, issued phase-preserving retries and managed continuation pins through current owners. Preserved hook consent/carriers, child definition limits and worker custody. ADR-162/163/063. Core 105 passed; clean neighbor authority/codec 319 and native fleet/Console 78; final fleet/Console/archive 125 passed without warnings after fixing selected-profile fixtures and actual fixture database teardown. Direct archive transport 2 passed. Owned lint/format, changed syntax/whitespace and shared lint baseline comparison pass. Evidence and platform limits: Docs/superpowers/reviews/2026-09-30-expanded-hooks-integration.md. No external providers/keychain, full sweep, Windows/Linux or hardware power-loss claim; native Stop remains H5.
+
+Historical acceptance criteria5–6 from the original reviewed PR head7b4d5c501b are retained alongside current-dev implementation notes. New-base rebase qualification is tracked by TASK32695AC15; these historical checkmarks do not claim that qualification.
 <!-- SECTION:NOTES:END -->

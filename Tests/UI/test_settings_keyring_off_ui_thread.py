@@ -158,6 +158,9 @@ async def test_manual_sync_run_resolves_principal_scope_off_the_ui_thread():
     calls: list[dict[str, object]] = []
 
     class Control:
+        def preview(self, **kwargs):
+            return SimpleNamespace(can_run=True)
+
         async def run_once(self, **kwargs):
             calls.append(kwargs)
             raise RuntimeError("stop after capturing the scope")
@@ -308,7 +311,7 @@ async def _release_and_wait(pilot, loader: _BlockingLoader, predicate, message: 
 @private_profile_test
 async def test_image_gen_panel_loads_config_off_the_ui_thread(request, monkeypatch):
     import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
-    from tldw_chatbook.UI.Screens.settings_image_gen_defaults import (
+    from tldw_chatbook.UI.Settings_Modules.settings_image_gen_defaults import (
         ImageGenProbeResult,
     )
 

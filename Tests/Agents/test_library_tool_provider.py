@@ -94,9 +94,7 @@ class AgentLessonLibraryService(FakeLibraryService):
             "public_note_id": note_id,
             "note_id": note_id,
             "note_version": int(self.note_payload["revision"]),
-            "keywords": tuple(
-                row["name"] for row in item.get("keyword_metadata", ())
-            ),
+            "keywords": tuple(row["name"] for row in item.get("keyword_metadata", ())),
             "organization_version": item["organization_version"],
             "receipt_state": receipt_state,
             "receipt_note_version": (
@@ -174,9 +172,12 @@ def test_direct_load_schema_does_not_alias_shared_descriptor_parameters():
 
     canonical = LIBRARY_TOOL_DESCRIPTORS["library_search_notes"].input_schema
     assert canonical["properties"]["query"]["type"] == "string"
-    assert provider.load_schema(
-        "library:library_search_notes"
-    ).parameters["properties"]["query"]["type"] == "string"
+    assert (
+        provider.load_schema("library:library_search_notes").parameters["properties"][
+            "query"
+        ]["type"]
+        == "string"
+    )
 
 
 def test_direct_note_tool_schemas_come_from_the_shared_organization_contract():
@@ -204,12 +205,11 @@ def test_direct_note_tool_schemas_come_from_the_shared_organization_contract():
         "ensure_keywords",
         "expected_organization_version",
     } <= set(save.parameters["properties"])
-    assert search.parameters == LIBRARY_TOOL_DESCRIPTORS[
-        "library_search_notes"
-    ].input_schema
-    assert save.parameters == LIBRARY_TOOL_DESCRIPTORS[
-        "library_save_note"
-    ].input_schema
+    assert (
+        search.parameters
+        == LIBRARY_TOOL_DESCRIPTORS["library_search_notes"].input_schema
+    )
+    assert save.parameters == LIBRARY_TOOL_DESCRIPTORS["library_save_note"].input_schema
 
 
 def test_direct_provider_methods_are_synchronous():
@@ -354,7 +354,9 @@ def test_direct_invoke_rejects_unknown_tool_without_calling_the_service():
 
 
 def test_direct_invoke_never_leaks_service_exceptions():
-    service = FakeLibraryService(error=RuntimeError("sqlite3.OperationalError: no such table: secrets"))
+    service = FakeLibraryService(
+        error=RuntimeError("sqlite3.OperationalError: no such table: secrets")
+    )
     provider = LibraryToolProvider(service)
 
     decoded = _error_payload(provider.invoke("library:library_list_notes", {}))
@@ -505,15 +507,18 @@ def test_lesson_approval_stamp_is_exact_call_bound_and_cleared_per_run():
     with use_run_actor(CurrentRunActor("primary", "run-a", None)):
         authority = provider.issue_agent_lesson_approval("run-a", preflight)
 
-    assert provider.peek_agent_lesson_approval(
-        "run-a", "call-a", preflight.call_digest
-    ) is authority
-    assert provider.peek_agent_lesson_approval(
-        "run-a", "call-b", preflight.call_digest
-    ) is None
-    assert provider.peek_agent_lesson_approval(
-        "run-b", "call-a", preflight.call_digest
-    ) is None
+    assert (
+        provider.peek_agent_lesson_approval("run-a", "call-a", preflight.call_digest)
+        is authority
+    )
+    assert (
+        provider.peek_agent_lesson_approval("run-a", "call-b", preflight.call_digest)
+        is None
+    )
+    assert (
+        provider.peek_agent_lesson_approval("run-b", "call-a", preflight.call_digest)
+        is None
+    )
     assert provider.peek_agent_lesson_approval("run-a", "call-a", "0" * 64) is None
 
     provider.clear_agent_lesson_approvals("run-a")
@@ -609,7 +614,12 @@ def test_rag_invoke_success_projects_bounded_rows():
         # it. The provenance MAPPING itself never leaves on any branch.
         assert set(row) <= {"result_id", "title", "snippet", "score", "runtime_backend"}
     assert service.calls == [
-        ("quarterly plan", SUPPORTED_RAG_SOURCE_TYPES, "rag", {"top_k": 2, "include_citations": True})
+        (
+            "quarterly plan",
+            SUPPORTED_RAG_SOURCE_TYPES,
+            "rag",
+            {"top_k": 2, "include_citations": True},
+        )
     ]
 
 
@@ -680,17 +690,23 @@ def test_rag_invoke_empty_outcome_is_a_successful_empty_page():
 def test_rag_invoke_missing_service_maps_to_index_unavailable():
     provider = LibraryRagToolProvider(None)
 
-    decoded = _error_payload(provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q"}))
+    decoded = _error_payload(
+        provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q"})
+    )
 
     assert decoded["code"] == "index_unavailable"
     assert decoded["retryable"] is False
 
 
 def test_rag_invoke_retrieval_failure_maps_to_index_unavailable_scrubbed():
-    service = FakeRagService(error=RuntimeError("embeddings backend /private/path exploded"))
+    service = FakeRagService(
+        error=RuntimeError("embeddings backend /private/path exploded")
+    )
     provider = LibraryRagToolProvider(service)
 
-    decoded = _error_payload(provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q"}))
+    decoded = _error_payload(
+        provider.invoke(f"library:{RAG_TOOL_NAME}", {"query": "q"})
+    )
 
     assert decoded["code"] == "index_unavailable"
     assert decoded["retryable"] is True
@@ -908,9 +924,7 @@ def test_provider_rows_carry_the_identity_expand_document_requires():
     assert [row["source_type"] for row in projected] == [
         row["provenance"]["source_type"] for row in rows
     ]
-    assert [row["source_id"] for row in projected] == [
-        row["source_id"] for row in rows
-    ]
+    assert [row["source_id"] for row in projected] == [row["source_id"] for row in rows]
 
 
 def test_chunked_row_carries_its_chunk_id_and_a_label_row_does_not():

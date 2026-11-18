@@ -22,9 +22,14 @@ from textual.app import App
 from textual.widgets import Button, Input, Select
 
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.background_signals import wait_for_signal
 from tldw_chatbook.UI.Screens.stts_screen import STTSScreen
 from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
 from tldw_chatbook.UI.Speech.speech_settings_pane import SpeechSettingsPane
+
+# Source-bound mounted tests keep their selected profile for this lifetime.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 SWITCHABLE = ("playground", "settings", "audiobook", "dictation")
 
@@ -101,6 +106,11 @@ async def test_the_playground_view_mounts_a_playground():
         await pilot.pause()
         await pilot.pause()
 
+        assert screen.stts_window is not None
+        await wait_for_signal(
+            screen.stts_window._mounted_event, what="Speech window native mount"
+        )
+        await app.workers.wait_for_complete()
         assert screen.query_one("#speech-playground-pane")
 
 

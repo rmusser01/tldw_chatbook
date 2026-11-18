@@ -1,0 +1,122 @@
+[
+  {
+    "script": "scripts/check_canvas_mermaid_assets.py",
+    "command": [
+      "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+      "scripts/check_canvas_mermaid_assets.py"
+    ],
+    "exit_code": 1,
+    "seconds": 0.594,
+    "log": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\task-36728-36729\\integration-guards\\check_canvas_mermaid_assets.log"
+  },
+  {
+    "script": "tldw_chatbook/css/check_bundle_sync.py",
+    "command": [
+      "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+      "tldw_chatbook/css/check_bundle_sync.py"
+    ],
+    "exit_code": 0,
+    "seconds": 43.594,
+    "log": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\task-36728-36729\\integration-guards\\check_bundle_sync.log"
+  },
+  {
+    "script": "scripts/check_backlog_task_ids.py",
+    "command": [
+      "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+      "scripts/check_backlog_task_ids.py"
+    ],
+    "exit_code": 0,
+    "seconds": 2.453,
+    "log": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\task-36728-36729\\integration-guards\\check_backlog_task_ids.log"
+  },
+  {
+    "script": "scripts/check_backlog_task_files.py",
+    "command": [
+      "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+      "scripts/check_backlog_task_files.py"
+    ],
+    "exit_code": 0,
+    "seconds": 1.578,
+    "log": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\task-36728-36729\\integration-guards\\check_backlog_task_files.log"
+  },
+  {
+    "script": "scripts/check_schema_table_allowlist.py",
+    "command": [
+      "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+      "scripts/check_schema_table_allowlist.py"
+    ],
+    "exit_code": 0,
+    "seconds": 3.5,
+    "log": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\task-36728-36729\\integration-guards\\check_schema_table_allowlist.log"
+  },
+  {
+    "script": "scripts/check_profile_owned_path_inventory.py",
+    "command": [
+      "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+      "scripts/check_profile_owned_path_inventory.py"
+    ],
+    "exit_code": 0,
+    "seconds": 81.844,
+    "log": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\task-36728-36729\\integration-guards\\check_profile_owned_path_inventory.log"
+  },
+  {
+    "script": "scripts/check_index_plan_pins.py",
+    "command": [
+      "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+      "scripts/check_index_plan_pins.py"
+    ],
+    "exit_code": 0,
+    "seconds": 81.687,
+    "log": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\task-36728-36729\\integration-guards\\check_index_plan_pins.log"
+  },
+  {
+    "script": "scripts/check_textual_worker_contract.py",
+    "command": [
+      "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+      "scripts/check_textual_worker_contract.py"
+    ],
+    "exit_code": 0,
+    "seconds": 83.609,
+    "log": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\task-36728-36729\\integration-guards\\check_textual_worker_contract.log"
+  },
+  {
+    "script": "scripts/check_persistent_diagnostic_inventory.py",
+    "command": [
+      "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+      "scripts/check_persistent_diagnostic_inventory.py"
+    ],
+    "exit_code": 0,
+    "seconds": 165.171,
+    "log": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\task-36728-36729\\integration-guards\\check_persistent_diagnostic_inventory.log"
+  },
+  {
+    "script": "scripts/check_timestamp_writers.py",
+    "command": [
+      "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+      "scripts/check_timestamp_writers.py"
+    ],
+    "exit_code": 0,
+    "seconds": 43.766,
+    "log": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\task-36728-36729\\integration-guards\\check_timestamp_writers.log"
+  },
+  {
+    "script": "scripts/check_ui_pr_gate_census.py",
+    "command": [
+      "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+      "scripts/check_ui_pr_gate_census.py"
+    ],
+    "exit_code": 0,
+    "seconds": 20.829,
+    "log": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\task-36728-36729\\integration-guards\\check_ui_pr_gate_census.log"
+  },
+  {
+    "script": "scripts/check_markup_interpolation.py",
+    "command": [
+      "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+      "scripts/check_markup_interpolation.py"
+    ],
+    "exit_code": 0,
+    "seconds": 36.562,
+    "log": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\task-36728-36729\\integration-guards\\check_markup_interpolation.log"
+  }
+]

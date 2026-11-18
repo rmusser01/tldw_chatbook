@@ -1,0 +1,40 @@
+{
+  "archive_path": "/Users/macbook-dev/.codex/artifacts/task-35582-bounded-recovery/ci-shutdown-evidence.tar.gz",
+  "archive_sha256": "04cab4e3f0dd2a7f0b0ab321150f338f8e08f42f9716f1cb679a2adf194107fc",
+  "archive_bytes": 102580,
+  "source_baseline": "33b5afc3a3078beadf8a0798c7e7129fb77b3ec1",
+  "members": [
+    {
+      "name": "task35582-ci-33b5-windows-gguf.log",
+      "sha256": "2a3dbc3f85fa9939fa2b7acdcb9902c2a398708ea2086a51d636865b5322f1d7"
+    },
+    {
+      "name": "task35582-ci-33b5-final-rollup.json",
+      "sha256": "94629e9ae17b17359dd90baa08d7c7490ffed32329a55fdb26870bfe47477f7c"
+    },
+    {
+      "name": "task35582-ci-startup-closing-red3.log",
+      "sha256": "b7d8b8c574e47c495f8e02289cdd543601e898bd4de75c5d4fb44ee45bece6b1"
+    },
+    {
+      "name": "task35582-ci-startup-closing-green.log",
+      "sha256": "5d6c44df4c9944199e80ae29f597b4cb4dba24549d92db3a56b7840037cce225"
+    },
+    {
+      "name": "task35582-ci-startup-inventory-true.log",
+      "sha256": "7828e1e5436feadda9027492c29535362a2143eccaefc3448f4e3272e9bd5480"
+    },
+    {
+      "name": "task35582-ci-startup-closing-static.json",
+      "sha256": "87c6c6d7eb1a7dda466f2f50099108482e63742948e09f064b95795f977dc019"
+    },
+    {
+      "name": "task35582-ci-startup-closing-review.md",
+      "sha256": "0cea2005bbb07e8e9268662f855440ab656f050de77565915cc6e00ea406b98c"
+    },
+    {
+      "name": "task35582-ci-startup-closing.patch",
+      "sha256": "3a97093db52d2c1e5b43c480895ca09f5cd635a2f2b9cca2f344564eb1ac8d82"
+    }
+  ]
+}

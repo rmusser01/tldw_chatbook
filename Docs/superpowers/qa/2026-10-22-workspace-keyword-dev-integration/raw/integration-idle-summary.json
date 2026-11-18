@@ -1,0 +1,80 @@
+{
+  "commit": "19d38fd32ed9009d9fd7c9ffb04e38fd989d370d",
+  "exit_code": 0,
+  "pytest": "1 passed, 1 warning in244.90s",
+  "elapsed_seconds": 248.96487045288086,
+  "source_hashes_unchanged": true,
+  "rows": [
+    {
+      "shape": "nested",
+      "workload": "common",
+      "inner_lexical_p95_ms": 273.26399999583373,
+      "admitted_p95_ms": 644.722199998796
+    },
+    {
+      "shape": "nested",
+      "workload": "rare",
+      "inner_lexical_p95_ms": 205.67110000411049,
+      "admitted_p95_ms": 549.3819000039366
+    },
+    {
+      "shape": "nested",
+      "workload": "miss",
+      "inner_lexical_p95_ms": 169.09909999958472,
+      "admitted_p95_ms": 454.6416999946814
+    },
+    {
+      "shape": "wide",
+      "workload": "common",
+      "inner_lexical_p95_ms": 244.29650000092806,
+      "admitted_p95_ms": 617.6477999979397
+    },
+    {
+      "shape": "wide",
+      "workload": "rare",
+      "inner_lexical_p95_ms": 168.70120000385214,
+      "admitted_p95_ms": 474.64469999977155
+    },
+    {
+      "shape": "wide",
+      "workload": "miss",
+      "inner_lexical_p95_ms": 164.260400000785,
+      "admitted_p95_ms": 435.50210000103107
+    }
+  ],
+  "canonical_all_under_500ms": true,
+  "expanded_admitted_misses": [
+    {
+      "shape": "nested",
+      "workload": "common",
+      "inner_lexical_p95_ms": 273.26399999583373,
+      "admitted_p95_ms": 644.722199998796
+    },
+    {
+      "shape": "nested",
+      "workload": "rare",
+      "inner_lexical_p95_ms": 205.67110000411049,
+      "admitted_p95_ms": 549.3819000039366
+    },
+    {
+      "shape": "wide",
+      "workload": "common",
+      "inner_lexical_p95_ms": 244.29650000092806,
+      "admitted_p95_ms": 617.6477999979397
+    }
+  ],
+  "native_capture_proofs": 42,
+  "public_returns_with_registry_retired": 40,
+  "service_searches_remaining": 0,
+  "service_operations_remaining": 0,
+  "public_whole_tool_p95_ms": {
+    "nested": 1948.863400000846,
+    "wide": 2443.247999995947
+  },
+  "artifacts_sha256": {
+    "integration-idle-latency.json": "1d11049a55656365f9374b9fa9b7defb4406de20e3b26fd20924358f5aa2ff66",
+    "integration-idle-latency.txt": "9f3eb65b4771bd7051f07e59e8a74a3ffcfa19d41b3a547bb09d8ccdc3ffe6d4",
+    "integration-idle-source.json": "3dcc31ca54019948024498a00acc5bc38d6dd5b94078311d2d3bead4a6b7fa22",
+    "test_integration_idle_latency.py": "66d1a9b78a21cde38e520f1bc3640846851a5b3ac69d4189c8e9ea3724372b81"
+  }
+}

@@ -88,3 +88,84 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
             optional_default=True,
         ),
     )
+
+
+# TASK-40139, owner ruling on TASK-40137 (2026-11-12): one reviewed step
+# approves `config` and `runtime.sync_state` together and, in the same step,
+# clears the restored server identity, so no sync acts as the old device. It is
+# the only approver of `runtime.sync_state` (TASK-40711 may approve `config`
+# alone). The counts the user confirmed must still hold when it runs.
+SYNC_IDENTITY_OWNERS = ("config", "runtime.sync_state")
+SYNC_IDENTITY_CHANGED = "sync_identity_counts_changed"
+
+
+def _sync_identity_generations(state_path: Path):
+    """Unapproved restored generations binding a sync-identity owner."""
+    from tldw_chatbook.Backup_Recovery.activation import ActivationStore
+    from tldw_chatbook.Backup_Recovery.generation_witnesses import _witnesses
+    from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+
+    pending = {}
+    for path in (None, state_path):
+        with acquire_storage(path) as lease:
+            for witness in _witnesses(path, lease):
+                store = ActivationStore(Path(witness["store_root"]))
+                owners = tuple(
+                    owner
+                    for owner in SYNC_IDENTITY_OWNERS
+                    if owner in witness["owners"]
+                    and not store.allowed(witness["generation"], owner)
+                )
+                if owners:
+                    pending[(witness["store_root"], witness["generation"])] = owners
+    return pending
+
+
+def _identity_counts(state_path: Path) -> dict[str, int]:
+    from .sync_state_repository import SyncStateRepository
+
+    if not Path(state_path).exists():
+        return {name: 0 for name, _ in SyncStateRepository._RESTORED_IDENTITY_COUNTS}
+    repository = SyncStateRepository(state_path)
+    try:
+        return repository.restored_identity_counts()
+    finally:
+        repository.close()
+
+
+def sync_identity_review(state_path: Path) -> dict[str, int] | None:
+    """The counts the review shows, or None when no restore awaits it."""
+    if not _sync_identity_generations(Path(state_path)):
+        return None
+    return _identity_counts(Path(state_path))
+
+
+def approve_sync_identity(state_path: Path, *, shown: dict[str, int]) -> None:
+    """Clear the restored identity the user saw counted, then approve both owners.
+
+    The whole step holds the sync state's storage; the counts are compared and
+    the identity cleared inside one write transaction.
+    """
+    from tldw_chatbook.Backup_Recovery.activation import ActivationStore
+    from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+
+    from .sync_state_repository import SyncStateRepository
+
+    state_path = Path(state_path)
+    with acquire_storage(state_path):
+        pending = _sync_identity_generations(state_path)
+        if not pending:
+            return
+        if state_path.exists():
+            repository = SyncStateRepository(state_path)
+            try:
+                repository.clear_restored_identity(expected=shown)
+            finally:
+                repository.close()
+        elif dict(shown) != _identity_counts(state_path):
+            raise ValueError(SYNC_IDENTITY_CHANGED)
+        for (store_root, generation), owners in pending.items():
+            store = ActivationStore(Path(store_root))
+            for owner in owners:
+                store.approve(generation, owner)
+

@@ -142,6 +142,18 @@ class LibraryIngestState:
     # generation is no longer current (task-2011).
     preflight_generation: int = 0
 
+    # (TASK-34000.20 AC#3) The pre-flight generation an Enter / Start press
+    # is waiting on. Set when a submit arrives before the check for the
+    # current text has landed; `_apply_library_ingest_preflight_result`
+    # fires the one-shot submit when THAT generation's result arrives and
+    # clears it. A text edit or a pre-flight invalidation drops it.
+    submit_armed_generation: int | None = None
+    # (TASK-34000.20 fix round 1, C1) The exact stripped field text the arm
+    # was made for. The arm fires only while the field still shows this
+    # text, the ingest row is selected and the Library screen is the
+    # active screen; otherwise it is dropped, never deferred.
+    submit_armed_path: str = ""
+
     # (task-2015) While-typing validation: each path edit restarts this
     # timer; its fire runs the pre-flight so feedback no longer waits
     # for blur.

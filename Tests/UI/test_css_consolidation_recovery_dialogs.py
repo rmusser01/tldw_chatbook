@@ -41,7 +41,9 @@ def make_dialog(kind, root: Path):
         )
         return NotesRecoveryDialog(review, current=lambda: True, approve=approve)
     from tldw_chatbook.Skills_Interop.recovery_activation import RecoveryReview
-    from tldw_chatbook.UI.Screens.skills_screen import SkillRecoveryReviewModal
+    from tldw_chatbook.UI.Library_Modules.skills_trust_modals import (
+        SkillRecoveryReviewModal,
+    )
 
     review = RecoveryReview("fixture", (), (str(root), 0, 0), (), (), (), "fixture")
     return SkillRecoveryReviewModal(review, root, lambda: True)
@@ -84,3 +86,43 @@ async def test_consolidated_dialog_actions_keep_focus_and_cancel(
         await pilot.pause()
         assert modal not in app.screen_stack
         assert result == [None]
+
+
+@pytest.mark.asyncio
+async def test_skills_recovery_stale_selection_copy_is_equality_gated(tmp_path):
+    """TASK-35028: the 0.2 s poll rewrote the same constant stale-selection
+    copy every tick; the gate compares the row's own stored content, so only
+    the healthy -> stale transition repaints."""
+    from textual.widgets import Static
+
+    from tldw_chatbook.Skills_Interop.recovery_activation import RecoveryReview
+    from tldw_chatbook.UI.Library_Modules.skills_trust_modals import (
+        STALE_SELECTION_COPY,
+        SkillRecoveryReviewModal,
+    )
+
+    current = {"ok": True}
+    review = RecoveryReview("fixture", (), (str(tmp_path), 0, 0), (), (), (), "fixture")
+    app = ConsolidatedCSSApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = SkillRecoveryReviewModal(review, tmp_path, lambda: current["ok"])
+        app.push_screen(modal)
+        await pilot.pause()
+        status = modal.query_one("#skills-recovery-status", Static)
+        calls = []
+        original_update = status.update
+
+        def counting_update(*args, **kwargs):
+            calls.append(args)
+            return original_update(*args, **kwargs)
+
+        status.update = counting_update
+        # The mount ran its first poll against a healthy selection; go stale
+        # and prove only the healthy -> stale transition repaints.
+        current["ok"] = False
+        assert modal._check_selection() is False
+        assert len(calls) == 1
+        assert str(status.content) == STALE_SELECTION_COPY
+        assert modal._check_selection() is False
+        assert modal._check_selection() is False
+        assert len(calls) == 1, "the constant stale copy must not repaint per tick"

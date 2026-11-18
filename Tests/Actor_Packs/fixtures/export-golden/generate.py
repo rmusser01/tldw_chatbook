@@ -1,69 +1,82 @@
-"""Regenerate the reviewed minimal Actor Pack export goldens."""
+"""Regenerate the minimal Actor Pack export goldens without the product writer.
+
+Stdlib and the fixture oracle in ``Tests/Actor_Packs/conftest.py`` only:
+nothing from ``tldw_chatbook`` is imported, so the goldens stay independent of
+``write_actor_pack_archive`` (TASK-41112). The ZIP settings below are the V1
+byte contract written out by hand, not read from ``Actor_Packs.contracts``.
+
+``producer.version`` is ``GOLDEN_PRODUCER_VERSION``, not the app version: the
+golden test pins the writer's version to it, so a release bump does not move
+these bytes.
+"""
 
 from __future__ import annotations
 
-import hashlib
 import io
-import os
-import shutil
-import tempfile
+import sys
+import zipfile
 from pathlib import Path
 
-_ISOLATED_ROOT = Path(tempfile.mkdtemp(prefix="actor-pack-golden-"))
-os.environ.update(
-    {
-        "HOME": str(_ISOLATED_ROOT / "home"),
-        "XDG_CONFIG_HOME": str(_ISOLATED_ROOT / "config"),
-        "XDG_DATA_HOME": str(_ISOLATED_ROOT / "data"),
-        "XDG_CACHE_HOME": str(_ISOLATED_ROOT / "cache"),
-        "TLDW_CONFIG_PATH": str(_ISOLATED_ROOT / "config" / "config.toml"),
-        "TLDW_TEST_MODE": "1",
-    }
-)
-for directory in ("home", "config", "data", "cache"):
-    (_ISOLATED_ROOT / directory).mkdir(mode=0o700)
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from Tests.Actor_Packs.conftest import (  # noqa: E402
+    GOLDEN_PRODUCER_VERSION,
     PNG_1X1,
     PORTABLE_UUID,
     canonical_json,
+    file_descriptor,
+    with_content_digest,
 )
-from tldw_chatbook.Actor_Packs.export import (  # noqa: E402
-    ActorPackExportSnapshot,
-    write_actor_pack_archive,
-)
+
+
+def golden_archive(actor_kind: str) -> bytes:
+    files = {
+        "actor/actor.json": canonical_json(
+            {
+                "schema": "tldw.actor/v1",
+                "actor_kind": actor_kind,
+                "portable_uuid": PORTABLE_UUID,
+                "data": {"name": "Golden"},
+            }
+        ),
+        "actor/portrait.png": PNG_1X1,
+    }
+    root = with_content_digest(
+        {
+            "schema": "tldw.actor-pack/v1",
+            "actor": {
+                "kind": actor_kind,
+                "portable_uuid": PORTABLE_UUID,
+                "payload": "actor/actor.json",
+                "portrait": "actor/portrait.png",
+            },
+            "sections": [],
+            "producer": {"name": "tldw_chatbook", "version": GOLDEN_PRODUCER_VERSION},
+            "license": {"value": "unspecified"},
+            "provenance": {"source": "local"},
+            "required_features": [],
+            "files": [file_descriptor(path, data) for path, data in sorted(files.items())],
+        }
+    )
+    members = {"actor-pack.json": canonical_json(root), **dict(sorted(files.items()))}
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", zipfile.ZIP_STORED, allowZip64=True) as archive:
+        for path, data in members.items():
+            info = zipfile.ZipInfo(path, date_time=(1980, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_STORED
+            info.create_system = 3
+            info.flag_bits = 0
+            info.external_attr = 0o100644 << 16
+            with archive.open(info, mode="w", force_zip64=True) as member:
+                member.write(data)
+    return output.getvalue()
 
 
 def main() -> None:
-    try:
-        output_dir = Path(__file__).parent
-        for actor_kind in ("character", "persona"):
-            payload = canonical_json(
-                {
-                    "schema": "tldw.actor/v1",
-                    "actor_kind": actor_kind,
-                    "portable_uuid": PORTABLE_UUID,
-                    "data": {"name": "Golden"},
-                }
-            )
-            snapshot = ActorPackExportSnapshot(
-                actor_kind=actor_kind,
-                actor_revision=1,
-                portable_uuid=PORTABLE_UUID,
-                identity_version=1,
-                portrait_name="portrait.png",
-                portrait_sha256=hashlib.sha256(PNG_1X1).hexdigest(),
-                local_actor_id="private-local-id",
-                actor_payload=payload,
-                portrait_bytes=PNG_1X1,
-            )
-            archive = io.BytesIO()
-            write_actor_pack_archive(snapshot, archive)
-            (output_dir / f"minimal-{actor_kind}.tldw-actor-pack").write_bytes(
-                archive.getvalue()
-            )
-    finally:
-        shutil.rmtree(_ISOLATED_ROOT, ignore_errors=True)
+    for actor_kind in ("character", "persona"):
+        (Path(__file__).parent / f"minimal-{actor_kind}.tldw-actor-pack").write_bytes(
+            golden_archive(actor_kind)
+        )
 
 
 if __name__ == "__main__":

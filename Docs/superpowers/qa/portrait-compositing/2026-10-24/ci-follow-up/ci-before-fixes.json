@@ -1,0 +1,194 @@
+[
+  {
+    "bucket": "pending",
+    "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40141086416/job/121021876547",
+    "name": "Derived artifacts reproduce from their sources",
+    "state": "IN_PROGRESS"
+  },
+  {
+    "bucket": "pass",
+    "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40141086416/job/121012790255",
+    "name": "UI Fast Lane (14)",
+    "state": "SUCCESS"
+  },
+  {
+    "bucket": "pass",
+    "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40141086416/job/121012790317",
+    "name": "UI Fast Lane (8)",
+    "state": "SUCCESS"
+  },
+  {
+    "bucket": "pass",
+    "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40141086416/job/121012790241",
+    "name": "UI Fast Lane (16)",
+    "state": "SUCCESS"
+  },
+  {
+    "bucket": "pass",
+    "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40141086416/job/121012790265",
+    "name": "UI Fast Lane (17)",
+    "state": "SUCCESS"
+  },
+  {
+    "bucket": "pass",
+    "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40141086416/job/121012790214",
+    "name": "UI Fast Lane (4)",
+    "state": "SUCCESS"
+  },
+  {
+    "bucket": "pass",
+    "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40141086416/job/121012790198",
+    "name": "UI Fast Lane (13)",
+    "state": "SUCCESS"
+  },
+  {
+    "bucket": "pass",
+    "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40141086416/job/121012790175",
+    "name": "UI Fast Lane (7)",
+    "state": "SUCCESS"
+  },
+  {
+    "bucket": "pass",
+    "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40141086416/job/121012790076",
+    "name": "Dreams tracking tests",
+    "state": "SUCCESS"
+  },
+  {
+    "bucket": "pass",
+    "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40141086416/job/121012790228",
+    "name": "UI Fast Lane (10)",
+    "state": "SUCCESS"
+  },
+  {
+    "bucket": "pass",
+    "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40141086416/job/121012790230",
+    "name": "UI Fast Lane (5)",
+    "state": "SUCCESS"
+  },
+  {
+    "bucket": "pass",
+    "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40141086416/job/121012790191",
+    "name": "UI Fast Lane (3)",
+    "state": "SUCCESS"
+  },
+  {
+    "bucket": "fail",
+    "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40141086416/job/121012790111",
+    "name": "Console P0 regression gate",
+    "state": "FAILURE"
+  },
+  {
+    "bucket": "pass",
+    "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40141086416/job/121012790193",
+    "name": "UI Fast Lane (6)",
+    "state": "SUCCESS"
+  },
+  {
+    "bucket": "pass",
+    "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40141086416/job/121012790178",
+    "name": "UI Fast Lane (1)",
+    "state": "SUCCESS"
+  },
+  {
+    "bucket": "pass",
+    "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40141086416/job/121012790136",
+    "name": "Dreams and Guardian boundary contracts",
+    "state": "SUCCESS"
+  },
+  {
+    "bucket": "pass",
+    "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40141086416/job/121012790079",
+    "name": "UI Fast Lane (11)",
+    "state": "SUCCESS"
+  },
+  {
+    "bucket": "pass",
+    "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40141086416/job/121012790134",
+    "name": "UI Fast Lane (2)",
+    "state": "SUCCESS"
+  },
+  {
+    "bucket": "pass",
+    "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40141086416/job/121012790122",
+    "name": "UI Fast Lane (12)",
+    "state": "SUCCESS"
+  },
+  {
+    "bucket": "pass",
+    "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40141086416/job/121012790137",
+    "name": "UI Fast Lane (15)",
+    "state": "SUCCESS"
+  },
+  {
+    "bucket": "pass",
+    "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40141086416/job/121012790157",
+    "name": "UI Fast Lane (9)",
+    "state": "SUCCESS"
+  },
+  {
+    "bucket": "pass",
+    "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40141086416/job/121012790117",
+    "name": "PR Fast Lane (admission-sensitive)",
+    "state": "SUCCESS"
+  },
+  {
+    "bucket": "fail",
+    "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40141086424/job/121012789719",
+    "name": "UI latency guardrails",
+    "state": "FAILURE"
+  },
+  {
+    "bucket": "fail",
+    "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40141086416/job/121012790098",
+    "name": "PR Fast Lane",
+    "state": "FAILURE"
+  },
+  {
+    "bucket": "pass",
+    "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40141086416/job/121012789997",
+    "name": "PR Fast Lane (admission-sensitive 2)",
+    "state": "SUCCESS"
+  },
+  {
+    "bucket": "pass",
+    "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40141086462/job/121012789958",
+    "name": "Eval recovery (windows-2022)",
+    "state": "SUCCESS"
+  },
+  {
+    "bucket": "pass",
+    "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40141086462/job/121012790087",
+    "name": "Eval recovery (ubuntu-24.04)",
+    "state": "SUCCESS"
+  },
+  {
+    "bucket": "pass",
+    "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40141086462/job/121012790017",
+    "name": "Eval recovery (macos-15)",
+    "state": "SUCCESS"
+  },
+  {
+    "bucket": "skipping",
+    "link": "https://www.cubic.dev/pr/rmusser01/tldw_chatbook/pull/3244",
+    "name": "cubic · AI code reviewer",
+    "state": "NEUTRAL"
+  },
+  {
+    "bucket": "skipping",
+    "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40141086415/job/121012791031",
+    "name": "platform-evidence",
+    "state": "SKIPPED"
+  },
+  {
+    "bucket": "skipping",
+    "link": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40141086440/job/121012790449",
+    "name": "Linux storage - Python ${{ matrix.python }}",
+    "state": "SKIPPED"
+  },
+  {
+    "bucket": "pass",
+    "link": "",
+    "name": "CodeRabbit",
+    "state": "SUCCESS"
+  }
+]

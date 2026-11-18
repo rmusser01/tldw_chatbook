@@ -513,7 +513,7 @@ def _bounded_sum(*values: int) -> int:
 
 
 def ram_working_budget_bytes(total_bytes: int) -> int:
-    """Return physical RAM available after the ADR-080 machine reserve.
+    """Return physical RAM available after the ADR-327 machine reserve.
 
     Args:
         total_bytes: Observed total physical memory in bytes.

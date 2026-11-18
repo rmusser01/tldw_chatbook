@@ -1,0 +1,150 @@
+{
+  "held_native_mount": true,
+  "mount_batch_count": 1,
+  "observed": true,
+  "row_ids_during_native_mount_hold": [],
+  "highlighted_during_native_mount_hold": [],
+  "selected_id": "local:media:3",
+  "loaded_id": "local:media:3",
+  "reader_target_id": "local:media:3",
+  "reader_title": "Meeting notes (edited)",
+  "editing": false,
+  "browse_loading": false,
+  "applied_equals_requested": true,
+  "state_highlighted_ids": [
+    "local:media:3"
+  ],
+  "canvas_highlighted_ids": [
+    "local:media:3"
+  ],
+  "app_batch_count": 1,
+  "render_eligible_frames_before_hold": 66,
+  "read_later_calls": [
+    {
+      "action": "save",
+      "media_id": 3
+    },
+    {
+      "action": "remove",
+      "media_id": 3
+    }
+  ],
+  "update_calls": [
+    {
+      "media_id": 3,
+      "title": "Meeting notes (edited)",
+      "author": "Review fixture",
+      "url": "file:///import-docs/meeting-notes.md",
+      "keywords": [
+        "import"
+      ]
+    }
+  ],
+  "original_final_assertion_would_pass": false,
+  "render_eligible_frames_during_hold": 66,
+  "highlighted_after_release": [
+    "local:media:3"
+  ],
+  "selected_id_after_release": "local:media:3",
+  "loaded_id_after_release": "local:media:3",
+  "render_eligible_frames_after_release": 70,
+  "textual_version": "8.2.8",
+  "frames": {
+    "before_hold": {
+      "path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37031-37034\\media-highlight-probe\\frame-before_hold-01.txt",
+      "sha256": "716587daea44be6cb7f5c3db5c616ba33ee2543dc74e5fd8f5a0b00bb282d1f0",
+      "item_title_lines": [
+        "\u2502 \u2502    Conversations (2)           \u2502     \u2502    Team handbook                                     \u2502     \u258a Meeting notes (edited)                               \u258e \u2502",
+        "\u2502 \u2502    Collections (0)             \u2502     \u2502  \u25b8 Meeting notes                                     \u2502     \u258a\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u2594\u258e \u2502"
+      ],
+      "frame_time": 596733.734
+    },
+    "after_release": {
+      "path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37031-37034\\media-highlight-probe\\frame-after_release-01.txt",
+      "sha256": "63f5d23d035015397f8671ae0b0f7a1ed975e905832a2518b19bc226e0599595",
+      "item_title_lines": [
+        "\u2502 \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510  N  \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510  I  Meeting notes (edited)                                   \u2502",
+        "\u2502 \u2502    Collections (0)             \u2502     \u2502  \u25b8 Meeting notes (edited)                            \u2502                                                              \u2502"
+      ],
+      "frame_time": 596735.625
+    }
+  },
+  "run_receipts": [
+    {
+      "label": "media-highlight-original-20261028-01",
+      "verification": {
+        "exit_code": 0,
+        "private_profile_root": "C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-c09e1884cec24a3a8208395e060b2769",
+        "reports": [
+          {
+            "path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37031-37034\\media-highlight-original-20261028-01\\result.xml",
+            "sha256": "76155c205efc980bc3fc33da13b2238ad356e17380aaf6a83dca4bb08fa83d22",
+            "cases": 1,
+            "failures": 0,
+            "errors": 0,
+            "skips": 0
+          }
+        ]
+      },
+      "cases": [
+        {
+          "report_path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37031-37034\\media-highlight-original-20261028-01\\result.xml",
+          "report_sha256": "76155c205efc980bc3fc33da13b2238ad356e17380aaf6a83dca4bb08fa83d22",
+          "attributes": {
+            "classname": "Tests.UI.test_library_media_actions_target_opened_item",
+            "name": "test_read_later_and_edit_save_target_the_opened_item_not_row_1",
+            "time": "26.851"
+          },
+          "failure": [],
+          "error": [],
+          "skipped": []
+        }
+      ]
+    },
+    {
+      "label": "media-highlight-held-20261028-01",
+      "verification": {
+        "exit_code": 0,
+        "private_profile_root": "C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-cf1a6d65eadb4dc5b90798a649aaaf9c",
+        "reports": [
+          {
+            "path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37031-37034\\media-highlight-held-20261028-01\\result.xml",
+            "sha256": "b1978a3d6bfcb08965e7a92a06003dfbd07fdadaf7b21089bf386a355e10edaf",
+            "cases": 1,
+            "failures": 0,
+            "errors": 0,
+            "skips": 0
+          }
+        ]
+      },
+      "cases": [
+        {
+          "report_path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37031-37034\\media-highlight-held-20261028-01\\result.xml",
+          "report_sha256": "b1978a3d6bfcb08965e7a92a06003dfbd07fdadaf7b21089bf386a355e10edaf",
+          "attributes": {
+            "classname": ".test-tmp.textual-37031-37034.media-highlight-probe.test_media_highlight_probe",
+            "name": "test_native_recompose_observation_gap",
+            "time": "31.751"
+          },
+          "failure": [],
+          "error": [],
+          "skipped": []
+        }
+      ]
+    }
+  ],
+  "probe_artifacts": [
+    {
+      "path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37031-37034\\media-highlight-probe\\conftest.py",
+      "sha256": "db759b26ec0b08f189b7ec7864ffd605de2994adf3f98e2c18ef6f282826c488"
+    },
+    {
+      "path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37031-37034\\media-highlight-probe\\test_media_highlight_probe.py",
+      "sha256": "d8f839294bcdbbb0f70a128cc7a49163eee230475f8ffe32beb9ace7302e2455"
+    },
+    {
+      "path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37031-37034\\media-highlight-probe\\observation-01.json",
+      "sha256": "35508350457347ae4ddcb0ff054d697a00ee7f2133fb8614b4495a20d022e8f3"
+    }
+  ]
+}

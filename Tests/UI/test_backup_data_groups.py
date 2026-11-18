@@ -501,3 +501,222 @@ async def test_changed_restore_selection_discards_inflight_review(
         assert delivered and delivered[0].requested_groups == ("workspaces",)
         assert screen._restore_plan is None
         assert screen.query_one("#backup-start-restore", Button).disabled
+
+
+@pytest.mark.asyncio
+async def test_backup_review_explains_refused_live_plugins(tmp_path):
+    """TASK-40132 AC4: the preview names why plugins were refused and what to do."""
+    from textual.widgets import Static
+
+    from tldw_chatbook.Backup_Recovery.models import Inventory
+
+    async with mounted(tmp_path) as (pilot, screen, _service):
+        await press(pilot, "#backup-open-create")
+        details = {
+            "inventory": Inventory((), False, "scope", ("plugin_writers_active",)),
+            "complete": False,
+            "maintenance": "Writers resume after copying.",
+            "availability": (True, ""),
+            "capacity": (),
+            "credential_mode": "exclude",
+        }
+        screen._show_preview(
+            screen._revision,
+            details,
+            ((tmp_path / "config.toml",), tmp_path / "backup.zip", screen._options()),
+        )
+        coverage = str(screen.query_one("#backup-coverage", Static).render())
+        assert "Plugins are in use" in coverage
+        assert "quit Chatbook" in coverage
+
+
+@pytest.mark.asyncio
+async def test_restore_review_lists_newer_plugin_downloads_and_removes_them(
+    tmp_path, monkeypatch
+):
+    """TASK-40309 (owner decision 3, 2026-11-12): the restore review lists the
+    newer download folders and, before the user confirms, says what is deleted
+    with no safety copy and that a rollback cannot bring it back. The
+    confirmation deletes exactly the listed members, keeps snapshot/, and
+    reviews the restore again."""
+    from textual.widgets import Button, Static
+
+    root = tmp_path / "plugins"
+    folder = root / "staging" / "zz-new"
+    for relative in ("snapshot/plugin.json", "repository.git/HEAD", "host-git-config"):
+        (folder / relative).parent.mkdir(parents=True, exist_ok=True)
+        (folder / relative).write_bytes(b"x")
+    (root / "registry.sqlite3").write_bytes(b"")
+    members = (folder / "host-git-config", folder / "repository.git")
+    async with mounted(tmp_path) as (pilot, screen, _service):
+        reviews = []
+        monkeypatch.setattr(screen, "_review_restore", lambda: reviews.append(1))
+        button = screen.query_one("#backup-remove-plugin-downloads", Button)
+        assert not button.display
+        screen.query_one("#backup-review-restore", Button).focus()
+        await pilot.pause()
+        focused_before = screen.app.focused
+        screen._fetch_removal_ready(screen._revision, members)
+        await pilot.pause()
+        review = str(screen.query_one("#backup-restore-preview", Static).render())
+        assert "downloaded from a repository after this backup" in review
+        assert "with no safety copy; a rollback cannot bring them back" in review
+        assert "Your own git configuration and ~/.ssh are not touched" in review
+        assert "moves them into the before-replacement safety copy" in review
+        assert f"Folder: {folder}" in review
+        assert "Delete: host-git-config" in review and "Delete: repository.git" in review
+        assert "Delete: snapshot" not in review
+        # The review never moves focus onto the deleting button (r14plg-rev1).
+        assert button.display and screen.app.focused is not button
+        assert screen.app.focused is focused_before
+        assert screen.query_one("#backup-start-restore", Button).disabled
+        await press(pilot, "#backup-remove-plugin-downloads")
+        for _ in range(100):
+            if reviews:
+                break
+            await pilot.pause(0.02)
+        assert reviews == [1]
+        assert sorted(path.name for path in folder.iterdir()) == ["snapshot"]
+        message = str(screen.query_one("#backup-message", Static).render())
+        assert "Newer plugin downloads removed" in message
+        screen._invalidate()
+        assert not button.display and screen._fetch_removal == ()
+
+
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("credential_mode", ["exclude", "include"])
+async def test_backup_review_tells_personal_context_before_anything_is_written(
+    tmp_path, credential_mode
+):
+    """TASK-40134 AC#4 and AC#7: a backup without credentials says the
+    Personal Context key is not in it, and a first link in flight is refused with
+    a reason that says what to do."""
+    from textual.widgets import Static
+
+    from tldw_chatbook.Backup_Recovery.models import Inventory, StorageItem
+
+    repository = StorageItem(
+        "personal_context.repository",
+        "profile:p:personal_context.repository",
+        tmp_path / "tldw_chatbook_personal_context.db",
+        "included",
+        (),
+    )
+    async with mounted(tmp_path) as (pilot, screen, _service):
+        await press(pilot, "#backup-open-create")
+        details = {
+            "inventory": Inventory(
+                (repository,),
+                False,
+                "scope",
+                ("personal_context_first_link_in_progress",),
+            ),
+            "complete": False,
+            "maintenance": "Writers resume after copying.",
+            "availability": (True, ""),
+            "capacity": (),
+            "credential_mode": credential_mode,
+        }
+        screen._show_preview(
+            screen._revision,
+            details,
+            ((tmp_path / "config.toml",), tmp_path / "backup.zip", screen._options()),
+        )
+        coverage = str(screen.query_one("#backup-coverage", Static).render())
+    assert ("Its key is not in this backup" in coverage) is (
+        credential_mode == "exclude"
+    )
+    # TASK-40135 AC#5: and how far that copy reaches.
+    assert (
+        "readable only on this device, and only until Personal Context is "
+        "linked or removed" in coverage
+    ) is (credential_mode == "exclude")
+    assert "linking to your home server" in coverage
+    assert "back up again" in coverage
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("code", "copy"),
+    [
+        ("personal_context_restore_readable", "will be restored readable"),
+        (
+            "personal_context_restore_locked:personal_context_key_not_in_backup",
+            "does not include its key, and this device does not have it",
+        ),
+        (
+            "personal_context_restore_locked:personal_context_key_install_unavailable",
+            "no secure keyring to hold its key",
+        ),
+        (
+            "personal_context_restore_locked:personal_context_keyring_unavailable",
+            "no access to the system keyring",
+        ),
+    ],
+)
+async def test_restore_review_says_how_personal_context_will_end(
+    tmp_path, code, copy
+):
+    """TASK-40135 AC#10: before a replace restore runs, its plan says whether
+    Personal Context comes back readable with its key or locked, and why."""
+    from textual.widgets import Static
+
+    from tldw_chatbook.Backup_Recovery.restore_plan import RestorePlan
+
+    issue = code + ":profile:p:personal_context.repository"
+    plan = RestorePlan("digest", "replace", (), (), (), "fingerprint", issues=(issue,))
+    async with mounted(tmp_path) as (pilot, screen, _service):
+        await screen._restore_ready(screen._revision, plan, None)
+        await pilot.pause()
+        review = str(screen.query_one("#backup-restore-preview", Static).render())
+    assert "Issue: " + issue in review
+    assert copy in review
+
+
+@pytest.mark.asyncio
+async def test_locked_personal_context_restore_is_acknowledged_with_its_copy(tmp_path):
+    """TASK-40136 AC#4: a restore that will leave Personal Context locked asks
+    for an acknowledgement of each case, with its copy, before anything runs."""
+    from textual.widgets import Checkbox, Static
+
+    code = (
+        "credential_personal_context_restore_locked:"
+        "personal_context_keyring_unavailable:profile:p:personal_context.repository"
+    )
+    async with mounted(tmp_path) as (pilot, screen, _service):
+        screen._requested_restore_operation = "operation"
+        screen._restore_review_codes_seen = (code,)
+        await screen._show_restore_credential_review("operation", (code,))
+        await pilot.pause()
+        area = screen.query_one("#backup-restore-credential-review")
+        intro = str(area.query(Static).first().render())
+        (box,) = area.query(".backup-acknowledge-restore-credential").results(Checkbox)
+        label = str(box.label)
+    assert "will be restored but stay locked" in intro
+    assert "Nothing has been written yet" in intro
+    assert box.name == code
+    assert "no access to the system keyring" in label
+
+
+@pytest.mark.asyncio
+async def test_credential_review_names_the_personal_context_link_keys_left_out(
+    tmp_path,
+):
+    """TASK-40134 AC#8: like skill-trust keys, the review of a backup with
+    credentials says which Personal Context keys stay on this device."""
+    from textual.widgets import Checkbox
+
+    code = (
+        "credential_personal_context_link_keys_excluded:"
+        "profile:p:personal_context.repository"
+    )
+    async with mounted(tmp_path) as (pilot, screen, _service):
+        await screen._show_credential_review((code,))
+        await pilot.pause()
+        (box,) = screen.query(".backup-acknowledge-credential").results(Checkbox)
+        label = str(box.label)
+    assert box.name == code
+    for name in ("device wrapping key", "staged integrity keys", "dataset staging keys"):
+        assert name in label

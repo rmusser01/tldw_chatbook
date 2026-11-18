@@ -48,8 +48,19 @@ This release continues the approved app-only scope and omits the unavailable
 `tldw-voice-aec` dependency. Ordinary recording
 support remains available; experimental duplex voice keeps its unqualified runtime
 gate. Run `python Packaging/check_voice_aec_version_sync.py --app-only` before
-building. See `Docs/Development/TTS/voice-aec-release.md` and ADR-098 for the
+building. See `Docs/Development/TTS/voice-aec-release.md` and ADR-338 for the
 approved app-only exception and the separate companion publication requirements.
+
+## CI release qualification
+
+PRs into `main` must pass the stable Derived Artifacts context, including broad
+regression and the reusable comprehensive-test/package qualification workflows.
+Protect `main` with that required context and strict latest-base enforcement.
+`publish-pypi.yml` separately requires comprehensive tests and the validated
+package build on the exact protected main commit before uploading to PyPI;
+manual TestPyPI publication has the same test prerequisite. An earlier nightly
+result does not qualify another commit. See [CI rollout](../scripts/ci/README.md)
+for the staged activation and nightly coverage boundaries.
 
 ## Local Release Gates
 

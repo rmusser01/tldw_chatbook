@@ -387,18 +387,32 @@ async def test_ephemeral_send_crosses_started_before_provider_then_settles_in_me
 
     monkeypatch.setattr(gateway, "stream_chat", observe_recovery)
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 
-    result = await controller.submit_draft("hello", session_id=session.id)
+    runtime = ConsoleRuntime(app=None)
+    runtime.set_chat_store(store)
+    runtime.set_provider_gateway(gateway)
+    runtime.set_chat_controller(controller)
 
-    assert result.accepted is True
-    assert states_seen == [(kind.EPHEMERAL_DISPATCH_STARTED, True, "dispatch_started")]
-    assert store.dispatch_recovery_for_session(session.id) is None
-    assert store.messages_for_session(session.id)[-1].status == "complete"
-    for table in ("conversations", "messages", "console_dispatch_checkpoints"):
-        assert (
-            db.get_connection().execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-            == 0
-        )
+    try:
+        result = await controller.submit_draft("hello", session_id=session.id)
+
+        assert result.accepted is True
+        assert states_seen == [
+            (kind.EPHEMERAL_DISPATCH_STARTED, True, "dispatch_started")
+        ]
+        assert store.dispatch_recovery_for_session(session.id) is None
+        assert store.messages_for_session(session.id)[-1].status == "complete"
+        for table in ("conversations", "messages", "console_dispatch_checkpoints"):
+            assert (
+                db.get_connection()
+                .execute(f"SELECT COUNT(*) FROM {table}")
+                .fetchone()[0]
+                == 0
+            )
+    finally:
+        await runtime.dispose()
+        db.close()
 
 
 def test_unresolved_ephemeral_recovery_blocks_promotion_before_any_write(

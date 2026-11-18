@@ -112,9 +112,7 @@ REAL_FIXTURE_SKILLS = (
 
 async def _open_skills_import_row(screen, pilot) -> None:
     """Open the Skills rail row, then the inline Import row below its toolbar."""
-    skills_row = await _wait_for_selector(
-        screen, pilot, "#library-row-browse-skills"
-    )
+    skills_row = await _wait_for_selector(screen, pilot, "#library-row-browse-skills")
     assert isinstance(skills_row, Button)
     skills_row.press()
     # The default empty Library can already be showing Skills. Let that
@@ -213,9 +211,7 @@ def test_library_screen_has_no_parallel_skill_import_pipeline():
         "_apply_library_skills_import_outcome_from_exception",
     )
 
-    assert all(
-        not hasattr(LibraryScreen, name) for name in retired_screen_owners
-    )
+    assert all(not hasattr(LibraryScreen, name) for name in retired_screen_owners)
 
 
 def _multi_package() -> RemoteSkillPackage:
@@ -266,7 +262,9 @@ async def test_coordinator_holds_single_flight_through_candidate_choice(monkeypa
     async def inspect(*args, **kwargs):
         return package
 
-    monkeypatch.setattr(library_skill_import_controller, "inspect_skill_from_url", inspect)
+    monkeypatch.setattr(
+        library_skill_import_controller, "inspect_skill_from_url", inspect
+    )
     coordinator.open_draft()
     url = "https://github.com/o/repo"
     assert coordinator.claim(url) is True
@@ -297,12 +295,17 @@ async def test_coordinator_imports_explicit_retained_candidate_once(monkeypatch)
         imports.append((pending, candidate))
         return {"name": "b"}
 
-    monkeypatch.setattr(library_skill_import_controller, "inspect_skill_from_url", inspect)
-    monkeypatch.setattr(library_skill_import_controller, "import_inspected_skill", import_one)
+    monkeypatch.setattr(
+        library_skill_import_controller, "inspect_skill_from_url", inspect
+    )
+    monkeypatch.setattr(
+        library_skill_import_controller, "import_inspected_skill", import_one
+    )
     coordinator.open_draft()
     assert coordinator.claim("https://github.com/o/repo") is True
     await coordinator.run(
-        "https://github.com/o/repo", runtime_app=SimpleNamespace(screen=SimpleNamespace())
+        "https://github.com/o/repo",
+        runtime_app=SimpleNamespace(screen=SimpleNamespace()),
     )
     assert coordinator.claim_candidate("skills/b") is True
     assert coordinator.claim_candidate("skills/a") is False
@@ -336,12 +339,17 @@ async def test_selected_candidate_owner_survives_repeated_cancellation(monkeypat
         imports += 1
         return {"name": "a"}
 
-    monkeypatch.setattr(library_skill_import_controller, "inspect_skill_from_url", inspect)
-    monkeypatch.setattr(library_skill_import_controller, "import_inspected_skill", import_one)
+    monkeypatch.setattr(
+        library_skill_import_controller, "inspect_skill_from_url", inspect
+    )
+    monkeypatch.setattr(
+        library_skill_import_controller, "import_inspected_skill", import_one
+    )
     coordinator.open_draft()
     assert coordinator.claim("https://github.com/o/repo") is True
     await coordinator.run(
-        "https://github.com/o/repo", runtime_app=SimpleNamespace(screen=SimpleNamespace())
+        "https://github.com/o/repo",
+        runtime_app=SimpleNamespace(screen=SimpleNamespace()),
     )
     assert coordinator.claim_candidate("skills/a") is True
     owner = asyncio.create_task(
@@ -482,9 +490,7 @@ async def test_candidate_cancel_reuses_unchanged_private_signed_url(monkeypatch)
     raw = "https://example.com/PATH-SECRET.zip?token=QUERY-SECRET"
     coordinator.open_draft()
     assert coordinator.claim(raw)
-    await coordinator.run(
-        raw, runtime_app=SimpleNamespace(screen=SimpleNamespace())
-    )
+    await coordinator.run(raw, runtime_app=SimpleNamespace(screen=SimpleNamespace()))
     safe_receipt = repr(coordinator.snapshot)
     assert "PATH-SECRET" not in safe_receipt
     assert "QUERY-SECRET" not in safe_receipt
@@ -525,15 +531,15 @@ async def test_edit_after_candidate_cancel_replaces_private_signed_url(monkeypat
 
     assert coordinator.update_draft_path(edited)
     assert coordinator.claim(edited)
-    await coordinator.run(
-        edited, runtime_app=SimpleNamespace(screen=SimpleNamespace())
-    )
+    await coordinator.run(edited, runtime_app=SimpleNamespace(screen=SimpleNamespace()))
 
     assert inspected == [original, edited]
 
 
 @pytest.mark.asyncio
-async def test_local_multi_skill_folder_requires_choice_and_imports_only_selected(tmp_path):
+async def test_local_multi_skill_folder_requires_choice_and_imports_only_selected(
+    tmp_path,
+):
     source = tmp_path / "repository"
     for relative in ("skills/a", "skills/b"):
         skill_dir = source / relative
@@ -718,9 +724,9 @@ async def test_candidate_modal_replays_when_inspection_finishes_while_away(
             screen = _active_library_screen(host)
             await _wait_for_library_shell(screen, pilot)
             await _open_skills_import_row(screen, pilot)
-            screen.query_one("#library-skills-import-path", Input).value = (
-                "https://github.com/o/repo"
-            )
+            screen.query_one(
+                "#library-skills-import-path", Input
+            ).value = "https://github.com/o/repo"
             await pilot.pause()
             screen.query_one("#library-skills-import-run", Button).press()
             assert await asyncio.to_thread(started.wait, 5)
@@ -757,8 +763,8 @@ async def test_replacement_library_hydrates_pending_candidate_modal(tmp_path):
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         original = _active_library_screen(host)
         await _wait_for_library_shell(original, pilot)
-        coordinator = library_skill_import_controller.ensure_library_skill_import_coordinator(
-            app
+        coordinator = (
+            library_skill_import_controller.ensure_library_skill_import_coordinator(app)
         )
         package = _multi_package()
         coordinator._pending_package = package
@@ -1051,9 +1057,7 @@ async def test_coordinator_settles_accepted_import_before_consuming_cancellation
     monkeypatch.setattr(coordinator, "_import", blocked_import)
     coordinator.open_draft()
     assert coordinator.claim("/accepted") is True
-    worker = asyncio.create_task(
-        coordinator.run("/accepted", runtime_app=runtime_app)
-    )
+    worker = asyncio.create_task(coordinator.run("/accepted", runtime_app=runtime_app))
     await started.wait()
 
     worker.cancel()
@@ -1173,9 +1177,7 @@ async def test_coordinator_repeated_outer_cancellation_waits_for_one_outcome(
             )
         )
     )
-    owner = asyncio.create_task(
-        coordinator.run("/accepted", runtime_app=runtime_app)
-    )
+    owner = asyncio.create_task(coordinator.run("/accepted", runtime_app=runtime_app))
     await started.wait()
 
     try:
@@ -1278,7 +1280,9 @@ async def test_skill_import_is_single_flight_across_every_route_and_navigation(
             await _wait_for_library_shell(screen, pilot)
             screen.query_one("#library-row-browse-skills", Button).press()
             await _wait_for_selector(screen, pilot, "#library-skills-import")
-            await screen.handle_library_skills_import(SimpleNamespace(stop=lambda: None))
+            await screen.handle_library_skills_import(
+                SimpleNamespace(stop=lambda: None)
+            )
             await _wait_for_selector(screen, pilot, "#library-skills-import-path")
             path_input = screen.query_one("#library-skills-import-path", Input)
             path_input.value = str(import_value)
@@ -1327,9 +1331,7 @@ async def test_skill_import_is_single_flight_across_every_route_and_navigation(
 
             screen.query_one("#library-row-browse-skills", Button).press()
             await _wait_for_selector(screen, pilot, "#library-skills-import-path")
-            status = str(
-                screen.query_one("#library-skills-import-status").renderable
-            )
+            status = str(screen.query_one("#library-skills-import-status").renderable)
             assert (
                 status
                 == f'Imported "{expected_name}" · re-review it in the trust panel'
@@ -1377,9 +1379,9 @@ async def test_routed_library_replacement_observes_and_refuses_app_owned_import(
             original_screen = _active_library_screen(host)
             await _wait_for_library_shell(original_screen, pilot)
             await _open_skills_import_row(original_screen, pilot)
-            original_screen.query_one(
-                "#library-skills-import-path", Input
-            ).value = str(source)
+            original_screen.query_one("#library-skills-import-path", Input).value = str(
+                source
+            )
             await pilot.pause()
             original_screen.query_one("#library-skills-import-run", Button).press()
             assert await asyncio.to_thread(started.wait, 5)
@@ -1398,9 +1400,7 @@ async def test_routed_library_replacement_observes_and_refuses_app_owned_import(
             )
             assert isinstance(skills_row, Button)
             skills_row.press()
-            await _wait_for_selector(
-                replacement, pilot, "#library-skills-import-path"
-            )
+            await _wait_for_selector(replacement, pilot, "#library-skills-import-path")
             for selector in (
                 "#library-skills-import-path",
                 "#library-skills-import-browse",
@@ -1456,9 +1456,7 @@ async def test_completed_import_receipt_survives_rail_departure_and_return(tmp_p
         screen.query_one("#library-skills-import-path", Input).value = str(source)
         await pilot.pause()
         screen.query_one("#library-skills-import-run", Button).press()
-        await _wait_for_skill_import_terminal(
-            screen, pilot, expected_status=expected
-        )
+        await _wait_for_skill_import_terminal(screen, pilot, expected_status=expected)
 
         assert screen.query_one("#library-row-browse-media", Button) is media_row
         media_row.press()
@@ -1581,9 +1579,9 @@ async def test_abandoned_picker_cannot_write_into_reopened_import_row(
         await callback(Path("/stale/SKILL.md"))
 
         assert screen._library_skills_import_path == "/new-draft"
-        assert screen.query_one(
-            "#library-skills-import-path", Input
-        ).value == "/new-draft"
+        assert (
+            screen.query_one("#library-skills-import-path", Input).value == "/new-draft"
+        )
 
 
 @pytest.mark.asyncio
@@ -1662,9 +1660,7 @@ async def test_import_skill_via_skill_md_file_path_derives_name_from_parent_dire
     host = LibraryHarness(app)
 
     skill_dir = tmp_path / "verification-before-completion"
-    shutil.copytree(
-        FIXTURES_DIR / "verification-before-completion", skill_dir
-    )
+    shutil.copytree(FIXTURES_DIR / "verification-before-completion", skill_dir)
     references_dir = skill_dir / "references"
     references_dir.mkdir()
     (references_dir / "note.md").write_text(

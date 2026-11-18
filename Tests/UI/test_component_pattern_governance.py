@@ -88,7 +88,9 @@ def _sheet_sources() -> dict[str, str]:
     for sub in ("core", "layout", "components", "features", "utilities"):
         sources.update((CSS / sub).glob("*.tcss"))
     return {
-        str(path.relative_to(CSS)): _COMMENT.sub("", path.read_text(encoding="utf-8"))
+        path.relative_to(CSS).as_posix(): _COMMENT.sub(
+            "", path.read_text(encoding="utf-8")
+        )
         for path in sorted(sources)
     }
 
@@ -183,9 +185,9 @@ def test_canonical_owning_sheets_are_bundled(request) -> None:
     """
     owners = sorted(set(_canonical().values()))
     missing = [sheet for sheet in owners if sheet not in CSS_MODULES]
-    assert not missing, (
-        f"Owning sheets missing from CSS_MODULES (build_css.py): {missing}"
-    )
+    assert (
+        not missing
+    ), f"Owning sheets missing from CSS_MODULES (build_css.py): {missing}"
 
 
 @private_profile_test
@@ -451,3 +453,34 @@ def test_pin_rejects_active_css_extension_without_writing_baseline(request, tmp_
     assert "components/active.css" in result.stderr
     assert "refusing to pin: raw numeric dimension literals" in result.stderr
     assert not (test_dir / "pattern_ratchet_baseline.json").exists()
+
+
+@private_profile_test
+def test_pin_accepts_token_definitions_and_token_backed_active_css(request, tmp_path):
+    test_dir = tmp_path / "Tests" / "UI"
+    test_dir.mkdir(parents=True)
+    for name in ("pin_pattern_ratchets.py", "python_style_inventory.py"):
+        shutil.copy(Path(__file__).parent / name, test_dir / name)
+    package = tmp_path / "tldw_chatbook"
+    css = package / "css"
+    (css / "core").mkdir(parents=True)
+    (css / "components").mkdir()
+    (package / "__init__.py").write_text("")
+    (css / "__init__.py").write_text("")
+    (css / "build_css.py").write_text(
+        'CSS_MODULES = ["core/_variables.tcss", "components/active.css"]\n'
+    )
+    (css / "core" / "_variables.tcss").write_text("$ds-control-height: 3;\n")
+    (css / "components" / "active.css").write_text(
+        "Widget { height: $ds-control-height; }\n"
+    )
+    result = subprocess.run(
+        [sys.executable, str(test_dir / "pin_pattern_ratchets.py")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(
+        (test_dir / "pattern_ratchet_baseline.json").read_text(encoding="utf-8")
+    ) == {"python_styles": {}}

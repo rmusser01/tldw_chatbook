@@ -1,5 +1,6 @@
 # Tests/Chunking/test_chunk_lib_shim.py
 """Chunk_Lib shim contract (spec §6.2): legacy signatures + flat output shape."""
+
 import pytest
 
 from tldw_chatbook.Chunking import Chunk_Lib
@@ -53,8 +54,9 @@ def test_flat_contract_top_level_offsets():
     chunks = Chunk_Lib.improved_chunking_process(
         "One two three four. Five six seven eight.", {"method": "words", "max_size": 2}
     )
-    assert all("start_char" in c and "end_char" in c for c in chunks), \
+    assert all("start_char" in c and "end_char" in c for c in chunks), (
         "offsets must be top-level for _persist_chunks"
+    )
     assert all(c["word_count"] > 0 for c in chunks)
 
 
@@ -64,8 +66,11 @@ def test_module_level_chunk_xml_restored():
 
 def test_exception_aliases():
     from tldw_chatbook.Chunking.engine import (
-        LanguageNotSupportedError, InvalidInputError, ChunkingError as EngineChunkingError,
+        LanguageNotSupportedError,
+        InvalidInputError,
+        ChunkingError as EngineChunkingError,
     )
+
     assert Chunk_Lib.LanguageDetectionError is LanguageNotSupportedError
     assert Chunk_Lib.MemoryLimitError is InvalidInputError
     assert Chunk_Lib.ChunkingError is EngineChunkingError
@@ -87,11 +92,16 @@ def test_tokens_no_silent_fallback():
     # legacy-parity overlap guard would raise first -- see
     # test_tokens_overlap_geq_max_size_raises -- masking the Q2 path.)
     from tldw_chatbook.Chunking.engine.strategies import tokens as tokens_mod
+
     monkeypatch_obj = pytest.MonkeyPatch()
     original = tokens_mod.TokenChunkingStrategy._resolve_tokenizer
+
     def fake_resolve(self):
         return tokens_mod.FallbackTokenizer("gpt2")
-    monkeypatch_obj.setattr(tokens_mod.TokenChunkingStrategy, "_resolve_tokenizer", fake_resolve)
+
+    monkeypatch_obj.setattr(
+        tokens_mod.TokenChunkingStrategy, "_resolve_tokenizer", fake_resolve
+    )
     try:
         with pytest.raises(Chunk_Lib.ChunkingError, match="tiktoken"):
             Chunk_Lib.improved_chunking_process(
@@ -99,7 +109,9 @@ def test_tokens_no_silent_fallback():
                 {"method": "tokens", "max_size": 3, "overlap": 0},
             )
     finally:
-        monkeypatch_obj.setattr(tokens_mod.TokenChunkingStrategy, "_resolve_tokenizer", original)
+        monkeypatch_obj.setattr(
+            tokens_mod.TokenChunkingStrategy, "_resolve_tokenizer", original
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -197,9 +209,7 @@ def test_rolling_summarize_provider_exception_raises():
     def failing_llm(payload):
         raise RuntimeError("provider down")
 
-    with pytest.raises(
-        Chunk_Lib.ChunkingError, match=r"failed for part 1"
-    ) as excinfo:
+    with pytest.raises(Chunk_Lib.ChunkingError, match=r"failed for part 1") as excinfo:
         Chunk_Lib.improved_chunking_process(
             _ROLLING_FAIL_TEXT,
             dict(_ROLLING_FAIL_OPTS),
@@ -218,9 +228,7 @@ def test_rolling_summarize_error_string_result_raises():
     def error_string_llm(payload):
         return "Error: summarization provider exploded"
 
-    with pytest.raises(
-        Chunk_Lib.ChunkingError, match=r"failed for part 1"
-    ) as excinfo:
+    with pytest.raises(Chunk_Lib.ChunkingError, match=r"failed for part 1") as excinfo:
         Chunk_Lib.improved_chunking_process(
             _ROLLING_FAIL_TEXT,
             dict(_ROLLING_FAIL_OPTS),
@@ -236,9 +244,7 @@ def test_rolling_summarize_non_string_result_raises():
     def non_string_llm(payload):
         return 123
 
-    with pytest.raises(
-        Chunk_Lib.ChunkingError, match=r"failed for part 1"
-    ) as excinfo:
+    with pytest.raises(Chunk_Lib.ChunkingError, match=r"failed for part 1") as excinfo:
         Chunk_Lib.improved_chunking_process(
             _ROLLING_FAIL_TEXT,
             dict(_ROLLING_FAIL_OPTS),
@@ -395,7 +401,7 @@ def test_flat_offsets_correct_for_overlapping_chunks():
         for word in chunk["text"].split():
             assert word in span_words, (
                 f"chunk {chunk['text']!r} mapped to span "
-                f"{text[chunk['start_char']:chunk['end_char']]!r}"
+                f"{text[chunk['start_char'] : chunk['end_char']]!r}"
             )
 
 
@@ -578,9 +584,7 @@ def test_propositions_no_llm_callback_heuristic_default():
         _PROPS_TEXT, {"method": "propositions", "max_size": 5}
     )
     assert default_chunks
-    assert all(
-        c["metadata"]["chunk_method"] == "propositions" for c in default_chunks
-    )
+    assert all(c["metadata"]["chunk_method"] == "propositions" for c in default_chunks)
 
 
 def test_propositions_adapter_via_chunker_chunk_text():
@@ -615,3 +619,133 @@ def test_propositions_adapter_via_chunker_chunk_text():
     assert chunker._engine.llm_call_func is None
     heuristic = chunker.chunk_text(_PROPS_TEXT, method="propositions")
     assert heuristic and all(isinstance(c, str) for c in heuristic)
+
+
+# === task-34392: the per-call Chunker pays no never-hit cache, and the
+# === offsets synthesis is skipped when chunks already carry offsets.
+
+
+def test_improved_chunking_process_constructs_cacheless_chunker(monkeypatch):
+    """task-34392: improved_chunking_process's Chunker instance is throwaway
+    (dies at end of call), so it must be built with the engine's result LRU
+    disabled -- a cache it can never hit again meant a guaranteed-miss get
+    plus a full deepcopy of the chunk corpus on every ingest."""
+    observed = {}
+    original_init = Chunk_Lib.Chunker.__init__
+
+    def spying_init(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        observed["enable_cache"] = kwargs.get("enable_cache")
+        observed["engine_cache"] = self._engine._cache
+
+    monkeypatch.setattr(Chunk_Lib.Chunker, "__init__", spying_init)
+
+    Chunk_Lib.improved_chunking_process(
+        "Alpha beta gamma. Delta epsilon.", {"method": "words", "max_size": 3}
+    )
+
+    assert observed["enable_cache"] is False
+    assert observed["engine_cache"] is None  # engine built no LRU at all
+
+
+def test_chunker_adapter_default_keeps_cache_enabled():
+    """Backward compat: every other Chunker caller keeps the engine LRU
+    (the kwarg defaults to True)."""
+    chunker = Chunk_Lib.Chunker(options={"method": "words"})
+    assert chunker._engine._cache is not None
+
+
+def test_has_consistent_flat_offsets_precedence():
+    """task-34392: the skip predicate mirrors the flat contract's own
+    consumption precedence (start_char/end_char, then start_offset/
+    end_offset) and requires 0 <= start < end <= len(text)."""
+    assert Chunk_Lib._has_consistent_flat_offsets(
+        {"text": "x", "metadata": {"start_char": 0, "end_char": 3}}, 10
+    )
+    assert Chunk_Lib._has_consistent_flat_offsets(
+        {"text": "x", "metadata": {"start_offset": 1, "end_offset": 4}}, 10
+    )
+    # Half a pair is not usable.
+    assert not Chunk_Lib._has_consistent_flat_offsets(
+        {"text": "x", "metadata": {"start_char": 0}}, 10
+    )
+    # Inverted or out-of-range spans fall back to synthesis.
+    assert not Chunk_Lib._has_consistent_flat_offsets(
+        {"text": "x", "metadata": {"start_char": 4, "end_char": 2}}, 10
+    )
+    assert not Chunk_Lib._has_consistent_flat_offsets(
+        {"text": "x", "metadata": {"start_char": 0, "end_char": 11}}, 10
+    )
+
+
+def test_pre_attached_offsets_skip_synthesis_output_identical(monkeypatch):
+    """task-34392: when every chunk carries consistent offsets the
+    synthesizer is never invoked, and the flat output equals the
+    synthesized run's (the pre-attached offsets are consumed verbatim).
+
+    Metadata dicts legitimately differ by the pre-attached offset keys
+    themselves (chunk metadata is merged into the output as-is), so those
+    keys are stripped before the byte-identical comparison."""
+    synth_calls = []
+    real_synthesize = Chunk_Lib._synthesize_flat_offsets
+
+    def recording_synthesize(text, chunk_texts):
+        synth_calls.append((text, list(chunk_texts)))
+        return real_synthesize(text, chunk_texts)
+
+    monkeypatch.setattr(Chunk_Lib, "_synthesize_flat_offsets", recording_synthesize)
+
+    text = "One two three four. Five six seven eight. Nine ten eleven twelve."
+    options = {"method": "words", "max_size": 4, "overlap": 1}
+
+    reference = Chunk_Lib.improved_chunking_process(text, options)
+    assert reference
+    assert synth_calls, "sanity: plain-string chunks take the synthesis path"
+    synth_calls.clear()
+
+    # Simulate a chunker that attached offsets itself: wrap chunk_text so
+    # each raw chunk becomes a dict carrying the reference offsets.
+    real_chunk_text = Chunk_Lib.Chunker.chunk_text
+
+    def offset_attaching_chunk_text(self, *args, **kwargs):
+        raw = real_chunk_text(self, *args, **kwargs)
+        assert len(raw) == len(reference)
+        return [
+            {
+                "text": chunk,
+                "metadata": {
+                    "start_char": ref["start_char"],
+                    "end_char": ref["end_char"],
+                },
+            }
+            for chunk, ref in zip(raw, reference)
+        ]
+
+    monkeypatch.setattr(
+        Chunk_Lib.Chunker, "chunk_text", offset_attaching_chunk_text
+    )
+    with_offsets = Chunk_Lib.improved_chunking_process(text, options)
+
+    assert synth_calls == []  # the redundant synthesis was skipped
+
+    def _strip_metadata_offsets(chunks):
+        stripped = []
+        for chunk in chunks:
+            metadata = {
+                k: v
+                for k, v in chunk["metadata"].items()
+                if k not in {"start_char", "end_char", "start_offset", "end_offset"}
+            }
+            stripped.append({**chunk, "metadata": metadata})
+        return stripped
+
+    assert _strip_metadata_offsets(with_offsets) == _strip_metadata_offsets(
+        reference
+    )
+    # And the pre-attached offsets themselves survive verbatim.
+    assert [c["start_char"] for c in with_offsets] == [
+        c["start_char"] for c in reference
+    ]
+    assert [c["end_char"] for c in with_offsets] == [
+        c["end_char"] for c in reference
+    ]

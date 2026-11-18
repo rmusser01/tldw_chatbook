@@ -1,0 +1,20 @@
+{"event": "ready", "label": "whole-mounted-chat", "pid": 34900, "time": 1793850732.311373}
+{"conversation": "7a1bc8c5-94f7-4273-ac87-83d7acc1a6f4", "event": "chat", "pid": 34900, "session": "5a290b8c-cb81-4afa-8170-a37ef1dc309f", "time": 1793850732.364573}
+{"event": "ready", "label": "named-chat-tab", "pid": 34900, "time": 1793850733.768425}
+{"base": "http://127.0.0.1:8010", "event": "native-provider", "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0", "pid": 34900, "provider": "llama_cpp", "ready": true, "time": 1793850733.927325}
+{"event": "ready", "label": "typed workflow command", "pid": 34900, "time": 1793850735.8078039}
+{"active": "5a290b8c-cb81-4afa-8170-a37ef1dc309f", "disabled": false, "event": "draft", "pid": 34900, "session": "5a290b8c-cb81-4afa-8170-a37ef1dc309f", "time": 1793850735.808288}
+{"event": "ready", "label": "#console-send-message", "pid": 34900, "time": 1793850735.809429}
+{"event": "clicked", "id": "#console-send-message", "pid": 34900, "region": [116, 52, 14, 1], "time": 1793850736.328632}
+{"event": "ready", "label": "setup", "pid": 34900, "time": 1793850736.3289988}
+{"event": "ready", "label": "#workflow-plan", "pid": 34900, "time": 1793850736.3857799}
+{"event": "clicked", "id": "#workflow-plan", "pid": 34900, "region": [80, 49, 43, 1], "time": 1793850736.591986}
+{"event": "ready", "label": "detail", "pid": 34900, "time": 1793850738.632494}
+{"begins_json": true, "content_length": 4074, "ends_json": true, "event": "completion", "finish": "stop", "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0", "pid": 34900, "reasoning_length": 0, "time": 1793850761.409077, "tool_names": [], "usage": {"completion_tokens": 1351, "completion_tokens_details": {"reasoning_tokens": 0}, "prompt_tokens": 3436, "prompt_tokens_details": {"cached_tokens": 0}, "total_tokens": 4787}}
+{"begins_json": true, "content_length": 4074, "ends_json": true, "event": "completion", "finish": "stop", "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0", "pid": 34900, "reasoning_length": 0, "time": 1793850761.412798, "tool_names": [], "usage": {"completion_tokens": 1351, "completion_tokens_details": {"reasoning_tokens": 0}, "prompt_tokens": 3436, "prompt_tokens_details": {"cached_tokens": 0}, "total_tokens": 4787}}
+{"begins_json": true, "content_length": 4074, "ends_json": true, "event": "completion", "finish": "stop", "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0", "pid": 34900, "reasoning_length": 0, "time": 1793850761.413085, "tool_names": [], "usage": {"completion_tokens": 1351, "completion_tokens_details": {"reasoning_tokens": 0}, "prompt_tokens": 3436, "prompt_tokens_details": {"cached_tokens": 0}, "total_tokens": 4787}}
+{"event": "ready", "label": "plan terminal", "pid": 34900, "time": 1793850762.479551}
+{"event": "plan-disposition", "pid": 34900, "plans": 1, "spend": {"child_launch": 0, "generation": 1, "model_call": 1, "tokens": 4787}, "status": "awaiting_phase_review", "time": 1793850762.479757, "workflow": "ba84ac8a-d3bc-4327-8b12-8cbdd07f130a"}
+{"event": "ready", "label": "detach clean review", "pid": 34900, "time": 1793850763.1257138}
+{"event": "detached", "phase": "diagnose", "pid": 34900, "time": 1793850763.1259}
+{"event": "creators-returned", "pid": 34900, "time": 1793850763.2985542}

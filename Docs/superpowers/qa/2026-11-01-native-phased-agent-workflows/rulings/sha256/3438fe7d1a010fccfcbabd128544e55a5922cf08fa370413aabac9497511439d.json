@@ -1,0 +1,24 @@
+{
+  "captured_at": "2026-11-05T02:54:05.287287+00:00",
+  "head": "81ec86d2c854795274557e1bdd4725a317e7ba2a",
+  "parent": "082f4f1227d55bc3d610c6066bd06886fa78e45e",
+  "exact5_commit_index_worktree_equal": true,
+  "cached61_c5_equal": true,
+  "protected279_equal": true,
+  "full13_support_original_frozen_equal": true,
+  "prior_fix_unmodified_paths_equal": [
+    "tldw_chatbook/Widgets/Console/console_workflow_status.py",
+    "tldw_chatbook/Agents/workflow_run_service.py",
+    "Tests/UI/test_console_workflow_controls.py"
+  ],
+  "fix1_review_equal": true,
+  "report_sha256": "e12376e0114ce1dcd7f37db71d9dd440ddfe03fc3769dae18bdb8874745e8323",
+  "report_full_bytes": 55626,
+  "read": "Root FULLread11052Bround2suffix; exact44574Bprefix previouslycovered/frozen",
+  "suffix_sha256": "84003fcc20468517c6452a77e3c8e02be26f5b3cdc8b5c8f45c85ff668ffcbd9",
+  "postcommit_manifest_sha256": "6c660f53ab13e379f95e7d0309cb4726a264f6d6d0a2a7c770ce67fbc68ef63c",
+  "scoped_package_sha256": "830a0e615690a545cd1af127e1257370c5400d34e544dfc7d8e089f234c2c613",
+  "scoped_package_bytes": 31216,
+  "native8323_maps_tests_static": "writer-attributed, no root native/test rerun",
+  "gate": "scopedfix2independentre-reviewpending"
+}

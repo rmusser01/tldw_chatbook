@@ -13,8 +13,9 @@ def normalize_artifact_type(artifact_type: Any) -> str:
     if not isinstance(artifact_type, str) or artifact_type not in {
         "prompt",
         "recipe",
+        "mixin",
     }:
-        raise ValueError("artifact_type must be either 'prompt' or 'recipe'.")
+        raise ValueError("artifact_type must be 'prompt', 'recipe', or 'mixin'.")
     return artifact_type
 
 

@@ -542,10 +542,18 @@ class WorkspaceCreateModal(
             self._error = (
                 f"Created {self._created_workspace_name}. Retry the failed folders "
                 "or keep the workspace with its successful bindings.\n"
-                + "\n".join(f"{folder}: {message}" for folder, message in failed)
+                # TASK-41142: most binding errors already name the folder.
+                + "\n".join(
+                    message if folder in message else f"{folder}: {message}"
+                    for folder, message in failed
+                )
             )
             self._stash_form_state()
-            self.run_worker(self._show_binding_retry(), exclusive=True)
+            self.run_worker(
+                self._show_binding_retry(),
+                exclusive=True,
+                group="workspace-create-binding-retry",
+            )
             return
         self._bound_folders = all_bound
         self._failed_folder_messages = {}
@@ -573,7 +581,10 @@ class WorkspaceCreateModal(
         if not confirms:
             return
         retry = confirms.first(Button)
-        retry.focus()
+        # TASK-40318: the reveal below owns the scroll. Textual's own focus
+        # scroll is animated, aims before the error's final layout, and kept
+        # running after the reveal, stopping one row short at 80x24.
+        retry.focus(scroll_visible=False)
         self._error_origin = retry
         self.call_after_refresh(self._reveal_error)
 

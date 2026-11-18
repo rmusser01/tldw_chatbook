@@ -525,9 +525,7 @@ class DirectoryNavigation(OptionList):
         try:
             for entry in self._location.iterdir():
                 if is_dir(entry) or (is_file(entry) and self.show_files):
-                    entries.append(
-                        DirectoryEntry(self._location / entry.name, styles)
-                    )
+                    entries.append(DirectoryEntry(self._location / entry.name, styles))
                 if worker.is_cancelled:
                     return
         except PermissionError:
@@ -560,7 +558,7 @@ class DirectoryNavigation(OptionList):
     def _watch_file_filter(self) -> None:
         """Refresh the display when the file filter has been changed."""
         self._repopulate_display()
-    
+
     def _watch_search_filter(self) -> None:
         """Refresh the display when the search filter has been changed."""
         self._repopulate_display()

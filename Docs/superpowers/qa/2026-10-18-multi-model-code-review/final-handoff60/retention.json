@@ -1,0 +1,11 @@
+{
+  "archive_path": "/Users/macbook-dev/.codex/artifacts/task-35582-bounded-recovery/final-handoff60-evidence.tar.gz",
+  "archive_sha256": "31a64713e88495b5b1fa8460b5234277c8407305d568a699c97615e8a2bd0166",
+  "archive_bytes": 910401,
+  "member_count": 163,
+  "source_packet": "/private/tmp/task35582-final-handoff60/attempt-r72ljq_g",
+  "retained": "Reviewed runner, immutable authority and CI receipts, observer and transport packets, report observations, outcome review, CI diagnosis and fresh read-only SQLite backups.",
+  "excluded": "Temporary home/configuration, caches and generated source Git metadata; original packet remains untouched.",
+  "credential_scan": "No configured provider-key bytes in retained files.",
+  "sqlite_snapshots": "SQLite backup API from read-only source connections after the runner exited; original manifest preserved separately."
+}

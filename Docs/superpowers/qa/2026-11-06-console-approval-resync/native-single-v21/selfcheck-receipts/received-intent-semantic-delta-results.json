@@ -1,0 +1,77 @@
+{
+  "scope": "QA-only received-intent successor; pure controlled fixture delegation plus stock-owner source contracts; no App/product imports/GUI/live settlement/qualification",
+  "historical_packet_revision": "f66a2b49fff0b2cd218f21ff31215f062b6e9711",
+  "historical_protocol_SHA256": "4b6a2b1e17b9f83a31b8fad50fbeac6f8f6ab69a5148bd09330079e5d64af923",
+  "historical_manifest_SHA256": "52fd53b0442642bdf64d4b5f8094da348c835ca85fae2af430cff2f89798567d",
+  "final_control_SHA256": "94725e0598bc155ecbcc4beb33f1b0d3315621a1660475777313b863b3647029",
+  "historical_direct_submit_RED_exit": 1,
+  "release_contract_RED": "Clearing task/store/received_intent raised AttributeError; matching control and provisional source retained privately; export included.",
+  "final_GREEN_controls": 28,
+  "existing_pure_checks": [
+    {
+      "file": "check_visible_send_route.py",
+      "returncode": 0
+    },
+    {
+      "file": "check_stage_watchdog.py",
+      "returncode": 0
+    },
+    {
+      "file": "check_preparation_clock.py",
+      "returncode": 0
+    },
+    {
+      "file": "check_series_method.py",
+      "returncode": 0
+    },
+    {
+      "file": "check_series_spool.py",
+      "returncode": 0
+    },
+    {
+      "file": "check_workload_script_protocol.py",
+      "returncode": 0
+    },
+    {
+      "file": "check_qualification_freeze.py",
+      "returncode": 0
+    },
+    {
+      "file": "check_diagnostic_policy.py",
+      "returncode": 0
+    },
+    {
+      "file": "ruff ['format', '--check']",
+      "returncode": 0
+    },
+    {
+      "file": "ruff ['check', '--no-cache']",
+      "returncode": 0
+    }
+  ],
+  "AST_files": 20,
+  "unchanged_boundaries": {
+    "native_bootstrap.py_bytes_unchanged": true,
+    "native_window_api.py_bytes_unchanged": true,
+    "owned_roi_capture.py_bytes_unchanged": true,
+    "qa_process_guard.py_bytes_unchanged": true,
+    "native_series_method.py_bytes_unchanged": true,
+    "exact-pixel-refs.json_bytes_unchanged": true,
+    "approval_fixture_driver.py_bytes_unchanged": true,
+    "common_activity_observer.py_bytes_unchanged": true,
+    "native_product_observer.py:run_round_AST_unchanged": true,
+    "native_product_observer.py:capture_AST_unchanged": true,
+    "native_product_observer.py:persist_image_AST_unchanged": true,
+    "native_product_observer.py:validate_AST_unchanged": true,
+    "native_product_observer.py:await_observed_review_AST_unchanged": true,
+    "native_product_child.py:StageWatchdog_AST_unchanged": true,
+    "native_product_child.py:command_AST_unchanged": true,
+    "native_product_child.py:process_message_AST_unchanged": true,
+    "native_rehearsal_observation.py:bounded_value_AST_unchanged": true,
+    "native_rehearsal_observation.py:emit_AST_unchanged": true,
+    "native_rehearsal_observation.py:poll_AST_unchanged": true,
+    "native_rehearsal_observation.py:_poll_AST_unchanged": true
+  },
+  "qualified": false,
+  "product_samples": 0
+}

@@ -88,12 +88,18 @@ async def main():
     t0 = time.perf_counter()
     outcome = await run_library_rag_search(app, request)
     first = time.perf_counter() - t0
-    print(f"FIRST QUERY: {first:.2f}s status={outcome.status} rows={len(outcome.results)}", flush=True)
+    print(
+        f"FIRST QUERY: {first:.2f}s status={outcome.status} rows={len(outcome.results)}",
+        flush=True,
+    )
 
     t1 = time.perf_counter()
     outcome2 = await run_library_rag_search(app, request)
     second = time.perf_counter() - t1
-    print(f"SECOND QUERY: {second:.2f}s status={outcome2.status} rows={len(outcome2.results)}", flush=True)
+    print(
+        f"SECOND QUERY: {second:.2f}s status={outcome2.status} rows={len(outcome2.results)}",
+        flush=True,
+    )
 
 
 asyncio.run(main())

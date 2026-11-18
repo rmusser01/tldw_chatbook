@@ -1,0 +1,175 @@
+"""Exercise the original readiness gate with a real native-lock replay."""
+
+import asyncio
+import inspect
+import os
+import threading
+import time
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def queued_native_refresh(request, monkeypatch):
+    from Tests.private_profile import is_private_profile_child
+
+    if not is_private_profile_child(request):
+        yield
+        return
+
+    from tldw_chatbook import config
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+    from Tests.UI import test_console_mcp_approval as helpers
+
+    original_ready = helpers._wait_for_production_console_ready
+    original_next = ChatScreen.call_next
+    original_sync = ChatScreen._sync_console_rail_and_controls
+    original_full = ChatScreen._sync_native_console_chat_ui
+    original_replay = ChatScreen._run_coalesced_control_bar_sync
+    release = threading.Event()
+    held = threading.Event()
+    expired = threading.Event()
+    owner = None
+    watchdog = None
+    release_timer = None
+    armed = False
+    projecting = False
+    deferred = False
+    coalesced = False
+    replayed = False
+    pending_worker = False
+
+    async def full(screen):
+        nonlocal pending_worker
+        if (
+            os.environ.get("PR3034_PROBE_MODE") == "worker"
+            and coalesced
+            and release.is_set()
+            and not pending_worker
+        ):
+            from textual.worker import get_current_worker
+
+            worker = get_current_worker()
+            assert worker.node is screen and worker.group == "console-sync"
+            assert not worker.is_finished
+            assert not screen._console_sync_in_progress
+            assert not screen._console_sync_requested
+            assert not screen._console_control_bar_replay_whole_sync
+            assert not screen._console_control_bar_sync_scheduled
+            pending_worker = True
+            gate = asyncio.Event()
+            asyncio.get_running_loop().call_later(0.3, gate.set)
+            print("PR3034 probe: real replay Worker pending with all four flags clear", flush=True)
+            await gate.wait()
+        return await original_full(screen)
+
+    def replay(screen):
+        if os.environ.get("PR3034_PROBE_MODE") == "stuck" and coalesced:
+            print("PR3034 probe: actual trailing replay frozen; native lock still released", flush=True)
+            return
+        return original_replay(screen)
+
+    def sync(screen):
+        nonlocal owner, watchdog, deferred, replayed
+        if projecting and owner is None:
+            lock = config._settings_rebuild_lock()
+
+            def hold():
+                with lock:
+                    held.set()
+                    release.wait()
+
+            def expire():
+                if not release.is_set():
+                    expired.set()
+                    release.set()
+
+            owner = threading.Thread(target=hold)
+            owner.start()
+            assert held.wait(2), "Native holder did not acquire REBUILD"
+            watchdog = threading.Timer(4, expire)
+            watchdog.start()
+        result = original_sync(screen)
+        if projecting:
+            assert result is False
+            assert not release.is_set()
+            assert screen._console_control_bar_sync_scheduled
+            deferred = True
+            print("PR3034 probe: actual REBUILD held; original rail sync deferred", flush=True)
+        elif deferred and release.is_set() and result is True:
+            replayed = True
+            print("PR3034 probe: installed whole-sync replay rendered after release", flush=True)
+        return result
+
+    def call_next(screen, callback, *args, **kwargs):
+        nonlocal release_timer
+        caller = inspect.currentframe().f_back.f_code.co_name
+        if caller != "_wait_for_production_console_ready" or not coalesced:
+            return original_next(screen, callback, *args, **kwargs)
+
+        def pending_projection():
+            nonlocal release_timer
+            assert deferred and screen._console_sync_requested
+            release_timer = threading.Timer(0.1, release.set)
+            release_timer.start()
+            callback(*args, **kwargs)
+
+        return original_next(screen, pending_projection)
+
+    async def ready_after_coalesced_sync(app, pilot):
+        nonlocal armed, projecting, coalesced
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            screen = app.screen
+            if (
+                isinstance(screen, ChatScreen)
+                and screen._console_attach_reconciled
+                and screen._console_visible_draft_session_id is not None
+                and screen._console_chat_controller is not None
+                and not screen._console_setup_modal_blocking()
+                and not screen._console_sync_in_progress
+                and not screen._console_sync_requested
+                and not getattr(screen, "_console_control_bar_replay_whole_sync", False)
+                and not getattr(screen, "_console_control_bar_sync_scheduled", False)
+            ):
+                break
+            await asyncio.sleep(0.01)
+        else:
+            raise AssertionError("Original startup did not settle before native-lock probe")
+        assert not screen._console_sync_in_progress
+        assert not screen._console_sync_requested
+        assert not getattr(screen, "_console_control_bar_replay_whole_sync", False)
+        assert not getattr(screen, "_console_control_bar_sync_scheduled", False)
+        armed = True
+        projecting = True
+        try:
+            await screen._sync_native_console_chat_ui()
+        finally:
+            projecting = False
+        assert deferred and screen._console_control_bar_replay_whole_sync
+        assert not screen._console_sync_in_progress
+        await screen._sync_native_console_chat_ui()
+        assert screen._console_sync_requested
+        coalesced = True
+        print("PR3034 probe: real second sync coalesced; requested=True before original gate", flush=True)
+        result = await original_ready(app, pilot)
+        assert replayed, "Readiness returned before the installed whole-sync replay"
+        return result
+
+    monkeypatch.setattr(ChatScreen, "call_next", call_next)
+    monkeypatch.setattr(ChatScreen, "_sync_console_rail_and_controls", sync)
+    monkeypatch.setattr(ChatScreen, "_sync_native_console_chat_ui", full)
+    monkeypatch.setattr(ChatScreen, "_run_coalesced_control_bar_sync", replay)
+    monkeypatch.setattr(helpers, "_wait_for_production_console_ready", ready_after_coalesced_sync)
+    try:
+        yield
+    finally:
+        for timer in (watchdog, release_timer):
+            if timer is not None:
+                timer.cancel()
+        release.set()
+        if owner is not None:
+            owner.join(2)
+            assert not owner.is_alive()
+        assert armed and deferred and coalesced and not expired.is_set()
+        print(f"PR3034 probe: holder retired cleanly; real installed replay={replayed}", flush=True)

@@ -1,0 +1,25 @@
+{
+  "command": [
+    "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-m",
+    "pytest",
+    "Tests/Chat/test_console_interrupt_rounds.py::test_run_round_cancelled_calls_on_cancelled",
+    "Tests/Chat/test_console_interrupt_rounds.py::test_revoke_for_run_sweeps_only_the_named_kinds_and_run",
+    "Tests/Chat/test_console_interrupt_rounds.py::test_on_teardown_true_keeps_the_payload_parked",
+    "Tests/Agents/test_project_index_tool.py::test_exact_review_call_is_consumed_once_and_never_persisted",
+    "Tests/Agents/test_project_index_tool.py::test_conditional_review_remains_exact_when_read_becomes_allowed",
+    "Tests/Chat/test_console_local_citation_boundary.py::test_prepend_evidence_context_preserves_multimodal_parts_and_input",
+    "Tests/Chat/test_console_skill_substitution.py::test_evidence_prefix_preserves_host_plugin_budget_without_markers",
+    "-q",
+    "--tb=short",
+    "--show-capture=no",
+    "--no-showlocals"
+  ],
+  "cwd": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui",
+  "temp": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase",
+  "profile": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\ci-ratchet-profile-interrupt",
+  "started_unix": 1792654075.0151646,
+  "elapsed_seconds": 41.00964975357056,
+  "exit_code": 0,
+  "timed_out": false
+}

@@ -18,7 +18,8 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from multiprocessing.connection import Connection
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 from tldw_chatbook.Utils.fd_protection import protect_file_descriptors
 from .contracts import (
@@ -33,6 +34,9 @@ from .executor_process_tree import (
     ProcessContainmentError,
     WorkerContainmentIdentity,
 )
+
+if TYPE_CHECKING:
+    from .failure_diagnostics import STTFailureDiagnostic
 
 _MAX_RECOVERY_ACTIONS = 8
 _MAX_RECOVERY_ACTION_LENGTH = 80
@@ -208,13 +212,27 @@ class ModelIdentity:
 
 
 @dataclass(frozen=True, slots=True)
+class URLIngestSource:
+    """An unchanged Library HTTP(S) source, still subject to parse egress checks."""
+
+    url: str = field(repr=False)
+
+    def __post_init__(self) -> None:
+        if type(self.url) is not str:
+            raise TypeError("url must be a string")
+        parsed = urlsplit(self.url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("url must have an HTTP(S) scheme and authority")
+
+
+@dataclass(frozen=True, slots=True)
 class ExecutorRequest:
     """One heavy batch request sent to a specific executor generation."""
 
     generation: int
     attempt_id: str
     job_id: str | None
-    source: FileAudioSource | BufferAudioSource = field(repr=False)
+    source: FileAudioSource | BufferAudioSource | URLIngestSource = field(repr=False)
     identity: ModelIdentity
     options: dict[str, Any] = field(repr=False)
     segment_end_frames: tuple[int, ...] = ()
@@ -227,8 +245,10 @@ class ExecutorRequest:
         _require_generation_and_attempt(self.generation, self.attempt_id)
         if self.job_id is not None:
             _require_nonempty_text("job_id", self.job_id)
-        if type(self.source) not in (FileAudioSource, BufferAudioSource):
-            raise TypeError("source must be a FileAudioSource or BufferAudioSource")
+        if type(self.source) not in (FileAudioSource, BufferAudioSource, URLIngestSource):
+            raise TypeError("source must be a file, buffer, or URL ingest source")
+        if type(self.source) is URLIngestSource and self.job_id is None:
+            raise ValueError("URL ingest sources require a Library job ID")
         if self.segment_end_frames:
             if type(self.source) is not BufferAudioSource:
                 raise ValueError("segment_end_frames require a buffer source")
@@ -357,6 +377,7 @@ class ExecutorFailure:
     failed_attempt: dict[str, Any] | None = field(default=None, repr=False)
     device_failure_origin: DeviceFailureOrigin | None = None
     failed_device: ExecutionDevice | None = None
+    diagnostic: STTFailureDiagnostic | None = None
 
     def __post_init__(self) -> None:
         _require_generation_and_attempt(self.generation, self.attempt_id)
@@ -385,6 +406,11 @@ class ExecutorFailure:
             and type(self.failed_device) is not ExecutionDevice
         ):
             raise TypeError("failed_device must be an ExecutionDevice")
+        if self.diagnostic is not None:
+            from .failure_diagnostics import STTFailureDiagnostic
+
+            if type(self.diagnostic) is not STTFailureDiagnostic:
+                raise TypeError("diagnostic must be an STTFailureDiagnostic")
 
 
 class _AttemptTerminalGuard:
@@ -534,7 +560,7 @@ class LocalSTTExecutor:
         *,
         attempt_id: str,
         job_id: str | None,
-        source: FileAudioSource | BufferAudioSource,
+        source: FileAudioSource | BufferAudioSource | URLIngestSource,
         identity: ModelIdentity,
         options: dict[str, Any],
         segment_end_frames: tuple[int, ...] = (),
@@ -1131,6 +1157,7 @@ __all__ = [
     "LocalSourceSnapshot",
     "LocalSTTExecutor",
     "ModelIdentity",
+    "URLIngestSource",
     "WorkerPhase",
     "snapshot_local_source",
     "validate_local_source_snapshot",

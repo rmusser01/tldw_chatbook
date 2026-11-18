@@ -1,0 +1,71 @@
+{
+  "source_commit": "cd068fadb3e0c37f9573ebeca81a2bf47604aa66",
+  "capture_mode": "off",
+  "library_entry": "rag_only",
+  "model_requests": 4,
+  "http_statuses": [
+    200,
+    200,
+    200,
+    200
+  ],
+  "model_tool_calls": [
+    [
+      "search_archived_conversations"
+    ],
+    [],
+    [
+      "request_conversation_restore"
+    ],
+    []
+  ],
+  "followup_handoffs": [
+    [],
+    [],
+    [
+      {
+        "omitted_pages": 0,
+        "pages": 1,
+        "rows": 3
+      }
+    ],
+    [
+      {
+        "omitted_pages": 0,
+        "pages": 1,
+        "rows": 3
+      }
+    ]
+  ],
+  "primary_runs": [
+    {
+      "status": "done",
+      "agent_kind": "primary",
+      "parent_run_id": null
+    },
+    {
+      "status": "done",
+      "agent_kind": "primary",
+      "parent_run_id": null
+    }
+  ],
+  "original_conversation_count": 3,
+  "original_messages": 6,
+  "original_ids_messages_leaf_versions_unchanged": true,
+  "atlas_workspace_restored_once": true,
+  "all_workspace_archive_fields_unchanged_after_restore": true,
+  "active_workspace_after_explicit_Open": "atlas",
+  "normal_fingerprints_unchanged": true,
+  "index_or_embedding_paths": [],
+  "native_quit_completed": true,
+  "tmux_session_absent": true,
+  "source_and_unrelated_drafts_native_preserved": true,
+  "drafts_not_sent": true,
+  "post_quit_read_method": "closed-file scratch copies including available WAL/SHM; no writes to source stores",
+  "verification_script_corrections": [
+    "nonexistent default workspace key replaced with dynamic comparison",
+    "after-Open workspace comparison excludes the expected active workspace transition"
+  ],
+  "post_quit_read_limitation": "direct read-only workspace open failed after shutdown; used closed-file scratch copy",
+  "quit_confirmation": "no additional modal; idle native Ctrl+Q exited immediately"
+}

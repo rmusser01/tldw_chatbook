@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="2" time="19.386" timestamp="2026-11-04T20:29:44.563205-08:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.Chat.test_workflow_native_journeys" name="test_original_workflow_hook_validation_preserves_capture_return[overlap]" time="9.573"><failure message="AssertionError: python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py&quot;, line 691, in run_until_complete&#10;      return future.result()&#10;             ^^^^^^^^^^^^^^^&#10;    File &quot;/Users/macbook-dev/Documents/GitHub/tldw_chatbook/Tests/Chat/test_workflow_native_journeys.py&quot;, line 525, in hook_validation_journey&#10;      await rig.close()&#10;    File &quot;/Users/macbook-dev/Documents/GitHub/tldw_chatbook/Tests/Chat/workflow_rig.py&quot;, line 186, in close&#10;      assert self.runtime.execution_capacity.snapshot().executions == ()&#10;             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py&quot;, line 1906, in execution_capacity&#10;      return self._get_execution_capacity()&#10;             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py&quot;, line 1949, in _get_execution_capacity&#10;      raise RuntimeError(&quot;runtime capacity is disposed&quot;)&#10;  RuntimeError: runtime capacity is disposed&#10;  &#10;assert 1 == 0&#10; +  where 1 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python', '-X', 'utf8', '-c', '\nim...hook_validation_journey(Path(os.environ[&quot;XDG_DATA_HOME&quot;]).parent, sys.argv[1]))\n', 'overlap', 'native'], returncode=1).returncode">Tests/Chat/test_workflow_native_journeys.py:538: in test_original_workflow_hook_validation_preserves_capture_return
+    _run(tmp_path, mode, "native", script=script, timeout=40)
+Tests/Backup_Recovery/test_home_citation_retirement.py:332: in _run
+    assert result.returncode == 0, stderr[-6000:] + stdout[-1000:]
+E   AssertionError: python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+E         return future.result()
+E                ^^^^^^^^^^^^^^^
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/Tests/Chat/test_workflow_native_journeys.py", line 525, in hook_validation_journey
+E         await rig.close()
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/Tests/Chat/workflow_rig.py", line 186, in close
+E         assert self.runtime.execution_capacity.snapshot().executions == ()
+E                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py", line 1906, in execution_capacity
+E         return self._get_execution_capacity()
+E                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py", line 1949, in _get_execution_capacity
+E         raise RuntimeError("runtime capacity is disposed")
+E     RuntimeError: runtime capacity is disposed
+E     
+E   assert 1 == 0
+E    +  where 1 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python', '-X', 'utf8', '-c', '\nim...hook_validation_journey(Path(os.environ["XDG_DATA_HOME"]).parent, sys.argv[1]))\n', 'overlap', 'native'], returncode=1).returncode</failure></testcase><testcase classname="Tests.Chat.test_workflow_native_journeys" name="test_original_workflow_hook_validation_preserves_capture_return[event]" time="9.303"><failure message="AssertionError: python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py&quot;, line 691, in run_until_complete&#10;      return future.result()&#10;             ^^^^^^^^^^^^^^^&#10;    File &quot;/Users/macbook-dev/Documents/GitHub/tldw_chatbook/Tests/Chat/test_workflow_native_journeys.py&quot;, line 525, in hook_validation_journey&#10;      await rig.close()&#10;    File &quot;/Users/macbook-dev/Documents/GitHub/tldw_chatbook/Tests/Chat/workflow_rig.py&quot;, line 186, in close&#10;      assert self.runtime.execution_capacity.snapshot().executions == ()&#10;             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py&quot;, line 1906, in execution_capacity&#10;      return self._get_execution_capacity()&#10;             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py&quot;, line 1949, in _get_execution_capacity&#10;      raise RuntimeError(&quot;runtime capacity is disposed&quot;)&#10;  RuntimeError: runtime capacity is disposed&#10;  &#10;assert 1 == 0&#10; +  where 1 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python', '-X', 'utf8', '-c', '\nim...n(hook_validation_journey(Path(os.environ[&quot;XDG_DATA_HOME&quot;]).parent, sys.argv[1]))\n', 'event', 'native'], returncode=1).returncode">Tests/Chat/test_workflow_native_journeys.py:538: in test_original_workflow_hook_validation_preserves_capture_return
+    _run(tmp_path, mode, "native", script=script, timeout=40)
+Tests/Backup_Recovery/test_home_citation_retirement.py:332: in _run
+    assert result.returncode == 0, stderr[-6000:] + stdout[-1000:]
+E   AssertionError: python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+E         return future.result()
+E                ^^^^^^^^^^^^^^^
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/Tests/Chat/test_workflow_native_journeys.py", line 525, in hook_validation_journey
+E         await rig.close()
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/Tests/Chat/workflow_rig.py", line 186, in close
+E         assert self.runtime.execution_capacity.snapshot().executions == ()
+E                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py", line 1906, in execution_capacity
+E         return self._get_execution_capacity()
+E                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py", line 1949, in _get_execution_capacity
+E         raise RuntimeError("runtime capacity is disposed")
+E     RuntimeError: runtime capacity is disposed
+E     
+E   assert 1 == 0
+E    +  where 1 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python', '-X', 'utf8', '-c', '\nim...n(hook_validation_journey(Path(os.environ["XDG_DATA_HOME"]).parent, sys.argv[1]))\n', 'event', 'native'], returncode=1).returncode</failure></testcase></testsuite></testsuites>

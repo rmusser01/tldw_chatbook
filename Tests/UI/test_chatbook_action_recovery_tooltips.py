@@ -118,11 +118,11 @@ async def test_chatbook_delete_selected_opens_confirmation_with_delete_labels(tm
             self.config_data = {}
             self.notify = Mock()
             self.pushed_screen = None
-            self.wait_for_dismiss = None
 
-        async def push_screen(self, screen, wait_for_dismiss=False):
+        # Only the shielded wait exists here (TASK-39146): a bare
+        # push_screen(..., wait_for_dismiss=True) would raise AttributeError.
+        async def push_screen_wait(self, screen):
             self.pushed_screen = screen
-            self.wait_for_dismiss = wait_for_dismiss
             return False
 
     app = ManagementApp()
@@ -141,7 +141,6 @@ async def test_chatbook_delete_selected_opens_confirmation_with_delete_labels(tm
     await window._delete_selected()
 
     assert isinstance(app.pushed_screen, ConfirmationDialog)
-    assert app.wait_for_dismiss is True
     assert app.pushed_screen.confirm_label == "Delete"
     assert app.pushed_screen.cancel_label == "Cancel"
 

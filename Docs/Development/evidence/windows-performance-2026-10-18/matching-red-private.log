@@ -1,0 +1,90 @@
+Fixture root: C:\Users\GDesktop-1\.tmp-windows-matching-tests-436jqu0l
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+FFF                                                                      [100%]
+================================== FAILURES ===================================
+_______ test_absent_type_and_unrelated_alternative_do_not_reach_matcher _______
+
+    def test_absent_type_and_unrelated_alternative_do_not_reach_matcher():
+        parent = Vertical()
+        button = Button()
+        button._attach(parent)
+        _, rules = _rules(
+            "MissingScreen Button { color: red; } "
+            "#unrelated, MissingScreen Button { color: blue; } "
+            "Vertical Button { color: green; }",
+            button,
+        )
+>       assert [rule.selectors for rule in rules] == ["Vertical Button"]
+E       AssertionError: assert ['MissingScre...tical Button'] == ['Vertical Button']
+E
+E         At index 0 diff: 'MissingScreen Button' != 'Vertical Button'
+E         Left contains 2 more items, first extra item: '#unrelated, MissingScreen Button'
+E         Use -v to get more diff
+
+Tests\Performance\test_css_static_requirements.py:27: AssertionError
+---------------------------- Captured stderr setup ----------------------------
+2026-10-19 11:33:32.158 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - \u2705 huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.\n2026-10-19 11:33:32.382 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available\n2026-10-19 11:33:32.383 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice\n2026-10-19 11:33:32.385 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+____ test_every_static_requirement_is_needed_but_compounds_stay_on_subject ____
+
+    def test_every_static_requirement_is_needed_but_compounds_stay_on_subject():
+        parent = Vertical(classes="outer")
+        button = Button(id="target", classes="hot")
+        button._attach(parent)
+        sheet, rules = _rules(
+            ".outer .missing Button { color: red; } "
+            "Vertical.missing Button { color: red; } "
+            "Static.hot { color: red; } "
+            "#target.hot { color: blue; } "
+            "Vertical Button.hot { color: green; }",
+            button,
+        )
+>       assert [rule.selectors for rule in rules] == [
+            "#target.hot", "Vertical Button.hot"
+        ]
+E       AssertionError: assert ['.outer .mis...l Button.hot'] == ['#target.hot...l Button.hot']
+E
+E         At index 0 diff: '.outer .missing Button' != '#target.hot'
+E         Left contains 3 more items, first extra item: 'Static.hot'
+E         Use -v to get more diff
+
+Tests\Performance\test_css_static_requirements.py:42: AssertionError
+______________ test_inherited_types_and_reparenting_are_observed ______________
+
+    def test_inherited_types_and_reparenting_are_observed():
+        class SpecialVertical(Vertical, inherit_css=False):
+            pass
+
+        class SpecialButton(Button, inherit_css=False):
+            pass
+
+        parent = SpecialVertical()
+        button = SpecialButton(classes="hot")
+        button._attach(parent)
+        sheet, rules = _rules("Vertical Button.hot { color: red; }", button)
+        assert len(rules) == 1  # Matcher uses MRO even when default CSS is not inherited.
+        button._attach(Horizontal())
+>       assert _ordered_candidates(sheet, button) == []
+E       AssertionError: assert [RuleSet(sele...lasses=set())] == []
+E
+E         Left contains one more item: RuleSet(selector_set=[<SelectorSet 'Vertical Button.hot' (0, 1, 2)>], styles=Styles(auto_color=False, color=Color(255, 0, 0)), errors=[], is_default_rules=False, tie_breaker=0, selector_names={'.hot'}, pseudo_classes=set())
+E         Use -v to get more diff
+
+Tests\Performance\test_css_static_requirements.py:66: AssertionError
+============================== warnings summary ===============================
+Tests/Performance/test_css_static_requirements.py::test_absent_type_and_unrelated_alternative_do_not_reach_matcher
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+1.67s setup    Tests/Performance/test_css_static_requirements.py::test_absent_type_and_unrelated_alternative_do_not_reach_matcher
+
+(8 durations < 1s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ===========================
+FAILED Tests/Performance/test_css_static_requirements.py::test_absent_type_and_unrelated_alternative_do_not_reach_matcher
+FAILED Tests/Performance/test_css_static_requirements.py::test_every_static_requirement_is_needed_but_compounds_stay_on_subject
+FAILED Tests/Performance/test_css_static_requirements.py::test_inherited_types_and_reparenting_are_observed
+3 failed, 1 warning in 2.25s

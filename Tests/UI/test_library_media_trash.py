@@ -726,7 +726,7 @@ async def test_media_trash_entry_requests_one_independent_initial_page():
                 ),
                 message="Normal Media type scope never applied.",
             )
-            screen._request_library_media_filter("Interview")
+            screen._media_controller._request_library_media_filter("Interview")
             await _wait_for_condition(
                 pilot,
                 lambda: (
@@ -874,9 +874,7 @@ async def test_media_trash_initial_entry_failure_sets_retry_focus_intent():
         assert len(feed.calls) == 1
         assert controller.state.applied_result is None
         assert controller.state.failed_scope == MediaTrashScope()
-        assert (
-            screen._media_state.trash_focus_identity == "#library-media-trash-retry"
-        )
+        assert screen._media_state.trash_focus_identity == "#library-media-trash-retry"
         status = await _wait_for_selector(screen, pilot, "#library-media-trash-status")
         assert status.renderable == "Could not load Trash · Retry"
         await _wait_for_selector(screen, pilot, "#library-media-trash-retry")
@@ -1016,21 +1014,19 @@ async def test_media_trash_filter_retry_page_and_type_use_applied_scope():
         calls_before_bound = len(feed.calls)
         long_input = Input(id="library-media-trash-search")
         long_event = Input.Submitted(long_input, "x" * 201)
-        screen.handle_library_media_trash_search_submitted(long_event)
+        screen._media_controller.handle_library_media_trash_search_submitted(long_event)
         await pilot.pause()
         assert len(feed.calls) == calls_before_bound
         assert controller.state.applied_result.scope == MediaTrashScope()
         assert controller.state.failed_scope is None
-        assert (
-            screen._media_state.trash_focus_identity == "#library-media-trash-search"
-        )
+        assert screen._media_state.trash_focus_identity == "#library-media-trash-search"
         assert (
             screen.query_one("#library-media-trash-status", Static).renderable
             == "Search is limited to 200 characters."
         )
 
         failed_input = Input(id="library-media-trash-search")
-        screen.handle_library_media_trash_search_submitted(
+        screen._media_controller.handle_library_media_trash_search_submitted(
             Input.Submitted(failed_input, "failed")
         )
         await _wait_for_condition(
@@ -1049,22 +1045,20 @@ async def test_media_trash_filter_retry_page_and_type_use_applied_scope():
         # Validation remains a Search-owned concern even when a prior
         # failed browse target is still retained for a later Retry.
         calls_before_failed_bound = len(feed.calls)
-        screen.handle_library_media_trash_search_submitted(
+        screen._media_controller.handle_library_media_trash_search_submitted(
             Input.Submitted(long_input, "y" * 201)
         )
         await pilot.pause()
         assert len(feed.calls) == calls_before_failed_bound
         assert controller.state.failed_scope == MediaTrashScope(query="failed")
-        assert (
-            screen._media_state.trash_focus_identity == "#library-media-trash-search"
-        )
+        assert screen._media_state.trash_focus_identity == "#library-media-trash-search"
         assert (
             screen.query_one("#library-media-trash-status", Static).renderable
             == "Search is limited to 200 characters."
         )
 
         retry = Button("Retry", id="library-media-trash-retry")
-        screen.handle_library_media_trash_retry(Button.Pressed(retry))
+        screen._media_controller.handle_library_media_trash_retry(Button.Pressed(retry))
         await _wait_for_condition(
             pilot,
             lambda: len(feed.calls) == calls_before_bound + 2,
@@ -1076,7 +1070,9 @@ async def test_media_trash_filter_retry_page_and_type_use_applied_scope():
         # After that second failure, Next derives from the visible applied
         # All-Trash page, never the failed query draft.
         next_button = Button("Next", id="library-media-trash-next")
-        screen.handle_library_media_trash_next(Button.Pressed(next_button))
+        screen._media_controller.handle_library_media_trash_next(
+            Button.Pressed(next_button)
+        )
         await _wait_for_condition(
             pilot,
             lambda: (
@@ -1094,7 +1090,7 @@ async def test_media_trash_filter_retry_page_and_type_use_applied_scope():
         option_list = OptionList(id="library-media-trash-type-choices")
         option = Option("audio")
         option.choice_value = "audio"
-        screen.handle_library_media_trash_type_choice(
+        screen._media_controller.handle_library_media_trash_type_choice(
             OptionList.OptionSelected(option_list, option, 0)
         )
         await _wait_for_condition(
@@ -1439,9 +1435,7 @@ async def test_media_trash_render_retry_matches_recoverable_browse_authority():
         )
         assert "Retry" not in loading_status
         assert not screen.query("#library-media-trash-retry")
-        assert (
-            screen._media_state.trash_focus_identity != "#library-media-trash-retry"
-        )
+        assert screen._media_state.trash_focus_identity != "#library-media-trash-retry"
 
         stale_failure = fail_media_trash_request(
             stale_loading,
@@ -1456,9 +1450,7 @@ async def test_media_trash_render_retry_matches_recoverable_browse_authority():
             == "List may be out of date · Retry"
         )
         assert len(list(screen.query("#library-media-trash-retry"))) == 1
-        assert (
-            screen._media_state.trash_focus_identity == "#library-media-trash-retry"
-        )
+        assert screen._media_state.trash_focus_identity == "#library-media-trash-retry"
 
 
 @pytest.mark.asyncio
@@ -1681,7 +1673,7 @@ async def test_media_trash_focus_recovers_after_suppressed_canvas_sync(monkeypat
             message="Real Tab did not leave Search after a suppressed sync.",
         )
         assert screen._notes_state.focus_intent_generation > older_generation
-        screen._focus_library_media_trash_after_paint(
+        screen._media_controller._focus_library_media_trash_after_paint(
             "#library-media-trash-search", older_generation
         )
         await pilot.pause()
@@ -2029,7 +2021,7 @@ async def test_media_trash_commit_unknown_blocks_back_but_refresh_can_be_abandon
                 == "Finishing this action…"
             )
             assert screen.check_action("library_media_trash_back", ()) is False
-            screen.action_library_media_trash_back()
+            screen._media_controller.action_library_media_trash_back()
             assert screen._media_state.view == "trash"
 
             release_commit.set()
@@ -2233,9 +2225,7 @@ async def test_media_trash_precommit_failure_releases_mounted_controls_without_r
         ("restore", ["malformed"]),
     ),
 )
-async def test_media_trash_malformed_mutation_results_fail_closed(
-    operation, outcome
-):
+async def test_media_trash_malformed_mutation_results_fail_closed(operation, outcome):
     """Malformed acknowledgements retain truthful fresh action authority."""
     from Tests.UI.app_factory import _build_test_app
     from Tests.UI.test_library_shell import (
@@ -2280,9 +2270,7 @@ async def test_media_trash_malformed_mutation_results_fail_closed(
             lambda: controller.state.applied_result is not None,
             message="Initial Trash page never applied.",
         )
-        await _wait_for_selector(
-            screen, pilot, "#library-media-trash-restore"
-        )
+        await _wait_for_selector(screen, pilot, "#library-media-trash-restore")
         retained_applied = controller.state.applied_result
         retained_items = controller.state.retained_items
         retained_selected_id = controller.state.selected_id
@@ -2425,9 +2413,7 @@ async def test_media_trash_restore_bounds_request_and_retained_summary():
             lambda: trash.state.applied_result is not None,
             message="Initial Trash page never applied.",
         )
-        await _wait_for_selector(
-            screen, pilot, "#library-media-trash-restore"
-        )
+        await _wait_for_selector(screen, pilot, "#library-media-trash-restore")
         screen.query_one("#library-media-trash-restore", Button).press()
         await _wait_for_condition(
             pilot,
@@ -2669,9 +2655,7 @@ async def test_media_trash_geometry_four_sizes_paints_all_fixed_controls(size):
                 assert "cannot be undone" in painted
                 assert confirmation_target.media_type in painted
                 # task-31635 item 2: the relative form, not the raw stamp.
-                assert (
-                    media_trash_age_copy(confirmation_target.trash_date) in painted
-                )
+                assert media_trash_age_copy(confirmation_target.trash_date) in painted
                 assert "Cancel" in painted
                 assert "Delete permanently" in painted
             else:
@@ -2743,7 +2727,7 @@ async def test_media_trash_back_and_escape_restore_distinct_media_return(exit_ke
             lambda: controller.applied_scope == MediaBrowseScope(),
             message="Initial Media page never applied.",
         )
-        screen._request_library_media_page(2, focus_identity=None)
+        screen._media_controller._request_library_media_page(2, focus_identity=None)
         await _wait_for_condition(
             pilot,
             lambda: controller.applied_scope == MediaBrowseScope(page=2),
@@ -2768,7 +2752,7 @@ async def test_media_trash_back_and_escape_restore_distinct_media_return(exit_ke
             lambda: trash_controller.state.applied_result is not None,
             message="Trash page never applied.",
         )
-        screen._request_library_media_trash_page(
+        screen._media_controller._request_library_media_trash_page(
             2, focus_identity="#library-media-trash-next"
         )
         await _wait_for_condition(
@@ -3005,8 +2989,10 @@ async def test_media_trash_unmount_fences_inflight_restore_completion():
             await _wait_for_selector(screen, pilot, "#library-media-trash-row-0")
             await _wait_for_condition(
                 pilot,
-                lambda: screen._library_media_trash_browse_controller.state.freshness
-                == "fresh",
+                lambda: (
+                    screen._library_media_trash_browse_controller.state.freshness
+                    == "fresh"
+                ),
                 message="Trash page did not settle before restore.",
             )
             screen.query_one("#library-media-trash-restore", Button).press()
@@ -3174,6 +3160,40 @@ async def test_confirm_copies_and_receipt_point_at_trash():
         )
         assert "restore later from Trash" in copy
         assert "no Trash view" not in copy
+        # TASK-34000.18 AC#3: with no title handed in, the generic subject.
+        assert copy.startswith("Move this item to Trash?"), copy
+
+    class _NamedViewerApp(ConsolidatedCSSApp):
+        CSS_PATH = [str(path) for path in APP_STYLESHEETS]
+
+        def compose(self):
+            yield LibraryMediaViewer(
+                build_library_media_viewer_state(
+                    {"id": "1", "title": "One", "type": "pdf", "content": "x"}
+                ),
+                confirming_delete=True,
+                delete_target_title="One [b]bold[/b]",
+                id="library-media-viewer",
+            )
+
+    app = _NamedViewerApp(); app_width = 120
+    async with app.run_test(size=(app_width, 40)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        widget = app.query_one("#library-media-delete-confirm-copy", Static)
+        copy = str(widget.renderable)
+        # TASK-34000.18 AC#3: the confirm names the item and keeps the
+        # Trash-path promise.
+        assert copy.startswith('Move "One [b]bold[/b]" to Trash?'), copy
+        assert "restore later from Trash" in copy
+        # Fix round 1 (minor): literally -- the PAINTED text carries the
+        # brackets, which ``markup=True`` would have swallowed as a bold tag.
+        strips = list(app.screen._compositor.render_strips())
+        painted = "\n".join(
+            strips[y].crop(widget.region.x, widget.region.right).text.rstrip()
+            for y in range(widget.region.y, min(widget.region.bottom, len(strips)))
+        )
+        assert 'Move "One [b]bold[/b]" to Trash?' in painted, painted
 
 
 # ---------------------------------------------------------------------------
@@ -3780,10 +3800,12 @@ async def test_media_trash_permanent_delete_uses_only_scope_service_target_seam(
             notify=lambda *_args, **_kwargs: None,
         ),
         _library_media_trash_browse_controller=SimpleNamespace(
-            finish_mutation_failure=lambda *args: events.append(("failure", args))
-            or True,
-            finish_mutation_commit=lambda *args: events.append(("commit", args))
-            or True,
+            finish_mutation_failure=lambda *args: (
+                events.append(("failure", args)) or True
+            ),
+            finish_mutation_commit=lambda *args: (
+                events.append(("commit", args)) or True
+            ),
             request_after_mutation=lambda *_args, **kwargs: events.append(
                 ("trash-request", kwargs)
             ),
@@ -4016,6 +4038,7 @@ async def _trash_screen_over_a_real_controller(
         LibraryScreen._restore_library_media_from_trash, fake
     )
     if begin_raises is not None:
+
         def _begin():
             raise begin_raises
 
@@ -4118,14 +4141,12 @@ def _restore_fake(*, db, trash_records, media_records, media_count):
     after_refresh = []
     trash_controller_events = []
     trash_controller = SimpleNamespace(
-        finish_mutation_failure=lambda claim, copy: trash_controller_events.append(
-            ("failure", claim.target, copy)
-        )
-        or True,
-        finish_mutation_commit=lambda claim, notice: trash_controller_events.append(
-            ("commit", claim.target, notice)
-        )
-        or True,
+        finish_mutation_failure=lambda claim, copy: (
+            trash_controller_events.append(("failure", claim.target, copy)) or True
+        ),
+        finish_mutation_commit=lambda claim, notice: (
+            trash_controller_events.append(("commit", claim.target, notice)) or True
+        ),
         request_after_mutation=lambda *_args, **kwargs: trash_controller_events.append(
             ("request", kwargs)
         ),
@@ -4464,7 +4485,10 @@ async def test_restore_from_trash_returns_a_fresh_media_list(tmp_path):
             title=title, content=title, media_type="article", keywords=[]
         )
     trashed_id, _, _ = db.add_media_with_keywords(
-        title="Restored item", content="restored body", media_type="article", keywords=[]
+        title="Restored item",
+        content="restored body",
+        media_type="article",
+        keywords=[],
     )
     assert db.mark_as_trash(trashed_id) is True
 
@@ -4580,7 +4604,9 @@ async def _open_trash_production(host, pilot, items):
         lambda: controller.state.applied_result is not None,
         message="Trash page never applied.",
     )
-    await _wait_for_selector(screen, pilot, f"#library-media-trash-row-{len(items) - 1}")
+    await _wait_for_selector(
+        screen, pilot, f"#library-media-trash-row-{len(items) - 1}"
+    )
     await pilot.pause()
     await pilot.pause()
     return screen

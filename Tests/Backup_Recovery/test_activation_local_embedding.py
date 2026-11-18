@@ -102,6 +102,14 @@ denied(lambda:require_local_model_construction(config))
 review=recovery.preview_local_embedding(config)
 assert not activation.allowed('generation','models.artifacts')
 recovery.approve_local_embedding(config,review.fingerprint)
+# TASK-41301: the exact-files receipt no longer approves the owner; Backup &
+# Restore's model-files review is its one approver, and both are required.
+assert not activation.allowed('generation','models.artifacts')
+denied(lambda:require_local_model_construction(config))
+from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+models_review=RecoveryService(base/'jobs')
+try:models_review.approve_models('generation')
+finally:models_review.close()
 assert activation.allowed('generation','models.artifacts')
 assert not activation.allowed('generation','config')
 assert all(not activation.allowed('generation',owner) for owner in owners if owner!='models.artifacts')
@@ -476,6 +484,7 @@ unrelated_inactive()
 if mode=='approve':
  review=recovery.preview_local_embedding(config)
  recovery.approve_local_embedding(config,review.fingerprint)
+ store.approve(witness['generation'],'models.artifacts')  # the model-files review (TASK-41301)
 wrapper=EmbeddingsServiceWrapper(str(model),device='cpu')
 assert wrapper.create_embedding('local model content').shape==(16,)
 wrapper.close()

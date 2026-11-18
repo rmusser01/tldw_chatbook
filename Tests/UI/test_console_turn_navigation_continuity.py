@@ -184,7 +184,9 @@ class _WorkerTerminalBridge:
 
 def _build_navigation_app(tmp_path):
     """Build a production-shaped app with isolated file-backed data."""
-    app = _build_test_app()
+    from tldw_chatbook.config import get_user_data_dir
+
+    app = _build_test_app(user_data_dir=get_user_data_dir())
     _attach_real_dbs(app, tmp_path)
     _configure_native_ready_console(app)
     gateway = _TwoChunkGateway()

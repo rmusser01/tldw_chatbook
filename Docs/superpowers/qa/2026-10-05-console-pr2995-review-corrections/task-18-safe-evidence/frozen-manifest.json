@@ -1,0 +1,20 @@
+{
+  "base": "1a9b777bdbe018181e6ea7fabd17d98174e912e8",
+  "state": "FROZEN_UNEXPECTED_PRECONDITION",
+  "tracked_files": 30536,
+  "tracked_changes": [],
+  "historical_private_receipts": 20171,
+  "historical_changes": [],
+  "new_artifacts": {
+    "base-tracked-sha256.json": "34c02114b09d94bbc79325847fbd2597034ce7eef286664b7da1992ca8324115",
+    "red-result.json": "1cc483a358a69dccbc8b58e7906095985ff1c44064a30ae8bba05bf889666278",
+    "red.log": "0c10537053305344654c1b7504ff694a31a9b0efb5c46012d23524f61a66a3d2",
+    "base-private-evidence-sha256.json": "8c446702bd5e3265747ae5726f0837518294e7ea75d5f7d0bf4ff6bc62038f59",
+    "red-argv.json": "8d1d612a558e25fa374e2609a672c4a34281d0f3f9bb906b394ca7bc8b60b767",
+    "red.xml": "85a3b97b90b0cd93a20fd2b245fa09a6d86e5edff647e2b9e7abdddde7167822"
+  },
+  "no_source_changes": true,
+  "no_AST_reversal_needed": "No implementation began; whole tracked sources remain byte-identical to BASE.",
+  "closed_pid": 91625,
+  "process_closed": true
+}

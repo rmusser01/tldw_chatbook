@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Protocol
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 
-if TYPE_CHECKING:
-    from ..tldw_api import TLDWAPIClient
+
+class ServerChatLoopClient(Protocol):
+    """Client methods ServerChatLoopService calls (TASK-36953.1)."""
+
+    async def approve_chat_loop_call(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def cancel_chat_loop_run(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_chat_loop_events(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def reject_chat_loop_call(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def start_chat_loop_run(self, *args: Any, **kwargs: Any) -> Any: ...
 
 
 class ServerChatLoopService:
@@ -15,7 +22,7 @@ class ServerChatLoopService:
 
     def __init__(
         self,
-        client: Optional[TLDWAPIClient] = None,
+        client: Optional[ServerChatLoopClient] = None,
         *,
         client_provider: Any | None = None,
     ):
@@ -32,7 +39,7 @@ class ServerChatLoopService:
     def from_server_context_provider(cls, provider: Any) -> "ServerChatLoopService":
         return cls(client_provider=provider)
 
-    def _require_client(self) -> TLDWAPIClient:
+    def _require_client(self) -> ServerChatLoopClient:
         if self.client is not None:
             return self.client
         if self.client_provider is not None:

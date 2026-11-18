@@ -1,0 +1,36 @@
+                                   ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library │ ⌃4 Roleplay │ ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Roleplay                                                                                                             │
+│ Editing Captain Isolde Varga                                                                                         │
+│  Ready                                                                                                               │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+Characters — who the AI plays · 28
+ Modes:    Characters    Personas    Dictionaries    Lore
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                                                      │
+│ ╭──────────────────────────╮╭────────────────────────────────────────────────────────╮┌────────────────────────────┐ │
+│ │  Library              <  ││           ▸ Try a test chat (nothing saved)            ││                            │ │
+│ │  Search...               ││ Character Editor                                       ││  Inspector             >   │ │
+│ │           New            ││  Context: whole character  Generate whole character…   ││ Selected: Captain Isolde   │ │
+│ │      New Actor Pack      ││  Name                                                  ││ Varga                      │ │
+│ │          Import          ││  ┌─────────────────────────────────────────────────┐   ││ Type: character            │ │
+│ │    Import Actor Pack     ││  │  Captain Isolde Varga                           │ ▇ ││ Validation: editing...     │ │
+│ │        Duplicate         ││  └─────────────────────────────────────────────────┘   ││ Conversations (2)          │ │
+│ │        Sort: Name        ││  First message  Generate                               ││   Search this              │ │
+│ │         Tag: All         ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   ││  Shore leave on Kepler-9   │ │
+│ │  Ada (Debugging Partn…   ││  ▊ *Isolde doesn't look up from the logbook.*      ▎   ││  Debris field salvage      │ │
+│ │  A patient senior eng… ▄ ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎   ││  All conversations         │ │
+│ │  ARIA-7                  ││  Description  Generate                                 ││  shown.                    │ │
+│ │  A ship AI that has q…   ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   ││ Readiness                  │ │
+│ │  Brother Anselm          ││  ▊ Captain Isolde Varga commands the               ▎   ││ Ready to chat in Console.▃ │ │
+│ │  A monastery brewer w…   ││  ▊ deep-survey frigate *Meridian's Wake*, a        ▎   ││         Chat now           │ │
+│ │  Captain Isolde Varga    ││                                                        ││   Send to Console draft    │ │
+│ │  Captain Isolde Varga…   ││    Save     Cancel                                     ││        Export JSON         │ │
+│ │  Chef Auguste            ││                   ▸ Dictionaries (0)                   ││        Export PNG          │ │
+│ │                          ││                   ▸ World Books (1)                    ││                            │ │
+│ ╰──────────────────────────╯╰────────────────────────────────────────────────────────╯└────────────────────────────┘ │
+│                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  ctrl+n new | ctrl+f search | ctrl+s save | esc back | F1 · F6 · Ctrl+P · Ctrl+Q

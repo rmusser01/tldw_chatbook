@@ -1,0 +1,75 @@
+[
+  {
+    "cell": null,
+    "code": "F841",
+    "end_location": {
+      "column": 18,
+      "row": 88
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/DB/prompt_export.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 21,
+            "row": 88
+          },
+          "location": {
+            "column": 9,
+            "row": 88
+          }
+        }
+      ],
+      "message": "Remove assignment to unused variable `timestamp`"
+    },
+    "location": {
+      "column": 9,
+      "row": 88
+    },
+    "message": "Local variable `timestamp` is assigned to but never used",
+    "name": "unused-variable",
+    "noqa_row": 88,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-variable"
+  },
+  {
+    "cell": null,
+    "code": "DTZ005",
+    "end_location": {
+      "column": 35,
+      "row": 88
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/DB/prompt_export.py",
+    "fix": null,
+    "location": {
+      "column": 21,
+      "row": 88
+    },
+    "message": "`datetime.datetime.now()` called without a `tz` argument",
+    "name": "call-datetime-now-without-tzinfo",
+    "noqa_row": 88,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/call-datetime-now-without-tzinfo"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 21,
+      "row": 239
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/DB/prompt_export.py",
+    "fix": null,
+    "location": {
+      "column": 12,
+      "row": 239
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 239,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  }
+]

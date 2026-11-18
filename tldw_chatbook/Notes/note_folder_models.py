@@ -14,6 +14,19 @@ FolderManagedState = Literal["normal", "protected", "inactive_managed"]
 FolderCapabilityName = Literal[
     "list", "create", "rename", "move", "delete", "restore", "membership"
 ]
+#: TASK-34000.28 (N-24): what a ``FolderConflictError`` is about, so the
+#: Notes tree can name it instead of one sentence for every reason.
+#: ``busy`` is SQLite contention that outlasted the repository's bounded
+#: retry -- nothing changed, and nothing was written.
+FolderConflictReason = Literal[
+    "folder_version",
+    "membership_version",
+    "folder_changed",
+    "membership_changed",
+    "membership_exists",
+    "busy",
+    "unknown",
+]
 _PORTABLE_PATH_LIMIT = 500
 
 
@@ -74,7 +87,40 @@ class FolderCollisionError(RuntimeError):
 
 
 class FolderConflictError(RuntimeError):
-    """Raised when a folder operation has a version conflict."""
+    """Raised when a folder operation has a version conflict.
+
+    Args:
+        message: Developer-facing detail; never shown to the user.
+        reason: What changed (``FolderConflictReason``). The Notes tree picks
+            its copy from this, not from ``message``.
+    """
+
+    def __init__(
+        self, message: str = "", *, reason: FolderConflictReason = "unknown"
+    ) -> None:
+        super().__init__(message)
+        self.reason: FolderConflictReason = reason
+
+
+#: What the Notes tree says for each ``FolderConflictError.reason``
+#: (TASK-34000.28, N-24). One sentence ("That folder changed elsewhere —
+#: refresh and try again.") used to cover every reason, so a busy database
+#: read as someone else's edit. Fixed copy, never interpolated.
+FOLDER_CONFLICT_COPY: Mapping[FolderConflictReason, str] = MappingProxyType(
+    {
+        "folder_version": "This folder was changed elsewhere since the tree loaded.",
+        "folder_changed": "This folder was changed elsewhere since the tree loaded.",
+        "membership_version": (
+            "This note's placement changed elsewhere since the tree loaded."
+        ),
+        "membership_changed": (
+            "This note's placement changed elsewhere since the tree loaded."
+        ),
+        "membership_exists": "The note is already in that folder.",
+        "busy": "The notes database was busy — nothing was written.",
+        "unknown": "The folder organization changed elsewhere.",
+    }
+)
 
 
 class FolderCapabilityError(RuntimeError):

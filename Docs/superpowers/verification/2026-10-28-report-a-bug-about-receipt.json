@@ -1,0 +1,45 @@
+{
+  "profile": "[disposable native profile]",
+  "stdout_tty": true,
+  "stderr_tty": true,
+  "checks": [
+    "production UI ready",
+    "existing Console store mounted",
+    "Settings destination mounted",
+    "About category button mounted",
+    "About entry visible",
+    "about report mounted",
+    "about bounded collection finished",
+    "about editable review generated",
+    "about copy validation finished",
+    "about sanitized re-review copy finished",
+    "about: client request matches exact reviewed bytes",
+    "about discard guard",
+    "about dismissed"
+  ],
+  "driver": "WindowsDriver",
+  "about_debug": {
+    "module": "tldw_chatbook.UI.Screens.settings_screen",
+    "running": true,
+    "initial_category": "about",
+    "category": "about",
+    "pending": false,
+    "revision": 0
+  },
+  "capture_debug": {
+    "conversation": null,
+    "trace_count": 0,
+    "tool_refs": 0,
+    "valid": true
+  },
+  "reports": [
+    {
+      "via": "about",
+      "bytes": 2429,
+      "sha256": "b7cf714d028fd67dd3e08c337e31ab6f0c595ad7c924cc5fd0ac816ca982a8d8",
+      "tool_opt_in": false,
+      "tool_available": false
+    }
+  ],
+  "passed": true
+}

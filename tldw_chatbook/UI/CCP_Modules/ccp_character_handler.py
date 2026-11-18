@@ -1,4 +1,5 @@
 """Handler for character-related operations in the Personas screen."""
+
 import asyncio
 from functools import partial
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
@@ -8,12 +9,12 @@ from rich.text import Text
 from textual.widgets import Input, Select, Static, TextArea
 
 from tldw_chatbook.Utils.fts5_match_forms import quote_fts5_prefix
-from ..character_display_text import (
+from tldw_chatbook.Utils.character_display_text import (
     sanitize_character_display_items,
     sanitize_character_display_label,
     sanitize_character_display_text,
 )
-from .ccp_messages import CharacterMessage, ViewChangeMessage
+from .ccp_messages import CharacterMessage
 
 if TYPE_CHECKING:
     from ..Screens.personas_screen import PersonasScreen
@@ -38,13 +39,6 @@ def _coerce_local_character_id(character_id: CharacterId) -> CharacterId:
         return raw_id
 
 
-def _default_character_db() -> Any:
-    """Return the configured local character DB for legacy CCP helpers."""
-    from ...config import get_chachanotes_db_lazy
-
-    return get_chachanotes_db_lazy()
-
-
 def _normalize_character_payload(data: Dict[str, Any]) -> Dict[str, Any]:
     """Map widget field aliases into the local character-card schema."""
     payload = dict(data)
@@ -53,7 +47,9 @@ def _normalize_character_payload(data: Dict[str, Any]) -> Dict[str, Any]:
     return payload
 
 
-def search_characters_fts(search_term: str, limit: int = 50) -> List[Dict[str, Any]]:
+def search_characters_fts(
+    db: Any, search_term: str, limit: int = 50
+) -> List[Dict[str, Any]]:
     """FTS search over character cards for large libraries.
 
     The user's raw term is wrapped as a quoted FTS5 prefix query
@@ -64,7 +60,6 @@ def search_characters_fts(search_term: str, limit: int = 50) -> List[Dict[str, A
     term = (search_term or "").strip()
     if not term:
         return []
-    db = _default_character_db()
     if db is None:
         return []
     match_query = quote_fts5_prefix(term)
@@ -80,11 +75,11 @@ def search_characters_fts(search_term: str, limit: int = 50) -> List[Dict[str, A
     ]
 
 
-def fetch_all_characters() -> List[Dict[str, Any]]:
+def fetch_all_characters(db: Any) -> List[Dict[str, Any]]:
     """Compatibility helper for CCP tests and UI refreshes."""
     from ...Character_Chat.Character_Chat_Lib import fetch_character_names
 
-    characters = fetch_character_names()
+    characters = fetch_character_names(db)
     if isinstance(characters, dict):
         return [
             {"id": str(char_id), "name": name} for char_id, name in characters.items()
@@ -97,25 +92,24 @@ def fetch_all_characters() -> List[Dict[str, Any]]:
     ]
 
 
-def fetch_character_by_id(character_id: CharacterId) -> Dict[str, Any]:
+def fetch_character_by_id(db: Any, character_id: CharacterId) -> Dict[str, Any]:
     """Compatibility helper for character loads."""
-    character = _default_character_db().get_character_card_by_id(
+    character = db.get_character_card_by_id(
         _coerce_local_character_id(character_id)
     )
     return character or {}
 
 
-def create_character(data: Dict[str, Any]) -> CharacterId:
+def create_character(db: Any, data: Dict[str, Any]) -> CharacterId:
     """Compatibility helper for character creation."""
-    return _default_character_db().add_character_card(
+    return db.add_character_card(
         _normalize_character_payload(data)
     )
 
 
-def update_character(character_id: CharacterId, data: Dict[str, Any]) -> bool:
+def update_character(db: Any, character_id: CharacterId, data: Dict[str, Any]) -> bool:
     """Compatibility helper for character updates."""
     local_id = _coerce_local_character_id(character_id)
-    db = _default_character_db()
     current = db.get_character_card_by_id(local_id)
     if not current:
         return False
@@ -129,7 +123,9 @@ def update_character(character_id: CharacterId, data: Dict[str, Any]) -> bool:
     )
 
 
-def delete_character(character_id: CharacterId, expected_version: int) -> bool:
+def delete_character(
+    db: Any, character_id: CharacterId, expected_version: int
+) -> bool:
     """Soft-delete a character card with optimistic locking.
 
     Thin seam over ``soft_delete_character_card`` for the destination
@@ -143,7 +139,6 @@ def delete_character(character_id: CharacterId, expected_version: int) -> bool:
         CharactersRAGDBError: For other database failures.
     """
     local_id = _coerce_local_character_id(character_id)
-    db = _default_character_db()
     if db is None:
         logger.warning("delete_character: no local character DB available.")
         return False
@@ -155,17 +150,16 @@ def delete_character(character_id: CharacterId, expected_version: int) -> bool:
     return bool(db.soft_delete_character_card(numeric_id, int(expected_version)))
 
 
-def import_character_card(file_path: str) -> Any:
+def import_character_card(db: Any, file_path: str) -> Any:
     """Compatibility helper for character import.
 
-    Delegates to ``import_and_save_character_from_file`` (the previous
-    ``ccv3_parser.import_character_card_json`` target is an empty module).
+    Delegates to ``import_and_save_character_from_file``.
     Returns the imported character's DB id, or ``None`` when the file does
     not contain a valid character card.
     """
     from ...Character_Chat.Character_Chat_Lib import import_and_save_character_from_file
 
-    return import_and_save_character_from_file(_default_character_db(), file_path)
+    return import_and_save_character_from_file(db, file_path)
 
 
 def inspect_character_card_tts_attachment(file_input: Any) -> Any:
@@ -178,17 +172,14 @@ def inspect_character_card_tts_attachment(file_input: Any) -> Any:
     return inspect_attachment(file_input)
 
 
-def import_character_card_with_outcome(file_input: Any) -> Any:
+def import_character_card_with_outcome(db: Any, file_input: Any) -> Any:
     """Return the structured local import outcome used by Personas."""
 
     from ...Character_Chat.Character_Chat_Lib import (
         import_and_save_character_from_file_with_outcome,
     )
 
-    return import_and_save_character_from_file_with_outcome(
-        _default_character_db(),
-        file_input,
-    )
+    return import_and_save_character_from_file_with_outcome(db, file_input)
 
 
 class CCPCharacterHandler:
@@ -225,10 +216,13 @@ class CCPCharacterHandler:
         return "local"
 
     def _notify(self, message: str, severity: str = "warning") -> None:
-        """Surface a notification when CCP execution helpers cannot complete."""
+        """Surface a notification when CCP execution helpers cannot complete.
+
+        Literal text (TASK-34400): messages quote server and exception text.
+        """
         notifier = getattr(self.window, "notify", None)
         if callable(notifier):
-            notifier(message, severity=severity)
+            notifier(message, severity=severity, markup=False)
 
     def _call_from_thread(self, callback: Any, *args: Any) -> Any:
         """Schedule a callback on Textual's main thread from a handler worker."""
@@ -403,7 +397,9 @@ class CCPCharacterHandler:
             # read of the entire character library. Awaited from a screen mount
             # it froze the whole app; every other caller of this method was
             # stalling the loop for the same read.
-            self.character_list = await asyncio.to_thread(fetch_all_characters)
+            self.character_list = await asyncio.to_thread(
+                fetch_all_characters, self.window._character_db()
+            )
             options = [
                 (
                     Text(
@@ -490,7 +486,7 @@ class CCPCharacterHandler:
         logger.info(f"Loading character {character_id}")
 
         try:
-            card_data = fetch_character_by_id(character_id)
+            card_data = fetch_character_by_id(self.window._character_db(), character_id)
 
             if card_data:
                 # Everything that mutates handler state or the UI happens on
@@ -533,13 +529,6 @@ class CCPCharacterHandler:
         self.current_character_data = card_data
 
         self.window.post_message(CharacterMessage.Loaded(character_id, card_data))
-
-        # Switch view to show character card
-        self.window.post_message(
-            ViewChangeMessage.Requested(
-                "character_card", {"character_id": character_id}
-            )
-        )
 
         self._display_character_card()
 
@@ -694,13 +683,6 @@ class CCPCharacterHandler:
             return
 
         try:
-            # Switch view to editor
-            self.window.post_message(
-                ViewChangeMessage.Requested(
-                    "character_editor", {"character_id": self.current_character_id}
-                )
-            )
-
             # Populate editor fields
             self._populate_editor_fields()
 
@@ -938,7 +920,7 @@ class CCPCharacterHandler:
             return
 
         try:
-            success = update_character(character_id, data)
+            success = update_character(self.window._character_db(), character_id, data)
 
             if success:
                 logger.info(f"Updated character {character_id}")
@@ -963,7 +945,7 @@ class CCPCharacterHandler:
     def _create_character(self, data: Dict[str, Any]) -> None:
         """Create a new character (sync worker method)."""
         try:
-            character_id = create_character(data)
+            character_id = create_character(self.window._character_db(), data)
 
             if character_id:
                 logger.info(f"Created new character with ID {character_id}")
@@ -1011,9 +993,6 @@ class CCPCharacterHandler:
 
                 # Refresh the character list
                 await self.refresh_character_list()
-
-                # Switch view back to main
-                self.window.post_message(ViewChangeMessage.Requested("conversations"))
             else:
                 logger.error(f"Failed to delete character {self.current_character_id}")
 
@@ -1033,8 +1012,9 @@ class CCPCharacterHandler:
             filters = Filters(
                 (
                     "Character Cards",
-                    lambda p: p.suffix.lower()
-                    in (".json", ".png", ".webp", ".yaml", ".yml"),
+                    lambda p: (
+                        p.suffix.lower() in (".json", ".png", ".webp", ".yaml", ".yml")
+                    ),
                 ),
                 ("JSON Files", lambda p: p.suffix.lower() == ".json"),
                 (
@@ -1058,7 +1038,7 @@ class CCPCharacterHandler:
             )
 
             # Push the file picker screen
-            file_path = await self.window.app.push_screen(picker, wait_for_dismiss=True)
+            file_path = await self.window.app.push_screen_wait(picker)
 
             if file_path:
                 await self.handle_import_character(str(file_path))
@@ -1072,7 +1052,7 @@ class CCPCharacterHandler:
             file_path: Path to the character card file
         """
         try:
-            character_id = import_character_card(file_path)
+            character_id = import_character_card(self.window._character_db(), file_path)
 
             if character_id:
                 logger.info(f"Imported character from {file_path}")

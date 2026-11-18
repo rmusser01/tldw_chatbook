@@ -1,0 +1,132 @@
+# The Library shell
+
+This document describes the Library destination: the rail/canvas navigation model, the adaptive reader shell, media browsing and read-it-later, the prompts and skills surfaces, collections, and the durable ingest job queue with its parse/write stages.
+
+## Authoritative files
+
+| Concern | File | Key symbols |
+| --- | --- | --- |
+| Screen | `UI/Screens/library_screen.py` | `LibraryScreen(BaseAppScreen)`; `apply_navigation_context`, `_build_library_entry_active_child` (composes exactly one canvas child) |
+| Rail state | `Library/library_shell_state.py` | pure (Textual-free) `build_library_shell_state`; the `LIBRARY_ROW_*` row ids (browse-conversations/-media/-notes/-prompts/-skills/-search/-collections, create-*, ingest-*) |
+| Nav controller | `UI/Library_Modules/library_navigation_controller.py`, `screen_constants.py` | route admission, pending character-repair lifecycle, `LIBRARY_NAV_MODE_TO_ROW_ID` (the 60-line comment above it is the authoritative live-vs-forward-compat mode list) |
+| Canvases | `Widgets/Library/*` | notes/skills/prompts canvases, `LibraryMediaViewer`, `LibraryBrowseReaderShell`, search/RAG panel, ingest canvas, collections capture/reader |
+| Canvas state | `Library/library_*_state.py` | pure display contracts per canvas (media list/viewer/reader/ingest/prompts/skills/conversations/notes) |
+| Media seam | `Media/local_media_reading_service.py`, `Media/media_reading_scope_service.py` | reading progress; read-it-later lifecycle (ADR-014 scope authority) |
+| Collections | `DB/Library_Collections_DB.py` (schema v4), `Library/library_collections_service.py` | collections + capture tables (items/tags/highlights/saved searches/offline files), review sets; legacy generic Collections tables are recovery-only |
+| Ingest jobs | `DB/Library_Ingest_Jobs_DB.py` (schema v7), `Library/library_ingest_jobs.py`, `app.py` `LibraryIngestQueueMixin` | durable job rows, in-memory registry, `plan_restore` |
+
+## Navigation model (dataflow)
+
+1. Another destination posts `NavigateToScreen("library", context)` with keys from `Constants.py`: `mode`, `conversation_id`, `note_id`, `notes_create`, `open_source_type`/`open_source_id`, `ingest_media`, character repair/inspection/browse contexts.
+2. The controller rejects context application while a prompts mutation is in flight, bumps a generation counter (stale async applies drop), and gives character contexts dedicated admission branches.
+3. Row resolution starts from the mode→row map, then applies priority overrides (conversation_id → conversations; `notes_create` → create-note; ingest → ingest row; any note_id → browse-notes; a validated open-source pair → its browse row). Unknown modes resolve to no-op — quiet degrade by contract.
+4. Leaving side-effects: media browse invalidates unless the target is media; collections capture unmounts unless the target is collections. When mounted, context application runs as a worker that first flushes pending editor saves — a save-guard refusal aborts the switch and keeps the current route.
+5. Row selection → `build_library_shell_state` → one canvas child (conversations / media / notes / prompts / skills / export / search / ingest / landing). **Collections is the exception** — it changes whole-route topology (rail scopes + Items + Work panes) and goes through the central recompose path instead of the one-child seam.
+
+`LibraryLandingCanvas.sync_state` adopts the latest display state before deciding
+how to publish it. Pending recomposition or the native recompose lock uses the
+existing recompose path, preserving the queued snapshot completion while children
+are absent or still describe the older widget set. Settled canvases retain the
+in-place patch path. This keeps the current generation/route completion fence
+intact when onboarding refreshes the retained landing during snapshot rendering.
+
+## Notes-sync preparation
+
+Library construction reuses an already-built Notes-sync owner without invoking
+the app's lazy property. When needed, the first mounted refresh prepares the
+original safe reader through the finite Library service worker, then attaches
+the same app-owned runtime to the sync controller on the UI loop. Until then the
+sync view is preparing; construction failures retain their distinct failed
+status. Unmounting discards late presentation, while runtime lifecycle remains
+owned by the app. Direct Notes attention/location reads also prepare the owner
+through that finite-worker boundary. Synchronous listener access reads only an
+already-built owner; a failed preparation preserves known attention. The app's
+safe reader serializes failure publication as well as construction so concurrent
+initial readers share one outcome.
+
+## Adaptive reader
+
+`LibraryBrowseReaderShell` is **one resident shell** shared by the Media and Notes routes (route-neutral id, marker classes, single writer `apply_route`) — the decomposition spec records that per-route shells previously caused 177 mounts per media switch, 55 of them pure rebuild waste. Reader modes: read / analysis / highlights / info. Pane visibility and widths persist to `[library.reader]` and per-destination `[library.<dest>_reader]` sections.
+
+## Media, read-it-later, progress
+
+Media canvas views: list / viewer / trash through one shared builder. Read-it-later is a `MediaReadItLaterState` row in the media DB (Home deep-links via the browse-subview context); reading progress is upserted per item and surfaced through the reading service. Saving a single reading item deliberately restores a trashed duplicate (an explicit user decision); the **bulk** import path stays non-restoring.
+
+`LibraryMediaController._restore_library_media_focus` delegates its captured
+focus restoration to the existing `canvas_sync` owner. The synchronous focus
+write records the exact programmatic target until its native focus event is
+consumed, so rebuilding Items preserves the loaded Reader. Same-target no-ops
+create no marker; failed focus writes clear only their own marker. Genuine
+keyboard focus changes retain the ordinary row-selection and loading path.
+Rail entry also uses its existing `keep_media_reader` decision to omit a
+competing explicit first-row intent when preserving a settled reader or dirty
+form. Fresh entry keeps the original first-row argument.
+
+## Notes, prompts and skills surfaces
+
+- Notes Markdown/text export captures its payload, validated destination and existing Notes operation token before admitting a screen-owned `library-note-export` worker in `UI/Library_Modules/library_file_export.py`. FileSave and explicit Replace callbacks return after admission; only the synchronous atomic write runs in a thread. Late no-clobber collisions reopen the existing confirmation on-loop; metadata recheck failures use recoverable export feedback. Notes keeps its single-operation admission and region-scoped result handling; a later worker does not cancel an accepted write. Native screen retirement stops UI publication while an already-running atomic write can finish. Mounted private-profile regressions use the real picker/writer with seeded Notes service stand-ins, verify App key dispatch before writer release, literal output bytes/source preservation, failure/retry, collisions and changed result owners. Existing format and newline policy remain with the shared writer.
+- The local Prompt library stores schema-v3 `text_mixin` artifacts with a literal body and before/after placement. Their canonical definition is projected to an empty System field and literal User field; Prompt insertion and System replacement require `artifact_type=prompt`. `PromptScopeService.read_mixin_records` reads exact active UUIDs and versions in one local SQLite snapshot under the detail policy.
+- Library dispatches supported schema-v3 mix-ins to the shared literal `PromptMixinEditor`; the parent retains private raw drafts, expected versions and exact source objects. Type filtering is part of the count/page scope. `ConsoleMixinEnableRequest` shares the Prompt one-shot slot and TTL, carries only a source reference plus exact session/incarnation/preference revision and transient scope/backend/DB identity fences, and is consumed through runtime `enable_reference` CAS; it never applies Prompt lanes.
+- Literal Mix-ins expose Author and Keywords regardless of the ordinary Prompt editor mode. Retained History recognizes the literal editor as compatible, restores through the existing expected-version/source/dirty gates, and opens the restored artifact kind as a new current version.
+- Prompts canvas consumes `PromptsDatabase` row shapes with typed conflicts (`ExpectedVersionConflictError`, `PromptNameConflictError`) classified at save; create vs browse is an editor-view sentinel, not a separate canvas. Prompt insertion into the Console is covered in [chat-pipeline.md](./chat-pipeline.md).
+- Pending Prompt Save uses `UI/Library_Modules/prompt_save_ack.py`: the existing scope service writes the submitted snapshot, then the controller adopts the committed identity/version while retaining newer raw metadata and Basic/Advanced block controls as dirty. The next Save updates that same record. Basic first-block mounts and Save acknowledgement re-read both live lanes after structural awaits and refresh every affected Advanced card; obsolete queued semantic projections cannot replace the current child state. Back/navigation/quit use the existing dirty guards.
+- Saved Prompt Markdown export captures the live editor payload and picked destination in `UI/Library_Modules/library_file_export.py`. Both FileSave and explicit Replace callbacks synchronously hand the write to a screen-owned `library-prompt-export` worker; only `write_export_text` runs in a thread. No-clobber collisions reopen the existing Replace confirmation on the UI loop. Completion and failure use the captured Prompt identity through the existing reporter, preserving the current editor's status/focus after navigation. Independent exports keep their own payload/destination and are not cancelled by a later export.
+- Skills canvas consumes `LocalSkillsService` envelopes (available/blocked + trust fields); import staging lives on the screen. Skills was retired as a destination into Library (ADR-015; route alias `skills` → `library`). Automatic failed keyring unlocks cool down for 60 seconds after completion; the trust header’s explicit Retry refreshes transient key/marker caches through the posture worker, retaining restored-root review gates (ADR-009). A successful current Retry also refreshes the latest requested browse scope so row trust and blocked totals reflect the recovered session without reverting a newer pending filter or page.
+
+Managed Parakeet installation keeps its consented artifact/preference lifecycle. `UI/Library_Modules/parakeet_install_selection.py` selects INT8 for the requesting form only when form identity, accepted-edit generation, source and live transcription controls still match. An obsolete completion retains current choices and reports installation without claiming current-batch selection.
+
+## Ingest job queue (dataflow)
+
+1. **Submit** (UI thread only): directory sources expand to one job per file; a missing media DB fails immediately with exact copy; an origin mismatch raises (fail-closed Research authority). Job enters `QUEUED`.
+2. **Parse stage** (UI thread coordination): a lazily created spawn-context multiprocessing pool; ebook batches get one-worker generations. Parse failures classify in-worker and go straight to FAILED; successes stash payloads.
+3. **Write stage**: exactly one background writer thread claims the oldest payload-ready job via a **single synchronous UI-thread call** (`call_from_thread`) that atomically transitions PARSING → WRITING — one WRITING job ever, honoring SQLite's single-writer nature. The writer persists through `persist_parsed_media` (the pipeline documented in [media-ingestion.md](./media-ingestion.md)).
+4. **Persistence**: the registry writes through to `Library_IngestJobsDB` (upsert); `research_source_operation_id` is immutable once persisted; a durable `dispatch_held` release cannot be re-held.
+5. **Restore on boot**: a worker (never blocking boot) loads persisted jobs (capped at 500), plans the restore — in-flight jobs become retryable FAILED "Interrupted by app restart"; held Research rows are exempt from both interruption and pruning — applies it, then attaches the store **before** merging so jobs submitted in the mount window persist too. Research-held jobs reconcile afterwards.
+
+Quit semantics (accepted v1 limits): a WRITING job finishes its DB write; PARSING/QUEUED jobs are lost and nothing resumes them next launch.
+
+## Config keys
+
+`[library]`: `ingest_directory_scan_limit` (1000), `ingest_url_preflight_probe` (**false** by default — a pasted link never auto-probes a host), `ingest_options`, `ingest_parse_workers` (`min(3, cpu-1)`), `ingest_heavy_lane_max_workers` (1). `[library.reader]` (+ legacy `[library.media_reader]` fallback) and per-destination `[library.<dest>_reader]` with env overrides. DB path overrides: `library_collections_db_path`, `library_ingest_jobs_db_path`.
+
+## Boundaries
+
+- Library owns user-facing import UI + canvases; **job lifecycle authority is the media reading scope service** (ADR-014); Settings owns durable ingestion-source administration (ADR-013/014).
+- The job registry is UI-thread-only with no internal locking; background threads marshal through `call_from_thread`; returned jobs are copies.
+- Parse workers never touch the media DB; the writer never touches parse workers.
+- The RAG search surface is documented in [rag.md](./rag.md) — this shell only hosts the canvas.
+
+## Failure behaviors
+
+| Case | Behavior |
+| --- | --- |
+| Corrupt ingest store | Registry starts empty and store-less with a warning; boot continues |
+| Restore-window race | Store attaches before merge so window-submitted jobs displace stale rows |
+| Collections count read failure | Renders "(—)" with a deadline sentence, never a fake 0 |
+| Save guard refuses on nav switch | Switch aborts; current route kept |
+| Same-key Escape bindings | Resolved in declaration order with disjoint `check_action` gates — position is the contract (10+ chained bindings) |
+
+## Governing decisions and docs
+
+ADR-013 (`013-library-ingest-ownership-and-job-lifecycle.md`, superseded), ADR-014 (`014-library-ingest-service-authority-and-recovery.md`), ADR-015 (destination IA; Skills folded into Library). Key specs: `2026-08-13-library-compose-once-design.md`, `2026-08-24-library-destinations-adaptive-reader-design.md`, `2026-09-01-library-screen-decomposition-design.md`, `2026-07-10-library-f3-parallel-parse-design.md`, `2026-07-12-library-persistent-job-history-design.md` (all under `Docs/superpowers/specs/`). User guide: `Docs/User_Guide/library.md` + `Docs/User_Guide/library/`.
+
+## Verified gotchas
+
+1. **SKIPPED jobs cannot persist**: the store's CHECK constraint omits `skipped`, so skip outcomes are in-memory only and vanish on restart (the best-effort persist swallows the rejection).
+2. The writer-claim must stay one synchronous UI-thread call — a two-call exit path previously stranded jobs behind a stale runner flag.
+3. v2→v3 of the jobs store is a table **rebuild** (SQLite can't alter a CHECK) with an explicit column list.
+4. The ingest store runs with `isolation_level = None`; `transaction()`'s explicit BEGIN is the only transaction owner.
+
+### Dreams artifacts
+
+Library's Artifacts → Dreams row uses the existing artifact controller and
+composite catalog. The local Dreams owner supplies bounded story, tracked-watch
+and empty-collection metadata windows through `Library/dreams_artifact_snapshot.py`.
+One read snapshot covers count/rank/candidate queries; selected bodies and
+persisted degradation notes are read on demand. Library's finite service worker
+includes lazy owner construction, retaining borrowed handles. The existing
+Dreams story/goals modals retain writes and capability-specific actions, with
+captured profile/owner getters and a refresh deferred until modal return.
+ADR-196 extends the ADR-172 fixed composite; no aggregate store or schema is added.
+
+Mixin edits affect future captures, including Regenerate and explicit Continue; queued/running attempts and original Retry retain their captured definitions. Workbench and Library share `PromptMixinEditor`. Held completions are fenced to the current mode/view/editor and raw draft; a save returns its exact saved record without discarding newer unsaved typing. The [integrated QA record](../superpowers/qa/2026-11-01-prompt-mix-ins/verification.md) distinguishes production PTY interactions from deterministic adapters and prior Pilot captures.

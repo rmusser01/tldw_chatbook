@@ -1,0 +1,20 @@
+# UI explicit service reads
+
+Approved UI-only repair completed on top of HEAD 022e3e54353ada2eb5e271247144df6527df7dcb. No commit, push, manifest, size-pin increase, or private-name allowlist edit.
+
+Removed exactly the 35 UI literal app lookups introduced since b07d1a1fa1. Exact original sites: /private/tmp/mixins-ui-added-sites.txt. Owned source/test inventory: /private/tmp/mixins-ui-lookup-owned-files.txt. Simple receivers now use one explicit attribute read inside a narrow AttributeError fallback; compound receivers are evaluated outside the try. Original default, None, and or-empty-dict behavior remains. Currentness callbacks retain short-circuit checks and re-read after awaits. Readiness polling still reads each iteration. Notes listener registration still returns the cached private owner without triggering its lazy property; failure state is checked only after an empty async preparation result.
+
+The app-owned plugin_operations singleton and console_emergency_stop_write Future are public fields. All production/test references were retargeted. Existing native plugin commit/cancel and physical emergency-stop cancellation tests now assert the public owner identity and retain/retire behavior. The selected-tool projection is a specific session-count helper invoked at the same keyword-evaluation position, not a generic lookup adapter.
+
+Measurement: UI 1313 -> 1278. Pin 1284 -> 1278 (six pre-existing removals also captured). All package counts match; no new private attributes. No blanket replacement of older duplicate service lookups. Full architecture census passed in the targeted batch.
+
+Validation:
+- Targeted 15-file run: 221 passed, 14 failed, 347.55s. Includes architecture census; real plugin operation ownership; physical emergency-stop Future lifetime; held workspace reconciliation/source drift; mix-in source/race UI; Notes mounted/listener controls; Kanban; Wizard projections. Full command and tracebacks retained in /private/tmp/mixins-pr3346-ui-lookup-tests.log and tool transcript.
+- Four added Notes lazy/conditional-read regressions: 4 passed, 9 deselected, 1.19s (/private/tmp/mixins-pr3346-ui-lookup-notes-tests.log).
+- Two failing Wizard loopback fixtures were denied bind by the sandbox. Exact escalated rerun: both passed. That rerun also checked the two native configuration cases; both failed before the expected SQL probe (/private/tmp/mixins-pr3346-ui-lookup-rerun.log).
+- Exact unmodified HEAD022 product + Tests archive, running only workspace_archive_async_completion and native configuration feedback: 12 failed, 14 passed, 33.60s. The twelve failed node IDs exactly match the current batch's non-loopback failures. Eleven are older archive fakes missing current owner/receipt requirements; one is Send-button not reaching Workspace SQL. /private/tmp/mixins-pr3346-ui-lookup-head022-tests.log, archive /private/tmp/mixins-ui-lookup-head022. This establishes pre-edit reproduction, not successful qualification of those controls.
+- Native configuration test file is unchanged, SHA256 2252fcd9f7c0313fb1f32eb49152c5461e04a7eba2a6ac85b2cb482ff9191dc3 in current and HEAD archive. Its factory intentionally leaves ChaChaNotesDB=None; local-service errors are logged. A temporary plugin adding the existing in-memory attachment helper did not qualify the test either (2 failed; worker thread sees empty memory DB). No assertions or product admission were weakened. /private/tmp/mixins_native_feedback_db.py and /private/tmp/mixins-pr3346-ui-lookup-native-db.log. The native feedback fixture remains an explicit evidence limitation; no unrelated cleanup attempted.
+- Scoped 23 Python-file Ruff comparison: 636 HEAD diagnostics, 636 current, zero additions. Inherited debt remains. /private/tmp/mixins-pr3346-ui-lookup-lint.txt; comparison script /private/tmp/mixins_ui_lint.py. Perf agent corrected its concurrent import-order diagnostics in shared prompts.py before final measurement.
+- git diff --check passed.
+
+No further product changes are pending for this lookup wave. Size extraction planning is separate and read-only until the parent's rebase/authorization.

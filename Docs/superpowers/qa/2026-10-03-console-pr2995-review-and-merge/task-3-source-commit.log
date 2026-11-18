@@ -1,0 +1,11 @@
+Auto packing the repository in background for optimum performance.
+See "git help gc" for manual housekeeping.
+warning: The last gc run reported the following. Please correct the root cause
+and remove /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.git/worktrees/tldw_chatbook1/gc.log
+Automatic cleanup will not be performed until the file is removed.
+
+warning: There are too many unreachable loose objects; run 'git prune' to remove them.
+
+[codex/console-chat-starts-dev fc1627e99b] fix(console): validate chat creation and preserve handoff labels
+ 8 files changed, 413 insertions(+), 53 deletions(-)
+ create mode 100644 Tests/Utils/test_console_new_chat_input_validation.py

@@ -210,7 +210,7 @@ class WizardNavigation(Horizontal):
     def update_progress_text(self) -> None:
         """Update the progress text."""
         # Skip if not mounted yet
-        if not self.is_mounted:
+        if not self.is_attached:
             return
 
         try:
@@ -222,7 +222,7 @@ class WizardNavigation(Horizontal):
     def update_button_states(self) -> None:
         """Update button enabled states."""
         # Skip if not mounted yet or buttons don't exist
-        if not self.is_mounted:
+        if not self.is_attached:
             return
 
         try:

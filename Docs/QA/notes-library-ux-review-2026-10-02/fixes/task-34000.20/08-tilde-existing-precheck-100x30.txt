@@ -1,0 +1,30 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflo  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌───────────────────────────┐Import media
+│ Navigati…    Collapse     │
+│  ▸ Import…                │File, folder or URL to import
+│    New note               │┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+│  Explore all tools        │┃ ~/fixtures/import-docs/team-handbook.md                            ┃
+│                           │┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+│                           │
+│                           │  Browse…     Clear
+│                           │1 plain text file
+│                           │
+│                           │1 file · 610 B
+│                           │
+│                           │╭────────────────────────────────────────────────────────────────────╮
+│                           ││ ▶ Import behavior · analysis off                                   │
+│                           │╰────────────────────────────────────────────────────────────────────╯
+│                           │
+│                           │Title (optional)       Author (optional)       Keywords (optional)
+│                           │▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+│                           │▊ Defaults to source ▎ ▊ e.g. Ada Lovelace   ▎ ▊ comma-separated     ▎
+│                           │──────────────────────────────────────────────────────────────────────▃
+│                           │
+│                           │ 1 will import
+│                           │
+│                           │   Start import
+└───────────────────────────┘ ▼ more — scroll for the rest
+  enter start import | esc back | / search | F6 next pane | F1 · Ctrl+P · Ctrl+Q

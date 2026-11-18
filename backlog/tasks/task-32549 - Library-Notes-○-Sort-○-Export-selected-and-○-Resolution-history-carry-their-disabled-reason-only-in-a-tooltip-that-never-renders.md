@@ -58,4 +58,7 @@ Live at 235x52 and 100x30: both list reasons paint whole, the Sort one disappear
 Files: Library/library_shell_state.py, Widgets/Library/library_notes_canvas.py, Widgets/Library/library_notes_add_from_files_canvas.py, UI/Library_Modules/canvas_sync.py, Tests/Library/test_library_shell_state.py, Tests/UI/test_library_notes_w4_layout.py, Docs/User_Guide/library/notes.md.
 
 NOT done, deliberately: the brief's relocation of `_disabled_action_label` out of `library_note_import_canvas.py`. The sibling `sync-roots` branch is already written against it and does not switch, so relocating would break an unlanded branch for no behaviour change; the reason grammar is identical in both.
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/library/notes.md`: Post-merge re-walk captures `wave4-caps/layout/layout-32-postmerge-note-open-235`, `layout-33` … `layout-36-postmerge-*`, `layout-37-postmerge-sort-reason-235`.
 <!-- SECTION:NOTES:END -->

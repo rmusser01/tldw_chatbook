@@ -1,0 +1,4 @@
+{
+  "sha256": "3933474a0a38833a744d812a4d5785750b5577dd64ca8641b49fa10948c0c7c0",
+  "raw_text": "{\n  \"before\": 1166,\n  \"after\": 1165,\n  \"added\": [],\n  \"removed\": [\n    {\n      \"code\": \"UP006\",\n      \"message\": \"Use `list` instead of `List` for type annotation\",\n      \"count\": 1\n    }\n  ],\n  \"qualification\": \"Aggregate code/message multiset over 18 explicit root extraction owners and destinations, preserving moved inherited diagnostics.\"\n}\n"
+}

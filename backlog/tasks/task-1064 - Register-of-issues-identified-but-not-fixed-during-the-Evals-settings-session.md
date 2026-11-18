@@ -1,7 +1,7 @@
 ---
 id: TASK-1064
 title: Register of issues identified but not fixed during the Evals/settings session
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-27 17:00'
 updated_date: '2026-07-27 22:08'
@@ -53,7 +53,7 @@ Deliberately not acted on during the session: this checkout hosts many concurren
 - [x] #1 `ConsoleProviderGateway` uses a per-loop client cache; a test proves two live loops never close each other's client
 - [x] #2 The 18 failures in `test_console_native_chat_flow.py` are each classified as stale-test or product regression, and resolved
 - [ ] #3 Repo gc/prune is run at a quiet moment and `.git/gc.log` cleared
-- [ ] #4 Any item split into its own task is linked from here
+- [x] #4 Any item split into its own task is linked from here
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -92,4 +92,29 @@ Regression check: re-ran all 22 in-file callers of `_select_llamacpp_console` (1
 Runtime: file dropped from ~5m24s to 4m32s (mostly the ~13 tests' failed `_wait_for_text` retry loops, 80 attempts x 0.05s each, no longer exhausting). Did not investigate further — task scope was triage/fix, not a performance rewrite. The remaining runtime is dominated by per-test full `TldwCli`/`ChatScreen` app mounts (~210 tests, most spinning up a full Textual pilot); no single obvious quick win beyond fixture reuse, which is a larger change.
 
 Files changed: `Tests/UI/test_console_native_chat_flow.py` only (test-only; no `tldw_chatbook/` product code touched, since triage found no product regression).
+
+AC3/AC4 disposition (2026-10-11, Evals UX follow-up batch):
+
+- **AC3 stays open, deliberately.** The quiet-moment precondition this task
+  itself pins ("done when the repo is quiet and no other sessions are
+  active, not opportunistically") does not hold on this machine: at the
+  moment of checking there were ~79 live agent processes (pytest/codex/
+  claude sessions) and 70+ registered worktrees, many holding other
+  sessions' in-flight branches, and `git count-objects -v` still reports
+  43,367 loose objects (~1.8 GB) with `.git/gc.log` carrying the standing
+  "too many unreachable loose objects" warning. `git prune`/`git gc` run
+  now would remove unreachable objects that other agents' uncommitted or
+  detached work may still depend on -- the exact hazard this task's own
+  description warns about. The check is recorded here so the next quiet
+  window knows the state it inherits; the AC is ticked only when the run
+  actually happens and `gc.log` is cleared.
+- **AC4 is satisfied vacuously and ticked**: neither item 1 (gateway
+  loop-cache) nor item 2 (the 18 test failures) was split into its own
+  task -- both were fixed directly in this task's own Implementation
+  Notes above -- and a board search finds no separately-filed task for
+  item 3 (gc). No item was split, so there is nothing to link.
 <!-- SECTION:NOTES:END -->
+
+## Disposition 2026-10-11
+
+Register task. Its still-open entries were implemented in the t1-evals batch (1483/1484/1510/1511/1512 now Done with evidence); the one unticked row is the Evals harness flake census, deliberately left open (pre-existing, out of this batch's scope). Status stays In Progress until the fleet's flake work closes it.

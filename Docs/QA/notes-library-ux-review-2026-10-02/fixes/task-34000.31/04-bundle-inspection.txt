@@ -1,0 +1,16 @@
+# $ PYTHONPATH=<worktree> python inspect_bundle.py $HARNESS/runs/p1p1-t1-1/home/bundle.zip  (PyYAML safe_load + the app's split_frontmatter over EVERY note file in the bundle)
+# content/notes/Paper notes Retrieval practice.md
+---
+id: 27e32e98-0350-45da-87c7-0669f6669a38
+title: 'Paper notes: Retrieval practice'
+created_at: '2026-10-24T14:21:44.985000+00:00'
+updated_at: '2026-10-24T14:25:08.727000+00:00'
+tags:
+- meeting
+- thesis
+---
+# yaml.safe_load -> {'id': '27e32e98-0350-45da-87c7-0669f6669a38', 'title': 'Paper notes: Retrieval practice', 'created_at': '2026-10-24T14:21:44.985000+00:00', 'updated_at': '2026-10-24T14:25:08.727000+00:00', 'tags': ['meeting', 'thesis']}
+# split_frontmatter tags -> ['meeting', 'thesis'] | body starts: '# Advisor meeting — 2026-09-24\n\nAttendee'
+MISMATCH content/notes/Meeting notes 2026-09-30.md 'Meeting Notes 2026-09-30' 'Meeting notes 2026-09-30'
+MISSING FILE (pre-existing creator defect: case-insensitive filename collision) content/notes/Meeting Notes 2026-09-30.md
+notes in bundle: 122; parse+title+tags+no-fence OK: 120; mismatches: 2

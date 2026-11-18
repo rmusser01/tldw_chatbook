@@ -1,0 +1,34 @@
+[Unit]
+Description=Disposable local GitHub CI VMs
+After=network-online.target
+Wants=network-online.target
+RequiresMountsFor=/var/lib/github-qemu-runner
+ConditionPathExists=/etc/github-qemu-runner/config.yaml
+ConditionPathExists=/etc/github-qemu-runner/app-key.pem
+
+[Service]
+Type=exec
+User=gh-runner
+Group=gh-runner
+SupplementaryGroups=kvm
+ExecStart=/usr/local/bin/github-qemu-runner -config /etc/github-qemu-runner/config.yaml controller
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=50m
+# Let the controller drain busy guests before systemd kills the cgroup.
+KillMode=mixed
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/github-qemu-runner
+LoadCredential=app-key.pem:/etc/github-qemu-runner/app-key.pem
+BindReadOnlyPaths=/etc/github-qemu-runner/resolv.conf:/etc/resolv.conf
+IPAddressDeny=127.0.0.0/8 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 169.254.0.0/16 224.0.0.0/4 ::1/128 fc00::/7 fe80::/10 ff00::/8
+MemoryMax=64G
+CPUQuota=1200%
+TasksMax=4096
+LimitCORE=0
+
+[Install]
+WantedBy=multi-user.target

@@ -45,7 +45,7 @@ older arrival and keeps the id.
 The project-instruction foundation is already complete in
 `backlog/tasks/task-16320 - Add-startup-AGENTS.md-project-context-to-Console.md`.
 Its governing decision is
-`backlog/decisions/069-console-project-instruction-local-state-and-preflight.md`.
+`backlog/decisions/317-console-project-instruction-local-state-and-preflight.md`.
 The old ambiguous `TASK-16320` dependency was removed during the TASK-19637
 renumber; this task must not depend on the unrelated duplicate TASK-16320.
 

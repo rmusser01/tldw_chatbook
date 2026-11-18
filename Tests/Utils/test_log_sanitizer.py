@@ -377,6 +377,68 @@ def test_standalone_credential_shapes_are_replaced_wholly(raw: str) -> None:
     assert sanitize_string(raw) == "***REDACTED***"
 
 
+#: TASK-39061: a 40-character body, the length the filed probe used.
+_UNDERSCORE_KEY_BODY = "DONOTUSEEXAMPLEONLY" + "a1B2c3D4e5" * 2 + "xyz"
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        # Split at the prefix, as `_synthetic` explains.
+        _synthetic("sk", "_live_"),
+        _synthetic("sk", "_test_"),
+        _synthetic("rk", "_live_"),
+        _synthetic("rk", "_test_"),
+    ],
+    ids=("sk-live", "sk-test", "rk-live", "rk-test"),
+)
+@pytest.mark.parametrize(
+    "template",
+    [
+        "payment retry failed with {key} for job 7",
+        # The forwarder's line for a bound `exception_type` (TASK-38989).
+        "persona_buddy_preferences_save_failed: {key}",
+        "persona_buddy_preferences_save_failed exception_type={key}",
+    ],
+    ids=("prose", "forwarder-suffix", "exception-type-field"),
+)
+def test_bare_underscore_live_and_test_keys_are_masked(prefix, template) -> None:
+    """TASK-39061: no standalone rule knew the `sk_`/`rk_` underscore forms."""
+    from tldw_chatbook.Utils.log_sanitizer import redact_log_line
+
+    key = prefix + _UNDERSCORE_KEY_BODY
+    line = template.format(key=key)
+    expected = template.format(key="***REDACTED***")
+    assert redact_log_line(line) == expected
+    assert sanitize_string(line) == expected
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "sk_live_mode is off for job 7",
+        "rk_test_ fixture loaded",
+        "flag sk_test_mode=true",
+        "sk_live_mode_enabled_for_every_customer_account",
+        # The prefix inside a longer word is not a key prefix.
+        "desk_live_" + _UNDERSCORE_KEY_BODY,
+        "SK_LIVE_" + _UNDERSCORE_KEY_BODY,
+    ],
+    ids=(
+        "short-word",
+        "bare-prefix",
+        "short-flag",
+        "underscore-identifier",
+        "prefix-inside-word",
+        "uppercase",
+    ),
+)
+def test_identifiers_that_only_share_the_key_prefix_stay_readable(raw) -> None:
+    from tldw_chatbook.Utils.log_sanitizer import redact_log_line
+
+    assert redact_log_line(raw) == raw
+
+
 @pytest.mark.parametrize(
     "raw",
     [
@@ -711,7 +773,8 @@ class TestSinkRedaction:
             _synthetic("AKI", "ADONOTUSEEXAMPLE1"),
             _synthetic("xox", "b-1234567890-DONOTUSEEXAMPLEONLY"),
             _synthetic(
-                "eyJ", "hbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0",
+                "eyJ",
+                "hbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0",
                 ".DONOTUSEEXAMPLE1",
             ),
         ],
@@ -950,3 +1013,469 @@ class TestRedactionOrderAndPathBoundaries:
         assert redact_user_paths("/srv/appdata/db.sqlite") == "~/db.sqlite"
         # A sibling that merely shares the prefix must survive intact.
         assert redact_user_paths("/srv/appdata-backup/db") == "/srv/appdata-backup/db"
+
+
+# ---------------------------------------------------------------------------
+# TASK-39123: the credentials-v2 trace projection. Its tests live here, beside
+# the v1 projection's pin, because this file runs on a PR lane.
+# Owner decision (2026-11-06): "Mask v1 on read: new traces are written under
+# v2; stored v1 traces keep their version tag, but every read, export and
+# share re-applies the v2 masks, so old keys never surface. No stored data is
+# rewritten."
+# ---------------------------------------------------------------------------
+
+_TRACE_KEY_PREFIXES = (
+    _synthetic("sk", "_live_"),
+    _synthetic("sk", "_test_"),
+    _synthetic("rk", "_live_"),
+    _synthetic("rk", "_test_"),
+)
+_TRACE_KEY_IDS = ("sk-live", "sk-test", "rk-live", "rk-test")
+
+
+@pytest.mark.parametrize("prefix", _TRACE_KEY_PREFIXES, ids=_TRACE_KEY_IDS)
+@pytest.mark.parametrize(
+    "shape", ["prose", "tool-result-string", "tool-result-value", "nested-json"]
+)
+def test_trace_credentials_v2_masks_bare_underscore_keys(prefix, shape) -> None:
+    import json
+
+    from tldw_chatbook.Chat.console_trace_redaction import CredentialSanitizer
+
+    key = prefix + _UNDERSCORE_KEY_BODY
+    value = {
+        "prose": f"payment retry failed with {key} for job 7",
+        "tool-result-string": json.dumps({"stripe": key}),
+        "tool-result-value": {"stripe": key},
+        "nested-json": {"messages": [{"role": "user", "content": f"key is {key}"}]},
+    }[shape]
+
+    result = CredentialSanitizer().sanitize(value)
+    stored = json.dumps(result.value)
+
+    assert (key in stored, "[credential omitted]" in stored) == (False, True)
+    # TASK-41133: new traces are stored under v3, which keeps the v2 masks.
+    assert result.detector_version == "credentials-v3"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "sk_live_mode is off for job 7",
+        "rk_test_ fixture loaded",
+        "sk_live_mode_enabled_for_every_customer_account",
+        "desk_live_" + _UNDERSCORE_KEY_BODY,
+        "SK_LIVE_" + _UNDERSCORE_KEY_BODY,
+    ],
+    ids=(
+        "short-word",
+        "bare-prefix",
+        "underscore-identifier",
+        "prefix-inside-word",
+        "uppercase",
+    ),
+)
+def test_trace_credentials_v2_keeps_identifiers_that_share_the_prefix(raw) -> None:
+    from tldw_chatbook.Chat.console_trace_redaction import CredentialSanitizer
+
+    assert CredentialSanitizer().sanitize(raw).value == raw
+
+
+def test_trace_credentials_v1_projection_stays_byte_identical() -> None:
+    """Stored v1 artifacts are compared with this projection; it never grows."""
+    from tldw_chatbook.Utils.log_sanitizer import sanitize_trace_credentials_v1
+
+    line = f"payment retry failed with {_TRACE_KEY_PREFIXES[0]}{_UNDERSCORE_KEY_BODY}"
+    assert sanitize_trace_credentials_v1(line) == line
+
+
+def _stored_v1_trace(
+    db,
+    *,
+    user_text: str,
+    response: bytes,
+    pii: bool = False,
+    cut: str | None = None,
+    version: str = "credentials-v1",
+):
+    """Store one completed native call under an older credential policy
+    (credentials-v1 by default, as an app before TASK-39123 did): its
+    provider-response artifact holds a key that version never masked.
+    Returns (assistant message id, policy id, artifact id).
+    """
+    from tldw_chatbook.Chat.console_semantic_revision import (
+        project_semantic_revision_provider_message,
+    )
+    from tldw_chatbook.Chat.console_trace_models import (
+        FrozenTracePolicy,
+        SemanticRevisionRef,
+        TraceCallState,
+        TraceContentRef,
+        new_opaque_id,
+    )
+    from tldw_chatbook.Chat.console_trace_redaction import (
+        BUILTIN_PII_RULESET_REVISION_ID,
+        redact_pii_value,
+    )
+    from tldw_chatbook.Chat.console_trace_repository import ConsoleTraceRepository
+
+    repository = ConsoleTraceRepository()
+    conversation_id = db.add_conversation({"title": "stored v1 trace"})
+
+    def message(sender, content, parent=None):
+        message_id = db.add_message(
+            {
+                "conversation_id": conversation_id,
+                "sender": sender,
+                "content": content,
+                "parent_message_id": parent,
+            }
+        )
+        row = db.get_connection().execute(
+            """SELECT revision_id FROM console_trace_semantic_revisions
+                WHERE source_message_id = ? ORDER BY revision_sequence DESC""",
+            (message_id,),
+        ).fetchone()
+        return message_id, str(row[0])
+
+    user_id, user_revision = message("user", user_text)
+    assistant_id, _assistant_revision = message("assistant", "answer", user_id)
+    policy = FrozenTracePolicy(
+        new_opaque_id(),
+        version,
+        pii,
+        BUILTIN_PII_RULESET_REVISION_ID if pii else None,
+    )
+    at = "2026-11-01T00:00:00Z"
+    with db.transaction(immediate=True) as cursor:
+        repository.ensure_policy(cursor, policy)
+        if pii:
+            # Spans as a v1 write froze them: over the v1 projection, which
+            # is the raw message, since v1 leaves a bare underscore key alone.
+            source = project_semantic_revision_provider_message(
+                cursor,
+                revision_id=user_revision,
+                expected_conversation_id=conversation_id,
+            )
+            redaction = redact_pii_value(source)
+            spans: dict[str, list] = {}
+            for item in redaction.field_redactions:
+                spans.setdefault(item.field_path, []).append(item.span)
+            assert spans
+            if cut is not None:
+                # A custom rule's span frozen beside the built-in one, in the
+                # same field (one string here): it may land inside a key.
+                import dataclasses
+                import re
+
+                ((field_path, found),) = spans.items()
+                found.extend(
+                    dataclasses.replace(
+                        found[0], start_codepoint=m.start(), end_codepoint=m.end()
+                    )
+                    for m in re.finditer(cut, user_text)
+                )
+            for field_path, items in spans.items():
+                repository.ensure_redaction_spans(
+                    cursor,
+                    policy_id=policy.policy_id,
+                    semantic_revision_id=user_revision,
+                    artifact_id=None,
+                    field_path=field_path,
+                    spans=items,
+                )
+        segment = repository.create_segment(cursor)
+        owner = repository.attach_owner(
+            cursor, conversation_id=conversation_id, root_segment_id=segment.segment_id
+        )
+        surface = repository.append_surface_node(
+            cursor,
+            segment_id=segment.segment_id,
+            sequence=0,
+            predecessor_node_id=None,
+            component_kind="message",
+            reference=SemanticRevisionRef(user_revision),
+        )
+        header = repository.create_or_reuse_request_header(
+            cursor,
+            provider_name="openai",
+            model_name="gpt-test",
+            route_identity="fresh",
+            endpoint_identity="https://api.openai.com/v1",
+            generation_parameters={"streaming": False},
+            adapter_defaults={},
+            response_format={},
+            reasoning_controls={},
+            components=(),
+        )
+        call = repository.reserve_call(
+            cursor,
+            owner_id=owner.owner_id,
+            segment_id=segment.segment_id,
+            turn_id=user_id,
+            run_id="run-v1",
+            call_sequence=0,
+            idempotency_key="stored-v1-trace",
+            policy_id=policy.policy_id,
+        )
+        repository.bind_call(
+            cursor,
+            call_id=call.call_id,
+            surface_node_id=surface.node_id,
+            request_header_id=header.header_id,
+            provider_name="openai",
+            model_name="gpt-test",
+            route_identity="fresh",
+        )
+        for target in (TraceCallState.DISPATCH_STARTED, TraceCallState.RESPONSE_STARTED):
+            repository.advance_call_state(
+                cursor,
+                call_id=call.call_id,
+                target=target,
+                occurred_at=at,
+                integrity_state="complete",
+            )
+        artifact = repository.store_sanitized_artifact(
+            cursor,
+            sanitized_bytes=response,
+            media_type="application/json",
+            normalization_version="provider-response-v1",
+        )
+        repository.store_response_link(
+            cursor,
+            call_id=call.call_id,
+            response=TraceContentRef(artifact.artifact_id, "provider_response"),
+        )
+        repository.advance_call_state(
+            cursor,
+            call_id=call.call_id,
+            target=TraceCallState.COMPLETE,
+            occurred_at=at,
+            usage={"provider": "openai", "model": "gpt-test", "output": 1},
+            integrity_state="complete",
+        )
+        repository.append_event(
+            cursor,
+            segment_id=segment.segment_id,
+            sequence=0,
+            event_type="call_boundary",
+            call_id=call.call_id,
+        )
+    return assistant_id, policy.policy_id, artifact.artifact_id
+
+
+def _at_rest(db, policy_id: str, artifact_id: str):
+    connection = db.get_connection()
+    return (
+        connection.execute(
+            "SELECT credential_filter_version FROM console_trace_policies WHERE policy_id = ?",
+            (policy_id,),
+        ).fetchone()[0],
+        bytes(
+            connection.execute(
+                "SELECT sanitized_bytes FROM console_trace_artifacts WHERE artifact_id = ?",
+                (artifact_id,),
+            ).fetchone()[0]
+        ),
+    )
+
+
+#: TASK-41133: the keys the credentials-v3 projection adds.
+_V3_KEYS = {
+    "webhook-secret": _synthetic("whsec", "_DONOTUSEEXAMPLEONLY" + "a1B2" * 4),
+    "groq": _synthetic("gsk", "_DONOTUSEEXAMPLEONLY" + "a1B2" * 6),
+}
+#: (stored policy version, a key that version left unmasked).
+_OLDER_TRACE_CASES = {
+    **{
+        f"v1-{name}": ("credentials-v1", prefix + _UNDERSCORE_KEY_BODY)
+        for name, prefix in zip(_TRACE_KEY_IDS, _TRACE_KEY_PREFIXES)
+    },
+    **{
+        f"{version[-2:]}-{name}": (version, key)
+        for version in ("credentials-v1", "credentials-v2")
+        for name, key in _V3_KEYS.items()
+    },
+}
+
+
+@pytest.mark.parametrize(
+    "version,key", list(_OLDER_TRACE_CASES.values()), ids=list(_OLDER_TRACE_CASES)
+)
+def test_stored_older_trace_is_masked_on_read_export_and_share_but_not_rewritten(
+    tmp_path, version, key
+) -> None:
+    """TASK-39123 for v1, TASK-41133 for the v3 keys in v1 and v2 history."""
+    import json
+
+    from tldw_chatbook.Chat.console_exchange_export import project_exchange_export
+    from tldw_chatbook.Chat.console_trace_native_reader import ConsoleTraceNativeReader
+    from tldw_chatbook.Chat.console_trace_projection import project_capture_for_viewer
+    from tldw_chatbook.Chat.trace_export_profiles import (
+        TraceExportProfile,
+        TraceViewerProfile,
+    )
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    response = json.dumps(
+        {"role": "assistant", "content": f"use {key}", "tool_calls": []},
+        separators=(",", ":"),
+    ).encode()
+    db = CharactersRAGDB(tmp_path / "trace.sqlite", "stored-older")
+    try:
+        assistant_id, policy_id, artifact_id = _stored_v1_trace(
+            db, user_text=f"my key is {key}", response=response, version=version
+        )
+        before = _at_rest(db, policy_id, artifact_id)
+        (call,) = ConsoleTraceNativeReader(db).read_calls(assistant_id)
+        disclosed = {
+            # The Conversation Inspector's read, both viewer profiles.
+            **{
+                f"read-{profile.value}": repr(
+                    project_capture_for_viewer(call.capture, profile)
+                )
+                for profile in TraceViewerProfile
+            },
+            # Export to a file and share to the clipboard both write this text
+            # (Widgets/Console/console_exchange_export_dialog.py).
+            **{
+                f"export-{profile.value}": project_exchange_export(
+                    call.capture, profile
+                ).json_text
+                for profile in TraceExportProfile
+            },
+        }
+        after = _at_rest(db, policy_id, artifact_id)
+    finally:
+        db.close()
+
+    assert {name: key in text for name, text in disclosed.items()} == {
+        name: False for name in disclosed
+    }
+    assert "[credential omitted]" in disclosed["export-full_trace"]
+    # Nothing at rest moved: the policy keeps its tag, the artifact its bytes.
+    assert before == after == (version, response)
+
+
+@pytest.mark.parametrize(
+    "version,key",
+    [
+        ("credentials-v1", _TRACE_KEY_PREFIXES[0] + _UNDERSCORE_KEY_BODY),
+        ("credentials-v1", _V3_KEYS["groq"]),
+        ("credentials-v2", _V3_KEYS["webhook-secret"]),
+    ],
+    ids=("v1-sk-live", "v1-groq", "v2-webhook-secret"),
+)
+def test_stored_older_pii_masks_still_land_with_the_current_key_mask(
+    tmp_path, version, key
+) -> None:
+    """A v1 or v2 policy's frozen PII spans index its own projection.
+    Re-sanitizing under the current one first would shift them off the
+    e-mail address."""
+    from tldw_chatbook.Chat.console_trace_native_reader import ConsoleTraceNativeReader
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(tmp_path / "trace.sqlite", "stored-older-pii")
+    try:
+        assistant_id, _policy_id, _artifact_id = _stored_v1_trace(
+            db,
+            user_text=f"key {key} then mail ada@example.com please",
+            response=b'{"content":"ok","role":"assistant"}',
+            pii=True,
+            version=version,
+        )
+        (call,) = ConsoleTraceNativeReader(db).read_calls(assistant_id)
+    finally:
+        db.close()
+
+    assert call.capture.request.get("messages_payload") == [
+        {
+            "role": "user",
+            "content": "key [credential omitted] then mail [PII omitted] please",
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "version,prefix",
+    [
+        ("credentials-v1", _TRACE_KEY_PREFIXES[0]),
+        ("credentials-v1", _synthetic("whsec", "_")),
+        ("credentials-v2", _synthetic("gsk", "_")),
+    ],
+    ids=("v1-sk-live", "v1-webhook-secret", "v2-groq"),
+)
+def test_stored_older_custom_span_inside_a_key_leaves_no_key_fragment(
+    tmp_path, version, prefix
+) -> None:
+    """TASK-39123 review r12b-rev1: a frozen span that cuts a bare key (here a
+    custom digit rule) split it into fragments the current masks no longer
+    match. The span is widened over the key, so the read shows no fragment
+    (TASK-41133: also for the v3 keys, in v1 and v2 history)."""
+    from tldw_chatbook.Chat.console_trace_native_reader import ConsoleTraceNativeReader
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    key = prefix + "DONOTUSE" + "123456" + "EXAMPLEONLYabcdefghij"
+    db = CharactersRAGDB(tmp_path / "trace.sqlite", "stored-older-cut")
+    try:
+        assistant_id, _policy_id, _artifact_id = _stored_v1_trace(
+            db,
+            user_text=f"key {key} then mail ada@example.com please",
+            response=b'{"content":"ok","role":"assistant"}',
+            pii=True,
+            cut=r"\d{4,}",
+            version=version,
+        )
+        (call,) = ConsoleTraceNativeReader(db).read_calls(assistant_id)
+    finally:
+        db.close()
+
+    assert call.capture.request.get("messages_payload") == [
+        {"role": "user", "content": "key [PII omitted] then mail [PII omitted] please"}
+    ]
+
+
+@pytest.mark.parametrize(
+    "secret",
+    [
+        _synthetic("whsec", "_DONOTUSEEXAMPLEONLY" + "a1B2" * 4),
+        _synthetic("whsec", "_DONOTUSEEXAMPLEONLY" + "a+B/" * 4 + "=="),
+        _synthetic("gsk", "_DONOTUSEEXAMPLEONLY" + "a1B2" * 6),
+    ],
+    ids=("webhook-secret", "webhook-secret-base64", "groq"),
+)
+def test_webhook_secrets_and_groq_keys_are_masked_in_logs_and_from_v3(secret) -> None:
+    """TASK-40301 AC#2: ``whsec_`` and ``gsk_`` were in neither the log list
+    nor the Trace export list. Logs mask them, and so does the credentials-v3
+    trace projection (TASK-41133); v1 and v2 stay byte-identical, so no stored
+    history reads as changed."""
+    from tldw_chatbook.Chat.console_trace_redaction import CredentialSanitizer
+    from tldw_chatbook.Utils.log_sanitizer import (
+        redact_log_line,
+        sanitize_trace_credentials_v1,
+        sanitize_trace_credentials_v2,
+        sanitize_trace_credentials_v3,
+    )
+
+    line = f"webhook verify failed with {secret} for job 7"
+    expected = "webhook verify failed with ***REDACTED*** for job 7"
+    assert sanitize_string(line) == expected
+    assert redact_log_line(line) == expected
+    assert sanitize_trace_credentials_v1(line) == line
+    assert sanitize_trace_credentials_v2(line) == line
+    assert sanitize_trace_credentials_v3(line) == expected
+    result = CredentialSanitizer().sanitize({"content": line})
+    assert result.value == {
+        "content": "webhook verify failed with [credential omitted] for job 7"
+    }
+    assert result.detector_version == "credentials-v3"
+
+
+@pytest.mark.parametrize(
+    "raw", ["whsec_mode is on", "gsk_enabled_for_every_customer_account_today"]
+)
+def test_identifiers_that_share_the_webhook_or_groq_prefix_stay_readable(raw) -> None:
+    from tldw_chatbook.Chat.console_trace_redaction import CredentialSanitizer
+
+    assert sanitize_string(raw) == raw
+    assert CredentialSanitizer().sanitize(raw).value == raw

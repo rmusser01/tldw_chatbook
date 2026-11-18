@@ -175,11 +175,17 @@ def test_actual_migrated_sqlite_is_revalidated_only_on_disposable_copy(
     original = private_sqlite.open_recovery_validation
     seen = []
 
-    def checked(owner, path, *, writable):
+    def checked(owner, path, *, writable, with_restrictions=False, cancel=None):
         seen.append(path)
         assert Path(path) not in dict(plan.restore).values()
         assert writable is False
-        return original(owner, path, writable=writable)
+        return original(
+            owner,
+            path,
+            writable=writable,
+            with_restrictions=with_restrictions,
+            cancel=cancel,
+        )
 
     monkeypatch.setattr(private_sqlite, "open_recovery_validation", checked)
     journal.validate_installed(candidate, plan)

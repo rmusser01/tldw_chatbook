@@ -1,0 +1,51 @@
+{"event": "ready", "label": "whole-mounted-chat", "pid": 66029, "time": 1793852168.7854831}
+{"conversation": "bda5e342-192f-4d87-947c-2a6c3f3ffd03", "event": "chat", "pid": 66029, "session": "05e5e232-9ef1-4d99-8318-10a8bc7ccf46", "time": 1793852168.915166}
+{"event": "ready", "label": "named-chat-tab", "pid": 66029, "time": 1793852170.855724}
+{"base": "http://127.0.0.1:8010", "event": "native-provider", "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0", "pid": 66029, "provider": "llama_cpp", "ready": true, "time": 1793852171.0566258}
+{"event": "ready", "label": "typed workflow command", "pid": 66029, "time": 1793852172.497788}
+{"active": "05e5e232-9ef1-4d99-8318-10a8bc7ccf46", "disabled": false, "event": "draft", "pid": 66029, "session": "05e5e232-9ef1-4d99-8318-10a8bc7ccf46", "time": 1793852172.498069}
+{"event": "ready", "label": "#console-send-message", "pid": 66029, "time": 1793852172.49866}
+{"event": "clicked", "id": "#console-send-message", "pid": 66029, "region": [116, 52, 14, 1], "time": 1793852172.740423}
+{"event": "ready", "label": "setup", "pid": 66029, "time": 1793852172.8423839}
+{"event": "ready", "label": "#workflow-plan", "pid": 66029, "time": 1793852172.896724}
+{"event": "clicked", "id": "#workflow-plan", "pid": 66029, "region": [80, 49, 43, 1], "time": 1793852173.1518521}
+{"event": "ready", "label": "detail", "pid": 66029, "time": 1793852174.868056}
+{"begins_json": true, "content_length": 2676, "ends_json": true, "event": "completion", "finish": "stop", "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0", "pid": 66029, "reasoning_length": 0, "time": 1793852189.544259, "tool_names": [], "usage": {"completion_tokens": 864, "completion_tokens_details": {"reasoning_tokens": 0}, "prompt_tokens": 3185, "prompt_tokens_details": {"cached_tokens": 0}, "total_tokens": 4049}}
+{"begins_json": true, "content_length": 2676, "ends_json": true, "event": "completion", "finish": "stop", "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0", "pid": 66029, "reasoning_length": 0, "time": 1793852189.5464902, "tool_names": [], "usage": {"completion_tokens": 864, "completion_tokens_details": {"reasoning_tokens": 0}, "prompt_tokens": 3185, "prompt_tokens_details": {"cached_tokens": 0}, "total_tokens": 4049}}
+{"begins_json": true, "content_length": 2676, "ends_json": true, "event": "completion", "finish": "stop", "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0", "pid": 66029, "reasoning_length": 0, "time": 1793852189.546612, "tool_names": [], "usage": {"completion_tokens": 864, "completion_tokens_details": {"reasoning_tokens": 0}, "prompt_tokens": 3185, "prompt_tokens_details": {"cached_tokens": 0}, "total_tokens": 4049}}
+{"event": "ready", "label": "plan terminal", "pid": 66029, "time": 1793852190.249057}
+{"event": "plan-disposition", "pid": 66029, "plans": 1, "spend": {"child_launch": 0, "generation": 1, "model_call": 1, "tokens": 4049}, "status": "awaiting_phase_review", "time": 1793852190.249184, "workflow": "01f534da-7811-4977-ad47-f42b0d31a071"}
+{"event": "ready", "label": "#workflow-approve", "pid": 66029, "time": 1793852190.24976}
+{"event": "clicked", "id": "#workflow-approve", "pid": 66029, "region": [37, 49, 28, 1], "time": 1793852190.4367738}
+{"begins_json": false, "content_length": 109, "ends_json": false, "event": "completion", "finish": "stop", "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0", "pid": 66029, "reasoning_length": 0, "time": 1793852194.529551, "tool_names": [], "usage": {"completion_tokens": 39, "completion_tokens_details": {"reasoning_tokens": 0}, "prompt_tokens": 894, "prompt_tokens_details": {"cached_tokens": 0}, "total_tokens": 933}}
+{"begins_json": false, "content_length": 109, "ends_json": false, "event": "completion", "finish": "stop", "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0", "pid": 66029, "reasoning_length": 0, "time": 1793852194.529778, "tool_names": [], "usage": {"completion_tokens": 39, "completion_tokens_details": {"reasoning_tokens": 0}, "prompt_tokens": 894, "prompt_tokens_details": {"cached_tokens": 0}, "total_tokens": 933}}
+{"begins_json": false, "content_length": 109, "ends_json": false, "event": "completion", "finish": "stop", "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0", "pid": 66029, "reasoning_length": 0, "time": 1793852194.529865, "tool_names": [], "usage": {"completion_tokens": 39, "completion_tokens_details": {"reasoning_tokens": 0}, "prompt_tokens": 894, "prompt_tokens_details": {"cached_tokens": 0}, "total_tokens": 933}}
+{"event": "ready", "label": "#workflow-refresh", "pid": 66029, "time": 1793852194.732085}
+{"event": "clicked", "id": "#workflow-refresh", "pid": 66029, "region": [54, 46, 17, 1], "time": 1793852194.9033759}
+{"event": "ready", "label": "pending decision visible", "pid": 66029, "time": 1793852195.066838}
+{"event": "ready", "label": "#workflow-pending", "pid": 66029, "time": 1793852195.067164}
+{"event": "clicked", "id": "#workflow-pending", "pid": 66029, "region": [37, 41, 30, 1], "time": 1793852195.805825}
+{"event": "ready", "label": "actual approval card", "pid": 66029, "time": 1793852195.808148}
+{"event": "pending-call", "pid": 66029, "rows": [{"arguments": {"path": "value.txt", "root_alias": "folder-b5ba24acd3cb"}, "call_id": "turn-1-call-0", "description": "Read a text file with 1-based line numbers; pages via offset/limit. Refuses binary files.", "effects": ["private_read"], "execution_policy": "bounded_abandonable", "full_command": "", "llm_name": "fs_read", "options": ["approve_once", "approve_session", "always_allow", "deny"], "path_precheck_failed": false, "rationale": "", "reason": "ask", "scope_notice": "", "server_key": "local:__local__", "server_label": "Local workspace, web, and Watchlists", "tool_name": "fs_read", "warning": ""}], "time": 1793852195.810477}
+{"event": "ready", "label": "#approval-fast-approve-9-0", "pid": 66029, "time": 1793852195.81133}
+{"event": "clicked", "id": "#approval-fast-approve-9-0", "pid": 66029, "region": [61, 15, 14, 1], "time": 1793852196.456644}
+{"event": "ready", "label": "tool approval accepted", "pid": 66029, "time": 1793852196.456883}
+{"event": "ready", "label": "dismiss preserved command popup", "pid": 66029, "time": 1793852196.645644}
+{"event": "ready", "label": "#console-workflow-line", "pid": 66029, "time": 1793852196.6476202}
+{"event": "original-scope-unwind", "function": "_refuse", "kind": "AutomaticWorkRefused", "message": "workflow_task_effectful_hooks_unsupported", "pid": 66029, "time": 1793852196.925997}
+{"event": "original-scope-unwind", "function": "_refuse", "kind": "AutomaticWorkRefused", "message": "workflow_task_effectful_hooks_unsupported", "pid": 66029, "time": 1793852196.940543}
+{"event": "original-scope-unwind", "function": "_refuse", "kind": "AutomaticWorkRefused", "message": "workflow_task_task_settled", "pid": 66029, "time": 1793852197.026691}
+{"event": "original-scope-unwind", "expected_launch": "4d2f60ad975b4b2085e30479aaf77c2e", "function": "check", "kind": "AutomaticWorkRefused", "message": "workflow_task_task_settled", "original_row": ["accepted", "4d2f60ad975b4b2085e30479aaf77c2e", "cancelled"], "pid": 66029, "time": 1793852197.026884}
+{"event": "original-scope-unwind", "function": "_check_task_call", "kind": "AutomaticWorkRefused", "message": "workflow_task_task_settled", "pid": 66029, "time": 1793852197.0270238}
+{"event": "original-scope-unwind", "function": "check_task_call", "kind": "AutomaticWorkRefused", "message": "workflow_task_task_settled", "pid": 66029, "time": 1793852197.027112}
+{"event": "original-scope-unwind", "function": "check_task_provider", "kind": "AutomaticWorkRefused", "message": "workflow_task_task_settled", "pid": 66029, "time": 1793852197.027178}
+{"admitted_aliases": ["folder-b5ba24acd3cb"], "args": {"path": "value.txt", "root_alias": "folder-b5ba24acd3cb"}, "code_name": "_invoke_detailed", "dispatch": false, "error": "workflow task scope refused", "event": "local-tool-return", "ok": false, "pid": 66029, "reason": "LocalToolInvocationReason.AUTHORITY_UNAVAILABLE", "root": "/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-9hu74n53/project", "terminal": "LocalProviderTerminal.NOT_STARTED", "time": 1793852197.113753, "tool": "local:fs_read"}
+{"event": "clicked", "id": "#console-workflow-line", "pid": 66029, "region": [0, 49, 160, 1], "time": 1793852197.640983}
+{"event": "ready", "label": "detail after approval", "pid": 66029, "time": 1793852197.896194}
+{"event": "stage-failed", "kind": "TimeoutError", "label": "native diagnostic read", "message": "", "pid": 66029, "screen": "ConsoleWorkflowStatus", "time": 1793852245.438457}
+{"event": "ready", "label": "#workflow-stop", "pid": 66029, "time": 1793852245.45424}
+{"event": "clicked", "id": "#workflow-stop", "pid": 66029, "region": [105, 46, 18, 1], "time": 1793852245.6269171}
+{"event": "ready", "label": "actual Stop returned", "pid": 66029, "time": 1793852246.050532}
+{"event": "stop-after-stage-failure", "label": "native diagnostic read", "pid": 66029, "time": 1793852246.050648}
+{"event": "monitor-released", "pid": 66029, "time": 1793852246.246929}
+{"event": "creator-refused", "kind": "AssertionError", "pid": 66029, "reason": "{'fixture_creator_not_settled': 'db.media.primary', 'participant_closed': False, 'handles': [{'thread': 'asyncio_6', 'transaction': False, 'live_lease': True}]}", "time": 1793852246.247137}

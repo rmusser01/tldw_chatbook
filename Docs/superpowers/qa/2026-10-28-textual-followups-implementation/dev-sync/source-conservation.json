@@ -1,0 +1,42 @@
+[
+  {
+    "path": "tldw_chatbook/UI/Evals/character_bench_editor.py",
+    "blob": "48cce291901ba531dded6921d63f4ff9d88da85f"
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/evals_screen.py",
+    "blob": "c8cd752697fc3d65db8723ed8eb8704a5f7ca00b"
+  },
+  {
+    "path": "tldw_chatbook/UI/Research_Window.py",
+    "blob": "8a4bf7af3e31eb1872120c87f5903cb01db12a54"
+  },
+  {
+    "path": "tldw_chatbook/UI/Library_Modules/library_file_export.py",
+    "blob": "ef33e680ac3b36fb1c14d05ae4c89346fa4d6db8"
+  },
+  {
+    "path": "Tests/UI/test_evals_character_bench_save_publication.py",
+    "blob": "890f69e772ee2bce9be9b410f6e7ba6270f6901b"
+  },
+  {
+    "path": "Tests/UI/test_research_run_refresh_publication.py",
+    "blob": "2a9a94ad538d5b8473b3a46bebc57fab4252b00f"
+  },
+  {
+    "path": "Tests/UI/test_library_note_export_responsiveness.py",
+    "blob": "c85464b9c2565106880e8cdbf884f3a8f5e3d322"
+  },
+  {
+    "path": "Tests/UI/library_note_links_support.py",
+    "blob": "8c03b5806bba30b0458e8968aef23f56ede4b411"
+  },
+  {
+    "path": "Tests/UI/test_library_media_reader_controls_in_list_view.py",
+    "blob": "d4f5e4288d510cc2c916372c164bb49fc09de9c4"
+  },
+  {
+    "path": "Tests/UI/test_library_note_links_picker_and_preview.py",
+    "blob": "6c0d816180b86b8607558b27ac50d832ea02bcca"
+  }
+]

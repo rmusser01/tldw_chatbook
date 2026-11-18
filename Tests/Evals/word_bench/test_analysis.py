@@ -44,7 +44,9 @@ def test_entropy_of_a_certain_distribution_is_zero():
 
 
 def test_entropy_of_a_uniform_pair_is_ln_two():
-    assert entropy(_cap([("a", 0.5), ("b", 0.5)])) == pytest.approx(math.log(2), abs=1e-9)
+    assert entropy(_cap([("a", 0.5), ("b", 0.5)])) == pytest.approx(
+        math.log(2), abs=1e-9
+    )
 
 
 def test_entropy_accounts_for_unobserved_mass_as_one_bucket():
@@ -87,7 +89,9 @@ def test_effective_k_is_the_minimum_k_returned_across_cells():
     for that."""
     a = _cap([("a", 0.5)] + [(f"a_extra_{i}", 0.001) for i in range(19)], k_returned=20)
     b = _cap([("b", 0.5)] + [(f"b_extra_{i}", 0.001) for i in range(4)], k_returned=5)
-    assert len(a.top_k) == 20 and len(b.top_k) == 5, "fixture must match its own k_returned"
+    assert len(a.top_k) == 20 and len(b.top_k) == 5, (
+        "fixture must match its own k_returned"
+    )
     assert effective_k([a, b]) == 5
 
 
@@ -141,8 +145,8 @@ def test_divergence_flags_bounded_when_truncated_mass_is_material():
     values that individually clear the threshold (as an earlier version of
     this test did) would not actually exercise the "combined" half of
     ``combined_truncation > TRUNCATION_WARN_THRESHOLD``."""
-    a = _cap([("x", 0.85)])   # 0.15 unobserved
-    b = _cap([("x", 0.85)])   # 0.15 unobserved
+    a = _cap([("x", 0.85)])  # 0.15 unobserved
+    b = _cap([("x", 0.85)])  # 0.15 unobserved
     _, bounded = divergence(a, b)
     assert bounded is True, f"combined truncation exceeds {TRUNCATION_WARN_THRESHOLD}"
 
@@ -199,7 +203,9 @@ def test_probe_bounded_when_absent_but_seen_elsewhere_in_the_run():
     cap = _cap([(" I", 0.9)])
     r = resolve_probe(cap, " Sure", ever_observed=True)
     assert r.state == "bounded"
-    assert r.logprob == pytest.approx(math.log(0.9), abs=1e-9), "bound is the K-th logprob"
+    assert r.logprob == pytest.approx(math.log(0.9), abs=1e-9), (
+        "bound is the K-th logprob"
+    )
 
 
 def test_probe_never_observed_is_distinct_from_bounded():
@@ -229,14 +235,28 @@ def test_divergence_matches_tokens_across_models_not_by_provider_token_id():
     Matching on ids would call these disjoint; matching on bytes sees them
     as the same token and reports zero divergence."""
     a = CellCapture(
-        prompt_mode="raw", k_requested=1, k_returned=1, content_offset=0,
-        top_k=(TokenProb(token=" a", logprob=math.log(1.0), bytes_=(32, 97), token_id=496),),
-        canary="pass", captured_at="2026-07-26T00:00:00Z",
+        prompt_mode="raw",
+        k_requested=1,
+        k_returned=1,
+        content_offset=0,
+        top_k=(
+            TokenProb(token=" a", logprob=math.log(1.0), bytes_=(32, 97), token_id=496),
+        ),
+        canary="pass",
+        captured_at="2026-07-26T00:00:00Z",
     )
     b = CellCapture(
-        prompt_mode="raw", k_requested=1, k_returned=1, content_offset=0,
-        top_k=(TokenProb(token=" a", logprob=math.log(1.0), bytes_=(32, 97), token_id=99999),),
-        canary="pass", captured_at="2026-07-26T00:00:00Z",
+        prompt_mode="raw",
+        k_requested=1,
+        k_returned=1,
+        content_offset=0,
+        top_k=(
+            TokenProb(
+                token=" a", logprob=math.log(1.0), bytes_=(32, 97), token_id=99999
+            ),
+        ),
+        canary="pass",
+        captured_at="2026-07-26T00:00:00Z",
     )
     jsd, _ = divergence(a, b)
     assert jsd == pytest.approx(0.0, abs=1e-9)
@@ -248,14 +268,24 @@ def test_divergence_treats_bytes_and_byteless_tokens_of_the_same_surface_form_as
     support) must not report ln(2) -- maximal divergence -- for identical
     distributions just because one side omits `bytes`."""
     a = CellCapture(
-        prompt_mode="raw", k_requested=1, k_returned=1, content_offset=0,
-        top_k=(TokenProb(token=" a", logprob=math.log(1.0), bytes_=(32, 97), token_id=1),),
-        canary="pass", captured_at="2026-07-26T00:00:00Z",
+        prompt_mode="raw",
+        k_requested=1,
+        k_returned=1,
+        content_offset=0,
+        top_k=(
+            TokenProb(token=" a", logprob=math.log(1.0), bytes_=(32, 97), token_id=1),
+        ),
+        canary="pass",
+        captured_at="2026-07-26T00:00:00Z",
     )
     b = CellCapture(
-        prompt_mode="raw", k_requested=1, k_returned=1, content_offset=0,
+        prompt_mode="raw",
+        k_requested=1,
+        k_returned=1,
+        content_offset=0,
         top_k=(TokenProb(token=" a", logprob=math.log(1.0), bytes_=(), token_id=1),),
-        canary="pass", captured_at="2026-07-26T00:00:00Z",
+        canary="pass",
+        captured_at="2026-07-26T00:00:00Z",
     )
     jsd, _ = divergence(a, b)
     assert jsd == pytest.approx(0.0, abs=1e-9)
@@ -277,12 +307,20 @@ def test_duplicate_identities_within_one_cell_accumulate_rather_than_last_wins()
 
     def _dup_cap(hi: float, lo: float) -> CellCapture:
         return CellCapture(
-            prompt_mode="raw", k_requested=2, k_returned=2, content_offset=0,
+            prompt_mode="raw",
+            k_requested=2,
+            k_returned=2,
+            content_offset=0,
             top_k=(
-                TokenProb(token=" a", logprob=math.log(hi), bytes_=(32, 97), token_id=1),
-                TokenProb(token=" a", logprob=math.log(lo), bytes_=(32, 97), token_id=2),
+                TokenProb(
+                    token=" a", logprob=math.log(hi), bytes_=(32, 97), token_id=1
+                ),
+                TokenProb(
+                    token=" a", logprob=math.log(lo), bytes_=(32, 97), token_id=2
+                ),
             ),
-            canary="pass", captured_at="2026-07-26T00:00:00Z",
+            canary="pass",
+            captured_at="2026-07-26T00:00:00Z",
         )
 
     a = _dup_cap(0.3, 0.2)  # duplicate " a" entries: true mass 0.5
@@ -294,7 +332,9 @@ def test_duplicate_identities_within_one_cell_accumulate_rather_than_last_wins()
     # accumulation is correct; last-wins would instead give [0.2, 0.8] / [0.05, 0.95].
     pa, pb = _aligned(a, b, k=2)
     assert pa == pytest.approx([0.5, 0.5], abs=1e-9), "accumulated, not last-wins (0.2)"
-    assert pb == pytest.approx([0.5, 0.5], abs=1e-9), "accumulated, not last-wins (0.05)"
+    assert pb == pytest.approx([0.5, 0.5], abs=1e-9), (
+        "accumulated, not last-wins (0.05)"
+    )
 
     jsd, _ = divergence(a, b)
     assert jsd == pytest.approx(0.0, abs=1e-9)
@@ -330,7 +370,9 @@ def test_divergence_is_an_estimate_not_a_guaranteed_bound():
         m = 0.5 * (p + q)
         true_jsd += 0.5 * p * math.log(p / m) + 0.5 * q * math.log(q / m)
 
-    assert true_jsd == pytest.approx(0.0, abs=1e-9), "sanity: the feasible worlds are identical"
+    assert true_jsd == pytest.approx(0.0, abs=1e-9), (
+        "sanity: the feasible worlds are identical"
+    )
     assert reported > true_jsd, (
         "reported divergence must exceed the true divergence of this "
         "feasible completion -- proving `reported` is NOT a guaranteed "
@@ -391,7 +433,9 @@ def test_combined_truncation_is_not_the_sum_of_each_cells_own_truncated_mass_at_
     smaller than one cell's native K, that cell's OWN `truncated_mass`
     (computed over its full native top_k) understates the truncation
     combined_truncation() actually uses (computed at the shared k)."""
-    rich = _cap([("a", 0.5), ("b", 0.3), ("c", 0.1)], k_returned=3)  # own truncated_mass = 0.1
+    rich = _cap(
+        [("a", 0.5), ("b", 0.3), ("c", 0.1)], k_returned=3
+    )  # own truncated_mass = 0.1
     poor = _cap([("a", 0.5), ("b", 0.3)], k_returned=2)  # own truncated_mass = 0.2
 
     naive_sum = rich.truncated_mass + poor.truncated_mass

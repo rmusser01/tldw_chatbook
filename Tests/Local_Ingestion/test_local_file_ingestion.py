@@ -13,7 +13,9 @@ from typing import Any, Dict
 import pytest
 
 from tldw_chatbook.Local_Ingestion import local_file_ingestion
-from tldw_chatbook.Local_Ingestion.local_file_ingestion import parse_local_file_for_ingest
+from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
+    parse_local_file_for_ingest,
+)
 
 
 def _make_pdf_result(**kwargs) -> Dict[str, Any]:
@@ -123,7 +125,9 @@ def test_pdf_unimplemented_options_record_warnings(tmp_path: Path, monkeypatch) 
     source = tmp_path / "doc.pdf"
     source.write_bytes(b"%PDF-1.4 stub")
 
-    def fake_process_pdf(engine=None, page_range=None, ocr=None, extract_images=False, **kwargs):
+    def fake_process_pdf(
+        engine=None, page_range=None, ocr=None, extract_images=False, **kwargs
+    ):
         warnings = []
         if page_range is not None:
             warnings.append(f"page_range={page_range}")
@@ -333,6 +337,95 @@ def test_video_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> N
     assert all(measured_data not in event for event in progress_events)
 
 
+@pytest.mark.parametrize("provenance_kind", ["user", "unknown", "forged", "missing"])
+def test_url_text_and_provenance_reach_video_processor(
+    monkeypatch,
+    provenance_kind,
+) -> None:
+    """TASK-38207: the existing parse boundary keeps an intact URL unchanged."""
+    from tldw_chatbook.STT.executor_worker import _default_parse_job
+    from tldw_chatbook.Utils.egress import UrlProvenance
+
+    original_url = (
+        "https://www.youtube.com/watch?v=wtTd8PJPMVg&next=https://example.org/a%2Fb"
+    )
+
+    video_calls: list[Dict[str, Any]] = []
+    article_calls: list[str] = []
+
+    class _StubVideoProcessor:
+        def __init__(self, media_db=None, transcription_runner=None):
+            self.media_db = media_db
+
+        def process_videos(self, **kwargs):
+            video_calls.append(kwargs)
+            return {
+                "results": [
+                    {
+                        "status": "Success",
+                        "content": "Video transcript",
+                        "metadata": {"title": "Video", "author": "Unknown"},
+                        "chunks": [],
+                        "analysis": "",
+                    }
+                ]
+            }
+
+    def _stub_extract_article(raw_source, options, url_provenance=None):
+        article_calls.append(raw_source)
+        return {
+            "url": raw_source,
+            "error": None,
+            "content": "Article text",
+            "title": "Article",
+        }
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Local_Ingestion.local_file_ingestion.LocalVideoProcessor",
+        _StubVideoProcessor,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Local_Ingestion.web_article_ingestion.extract_article_for_ingest",
+        _stub_extract_article,
+    )
+    # Config-default loading is incidental to the behavior under test and
+    # drags in the config bootstrap (deferred import from ..config); keep
+    # this test hermetic by patching at the source module.
+    monkeypatch.setattr(
+        "tldw_chatbook.config.get_media_ingestion_defaults",
+        lambda media_type: {},
+    )
+
+    options = {
+        "transcription_provider": "parakeet-onnx",
+        "transcription_model": "base",
+        "language": "en",
+        "transcription_precision": "int8",
+        "transcription_local_files_only": True,
+        "transcription_batch_route_resolved": True,
+        "timestamps": True,
+        "diarization": False,
+    }
+    provenance = {
+        "user": UrlProvenance.USER_ENTERED,
+        "unknown": UrlProvenance.UNKNOWN,
+        "forged": "USER_ENTERED",
+    }
+    if provenance_kind in provenance:
+        options["url_provenance"] = provenance[provenance_kind]
+    _default_parse_job(original_url, options, transcription_runner=object())
+
+    assert article_calls == []
+    assert len(video_calls) == 1
+    assert video_calls[0]["inputs"] == [original_url]
+
+    assert video_calls[0]["url_provenance"] is (
+        UrlProvenance.USER_ENTERED
+        if provenance_kind == "user"
+        else UrlProvenance.UNKNOWN
+    )
+
+
 @pytest.mark.parametrize(
     ("metadata", "expected"),
     (
@@ -369,7 +462,9 @@ def test_measured_transcription_percent_ignores_hostile_mapping() -> None:
         def __contains__(self, _key: object) -> bool:
             raise RuntimeError("hostile provider metadata")
 
-    assert local_file_ingestion._measured_transcription_percent(_HostileMapping()) is None
+    assert (
+        local_file_ingestion._measured_transcription_percent(_HostileMapping()) is None
+    )
 
 
 def test_ebook_options_are_routed_to_process_ebook(tmp_path: Path, monkeypatch) -> None:
@@ -403,11 +498,15 @@ def test_ebook_options_are_routed_to_process_ebook(tmp_path: Path, monkeypatch) 
     assert call["split_chapters"] is True
 
 
-def test_ebook_split_chapters_false_records_warning(tmp_path: Path, monkeypatch) -> None:
+def test_ebook_split_chapters_false_records_warning(
+    tmp_path: Path, monkeypatch
+) -> None:
     source = tmp_path / "book.epub"
     source.write_bytes(b"PK\x03\x04" + b"\x00" * 64)
 
-    def fake_process_ebook(method=None, split_chapters=True, include_toc=True, **kwargs):
+    def fake_process_ebook(
+        method=None, split_chapters=True, include_toc=True, **kwargs
+    ):
         warnings = []
         if not split_chapters:
             warnings.append("split_chapters=False")

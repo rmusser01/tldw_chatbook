@@ -1,4 +1,14 @@
-"""Durable cross-destination adaptive-reader closeout regressions."""
+"""Durable cross-destination adaptive-reader closeout regressions.
+
+Every case runs under ``@private_profile_test`` (TASK-32386): the journeys
+mount real production-CSS apps whose ``_build_test_app -> load_settings``
+path goes through the ADR-126 config-participant admission, which the
+per-test environment redirect fails closed (the TASK-32628/32873/33370
+``RecoveryRequired: raw_source_selection_changed`` class), and their
+durable per-destination reader preferences must stay isolated per case —
+a shared in-process bootstrap profile leaks a Library/Items choice written
+by one case into the next one's initial layout.
+"""
 
 from __future__ import annotations
 
@@ -7,9 +17,11 @@ import inspect
 import operator
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from textual.containers import Vertical
+from textual.errors import NoWidget
 from textual.widgets import Button, Input, TextArea
 
 from Tests.UI.test_library_conversation_reader import (
@@ -33,6 +45,7 @@ from Tests.UI.test_library_shell import (
 )
 from Tests.UI.test_library_skills_reader import _wire_skills
 from Tests.UI.test_destination_shells import StaticLibraryNotesScopeService
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.Library.library_notes_tree_paging import NotesBranchKey
 from tldw_chatbook.Library.collections_capture_models import (
     CapturePageRequest,
@@ -46,6 +59,9 @@ from tldw_chatbook.Notes.note_folder_models import (
     NotePlacementRecord,
 )
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
+from tldw_chatbook.Widgets.Library.library_browse_reader_shell import (
+    LIBRARY_BROWSE_READER_SHELL_ID,
+)
 from tldw_chatbook.Widgets.workbench_focus import _available_targets
 from tldw_chatbook.config import load_settings
 
@@ -184,8 +200,10 @@ class _CloseoutPagedNotesService(StaticLibraryNotesScopeService):
 
     @staticmethod
     def _folder(parent_id: str | None, index: int) -> NoteFolder:
-        folder_id = "personal" if parent_id is None and index == 0 else (
-            f"root-{index:02d}" if parent_id is None else f"child-{index:02d}"
+        folder_id = (
+            "personal"
+            if parent_id is None and index == 0
+            else (f"root-{index:02d}" if parent_id is None else f"child-{index:02d}")
         )
         name = (
             "00 Personal research with a deliberately identifying long title"
@@ -366,7 +384,42 @@ async def _seed_closeout_app(root: Path):
     return app, prompt_db
 
 
-async def _open_destination(screen, pilot, destination: str):
+#: TASK-39052: the route cycle runs on a required lane, on runners that can be
+#: loaded; its waits are deadlines long enough for that, so a slow machine
+#: slows these journeys rather than failing them. Polled every 50 ms, so a wait
+#: does not walk the whole screen every 20 ms (each ``pilot.pause`` does).
+_ROUTE_WAIT_SECONDS = 60.0
+
+
+async def _route_wait(pilot, predicate, *, message) -> None:
+    await _wait_for_condition(
+        pilot,
+        predicate,
+        timeout=_ROUTE_WAIT_SECONDS,
+        interval=0.05,
+        message=message,
+    )
+
+
+async def _route_selector(screen, pilot, selector: str):
+    return await _wait_for_selector(
+        screen, pilot, selector, timeout=_ROUTE_WAIT_SECONDS
+    )
+
+
+async def _open_destination(
+    screen, pilot, destination: str, *, keep_library_closed: bool = False
+):
+    """Open ``destination`` from the rail and select its second item.
+
+    With the shared Library pane closed, the rail is hidden, so by default
+    this reopens the pane, presses the rail row, and closes the pane again
+    (waiting for that choice to persist). ``keep_library_closed`` (TASK-39052)
+    instead presses the hidden rail row, whose ``Pressed`` reaches the screen's
+    handler (``handle_library_rail_row``) through its message pump as usual,
+    and never reopens the pane: the shared closed choice then stands for the
+    whole visit. The shell returned is always the one mounted on return.
+    """
     rail, shell_selector, second_selector, _preferences, _layout = DESTINATION_CONTRACT[
         destination
     ]
@@ -397,9 +450,12 @@ async def _open_destination(screen, pilot, destination: str):
         }
         == {False}
     )
-    if restore_closed_library:
+    if restore_closed_library and keep_library_closed:
+        screen.query_one(rail, Button).press()
+        restore_closed_library = False
+    elif restore_closed_library:
         mounted_shells[0].library_grip.press()
-        await _wait_for_condition(
+        await _route_wait(
             pilot,
             lambda: (
                 {
@@ -411,12 +467,14 @@ async def _open_destination(screen, pilot, destination: str):
             ),
             message=f"Library restore grip did not expose {destination}",
         )
-    screen.query_one(rail, Button).press()
-    shell = await _wait_for_selector(screen, pilot, shell_selector)
+        screen.query_one(rail, Button).press()
+    else:
+        screen.query_one(rail, Button).press()
+    shell = await _route_selector(screen, pilot, shell_selector)
     if destination == "prompts":
         await _open_prompts_list(screen, pilot)
-        shell = await _wait_for_selector(screen, pilot, shell_selector)
-    second = await _wait_for_selector(screen, pilot, second_selector)
+        shell = await _route_selector(screen, pilot, shell_selector)
+    second = await _route_selector(screen, pilot, second_selector)
     if destination == "prompts":
         rows = list(screen.query(".library-prompt-row"))
         assert len(rows) >= 2
@@ -454,7 +512,9 @@ async def _open_destination(screen, pilot, destination: str):
             str(screen._conversations_state.reader_state.selected_id or "")
             == str(second.conversation_id)
         ),
-        "notes": lambda: str(screen._notes_state.selected_note_id or "") == str(second.note_id),
+        "notes": lambda: (
+            str(screen._notes_state.selected_note_id or "") == str(second.note_id)
+        ),
         "prompts": lambda: str(screen._prompts_state.selected_prompt_id) == expected,
         "skills": lambda: (
             screen._skills_state.editor_state is not None
@@ -464,7 +524,7 @@ async def _open_destination(screen, pilot, destination: str):
     if not already_selected():
         second.press()
     if destination == "media":
-        await _wait_for_condition(
+        await _route_wait(
             pilot,
             lambda: (
                 screen._media_state.reader_session.selected_id == expected
@@ -473,13 +533,13 @@ async def _open_destination(screen, pilot, destination: str):
             ),
             message="Media second selection did not settle",
         )
-        await _wait_for_selector(
+        await _route_selector(
             screen,
             pilot,
             (f"#library-media-reader-mode-{screen._media_state.reader_session.mode}"),
         )
     elif destination == "collections":
-        await _wait_for_condition(
+        await _route_wait(
             pilot,
             lambda: (
                 screen._library_collections_capture_controller.state.selected_identity
@@ -492,9 +552,9 @@ async def _open_destination(screen, pilot, destination: str):
             ),
             message="Collections second selection did not settle",
         )
-        await _wait_for_selector(screen, pilot, "#library-collections-reader-title")
+        await _route_selector(screen, pilot, "#library-collections-reader-title")
     elif destination == "conversations":
-        await _wait_for_condition(
+        await _route_wait(
             pilot,
             lambda: (
                 screen._conversations_state.reader_state.selected_id == expected
@@ -503,9 +563,9 @@ async def _open_destination(screen, pilot, destination: str):
             ),
             message="Conversation second selection did not settle",
         )
-        await _wait_for_selector(screen, pilot, "#library-conversation-reader-info")
+        await _route_selector(screen, pilot, "#library-conversation-reader-info")
     elif destination == "notes":
-        await _wait_for_condition(
+        await _route_wait(
             pilot,
             lambda: (
                 screen._notes_state.selected_note_id == expected
@@ -515,10 +575,10 @@ async def _open_destination(screen, pilot, destination: str):
             ),
             message="Note second selection did not settle",
         )
-        await _wait_for_selector(screen, pilot, "#library-note-title")
-        await _wait_for_selector(screen, pilot, "#library-note-preview")
+        await _route_selector(screen, pilot, "#library-note-title")
+        await _route_selector(screen, pilot, "#library-note-preview")
     elif destination == "prompts":
-        await _wait_for_condition(
+        await _route_wait(
             pilot,
             lambda: (
                 str(screen._prompts_state.selected_prompt_id) == expected
@@ -528,10 +588,10 @@ async def _open_destination(screen, pilot, destination: str):
             ),
             message="Prompt second selection did not settle",
         )
-        await _wait_for_selector(screen, pilot, "#library-prompt-name")
-        await _wait_for_selector(screen, pilot, "#library-prompt-mode-info")
+        await _route_selector(screen, pilot, "#library-prompt-name")
+        await _route_selector(screen, pilot, "#library-prompt-mode-info")
     else:
-        await _wait_for_condition(
+        await _route_wait(
             pilot,
             lambda: (
                 screen._skills_state.selected_skill_name == expected
@@ -541,21 +601,21 @@ async def _open_destination(screen, pilot, destination: str):
             ),
             message="Skill second selection did not settle",
         )
-        await _wait_for_selector(screen, pilot, "#library-skill-mode-overview")
+        await _route_selector(screen, pilot, "#library-skill-mode-overview")
     if restore_closed_library:
         # Collections repaints its reader while page/detail settlement lands;
         # always operate on the current shell after that transition.
         shell = screen.query_one(shell_selector)
         if not shell.effective_layout.library_open:
             shell.library_grip.press()
-            await _wait_for_condition(
+            await _route_wait(
                 pilot,
                 lambda: shell.effective_layout.library_open,
                 message=f"Library pane did not reopen after {destination}",
             )
         generation = screen._library_reader_persistence_generations["library"]
         shell.library_grip.press()
-        await _wait_for_condition(
+        await _route_wait(
             pilot,
             lambda: (
                 {
@@ -570,7 +630,9 @@ async def _open_destination(screen, pilot, destination: str):
             ),
             message=f"Shared Library choice did not restore after {destination}",
         )
-    return shell
+    # Collections repaints its reader while page/detail settlement lands
+    # (r11l-rev2): return the shell mounted now, on every path.
+    return screen.query_one(shell_selector)
 
 
 def _destination_state(screen, destination: str) -> tuple[object, ...]:
@@ -607,7 +669,10 @@ def _destination_state(screen, destination: str) -> tuple[object, ...]:
         )
         semantic = (screen._notes_state.selected_note_id, mode)
     elif destination == "prompts":
-        semantic = (screen._prompts_state.selected_prompt_id, screen._prompts_state.editor_mode)
+        semantic = (
+            screen._prompts_state.selected_prompt_id,
+            screen._prompts_state.editor_mode,
+        )
     else:
         semantic = (
             screen._skills_state.editor_state.name,
@@ -807,15 +872,56 @@ async def _focus_closeout_work_via_f6(
     screen, pilot, shell, destination: str
 ) -> tuple[str, str]:
     """Reach the active Work region through the app-owned visible F6 route."""
+
     # Prompt/Skills mode changes may recompose their shell after
     # ``_open_destination`` returns. Resolve the currently mounted owner so
     # focus evidence never compares a live control with a stale shell object.
+    # The destination's own mode presses (e.g. Collections Info) flip
+    # ``reader_mode`` BEFORE the work-pane swap that projects it lands, so a
+    # cold/slow event loop can reach this point mid-recompose with the work
+    # pane unmounted and the workbench target list empty -- the
+    # TASK-31422/32386 load-dependent "collections has no reachable Work
+    # focus target" signature. Wait the swap out first instead of asserting
+    # against the transient.
+    def _work_target_ready() -> bool:
+        current = screen.query_one(DESTINATION_CONTRACT[destination][1])
+        work = current.work
+        return (
+            work.is_mounted
+            and work.display
+            and any(
+                pane is work or work in pane.ancestors
+                for pane, _target in _available_targets(
+                    screen, screen._library_workbench_focus_targets()
+                )
+            )
+        )
+
+    await _route_wait(
+        pilot,
+        _work_target_ready,
+        message=lambda: (
+            f"{destination} has no reachable Work focus target: "
+            f"row={screen._library_selected_row_id!r}, "
+            f"shell.work={screen.query_one(DESTINATION_CONTRACT[destination][1]).work!r}, "
+            f"available panes={[getattr(pane, 'id', None) for pane, _t in _available_targets(screen, screen._library_workbench_focus_targets())]}, "
+            f"focused={screen.focused!r}"
+        ),
+    )
     shell = screen.query_one(DESTINATION_CONTRACT[destination][1])
     available = _available_targets(screen, screen._library_workbench_focus_targets())
     assert any(
         pane is shell.work or shell.work in pane.ancestors
         for pane, _target in available
-    ), f"{destination} has no reachable Work focus target"
+    ), (
+        f"{destination} has no reachable Work focus target: "
+        f"row={screen._library_selected_row_id!r}, "
+        f"shell.work={shell.work!r} (id={shell.work.id!r}, "
+        f"display={shell.work.display!r}, "
+        f"mounted={getattr(shell.work, 'is_mounted', None)!r}), "
+        f"available panes={[getattr(pane, 'id', None) for pane, _t in available]}, "
+        f"focused={screen.focused!r}"
+    )
     focused = screen.focused
     assert focused is None or focused is screen or focused.parent is not None, (
         f"{destination} recompose left detached focus owner {focused!r}"
@@ -921,10 +1027,14 @@ async def _exercise_closeout_resize_is_presentation_only(
     return facts, str(facts["compositor_text"]), svg
 
 
+@private_profile_test
 @pytest.mark.asyncio
 @pytest.mark.parametrize("destination", DESTINATIONS)
 async def test_closeout_resize_is_presentation_only(
-    destination: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    destination: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> None:
     facts, _compositor, _svg = await _exercise_closeout_resize_is_presentation_only(
         destination, tmp_path, monkeypatch
@@ -962,7 +1072,9 @@ async def _exercise_closeout_preferences_restore_in_fresh_screen(
             shell = None
             for destination, items_open in expected.items():
                 shell = await _open_destination(screen, pilot, destination)
-                preferences = operator.attrgetter(DESTINATION_CONTRACT[destination][3])(screen)
+                preferences = operator.attrgetter(DESTINATION_CONTRACT[destination][3])(
+                    screen
+                )
                 if preferences.items_open is items_open:
                     continue
                 authority = f"{destination}_items"
@@ -971,7 +1083,9 @@ async def _exercise_closeout_preferences_restore_in_fresh_screen(
                 await _wait_for_condition(
                     pilot,
                     lambda authority=authority, generation=generation, destination=destination, items_open=items_open: (
-                        operator.attrgetter(DESTINATION_CONTRACT[destination][3])(screen).items_open
+                        operator.attrgetter(DESTINATION_CONTRACT[destination][3])(
+                            screen
+                        ).items_open
                         is items_open
                         and screen._library_reader_persistence_generations[authority]
                         > generation
@@ -1025,7 +1139,9 @@ async def _exercise_closeout_preferences_restore_in_fresh_screen(
             await _wait_for_library_shell(screen, pilot)
             for destination, items_open in expected.items():
                 shell = await _open_destination(screen, pilot, destination)
-                preferences = operator.attrgetter(DESTINATION_CONTRACT[destination][3])(screen)
+                preferences = operator.attrgetter(DESTINATION_CONTRACT[destination][3])(
+                    screen
+                )
                 assert preferences.library_open is False
                 assert preferences.items_open is items_open
             facts = _durable_live_oracle(
@@ -1050,8 +1166,11 @@ async def _exercise_closeout_preferences_restore_in_fresh_screen(
     return facts, str(facts["compositor_text"]), svg
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_closeout_preferences_restore_in_fresh_screen(tmp_path: Path) -> None:
+async def test_closeout_preferences_restore_in_fresh_screen(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
     (
         facts,
         _compositor,
@@ -1070,9 +1189,16 @@ async def test_closeout_preferences_restore_in_fresh_screen(tmp_path: Path) -> N
     assert cleanup["host_thread_worker_leaks"] == 0
 
 
+#: TASK-39052: longer than any route cycle, so no autosave timer fires on
+#: its own while the cycle runs; the burst clock decides the return instead.
+_ROUTE_CYCLE_AUTOSAVE_NEVER = 3600.0
+
+
 async def _exercise_closeout_single_app_route_cycle(
     tmp_path: Path,
 ) -> tuple[dict[str, object], str, str]:
+    from tldw_chatbook.UI.Library_Modules import library_note_autosave
+
     app, prompt_db = await _seed_closeout_app(tmp_path / "cycle")
     host = LibraryGlobalKeyProductionCSSHarness(app)
     worker_baseline = {id(worker) for worker in host.workers}
@@ -1086,17 +1212,44 @@ async def _exercise_closeout_single_app_route_cycle(
     stale_target_id: str | None = None
     facts: dict[str, object] | None = None
     svg = ""
+    # TASK-39052 (owner decision 2026-11-06: save at once). The max wait means
+    # a draft is never left unsaved longer than its max wait of editing time,
+    # so returning to Notes with a parked draft whose max wait has passed
+    # saves it at once (``AUTOSAVE_MIN_DELAY_SECONDS``). The test used to
+    # expect no save, which held only while it outran the 2 s debounce and the
+    # 10 s max wait. Neither timer can fire on its own here; the burst clock
+    # (``library_note_autosave``'s ``time.monotonic()``) is moved past the max
+    # wait while the note is parked, so the return decides the save.
+    burst_clock = [0.0]
+    autosave_patch = pytest.MonkeyPatch()
+    autosave_patch.setattr(
+        library_screen_module,
+        "LIBRARY_NOTES_AUTOSAVE_SECONDS",
+        _ROUTE_CYCLE_AUTOSAVE_NEVER,
+    )
+    autosave_patch.setattr(
+        library_screen_module,
+        "LIBRARY_NOTES_AUTOSAVE_MAX_WAIT_SECONDS",
+        _ROUTE_CYCLE_AUTOSAVE_NEVER,
+    )
+    autosave_patch.setattr(
+        library_note_autosave,
+        "time",
+        SimpleNamespace(monotonic=lambda: burst_clock[0]),
+    )
     try:
         async with host.run_test(size=(160, 50)) as pilot:
             screen = _active_library_screen(host)
             await _wait_for_library_shell(screen, pilot)
             for destination in DESTINATIONS:
-                shell = await _open_destination(screen, pilot, destination)
+                shell = await _open_destination(
+                    screen, pilot, destination, keep_library_closed=True
+                )
                 if destination == "media":
                     screen.query_one(
                         "#library-media-reader-select-info", Button
                     ).press()
-                    await _wait_for_condition(
+                    await _route_wait(
                         pilot,
                         lambda: screen._media_state.reader_session.mode == "info",
                         message="Media route mode did not settle",
@@ -1105,11 +1258,13 @@ async def _exercise_closeout_single_app_route_cycle(
                         "library"
                     ]
                     shell.library_grip.press()
-                    await _wait_for_condition(
+                    await _route_wait(
                         pilot,
                         lambda: (
                             all(
-                                not operator.attrgetter(contract[3])(screen).library_open
+                                not operator.attrgetter(contract[3])(
+                                    screen
+                                ).library_open
                                 for contract in DESTINATION_CONTRACT.values()
                             )
                             and screen._library_reader_durable_generations["library"]
@@ -1122,7 +1277,7 @@ async def _exercise_closeout_single_app_route_cycle(
                     )
                 elif destination == "collections":
                     screen.query_one("#library-collections-mode-info", Button).press()
-                    await _wait_for_condition(
+                    await _route_wait(
                         pilot,
                         lambda: screen._collections_state.reader_mode == "info",
                         message="Collections Info mode did not settle",
@@ -1134,27 +1289,27 @@ async def _exercise_closeout_single_app_route_cycle(
                 elif destination == "prompts":
                     name = screen.query_one("#library-prompt-name", Input)
                     name.value = f"{name.value} route draft"
-                    await _wait_for_selector(
+                    await _route_selector(
                         screen,
                         pilot,
                         "#library-prompt-mode-info",
                     )
                     screen.query_one("#library-prompt-mode-info", Button).press()
-                    await _wait_for_condition(
+                    await _route_wait(
                         pilot,
                         lambda: screen._prompts_state.editor_mode == "info",
                         message="Prompt Info mode did not settle",
                     )
                 elif destination == "skills":
                     screen.query_one("#library-skill-mode-edit", Button).press()
-                    await _wait_for_condition(
+                    await _route_wait(
                         pilot,
                         lambda: screen._skills_state.reader_mode == "edit",
                         message="Skills Edit mode did not settle",
                     )
                 if destination == "notes":
                     shell.items_grip.press()
-                    await _wait_for_condition(
+                    await _route_wait(
                         pilot,
                         lambda: not screen._notes_state.reader_preferences.items_open,
                         message="Notes Items preference did not close",
@@ -1182,17 +1337,30 @@ async def _exercise_closeout_single_app_route_cycle(
                     rows = list(screen.query(".library-conversation-row"))
                     assert len(rows) >= 2
                     rows[0].press()
-                    await _wait_for_condition(
+                    await _route_wait(
                         pilot,
                         stale_service.first_started.is_set,
                         message="Stale Conversation A worker did not start",
+                    )
+                    # The A selection schedules a canvas repaint; reading the
+                    # rows the instant the gated worker starts can catch that
+                    # repaint mid-flight with every row momentarily unmounted
+                    # (TASK-32386: observed as a transient `assert 0 >= 2`
+                    # under a cold event loop). Wait the rows back rather
+                    # than point-reading the transient.
+                    await _route_wait(
+                        pilot,
+                        lambda: (
+                            len(list(screen.query(".library-conversation-row"))) >= 2
+                        ),
+                        message="Conversation rows did not survive the stale A read",
                     )
                     current_rows = list(screen.query(".library-conversation-row"))
                     assert len(current_rows) >= 2
                     current_rows[1].press()
                     second_id = str(current_rows[1].conversation_id)
                     stale_target_id = second_id
-                    await _wait_for_condition(
+                    await _route_wait(
                         pilot,
                         lambda: (
                             screen._conversations_state.reader_state.selected_id
@@ -1212,17 +1380,28 @@ async def _exercise_closeout_single_app_route_cycle(
                 )
                 remembered[destination] = _destination_state(screen, destination)
 
+            # Parked: leaving Notes saved nothing behind the user's back.
+            assert app.notes_scope_service.save_calls == []
+            assert (
+                tuple(dict(note) for note in app.notes_scope_service.notes)
+                == notes_before
+            )
+            # The burst's max wait runs out while the note is parked.
+            burst_clock[0] += _ROUTE_CYCLE_AUTOSAVE_NEVER + 1.0
+
             for destination in DESTINATIONS:
-                shell = await _open_destination(screen, pilot, destination)
+                shell = await _open_destination(
+                    screen, pilot, destination, keep_library_closed=True
+                )
                 if destination == "notes" and stale_service is not None:
                     stale_service.release_first.set()
-                    await _wait_for_condition(
+                    await _route_wait(
                         pilot,
                         stale_first_receipt.is_set,
                         message="Stale Conversation A service receipt did not settle",
                     )
                     await screen.workers.wait_for_complete()
-                    await _wait_for_condition(
+                    await _route_wait(
                         pilot,
                         lambda: (
                             stale_target_id is not None
@@ -1234,6 +1413,20 @@ async def _exercise_closeout_single_app_route_cycle(
                             and not screen._conversations_state.reader_state.loading
                         ),
                         message="Late Conversation worker escaped its route fence",
+                    )
+                if destination == "notes":
+                    # The return saves the parked draft at once: the debounce
+                    # it would otherwise wait is an hour here.
+                    await _route_wait(
+                        pilot,
+                        lambda: (
+                            len(app.notes_scope_service.save_calls) == 1
+                            and not screen._library_note_session.snapshot.dirty
+                        ),
+                        message=lambda: (
+                            "Returning to Notes did not save the parked draft "
+                            f"at once: saves={app.notes_scope_service.save_calls!r}"
+                        ),
                     )
                 current = _destination_state(screen, destination)
                 assert current[3] == remembered[destination][3]
@@ -1253,7 +1446,9 @@ async def _exercise_closeout_single_app_route_cycle(
                 } == {False}
                 assert not screen._library_reader_durable_preferences["library"]
                 assert (
-                    operator.attrgetter(DESTINATION_CONTRACT[destination][3])(screen).items_open
+                    operator.attrgetter(DESTINATION_CONTRACT[destination][3])(
+                        screen
+                    ).items_open
                     is expected_items[destination]
                 )
                 restored_focus = await _focus_closeout_work_via_f6(
@@ -1273,8 +1468,8 @@ async def _exercise_closeout_single_app_route_cycle(
                 )
                 if destination == "notes":
                     draft = {
-                        "dirty": True,
-                        "retained_without_save": True,
+                        "dirty": screen._library_note_session.snapshot.dirty,
+                        "retained_without_save": False,
                         "value": screen.query_one("#library-note-body", TextArea).text,
                     }
                 elif destination == "prompts":
@@ -1304,11 +1499,22 @@ async def _exercise_closeout_single_app_route_cycle(
                     revisit_receipts["conversations"]["worker_fenced"] = True
             assert screen._notes_state.reader_preferences.items_open is False
             assert screen._media_state.reader_preferences.items_open is True
-            assert (
-                tuple(dict(note) for note in app.notes_scope_service.notes)
-                == notes_before
-            )
-            assert app.notes_scope_service.save_calls == []
+            # Exactly one save, of the parked draft, on the return to Notes.
+            assert [
+                (call["note_id"], call["content"], call["version"])
+                for call in app.notes_scope_service.save_calls
+            ] == [("n-2", "Closeout route draft", 1)]
+            notes_after = tuple(dict(note) for note in app.notes_scope_service.notes)
+            assert notes_after[0] == notes_before[0]
+            assert {
+                key: notes_after[1][key]
+                for key in ("id", "title", "content", "version")
+            } == {
+                "id": "n-2",
+                "title": "Reading list",
+                "content": "Closeout route draft",
+                "version": 2,
+            }
             assert tuple(prompt_db.get_prompt_by_id(index) for index in (1, 2)) == (
                 prompts_before
             )
@@ -1325,7 +1531,8 @@ async def _exercise_closeout_single_app_route_cycle(
                         name: region
                         for name, (region, _owner) in remembered_focus.items()
                     },
-                    "notes_draft_retained_without_save": True,
+                    "notes_draft_retained_without_save": False,
+                    "notes_draft_saved_on_return": True,
                     "prompt_draft_retained_without_save": True,
                     "late_conversation_worker_fenced": True,
                     "revisit_receipts": revisit_receipts,
@@ -1339,12 +1546,16 @@ async def _exercise_closeout_single_app_route_cycle(
         if stale_service is not None:
             stale_service.release_first.set()
         prompt_db.close()
+        autosave_patch.undo()
     assert facts is not None
     return facts, str(facts["compositor_text"]), svg
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_closeout_single_app_route_cycle(tmp_path: Path) -> None:
+async def test_closeout_single_app_route_cycle(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
     facts, _compositor, _svg = await _exercise_closeout_single_app_route_cycle(tmp_path)
     receipts = facts["observations"]["revisit_receipts"]
     assert set(receipts) == set(DESTINATIONS)
@@ -1359,24 +1570,91 @@ async def test_closeout_single_app_route_cycle(tmp_path: Path) -> None:
         }
         assert receipt["record"]["pending"] is None
         assert receipt["focus"]["region"] == "work"
-        assert receipt["identities"]["shell"] == (
-            DESTINATION_CONTRACT[destination][1].removeprefix("#")
-        )
+        if destination in {"media", "notes"}:
+            # 7b4a7e2896 graduated the two browse routes onto ONE resident
+            # LibraryBrowseReaderShell whose id is route-neutral on purpose
+            # (naming it after either route would lie); the route is
+            # projected through the marker classes the contract entries
+            # already name (`.library-media-route` / `.library-notes-route`).
+            # The identity this receipt must pin is therefore the shared
+            # shell's own id, not a `#`-stripped selector string.
+            assert receipt["identities"]["shell"] == LIBRARY_BROWSE_READER_SHELL_ID
+        else:
+            assert receipt["identities"]["shell"] == (
+                DESTINATION_CONTRACT[destination][1].removeprefix("#")
+            )
         assert receipt["worker_fenced"] is True
+    # TASK-39052: the parked Notes draft comes back with its text and is saved
+    # on the return; the Prompt draft (no autosave) is kept unsaved.
+    assert receipts["notes"]["draft"] == {
+        "dirty": False,
+        "retained_without_save": False,
+        "value": "Closeout route draft",
+    }
+    assert receipts["prompts"]["draft"]["dirty"] is True
+    assert receipts["prompts"]["draft"]["retained_without_save"] is True
+    assert facts["observations"]["notes_draft_saved_on_return"] is True
+
+
+@private_profile_test
+@pytest.mark.asyncio
+@pytest.mark.parametrize("destination", DESTINATIONS)
+async def test_each_destination_library_grip_close_persists(
+    tmp_path: Path, request: pytest.FixtureRequest, destination: str
+) -> None:
+    """TASK-39052 review: each destination persists the shared Library choice
+    from its own grip. ``_toggle_library_media_reader_pane`` has one branch per
+    destination, each with its own persist call. The route cycle used to
+    re-close the Library from every destination's grip and wait for that close
+    to persist; it now keeps the Library closed, so this test carries that
+    check: close the shared Library from Media, then open ``destination``
+    through ``_open_destination``'s default path, which reopens the pane,
+    presses the rail row, closes the pane again from ``destination``'s own
+    grip and waits for the durable close."""
+    app, prompt_db = await _seed_closeout_app(tmp_path / destination)
+    host = LibraryGlobalKeyProductionCSSHarness(app)
+    try:
+        async with host.run_test(size=(160, 50)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            shell = await _open_destination(screen, pilot, "media")
+            generation = screen._library_reader_durable_generations["library"]
+            shell.library_grip.press()
+            await _route_wait(
+                pilot,
+                lambda: (
+                    screen._library_reader_durable_generations["library"] > generation
+                    and not screen._library_reader_durable_preferences["library"]
+                ),
+                message="Media's grip did not persist the shared Library close",
+            )
+            # The default path: reopen, rail, then close from this
+            # destination's own grip and wait until that close is durable.
+            await _open_destination(screen, pilot, destination)
+            assert {
+                operator.attrgetter(contract[3])(screen).library_open
+                for contract in DESTINATION_CONTRACT.values()
+            } == {False}
+            assert not screen._library_reader_durable_preferences["library"]
+    finally:
+        prompt_db.close()
 
 
 def _assert_inside_items(items, widget) -> None:
-    assert widget.region.x >= items.region.x and widget.region.right <= items.region.right, (
+    assert (
+        widget.region.x >= items.region.x and widget.region.right <= items.region.right
+    ), (
         widget.id,
         widget.region,
         items.region,
     )
 
 
+@private_profile_test
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", SIZES)
 async def test_notes_branch_paging_is_contained_focusable_and_collapsible_in_production_shell(
-    size: tuple[int, int],
+    size: tuple[int, int], request: pytest.FixtureRequest
 ) -> None:
     """Notes paging keeps its source-owned controls sound in the shared shell."""
     app = _build_test_app()
@@ -1416,11 +1694,27 @@ async def test_notes_branch_paging_is_contained_focusable_and_collapsible_in_pro
             ("folders", None, "more"),
             ("placements", None, "more"),
         }
+        # Region (layout) lags DOM mount: the branch-count settle above can
+        # return while the Items pane still measures 0x0 on a cold/slow event
+        # loop (TASK-32386 -- the same state-vs-projection lag the focus
+        # step waits out). Wait for real geometry before asserting it.
+        await _wait_for_condition(
+            pilot,
+            lambda: items.region.width > 0 and items.region.height > 0,
+            message=lambda: (
+                f"Notes Items pane never laid out at {size}: "
+                f"items_region={items.region!r}, "
+                f"shell_layout={shell.effective_layout!r}, "
+                f"screen_size={screen.size!r}"
+            ),
+        )
         assert items.region.width > 0 and items.region.height > 0
         _assert_inside_items(items, notes_list)
         for widget in (*screen.query(".library-notes-folder-row"), *initial_pagers):
             _assert_inside_items(items, widget)
-        assert all(widget.region.right <= items.region.right for widget in initial_pagers)
+        assert all(
+            widget.region.right <= items.region.right for widget in initial_pagers
+        )
 
         identifying = next(
             row
@@ -1430,7 +1724,9 @@ async def test_notes_branch_paging_is_contained_focusable_and_collapsible_in_pro
         notes_list.scroll_to_widget(identifying, animate=False, force=True)
         await pilot.pause()
         painted = " ".join(
-            "\n".join(strip.text for strip in screen._compositor.render_strips()).split()
+            "\n".join(
+                strip.text for strip in screen._compositor.render_strips()
+            ).split()
         )
         assert "Long identifying Notes" in painted
         assert identifying.region.right <= items.region.right
@@ -1462,14 +1758,16 @@ async def test_notes_branch_paging_is_contained_focusable_and_collapsible_in_pro
         personal.press()
         await _wait_for_condition(
             pilot,
-            lambda: {
-                (pager.content_kind, pager.parent_folder_id, pager.paging_action)
-                for pager in screen.query(".library-notes-tree-pager")
-            }
-            >= {
-                ("folders", "personal", "more"),
-                ("placements", "personal", "more"),
-            },
+            lambda: (
+                {
+                    (pager.content_kind, pager.parent_folder_id, pager.paging_action)
+                    for pager in screen.query(".library-notes-tree-pager")
+                }
+                >= {
+                    ("folders", "personal", "more"),
+                    ("placements", "personal", "more"),
+                }
+            ),
             message=f"Expanded Notes branch controls did not settle at {size}",
         )
         await pilot.pause()
@@ -1526,13 +1824,16 @@ async def test_notes_branch_paging_is_contained_focusable_and_collapsible_in_pro
             lambda: getattr(screen.focused, "note_id", "") == "note-20",
             message=f"Successful Notes Retry did not focus the first added row at {size}",
         )
-        assert len(
-            [
-                row
-                for row in screen.query(".library-notes-tree-note-row")
-                if getattr(row, "folder_id", None) == "personal"
-            ]
-        ) == 40
+        assert (
+            len(
+                [
+                    row
+                    for row in screen.query(".library-notes-tree-note-row")
+                    if getattr(row, "folder_id", None) == "personal"
+                ]
+            )
+            == 40
+        )
         for widget in screen.query(
             ".library-notes-folder-row, .library-notes-tree-note-row, "
             ".library-notes-tree-pager"
@@ -1557,16 +1858,16 @@ async def test_notes_branch_paging_is_contained_focusable_and_collapsible_in_pro
             ),
             message=lambda: (
                 f"Library pane did not collapse at {size}: "
-                    f"shell={shell.effective_layout!r}, "
-                    f"prefs={screen._notes_state.reader_preferences!r}, "
-                    f"items_region={items.region!r}, "
-                    f"selected={screen._library_selected_row_id!r}, "
-                    f"view={screen._notes_state.view!r}, "
-                    f"stage={screen._notes_state.stage!r}, "
-                    f"shell_region={shell.region!r}, "
-                    f"durable={screen._library_reader_durable_preferences!r}, "
-                    f"generations={screen._library_reader_persistence_generations!r}"
-                ),
+                f"shell={shell.effective_layout!r}, "
+                f"prefs={screen._notes_state.reader_preferences!r}, "
+                f"items_region={items.region!r}, "
+                f"selected={screen._library_selected_row_id!r}, "
+                f"view={screen._notes_state.view!r}, "
+                f"stage={screen._notes_state.stage!r}, "
+                f"shell_region={shell.region!r}, "
+                f"durable={screen._library_reader_durable_preferences!r}, "
+                f"generations={screen._library_reader_persistence_generations!r}"
+            ),
         )
         assert items.region.width > items_before_library_collapse
 
@@ -1588,8 +1889,11 @@ async def test_notes_branch_paging_is_contained_focusable_and_collapsible_in_pro
         assert tuple(DESTINATION_CONTRACT) == DESTINATIONS
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_notes_explicit_items_close_survives_reconcile_resize_and_library_toggle() -> None:
+async def test_notes_explicit_items_close_survives_reconcile_resize_and_library_toggle(
+    request: pytest.FixtureRequest,
+) -> None:
     """An intentional Items close remains authoritative across later layout work."""
     app = _build_test_app()
     _seed_conversations(app, _conversation_records(), notes=[])
@@ -1600,9 +1904,7 @@ async def test_notes_explicit_items_close_survives_reconcile_resize_and_library_
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes", Button).press()
-        shell = await _wait_for_selector(
-            screen, pilot, ".library-notes-route"
-        )
+        shell = await _wait_for_selector(screen, pilot, ".library-notes-route")
         if not screen._notes_state.reader_layout.library_open:
             shell.library_grip.press()
         await _wait_for_condition(
@@ -1654,9 +1956,11 @@ async def test_notes_explicit_items_close_survives_reconcile_resize_and_library_
         assert screen._notes_state.reader_layout.items_open is False
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_notes_explicit_close_never_resolves_against_stale_allocation(
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> None:
     """A hysteresis reset cannot make a decision from transient geometry."""
     app = _build_test_app()
@@ -1668,9 +1972,7 @@ async def test_notes_explicit_close_never_resolves_against_stale_allocation(
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes", Button).press()
-        shell = await _wait_for_selector(
-            screen, pilot, ".library-notes-route"
-        )
+        shell = await _wait_for_selector(screen, pilot, ".library-notes-route")
         if not screen._notes_state.reader_layout.library_open:
             shell.library_grip.press()
         await _wait_for_condition(
@@ -1690,3 +1992,786 @@ async def test_notes_explicit_close_never_resolves_against_stale_allocation(
 
         assert screen._notes_state.reader_preferences.library_open is False
         assert screen._notes_state.reader_layout == before
+
+
+def _work_cells(widget) -> int:
+    """Columns of ``widget`` painted inside its compositor clip (TASK-38981)."""
+    screen = widget.screen
+    try:
+        clip = screen.find_widget(widget).clip
+    except NoWidget:
+        return 0
+    region = widget.region
+    return min(region.right, clip.right, screen.size.width) - max(region.x, clip.x, 0)
+
+
+#: The profile floor (``work_min_width``) each destination's work pane keeps
+#: when it stays beside an opened list.
+_WORK_FLOORS = {
+    "notes": 48,
+    "media": 46,
+    "prompts": 48,
+    "skills": 48,
+    "collections": 48,
+    "conversations": 44,
+}
+
+
+async def _open_the_list_beside_the_open_item(
+    screen, pilot, destination: str, widths
+) -> None:
+    """Open, check and close the list beside the open item at each width."""
+    selector = DESTINATION_CONTRACT[destination][1]
+    layout_name = DESTINATION_CONTRACT[destination][4]
+    floor = _WORK_FLOORS[destination]
+
+    def layout():
+        return operator.attrgetter(layout_name)(screen)
+
+    for width in widths:
+        await pilot.resize_terminal(width, 30)
+
+        def settled() -> bool:
+            resolved = layout()
+            return screen.size.width == width and screen.query_one(
+                selector
+            ).region.width == (
+                resolved.library_width
+                + resolved.items_width
+                + resolved.reader_width
+                + 2 * resolved.grip_width
+            )
+
+        await _wait_for_condition(
+            pilot, settled, message=f"{width}: the layout did not settle"
+        )
+        await pilot.pause()
+        shell = screen.query_one(selector)
+        if layout().items_open:
+            await pilot.click(shell.items_grip)
+            await _wait_for_condition(
+                pilot,
+                lambda: not layout().items_open and shell.work.display,
+                message=f"{width}: the open item did not take the stage",
+            )
+
+        # The user is in the open item, then clicks the list grip. Under load
+        # the work pane may not have painted yet: wait for a painted control
+        # instead of taking a bare next() after one pause (TASK-39128).
+        def painted_reading_target():
+            return next(
+                (
+                    target
+                    for target in screen.focus_chain
+                    if shell.work in target.ancestors and _work_cells(target) > 0
+                ),
+                None,
+            )
+
+        await _wait_for_condition(
+            pilot,
+            lambda: painted_reading_target() is not None,
+            message=f"{width}: no work-pane control painted in the open item",
+        )
+        reading = painted_reading_target()
+        screen.set_focus(reading)
+        await pilot.pause()
+        await pilot.click(shell.items_grip)
+        await _wait_for_condition(
+            pilot,
+            lambda: layout().items_open and shell.items.display,
+            message=f"{width}: the list did not open",
+        )
+        await pilot.pause()
+        work = shell.work
+        assert not work.display or _work_cells(work) >= floor, (
+            width,
+            _work_cells(work),
+        )
+        unseen = [
+            target.id
+            for target in screen.focus_chain
+            if work in target.ancestors and _work_cells(target) <= 0
+        ]
+        assert not unseen, (width, unseen)
+        focused = screen.focused
+        assert focused is not None and _work_cells(focused) > 0, (width, focused)
+
+        await pilot.click(shell.items_grip)
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                not layout().items_open
+                and shell.work.display
+                and screen.focused is not None
+                and shell.work in screen.focused.ancestors
+                and _work_cells(screen.focused) > 0
+            ),
+            message=(
+                f"{width}: closing the list left focus on "
+                f"{screen.focused!r}, not inside the open item"
+            ),
+        )
+
+
+@private_profile_test
+@pytest.mark.asyncio
+# TASK-38981: each case covers ten widths, to keep a census entry short.
+@pytest.mark.parametrize("decade", ["40", "50", "60", "70"])
+@pytest.mark.parametrize("destination", ["notes", "media"])
+async def test_opening_the_list_beside_an_open_item_leaves_no_work_sliver(
+    destination: str,
+    decade: str,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+) -> None:
+    """TASK-38981: with an item open, the list grip at 40-79 columns resolved
+    a 32-cell list and a ``width - 42`` work pane (1 cell at 40), whose
+    controls Tab reached off screen. The list now takes the stage (the work
+    pane hides, the item stays open) or the work pane keeps the profile's
+    floor; closing the list returns to the item with focus inside it."""
+    app, prompt_db = await _seed_closeout_app(tmp_path)
+    host = LibraryProductionCSSHarness(app)
+    first = int(decade)
+    try:
+        async with host.run_test(size=(160, 50)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _open_destination(screen, pilot, destination)
+            await _open_the_list_beside_the_open_item(
+                screen, pilot, destination, range(first, first + 10)
+            )
+    finally:
+        prompt_db.close()
+
+
+@private_profile_test
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "destination", ["prompts", "skills", "collections", "conversations"]
+)
+async def test_every_other_list_destination_gives_an_opened_list_the_stage(
+    destination: str,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+) -> None:
+    """TASK-38981 AC#1 for the other shared-shell destinations, at 44 and 60
+    columns (the Notes and Media sweep covers every width)."""
+    app, prompt_db = await _seed_closeout_app(tmp_path)
+    host = LibraryProductionCSSHarness(app)
+    try:
+        async with host.run_test(size=(160, 50)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _open_destination(screen, pilot, destination)
+            await _open_the_list_beside_the_open_item(
+                screen, pilot, destination, (60, 44)
+            )
+    finally:
+        prompt_db.close()
+
+
+@private_profile_test
+@pytest.mark.asyncio
+@pytest.mark.parametrize("destination", ["collections", "skills"])
+async def test_an_empty_list_destination_keeps_the_list_at_60x24(
+    destination: str,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+) -> None:
+    """TASK-34851: at 60x24 with nothing open, Collections and Skills gave the
+    whole stage to an empty work pane. They show their list, as Media does.
+    (Conversations opens its first conversation on entry, so it has no empty
+    state to check here; its profile carries the same rule.)"""
+    app, prompt_db = await _seed_closeout_app(tmp_path)
+    host = LibraryProductionCSSHarness(app)
+    rail, selector, _row, preferences_name, layout_name = DESTINATION_CONTRACT[
+        destination
+    ]
+    try:
+        async with host.run_test(size=(60, 24)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            screen.query_one(rail, Button).press()
+            shell = await _wait_for_selector(screen, pilot, selector)
+            preferences = operator.attrgetter(preferences_name)(screen)
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    operator.attrgetter(layout_name)(screen).items_open
+                    and shell.items.display
+                    and shell.items.region.width
+                    == min(preferences.items_width, 60 - 10)
+                ),
+                message=(
+                    f"{destination}: the list did not keep the 60-column stage "
+                    f"({operator.attrgetter(layout_name)(screen)})"
+                ),
+            )
+    finally:
+        prompt_db.close()
+
+
+@private_profile_test
+@pytest.mark.asyncio
+async def test_prompts_list_takes_the_narrow_stage_and_an_open_prompt_takes_it_back(
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+) -> None:
+    """TASK-38981 AC#4: below 64 columns the Prompts list kept an empty work
+    pane (8 cells at 50, 18 at 60) beside its 32-cell floor. It now takes the
+    stage as Notes and Media do, and opening a prompt hands the width back."""
+    app, prompt_db = await _seed_closeout_app(tmp_path)
+    host = LibraryProductionCSSHarness(app)
+    try:
+        async with host.run_test(size=(60, 30)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            screen.query_one("#library-row-browse-prompts", Button).press()
+            await _open_prompts_list(screen, pilot)
+            shell = await _wait_for_selector(
+                screen, pilot, "#library-prompts-reader-shell"
+            )
+            preferences = screen._prompts_state.reader_preferences
+            for width in (63, 60, 50, 44, 40):
+                await pilot.resize_terminal(width, 30)
+                # The list takes its preferred width, or all the grips leave
+                # (the Notes and Media rule); no empty work pane keeps a share.
+                stage = min(preferences.items_width, width - 10)
+                await _wait_for_condition(
+                    pilot,
+                    lambda: (
+                        screen.size.width == width
+                        and screen._prompts_state.reader_layout.items_open
+                        and shell.items.region.width == stage
+                    ),
+                    message=(
+                        f"{width}: the Prompts list did not take the stage "
+                        f"({screen._prompts_state.reader_layout})"
+                    ),
+                )
+            rows = list(screen.query(".library-prompt-row"))
+            assert rows
+            rows[0].press()
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen._prompts_state.detail is not None
+                    and not screen._prompts_state.reader_layout.items_open
+                    and shell.work.display
+                    and shell.work.region.width == 40 - 10
+                ),
+                message="opening a prompt did not hand the width back",
+            )
+    finally:
+        prompt_db.close()
+
+
+#: TASK-38981 review: the row picked from the list that holds the stage, and
+#: how to read which item each destination then has open.
+_PICKED_ROWS = {
+    "notes": ("#library-notes-tree-note-1", "note_id"),
+    "media": ("#library-media-row-0", "media_id"),
+    "conversations": ("#library-conversation-row-0", "conversation_id"),
+    "collections": ("#library-collections-row-0", "capture_identity"),
+    "skills": ("#library-skill-row-release-notes", "skill_name"),
+    "prompts": (".library-prompt-row", "prompt_id"),
+}
+
+
+def _open_item_identity(screen, destination: str) -> object:
+    """The identity of the item a destination has open right now."""
+    if destination == "notes":
+        return str(screen._notes_state.selected_note_id or "")
+    if destination == "media":
+        return str(screen._media_state.reader_session.selected_id or "")
+    if destination == "conversations":
+        return str(screen._conversations_state.reader_state.selected_id or "")
+    if destination == "collections":
+        state = screen._library_collections_capture_controller.state
+        return state.selected_identity
+    if destination == "skills":
+        return str(screen._skills_state.selected_skill_name or "")
+    return str(screen._prompts_state.selected_prompt_id or "")
+
+
+@private_profile_test
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "destination",
+    ["notes", "media", "conversations", "collections", "skills", "prompts"],
+)
+async def test_an_item_picked_from_the_stage_list_takes_the_stage_back(
+    destination: str,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+) -> None:
+    """TASK-38981 review: once the list held the stage beside an open item,
+    the layout kept its explicit list priority, so picking another row loaded
+    that item behind the hidden work pane (Media, Conversations, Collections).
+    At 60 columns the picked item now takes the stage, and focus stays on a
+    control the user can see."""
+    app, prompt_db = await _seed_closeout_app(tmp_path)
+    host = LibraryProductionCSSHarness(app)
+    selector = DESTINATION_CONTRACT[destination][1]
+    layout_name = DESTINATION_CONTRACT[destination][4]
+    row_selector, identity_attribute = _PICKED_ROWS[destination]
+
+    def layout():
+        return operator.attrgetter(layout_name)(screen)
+
+    try:
+        async with host.run_test(size=(160, 50)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _open_destination(screen, pilot, destination)
+            await pilot.resize_terminal(60, 30)
+            await _wait_for_condition(
+                pilot,
+                lambda: screen.size.width == 60
+                and screen.query_one(selector).region.width
+                == (
+                    layout().library_width
+                    + layout().items_width
+                    + layout().reader_width
+                    + 2 * layout().grip_width
+                ),
+                message="the 60-column layout did not settle",
+            )
+            await pilot.pause()
+            shell = screen.query_one(selector)
+            if layout().items_open:
+                await pilot.click(shell.items_grip)
+                await _wait_for_condition(
+                    pilot,
+                    lambda: not layout().items_open and shell.work.display,
+                    message="the open item did not take the stage",
+                )
+            before = _open_item_identity(screen, destination)
+            await pilot.click(shell.items_grip)
+            await _wait_for_condition(
+                pilot,
+                lambda: layout().items_open and not shell.work.display,
+                message="the list did not take the stage beside the open item",
+            )
+            rows = [
+                row
+                for row in screen.query(row_selector)
+                if getattr(row, identity_attribute, None) is not None
+            ]
+            row = next(
+                candidate
+                for candidate in rows
+                if str(getattr(candidate, identity_attribute)) != str(before)
+            )
+            picked = getattr(row, identity_attribute)
+            screen.set_focus(row)
+            await pilot.pause()
+            await pilot.press("enter")
+            def current_work():
+                # Collections remounts its reader shell as a pick settles.
+                return screen.query_one(selector).work
+
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    str(_open_item_identity(screen, destination)) == str(picked)
+                    and current_work().display
+                    and _work_cells(current_work()) >= _WORK_FLOORS[destination]
+                    and screen.focused is not None
+                    and _work_cells(screen.focused) > 0
+                    # TASK-38981 re-review 3: Prompts and Media land in the
+                    # opened item, as the others already did.
+                    and current_work() in screen.focused.ancestors_with_self
+                ),
+                # A callable, so the report shows the state at the timeout.
+                message=lambda: (
+                    f"{destination}: picking {picked!r} left "
+                    f"{_open_item_identity(screen, destination)!r} open, "
+                    f"work shown {current_work().display}, layout {layout()}, "
+                    f"focus {screen.focused!r}"
+                ),
+            )
+    finally:
+        prompt_db.close()
+
+
+@private_profile_test
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "destination", ["collections", "skills", "prompts", "conversations-empty"]
+)
+async def test_an_empty_narrow_stage_leaves_no_invisible_work_tab_stop(
+    destination: str,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+) -> None:
+    """TASK-38981 review: with nothing open below 64 columns the list takes
+    the stage with no priority, and the shell left the zero-width work pane
+    displayed, so its controls stayed in the focus chain off screen (Skills'
+    work pane at x=60; Read, Info, Find and Messages with no conversations)."""
+    if destination == "conversations-empty":
+        app = _build_test_app()
+        _seed_conversations(app, [], notes=[], media=[])
+        prompt_db = None
+        key = "conversations"
+    else:
+        app, prompt_db = await _seed_closeout_app(tmp_path)
+        key = destination
+    rail, selector, _row, _preferences, layout_name = DESTINATION_CONTRACT[key]
+    host = LibraryProductionCSSHarness(app)
+    try:
+        async with host.run_test(size=(60, 24)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            screen.query_one(rail, Button).press()
+            shell = await _wait_for_selector(screen, pilot, selector)
+            if key == "prompts":
+                await _open_prompts_list(screen, pilot)
+            await _wait_for_condition(
+                pilot,
+                lambda: operator.attrgetter(layout_name)(screen).items_open,
+                message=f"{destination}: the list did not take the narrow stage",
+            )
+            for _ in range(5):
+                await pilot.pause()
+            unseen = [
+                target.id or type(target).__name__
+                for target in screen.focus_chain
+                if shell.work in target.ancestors_with_self
+                and _work_cells(target) <= 0
+            ]
+            assert not unseen, (destination, unseen)
+    finally:
+        if prompt_db is not None:
+            prompt_db.close()
+
+
+@private_profile_test
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", ["right_square_bracket", "left_square_bracket"])
+async def test_media_adjacent_item_keys_open_the_next_item_on_the_stage(
+    key: str,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+) -> None:
+    """TASK-38981 re-review: ``]`` / ``[`` open the next or previous browse
+    item in the Reader, so from the list holding the stage they hand the
+    stage back to the newly opened item instead of loading it behind it."""
+    app, prompt_db = await _seed_closeout_app(tmp_path)
+    host = LibraryGlobalKeyProductionCSSHarness(app)
+    selector = DESTINATION_CONTRACT["media"][1]
+
+    def layout():
+        return screen._media_state.reader_layout
+
+    try:
+        async with host.run_test(size=(160, 50)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _open_destination(screen, pilot, "media")
+            await pilot.resize_terminal(60, 30)
+            await _wait_for_condition(
+                pilot,
+                lambda: screen.size.width == 60
+                and screen.query_one(selector).region.width
+                == layout().items_width + layout().reader_width + 10,
+                message="the 60-column layout did not settle",
+            )
+            await pilot.pause()
+            shell = screen.query_one(selector)
+            if layout().items_open:
+                await pilot.click(shell.items_grip)
+                await _wait_for_condition(
+                    pilot,
+                    lambda: not layout().items_open,
+                    message="the open item did not take the stage",
+                )
+            await pilot.click(shell.items_grip)
+            await _wait_for_condition(
+                pilot,
+                lambda: layout().items_open and not shell.work.display,
+                message="the list did not take the stage beside the open item",
+            )
+            before = screen._media_state.reader_session.selected_id
+            await pilot.press(key)
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen._media_state.reader_session.selected_id != before
+                    and screen.query_one(selector).work.display
+                    and _work_cells(screen.query_one(selector).work)
+                    >= _WORK_FLOORS["media"]
+                ),
+                message=(
+                    f"{key}: {screen._media_state.reader_session.selected_id!r} "
+                    f"(was {before!r}), layout {layout()}"
+                ),
+            )
+    finally:
+        prompt_db.close()
+
+
+@private_profile_test
+@pytest.mark.asyncio
+async def test_notes_reader_focus_survives_a_wide_step_after_the_list_stage(
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+) -> None:
+    """TASK-38981 re-review: after the list held the stage at 60 columns, a
+    resize to 160 showed the work pane again and the shell moved focus into
+    it, past Notes' own focus restore. Back at 60 the user's reader focus was
+    lost to the Items grip (base kept it on the note body)."""
+    app, prompt_db = await _seed_closeout_app(tmp_path)
+    host = LibraryProductionCSSHarness(app)
+    selector = DESTINATION_CONTRACT["notes"][1]
+
+    def layout():
+        return screen._notes_state.reader_layout
+
+    async def settle() -> None:
+        for _ in range(12):
+            await pilot.pause(0.03)
+
+    try:
+        async with host.run_test(size=(160, 50)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _open_destination(screen, pilot, "notes")
+            await pilot.resize_terminal(60, 30)
+            await settle()
+            shell = screen.query_one(selector)
+            if layout().items_open:
+                await pilot.click(shell.items_grip)
+                await settle()
+            await pilot.click(shell.items_grip)
+            await _wait_for_condition(
+                pilot,
+                lambda: layout().items_open and not shell.work.display,
+                message="the list did not take the stage beside the open note",
+            )
+            await pilot.resize_terminal(160, 30)
+            await settle()
+            for _ in range(40):  # the user Tabs into the reader
+                focused = screen.focused
+                if (
+                    focused is not None
+                    and shell.work in focused.ancestors
+                    and _work_cells(focused) > 0
+                ):
+                    break
+                await pilot.press("tab")
+                await pilot.pause()
+            reading = screen.focused
+            assert reading is not None and shell.work in reading.ancestors
+            await pilot.resize_terminal(60, 30)
+            await settle()
+            focused = screen.focused
+            assert (
+                focused is not None
+                and shell.work in focused.ancestors
+                and _work_cells(focused) > 0
+            ), (reading.id, focused, layout())
+    finally:
+        prompt_db.close()
+
+
+@private_profile_test
+@pytest.mark.asyncio
+@pytest.mark.parametrize("wide", [(160, 30), (211, 44), (235, 52)])
+async def test_notes_list_focus_survives_a_widen_that_ends_the_stage(
+    wide: tuple[int, int],
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+) -> None:
+    """TASK-38981 re-review 3: with the list holding the stage at 60 columns
+    and focus in it, a widen ends the stage. Focus moved to the Library grip
+    (base kept it in the list's filter); it stays where the user had it."""
+    app, prompt_db = await _seed_closeout_app(tmp_path)
+    host = LibraryProductionCSSHarness(app)
+    selector = DESTINATION_CONTRACT["notes"][1]
+
+    def layout():
+        return screen._notes_state.reader_layout
+
+    async def settle() -> None:
+        for _ in range(12):
+            await pilot.pause(0.03)
+
+    try:
+        async with host.run_test(size=(160, 50)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _open_destination(screen, pilot, "notes")
+            await pilot.resize_terminal(60, 30)
+            await settle()
+            shell = screen.query_one(selector)
+            if layout().items_open:
+                await pilot.click(shell.items_grip)
+                await settle()
+            await pilot.click(shell.items_grip)
+            await _wait_for_condition(
+                pilot,
+                lambda: layout().items_open and not shell.work.display,
+                message="the list did not take the stage beside the open note",
+            )
+            await settle()
+            listing = screen.focused
+            assert listing is not None and shell.items in listing.ancestors, listing
+            await pilot.resize_terminal(*wide)
+            await settle()
+            assert shell.work.display and layout().reader_width > 0, layout()
+            # The list may rebuild its toolbar for the wider pane, so the
+            # control is matched by id, not by object.
+            focused = screen.focused
+            assert focused is not None and focused.id == listing.id, (
+                listing.id,
+                focused,
+            )
+            assert shell.items in focused.ancestors and _work_cells(focused) > 0
+    finally:
+        prompt_db.close()
+
+
+@private_profile_test
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["loading", "landed"])
+@pytest.mark.parametrize("destination", ["prompts", "media"])
+async def test_a_user_move_to_the_items_grip_after_a_stage_pick_is_kept(
+    destination: str,
+    phase: str,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-38981 re-review 4: a pick from the list holding the stage lands
+    focus in the opened item, but never over the user's own move. Shift+Tab
+    to the Items grip while the pick is still loading (the detail load is
+    held), or right after the landing, keeps focus on the grip."""
+    from tldw_chatbook.UI.Library_Modules.library_prompts_controller import (
+        LibraryPromptsController,
+    )
+
+    release = asyncio.Event()
+    if destination == "prompts":
+        original = LibraryPromptsController._refresh_library_prompt_detail
+
+        async def held(self, *args, **kwargs):
+            await release.wait()
+            return await original(self, *args, **kwargs)
+
+        monkeypatch.setattr(
+            LibraryPromptsController, "_refresh_library_prompt_detail", held
+        )
+    else:
+        original_media = library_screen_module.LibraryScreen._refresh_library_media_detail
+
+        async def held_media(self, *args, **kwargs):
+            await release.wait()
+            return await original_media(self, *args, **kwargs)
+
+        monkeypatch.setattr(
+            library_screen_module.LibraryScreen,
+            "_refresh_library_media_detail",
+            held_media,
+        )
+    if phase == "landed":
+        release.set()
+    app, prompt_db = await _seed_closeout_app(tmp_path)
+    host = LibraryProductionCSSHarness(app)
+    selector = DESTINATION_CONTRACT[destination][1]
+    layout_name = DESTINATION_CONTRACT[destination][4]
+    row_selector, identity_attribute = _PICKED_ROWS[destination]
+
+    def layout():
+        return operator.attrgetter(layout_name)(screen)
+
+    def loaded() -> object:
+        if destination == "prompts":
+            return screen._prompts_state.loaded_id
+        return screen._media_state.reader_session.loaded_id
+
+    async def settle(turns: int = 12) -> None:
+        for _ in range(turns):
+            await pilot.pause(0.03)
+
+    async def shift_tab_to(target) -> None:
+        if screen.focused is target:
+            # The pick's rebuild may already have reset focus here; the user's
+            # move is then Tab away and Shift+Tab back.
+            await pilot.press("tab")
+            await pilot.pause()
+        for _ in range(60):
+            if screen.focused is target:
+                return
+            await pilot.press("shift+tab")
+            await pilot.pause()
+        raise AssertionError(f"Shift+Tab never reached {target.id}")
+
+    try:
+        async with host.run_test(size=(160, 50)) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            release.set()  # the destination's own first load is not held
+            await _open_destination(screen, pilot, destination)
+            if phase == "loading":
+                release.clear()
+            await pilot.resize_terminal(60, 30)
+            await settle()
+            shell = screen.query_one(selector)
+            if layout().items_open:
+                await pilot.click(shell.items_grip)
+                await settle()
+            await pilot.click(shell.items_grip)
+            await _wait_for_condition(
+                pilot,
+                lambda: layout().items_open and not shell.work.display,
+                message="the list did not take the stage beside the open item",
+            )
+            before = str(_open_item_identity(screen, destination))
+            row = next(
+                candidate
+                for candidate in screen.query(row_selector)
+                if getattr(candidate, identity_attribute, None) is not None
+                and str(getattr(candidate, identity_attribute)) != before
+            )
+            picked = getattr(row, identity_attribute)
+            screen.set_focus(row)
+            await pilot.pause()
+            await pilot.press("enter")
+            await settle(4)
+            grip = screen.query_one(selector).items_grip
+            if phase == "loading":
+                await shift_tab_to(grip)
+                release.set()
+                await _wait_for_condition(
+                    pilot,
+                    lambda: str(loaded()) == str(picked),
+                    message="the held pick never loaded",
+                )
+            else:
+                # Act at once after the landing: plain asyncio polling, and
+                # Shift+Tab's own action (Pilot's idle wait can take ~1 s).
+                for _ in range(500):
+                    focused = screen.focused
+                    if (
+                        str(loaded()) == str(picked)
+                        and focused is not None
+                        and screen.query_one(selector).work
+                        in focused.ancestors_with_self
+                    ):
+                        break
+                    await asyncio.sleep(0.01)
+                else:
+                    raise AssertionError("the pick did not land in the opened item")
+                for _ in range(20):
+                    screen.action_focus_previous()
+                    await asyncio.sleep(0)
+                    if screen.focused is grip:
+                        break
+                else:
+                    raise AssertionError(f"Shift+Tab never reached {grip.id}")
+            await settle(30)  # longer than any landing window
+            assert screen.focused is grip, (phase, screen.focused)
+    finally:
+        prompt_db.close()

@@ -16,6 +16,9 @@ from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleEgressClass,
     ConsoleResolvedDestination,
 )
+from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+    canonical_endpoint_host,
+)
 
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
@@ -89,6 +92,60 @@ def resolve_console_destination(
         resolution.provider if isinstance(resolution.provider, str) else "unknown"
     )
     model = resolution.model if isinstance(resolution.model, str) else None
+    destination = _resolve_origin_destination(resolution, provider, model)
+    return _with_durable_continuation(destination, resolution)
+
+
+def _with_durable_continuation(
+    destination: ConsoleResolvedDestination,
+    resolution: ConsoleProviderResolution,
+) -> ConsoleResolvedDestination:
+    """Pin the continuation tuple only when a dispatch checkpoint can record it.
+
+    Continuation durability is optional: a destination whose tuple cannot be
+    validated or stored (blank or credentialed base URL, oversized identity)
+    stays sendable and simply is not resumable.
+    """
+    protocol = getattr(resolution, "continuation_protocol", None)
+    if (
+        protocol is None
+        or destination.endpoint_provenance
+        == ConsoleEndpointProvenance.EPHEMERAL_SESSION
+    ):
+        return destination
+    from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+        ConsoleDispatchCheckpointValidationError,
+        dump_console_resolved_destination_json,
+    )
+    from tldw_chatbook.provider_registry import RECORDS_BY_KEY
+
+    execution_key = getattr(resolution, "execution_key", None)
+    base_url = resolution.base_url
+    record = RECORDS_BY_KEY.get(execution_key)
+    if not base_url and record is not None and record.engine_driven:
+        # The engine itself sends to its record default when nothing is set.
+        base_url = record.default_base_url
+    durable = replace(
+        destination,
+        continuation_provider=execution_key,
+        continuation_protocol=protocol,
+        continuation_base_url=base_url,
+    )
+    try:
+        dump_console_resolved_destination_json(durable)
+    except ConsoleDispatchCheckpointValidationError:
+        return destination
+    return durable
+
+
+def _resolve_origin_destination(
+    resolution: ConsoleProviderResolution, provider: str, model: str | None
+) -> ConsoleResolvedDestination:
+    provenance = getattr(
+        resolution,
+        "endpoint_provenance",
+        ConsoleEndpointProvenance.DURABLE_CONFIGURATION,
+    )
     parsed = _parse_endpoint_origin(resolution.base_url)
     if parsed is None:
         return ConsoleResolvedDestination(
@@ -96,11 +153,7 @@ def resolve_console_destination(
             model=model,
             endpoint_identity=_UNKNOWN_ENDPOINT_IDENTITY,
             egress_class=ConsoleEgressClass.UNKNOWN,
-            endpoint_provenance=getattr(
-                resolution,
-                "endpoint_provenance",
-                ConsoleEndpointProvenance.DURABLE_CONFIGURATION,
-            ),
+            endpoint_provenance=provenance,
         )
 
     scheme, hostname, port, ip = parsed
@@ -115,11 +168,7 @@ def resolve_console_destination(
         model=model,
         endpoint_identity=endpoint_identity,
         egress_class=egress_class,
-        endpoint_provenance=getattr(
-            resolution,
-            "endpoint_provenance",
-            ConsoleEndpointProvenance.DURABLE_CONFIGURATION,
-        ),
+        endpoint_provenance=provenance,
     )
 
 
@@ -214,9 +263,11 @@ def _parse_endpoint_origin(
             or not _userinfo_is_well_formed(parsed.netloc)
         ):
             return None
-        hostname = parsed.hostname.lower().rstrip(".")
-        if not hostname or len(hostname) > 253:
+        # TASK-39137: the contract's host rule (it refuses an IPv6 zone id and
+        # "localhost.."), on the host as typed; only the identity drops a dot.
+        if canonical_endpoint_host(parsed.hostname.lower()) is None:
             return None
+        hostname = parsed.hostname.lower().rstrip(".")
         port = parsed.port
     except (TypeError, ValueError):
         return None

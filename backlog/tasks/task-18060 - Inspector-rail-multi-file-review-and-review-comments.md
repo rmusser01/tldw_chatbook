@@ -145,4 +145,7 @@ specific passing test (see the sweep) rather than ticked on trust, and
 every doc claim in the user-guide update was checked against the shipped
 source it describes before being written (byte-exact strings verified
 against the widget/screen source, not recalled).
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/console/agent-runs-and-tools.md`: Docs-only pass against shipped code and the targeted sweep (414 passed), not an interactive live-tmux walkthrough.
 <!-- SECTION:NOTES:END -->

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
-import threading
 from typing import Any, Literal, Protocol
 from uuid import uuid4
 
@@ -19,13 +20,15 @@ from tldw_chatbook.Agents.approval_provenance import (
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Tools.raw_cli_executor import (
-    RawCliHardlineViolation,
-    failure_hint,
     MAX_RAW_COMMAND_BYTES,
     MAX_RAW_TIMEOUT_SECONDS,
+    RawCliHardlineViolation,
     RawCliRequest,
     RawCliResult,
     RawCliStreamEvent,
+    bind_model_raw_cli,
+    failure_hint,
+    resolve_checked_workspace_shell_argv,
     validate_raw_cli_request,
 )
 from tldw_chatbook.Utils.input_validation import RawShellExecInput
@@ -51,15 +54,12 @@ RAW_SHELL_APPROVAL_WARNING = (
 #: the closed Select -- keep the two in step (`_RAW_SHELL_DECISION_OPTIONS`
 #: in `Widgets/Chat_Widgets/chat_approval_card.py`).
 RAW_SHELL_SESSION_SCOPE_NOTICE = (
-    "\"All shell · session\" covers future raw "
-    "shell commands, not only this displayed command. It clears on Disarm or "
+    '"Until Chatbook exits" covers future raw '
+    "shell commands in this Console chat, not only this displayed command. It clears on Disarm or "
     "when Chatbook exits."
 )
 RAW_SHELL_APPROVAL_OPTIONS = ("approve_once", "approve_session", "deny")
-_MAX_MODEL_RESULT_CHARS = 4000
-RawShellProgressSink = Callable[
-    [str, str, RawCliStreamEvent | RawCliResult], None
-]
+RawShellProgressSink = Callable[[str, str, RawCliStreamEvent | RawCliResult], None]
 
 _SHELLS = ("auto", "bash", "powershell", "cmd")
 
@@ -139,6 +139,27 @@ def resolve_raw_shell_state(
     return "deny" if effective.state == "deny" else "ask"
 
 
+def raw_shell_schema(tool_id: str) -> ToolSchema:
+    """Return the one native descriptor; callers retain all eligibility gates."""
+    return ToolSchema(
+        id=tool_id,
+        name=RAW_SHELL_TOOL_NAME,
+        description=(
+            "Run a non-interactive command in a real host shell with the full "
+            "authority of the OS user. Every command requires visible approval "
+            "unless the user grants this Console session temporary authority."
+        ),
+        parameters=_MODEL_SCHEMA,
+    )
+
+
+def _hardline_refusal(error: RawCliHardlineViolation) -> ToolResult:
+    return ToolResult.blocked(
+        f"{error} — this is the built-in safety floor, "
+        "not a user denial; it cannot be approved or overridden"
+    )
+
+
 class RawShellToolProvider:
     """Expose one conditional model schema and one always-projectable policy row."""
 
@@ -148,6 +169,7 @@ class RawShellToolProvider:
         runtime: _RawCliRuntime,
         console_session_id: str,
         initial_directory: Callable[[], Path],
+        protected_roots: Callable[[], tuple[Path, ...]] = tuple,
         resolve_state: Callable[[HubTool], EffectiveToolState] | None = None,
         local_tools_enabled: Callable[[], bool] = lambda: True,
         kill_switch: Callable[[], bool] = lambda: False,
@@ -159,6 +181,7 @@ class RawShellToolProvider:
             runtime: Existing app-owned raw CLI runtime.
             console_session_id: Nonblank Console session identity.
             initial_directory: Resolver for the default execution directory.
+            protected_roots: Live local folder bindings of this chat's workspace.
             resolve_state: Resolver for the effective Ask/Off policy.
             local_tools_enabled: Live local-tools gate probe.
             kill_switch: Live global tool kill-switch probe.
@@ -175,6 +198,7 @@ class RawShellToolProvider:
         self._runtime = runtime
         self.console_session_id = console_session_id
         self._initial_directory = initial_directory
+        self._protected_roots = protected_roots
         self._resolve_state = resolve_state or (
             lambda _hub: EffectiveToolState(state="ask", origin="global_default")
         )
@@ -236,16 +260,7 @@ class RawShellToolProvider:
         name = tool_id.split(":", 1)[-1]
         if name != RAW_SHELL_TOOL_NAME or not self.catalog_enabled():
             raise KeyError(f"Raw shell tool is unavailable: {tool_id}")
-        return ToolSchema(
-            id=tool_id,
-            name=RAW_SHELL_TOOL_NAME,
-            description=(
-                "Run a non-interactive command in a real host shell with the full "
-                "authority of the OS user. Every command requires visible approval "
-                "unless the user grants this Console session temporary authority."
-            ),
-            parameters=_MODEL_SCHEMA,
-        )
+        return raw_shell_schema(tool_id)
 
     @staticmethod
     def hub_tool() -> HubTool:
@@ -296,7 +311,27 @@ class RawShellToolProvider:
             timeout_seconds=validated.timeout_seconds,
             console_session_id=self.console_session_id,
         )
-        return validate_raw_cli_request(request)
+        request = validate_raw_cli_request(request)
+        try:
+            roots = self._protected_roots()
+            if not isinstance(roots, tuple) or any(
+                not isinstance(root, Path)
+                or not root.is_absolute()
+                or "\0" in str(root)
+                for root in roots
+            ):
+                raise ValueError("invalid workspace folder bindings")
+        except Exception:
+            raise RawCliHardlineViolation("workspace-protection-unavailable") from None
+        if not roots:
+            return request
+        request = replace(request, protected_roots=roots)
+        try:
+            resolve_checked_workspace_shell_argv(request)
+        except FileNotFoundError:
+            # Leave the usual permission flow and unavailable-shell outcome in place.
+            pass
+        return request
 
     def pending_gate_for(self, call: ToolCall) -> MCPPendingCall | None:
         """Build one complete, independently addressable raw approval row.
@@ -323,7 +358,12 @@ class RawShellToolProvider:
             return None
         if state != "ask" or session_granted:
             return None
+        from tldw_chatbook.Chat.approval_presentation import ApprovalAuthority
+
         return MCPPendingCall(
+            presentation_authority=ApprovalAuthority("raw_shell", self.console_session_id,
+                "Console chat", str(request.initial_directory), "console_chat", "call", "Disarm or exit"),
+            requires_individual_review=True,
             llm_name=RAW_SHELL_TOOL_NAME,
             server_key=RAW_SHELL_SERVER_KEY,
             tool_name=RAW_SHELL_TOOL_NAME,
@@ -358,41 +398,81 @@ class RawShellToolProvider:
             pending: Approval rows shown to the user.
             authority_generation: Optional generation captured before review.
         """
-        with self._stamps_lock:
-            if (
-                authority_generation is not None
-                and authority_generation != self._authority_generation
-            ):
-                return
-            self._stamps = {
-                key: value for key, value in self._stamps.items() if key[0] != run_id
-            }
-            grant_session = False
-            for row in pending:
-                key = row.call_id or row.llm_name
-                decision = decisions.get(key)
-                if decision not in RAW_SHELL_APPROVAL_OPTIONS:
-                    continue
-                self._stamps[(run_id, key)] = approval_stamp(
-                    decision,
-                    unanswered=approval_key_unanswered(decisions, key),
-                    allowing=("approve_once", "approve_session"),
-                )
-                if decision == "approve_session":
-                    grant_session = True
-            if not grant_session:
-                return
-            try:
-                state = resolve_raw_shell_state(self._resolve_state(self.hub_tool()))
-                if self.catalog_enabled() and state == "ask":
-                    # Keep the provider lock through the runtime write. Disarm
-                    # closes the runtime first and then waits on this same lock
-                    # to advance the generation, so an old approval can land
-                    # either wholly before disarm or wholly before revocation,
-                    # never after a completed disarm/re-arm cycle.
-                    self._runtime.grant_model_session(self.console_session_id)
-            except Exception:
-                return
+        from .approval_observation import (
+            ApprovalObservationContext,
+            approval_contexts_scope,
+            decision_approval_contexts,
+            publish_grant_application,
+        )
+
+        keys = tuple(
+            row.call_id or row.llm_name
+            for row in pending
+            if decisions.get(row.call_id or row.llm_name) == "approve_session"
+        )
+        contexts = decision_approval_contexts(decisions, keys)
+        observations = []
+        buffered = tuple(
+            ApprovalObservationContext(context.identity, observations.append)
+            for context in contexts
+        )
+
+        def apply():
+            with self._stamps_lock:
+                if (
+                    authority_generation is not None
+                    and authority_generation != self._authority_generation
+                ):
+                    publish_grant_application(
+                        "not_applied", error_code="authority_unavailable"
+                    )
+                    return
+                self._stamps = {
+                    key: value for key, value in self._stamps.items() if key[0] != run_id
+                }
+                grant_session = False
+                for row in pending:
+                    key = row.call_id or row.llm_name
+                    decision = decisions.get(key)
+                    if decision not in RAW_SHELL_APPROVAL_OPTIONS:
+                        continue
+                    self._stamps[(run_id, key)] = approval_stamp(
+                        decision,
+                        unanswered=approval_key_unanswered(decisions, key),
+                        allowing=("approve_once", "approve_session"),
+                    )
+                    if decision == "approve_session":
+                        grant_session = True
+                if not grant_session:
+                    return
+                try:
+                    state = resolve_raw_shell_state(self._resolve_state(self.hub_tool()))
+                    if self.catalog_enabled() and state == "ask":
+                        # Keep the provider lock through the runtime write. Disarm
+                        # closes the runtime first and then waits on this same lock
+                        # to advance the generation, so an old approval can land
+                        # either wholly before disarm or wholly before revocation,
+                        # never after a completed disarm/re-arm cycle.
+                        self._runtime.grant_model_session(self.console_session_id)
+                    else:
+                        publish_grant_application(
+                            "not_applied", error_code="authority_unavailable"
+                        )
+                except Exception:
+                    publish_grant_application("failed", error_code="writer_failed")
+                    return
+
+        with approval_contexts_scope(buffered):
+            apply()
+        for observation in observations:
+            for context in contexts:
+                if context.identity == observation.identity:
+                    context.publish(
+                        observation.kind,
+                        observation.outcome,
+                        actual_scope=observation.actual_scope,
+                        error_code=observation.error_code,
+                    )
 
     @property
     def authority_generation(self) -> int:
@@ -473,19 +553,21 @@ class RawShellToolProvider:
             return ToolResult(ok=False, error=f"Unknown raw shell tool: {name}")
         run_id = current_run_id()
         call_id = current_tool_call_id() or RAW_SHELL_TOOL_NAME
+        from .workflow_task_scope import check_task_provider
+
+        try:
+            check_task_provider(self, tool_id, dict(args))
+        except Exception:  # noqa: BLE001 - authority failures must refuse
+            return ToolResult.blocked("workflow task scope refused")
         try:
             request = self._validated_request(
                 args,
                 invocation_id=current_tool_call_id() or f"raw-shell-{uuid4()}",
             )
         except RawCliHardlineViolation as exc:
-            # TASK-25905 AC#4: the floor's refusal is ITS OWN thing -- it
-            # names the rule, states it is not a user denial, and no
-            # approval option (session grants included) can clear it.
-            return ToolResult.blocked(
-                f"{exc} — this is the built-in safety floor, "
-                "not a user denial; it cannot be approved or overridden"
-            )
+            if exc.rule.startswith("workspace-"):
+                self._pop_stamp_detail(run_id, RAW_SHELL_TOOL_NAME)
+            return _hardline_refusal(exc)
         except (TypeError, ValueError, OSError) as exc:
             return ToolResult(ok=False, error=f"invalid shell_exec request: {exc}")
         detail = self._pop_stamp_detail(run_id, RAW_SHELL_TOOL_NAME)
@@ -507,9 +589,7 @@ class RawShellToolProvider:
         approved = stamp in {"approve_once", "approve_session"}
         if not approved:
             try:
-                approved = self._runtime.model_session_granted(
-                    self.console_session_id
-                )
+                approved = self._runtime.model_session_granted(self.console_session_id)
             except Exception:
                 approved = False
         if not approved:
@@ -525,11 +605,52 @@ class RawShellToolProvider:
                 return ToolResult.blocked(
                     RAW_SHELL_DENY_REFUSAL, approval_decision="denied"
                 )
+            from .code_review_checks import current_check_execution
+
+            check_execution = current_check_execution()
+            callbacks = {}
+            if check_execution is not None:
+                if (
+                    check_execution.provider is not self
+                    or dict(args) != check_execution.arguments
+                ):
+                    return ToolResult.blocked(
+                        "check execution owner or specification mismatch"
+                    )
+                callbacks["on_started"] = lambda _started: check_execution.accepted(
+                    request.invocation_id
+                )
+                callbacks["admission_scope"] = check_execution.admission_scope
+            try:
+                check_task_provider(self, tool_id, dict(args))
+            except Exception:  # noqa: BLE001 - authority failures must refuse
+                return ToolResult.blocked("workflow task scope refused")
+            from .workflow_task_scope import current_task_authorization
+
+            authorization = current_task_authorization()
+            observation = None
+            if authorization is not None and authorization._required_evidence:
+                observation = authorization._required_evidence[0].begin_shell(
+                    self, request
+                )
+            bind_model_raw_cli(self, request)
             result = self._runtime.execute(
                 request,
                 lambda event: self._emit_progress(run_id, call_id, event),
+                **callbacks,
+                **(
+                    {"required_output": observation.output}
+                    if observation is not None
+                    else {}
+                ),
             )
+            if check_execution is not None:
+                check_execution.settled(result)
+            if observation is not None:
+                authorization._required_evidence[0].finish_shell(observation, result)
             self._emit_progress(run_id, call_id, result)
+        except RawCliHardlineViolation as exc:
+            return _hardline_refusal(exc)
         except Exception as exc:
             detail = (str(exc) or type(exc).__name__)[:300]
             return ToolResult(
@@ -537,7 +658,7 @@ class RawShellToolProvider:
                 error=f"raw shell execution failed: {detail}",
                 outcome="failed",
             )
-        return self._tool_result(result)
+        return self._tool_result(result, command=request.command)
 
     def _emit_progress(
         self,
@@ -555,8 +676,15 @@ class RawShellToolProvider:
             return
 
     @staticmethod
-    def _tool_result(result: RawCliResult) -> ToolResult:
+    def _tool_result(result: RawCliResult, *, command: str = "") -> ToolResult:
         """Map one executor settlement to the ordinary bounded tool contract."""
+        from tldw_chatbook.Tools.shell_search_outcomes import is_empty_search
+
+        if result.prelaunch_refusal_rule is not None:
+            return _hardline_refusal(
+                RawCliHardlineViolation(result.prelaunch_refusal_rule)
+            )
+
         exit_code = "none" if result.exit_code is None else str(result.exit_code)
         detail = (
             f"terminal_state: {result.terminal_state}\n"
@@ -568,7 +696,7 @@ class RawShellToolProvider:
             f"cleanup_proven: {str(result.cleanup_proven).lower()}\n"
             f"stdout:\n{result.stdout_preview or '(no output)'}\n"
             f"stderr:\n{result.stderr_preview or '(no output)'}"
-        )[:_MAX_MODEL_RESULT_CHARS]
+        )
         # TASK-26006: one labeled recovery line for known failure shapes,
         # APPENDED after the untouched output -- never on success, never
         # more than one, absent for unrecognized failures.
@@ -578,7 +706,16 @@ class RawShellToolProvider:
         )
         if hint is not None:
             detail = f"{detail}\n{hint}"
-        if result.terminal_state == "exited" and result.exit_code == 0:
+        if result.terminal_state == "exited" and (
+            result.exit_code == 0
+            or not result.truncated
+            and is_empty_search(
+                command,
+                result.exit_code,
+                result.stderr_preview,
+                shell=result.resolved_shell,
+            )
+        ):
             return ToolResult(ok=True, content=detail)
         if result.terminal_state == "timed_out":
             outcome = "timeout"
@@ -599,3 +736,23 @@ __all__ = [
     "RawShellToolProvider",
     "resolve_raw_shell_state",
 ]
+
+
+# Original pure metadata for the conditional prospective planning descriptor.
+from copy import deepcopy as _planning_deepcopy
+
+_PLANNING_SHELL_SCHEMA = _planning_deepcopy(_MODEL_SCHEMA)
+_PLANNING_SHELL_DESCRIPTOR = (
+    raw_shell_schema,
+    raw_shell_schema.__code__,
+    raw_shell_schema.__defaults__,
+    raw_shell_schema.__kwdefaults__,
+    tuple((raw_shell_schema.__kwdefaults__ or {}).items()),
+    raw_shell_schema.__closure__,
+    tuple((c, c.cell_contents) for c in raw_shell_schema.__closure__ or ()),
+)
+
+
+def planning_shell_schema_changed() -> bool:
+    """Compare the live descriptor schema with its original planning snapshot."""
+    return _MODEL_SCHEMA != _PLANNING_SHELL_SCHEMA

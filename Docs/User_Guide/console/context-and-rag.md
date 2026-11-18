@@ -38,7 +38,7 @@ Where this page's controls live:
   panel](#the-environment-panel-environment-tasks-agents) below), the
   "Sources — next send" tray, the Library search controls, the
   retrieval-scope row, the "Prefill" rows when one is armed, the
-  run/readiness groups, the "Selected turn" block, "Session Settings", the
+  run/readiness groups, the "Selected turn" block, "Chat settings", the
   "Live work sources" card, and the "Chat Dictionaries" / "World Books"
   blocks at the bottom. Press **Alt+I**
   to open the rail and put the caret on the send summary; press it again to
@@ -71,6 +71,27 @@ Where this page's controls live:
 
 ## Features & controls
 
+### Questions about an attached project
+
+Bind the project folder in a named Workspace, then ask a normal question such
+as "Summarize this project". When file-reading tools are available, Console
+guides the model to inspect relevant README files, manifests and source. With
+multiple folders, name the project you mean. Folder bindings provide file access;
+they do not automatically read, ingest or index the folder, and need no embeddings.
+Tool permissions, read-only bindings and excluded paths still apply. A model may
+need a more specific question if it does not choose the relevant files.
+
+Your saved **Never/Automatic** retrieval and **Blocked/Allowed** assistant Library
+access choices stay as you set them. Automatic or manually staged Library
+excerpts can accompany file results; unrelated excerpts do not mean project files
+are unavailable. Answers should identify file evidence by path and use `[S#]`
+only for the supplied Library references. An answer based entirely on project
+files can have no Library citation. Switching to another chat while a send is
+preparing does not transfer that chat's folders or Library scope into the send.
+
+Optional folder indexing is a separate planned capability, with explicit opt-in;
+this guidance change does not enable it or retain project files as Library items.
+
 ### Model context capacity
 
 The model controls use the selected server's reported context size when it is
@@ -87,6 +108,111 @@ budget is retained and limited to the available capacity for each request.
 Applying settings preserves the values shown for the conversation, including
 previous edits. Making a new default also saves that profile for subsequent
 chats; changing only Streaming does not reset other fields.
+
+### When a chat reaches its context limit
+
+What happens depends on **When limit nears** in Chat settings ▸ Context
+and memory:
+
+- **Ask** (the default). When a message you send would take the chat past its
+  compaction threshold, the message is held before anything is sent or saved.
+  A card above the transcript shows how many tokens the chat uses out of its
+  budget and where compaction starts (the trigger, for example "compaction
+  trigger 1,200 tokens (80%)"), and offers four choices:
+  - **Compact and send** summarizes older turns, then sends your message. The
+    summary is one extra model call and may be billed. If it fails, the card
+    stays, says why, and your message is still held.
+  - **Send without compacting** sends this one message as it is. Older turns
+    that do not fit the model's context window are left out of the request.
+  - **Change policy** opens Chat settings at Context and memory, where you can
+    set **When limit nears** to Automatic or Off, or raise the budget. Your
+    message stays held until you pick one of the other choices.
+  - **Cancel send** sends nothing and compacts nothing; your message goes back
+    to the composer.
+
+  To see which turns would be summarized before choosing, use `/rewind` ▸
+  **Summarize up to here**: it shows a preview before anything changes, and
+  it works while the message is held (the held message is not offered as a
+  rewind target, because it is not part of the chat yet).
+- **Automatic** compacts and sends without asking.
+- **Off** never compacts.
+
+Turns nobody typed follow the same rule. Under **Ask**, a background
+sub-agent that finishes while the chat is over its trigger does not wake its
+supervisor: nothing is sent, compacted or saved, and no turn is marked
+Failed. The chat shows "Background agent paused: this chat reached its
+compaction threshold …", and the agent fleet section reads **Paused: context
+limit. Results saved. Run /compact to continue.** The results wait until you
+decide:
+
+- `/compact` (or **Compact now**, or `/rewind` ▸ **Summarize**) lets the
+  agent go on with its results straight away. **Compact and send** on a held
+  message of yours does too, once your message's reply is done. If `/compact`
+  finds nothing to summarize (say, after you deleted turns), the agent still
+  checks again and goes on if the chat is now under its trigger.
+- Setting **When limit nears** to Automatic or Off lets it go on the next
+  time anything in Console settles, for example after your next message.
+- A message you send yourself, with or without compacting, is your own turn;
+  the agent's results keep waiting and stay readable in **View all runs**.
+
+If the chat is still over its trigger when the agent tries again, it pauses
+again; it never retries on its own. A goal run's iterations send the goal's
+handoff instead of the chat's history, so the trigger does not apply to them.
+
+For plain-provider requests with measured inputs, you can see an estimated pause coming. Once the chat's history is over its trigger
+under **Ask**, the header badge reads **Next send pauses to compact** (on
+narrow terminals the badge has no room for it), Inspect's "What happens if I
+send now?" Run line and the run chip at the start of the status strip read
+**Pauses for compaction**, and the Context chip starts with **Next send
+pauses to compact** (its tooltip gives the numbers). While a message is held,
+the badge reads **Blocked** and the Run line and run chip **Blocked —
+compaction ask**. F1 help lists the same in its **Context limit** group.
+
+The estimate includes current prompt/draft overhead and model input/output limits.
+Agent/tool-enabled chats show **Forecast unavailable**, including light chats with
+tools: tool availability can change between sends. Above the displayed estimated
+trigger, the Context chip retains a **High context · forecast unavailable**
+advisory. It does not promise that the next send will pause for compaction; the
+real next-send check still decides. Media, response prefills, unknown limits and
+unsupported memory shapes can also lack a forecast.
+
+To compact without sending, type `/compact` or choose **Console: Compact
+context now** from the command palette (Ctrl+P). Both run the same summary as
+**Compact now** in Chat settings ▸ Context and memory (one model call) and
+report the result in the chat.
+
+**Continue**, **Regenerate**, **Retry** and **Edit & resend** cannot show
+the card. Over the trigger they stop before a reply is started (an edited
+message is not added as a new branch), so nothing is marked Failed, and a note
+gives the numbers and the way on: run `/compact`, then try again, or change
+**When limit nears**.
+A message that starts with `$` (a skill) or `/` while Capture is off cannot
+show the card either. Over the trigger it is not sent: the note starts "Not
+sent", your text stays in the composer, and the shelf above the composer lists
+the message with **Restore** and **Discard**. To go on, clear the composer and
+run `/compact`, then choose **Restore** to put the message back and send it.
+Queued prompts and Buddy replies cannot show it either. A queued prompt that
+reaches the trigger is not sent: it goes back to the front of the queue, the
+queue pauses on **Start refused**, and the note starts "Not sent from the
+queue". Run `/compact`, then **Try again** (compacting changes the context, so
+the queue first asks you to review it), or change **When limit nears**. A
+Buddy reply over the trigger is not sent either; Buddy keeps your text and
+shows the same note, and the Console composer is left as it was.
+
+When compacting cannot make enough room, the message is not sent and the note
+says what fills the window and what to change:
+
+- **Max tokens** (Chat settings ▸ Model and generation, Ctrl+O) plus the
+  safety margin already use the whole window: lower Max tokens.
+- The system prompt, tools and attached context need more than the window
+  leaves: remove attached sources or tools, or lower Max tokens.
+- The message does not fit and there are no older complete turns to compact:
+  shorten it or its attachments, lower Max tokens, or start a new chat.
+
+If no catalog knows the model's context window, the app assumes a size (the
+**Model window** row in Chat settings ▸ Context and memory reads "unknown,
+32,000 assumed"), and the card and the note say so. Set the real value in
+**Settings ▸ Providers & Models (F4)**, under Advanced ▸ Context window.
 
 ### Per-turn micro-compaction
 
@@ -117,7 +243,7 @@ yet" instead.
 
 A note that held your message, or that reports a failed **Compact now**, also
 gives a next step. "Nothing to compact yet" is not a failure and gives none.
-In **Conversation settings > Context and memory** you can raise
+In **Chat settings > Context and memory** you can raise
 **Conversation max tokens**, set **If compaction fails** to **Omit older
 context** (the message is then sent without compacting), or set **When limit
 nears** to **Off**. You can also start a new chat. In a saved chat, the
@@ -205,7 +331,8 @@ that built the payload, never a separate estimate — so they always sum to
 the request total. Categories big enough to act on name their lever (e.g.
 Conversation → summarize older turns via `/rewind`; Attachments →
 `[agents] retire_stale_images`). Viewing the breakdown never triggers a
-model call, and an unverified model window keeps its "estimated" label.
+model call, and a model window no catalog knows still reads "unknown" with
+the size it assumes.
 
 
 ### Reading long Context and Inspector sections
@@ -261,9 +388,9 @@ this, what are my sub-agents doing?* Three collapsible sections sit above
 the "Sources — next send" tray:
 
 **Environment** — the git working tree behind the conversation. It reports
-on the **active workspace's change-review root** (the same tree the
-`Review changes` action opens), so the rail and Change Review can never
-describe different trees. Rows, top to bottom:
+on the **active workspace's change-review root** (the same tree its **Review in
+Change Review…** and **Review & commit…** actions open), so the rail and
+Change Review can never describe different trees. Rows, top to bottom:
 
 A trailing marker on each row's own text says what Enter does to it, since
 the rows otherwise look alike: a `▸` (or `▾` once expanded) means Enter
@@ -279,6 +406,10 @@ the composer draft. A row with none of these is inert — Enter does nothing.
 | **Review & commit… · N files** | shown when the tree is dirty; `Push ↑n…` when it is only ahead — **absent when the tree is clean and in sync** | — | opens Change Review directly on its working-tree mode |
 | **PR ▸** | `PR #N · Open` / `· Draft` / `· Merged`, with `Merged 6d ago` beside a merged one | the PR title with its ± counts (inert) | **Open in browser…**, **+ Add to chat** (pastes a PR summary into the composer) |
 | **checks ▸** | `3 failing checks`, `2 pending checks`, or `12 checks passed` | the failing check names (inert) | **+ Fix — add failure summary to chat** (pastes the failing check names and their details URLs into the composer) |
+
+**Review in Change Review…** and **Review & commit…** open Change Review on
+the working tree; the run inspector's **Review changes** and a turn card's
+**Review** open that run's recorded turn instead.
 
 Large counts compact rather than wrap: a seven-digit pair reads
 `+1.7M −278k` in the rail's 30-column width, and the exact figures stay one
@@ -326,7 +457,8 @@ the numbers are freshest exactly when they just changed. PR and check data
 is cached for 60 seconds; the **Refresh** action on the Environment header
 forces a fresh fetch past that cache — the button reads **Refreshing…**
 until the fetch lands, even when it comes back unchanged, so pressing it
-never looks like a dead control while the network call is in flight.
+never looks like a dead control while the network call is in flight. Its
+tooltip names the section it refreshes: **Refresh — Environment**.
 
 **When things are missing.** Absence is quiet by design — an unavailable
 source never renders as an error:
@@ -340,6 +472,7 @@ source never renders as an error:
 | `gh` not installed, not authenticated, or the remote isn't GitHub | the PR and check rows are simply absent — the git rows still work |
 | No open or recent PR for the branch | same: no PR row |
 | No `backlog/` directory | no Tasks section |
+| Git status cannot be read and there is no earlier answer to fall back on | one **Environment unavailable — Refresh to retry** row |
 | A source errors or times out after previously working | the last good data stays, marked `(stale)` in the row's own text (not color alone) — no toast, no flashing |
 | A source fails three times running | it stops polling until you press **Refresh** or switch workspace, so a broken tool can't produce a 10-second flap loop |
 
@@ -442,7 +575,7 @@ back to one ssh exchange per call), `session_idle_s` (default `60`
 seconds before an idle session closes), and `bundle_cache` (default
 `true`; set `false` to never cache the worker on the server).
 
-**Adding a binding.** Press **F9 → Workspaces**, select the workspace,
+**Adding a binding.** Press **F4 → Workspaces**, select the workspace,
 and use the **SSH folders** editor: a target (`user@host[:port]` or an
 ssh-config alias), an absolute remote path (starting with `/`), the
 **Access** toggle (read-only by default, read-write on request — a
@@ -508,6 +641,16 @@ Click the cost chip for **Usage & cost**, or press **Ctrl+Shift+P** / choose
 being inspected. The modal stays bound to that chat and profile. **Close** and
 `Escape` return to your previous control.
 
+Hovering the cost chip shows a summary: context fullness, conversation budget,
+compaction, current spend and the next-send estimate. When no catalog knows
+the model's window, the fullness line ends "(assumed; window unknown)". When
+the session's provider sends rate-limit headers (OpenAI and Anthropic do, as
+do many compatible APIs), the last line shows how much its most recent reply
+said was left. For example: `Rate limit at 14:32:05: 4,999/5,000 requests left (resets
+14:32:53) · 39,200/40,000 tokens left (resets 14:32:06)`. The times are clock
+times from that reply. A provider that sends no rate-limit headers adds no
+line.
+
 The section list and reader sit side by side in a wide terminal. At narrower
 widths, select an item and press `Enter` to open its reader; **Back to sections**
 returns to the same selection. Resizing preserves the selected item and reader
@@ -545,8 +688,16 @@ Captured call summaries load only for the selected message. These costs are
 supporting detail, not additional spend to add to the transcript total.
 **Inspect calls in Exchange history** keeps the same message identity. Missing
 or ambiguous identity disables drill-in rather than guessing another turn.
-A capture load failure leaves usage figures available and can be retried by
-selecting the turn again.
+A capture load failure leaves usage figures available and says why it failed.
+Only a busy store offers **Select this turn again to retry**; a stored capture
+that cannot be decoded says a retry will not help, and any other failure is
+reported as an unexpected error. The app log records the reason and error type.
+
+Each turn is one row, with its basis (**Estimated** or **Reported**) and cost
+before the token counts; a list too narrow for the whole row clips the token
+counts, never the basis. A focused list tints its background and paints the
+highlighted row in the focus colours instead of drawing an outline, so its
+first and last rows stay readable.
 
 #### Exchange history
 
@@ -556,9 +707,10 @@ labels. The reader shows the captured request, response, reported usage, omitted
 fields, and provenance. Locally synthesized fallback text is labeled as such.
 
 Capture records the request at the provider-adapter boundary, generally before
-provider-internal framing and prompt-cache markers. The llama.cpp capture is the
-literal wire payload. Missing captures can reflect capture being off, a failed
-capture, or purged history; the modal does not reconstruct missing requests.
+provider-internal framing and prompt-cache markers. A llama.cpp call is the
+exception: its capture is the literal payload sent, and its call detail says so.
+Missing captures can reflect capture being off, a failed capture, or purged
+history; the modal does not reconstruct missing requests.
 
 **View: Safe/Full** (or **v**) controls local disclosure in both historical
 views. Changing it clears both readers and their cached bodies; switching to
@@ -570,7 +722,7 @@ cannot return through a delayed load or export.
 
 ### Thinking history replay
 
-Open the current conversation's Console settings and find **Thinking history
+Open the current conversation's Chat settings and find **Thinking history
 replay**. Its saved policy belongs to the conversation and affects future
 provider requests, not whether Thinking rows are visible:
 
@@ -661,12 +813,16 @@ whole transcript on every send. Provider-only instructions, RAG, tools, and
 responses are filtered and stored once as reusable artifacts. Capture is on by
 default; Capture Off stops future trace writes without erasing prior history.
 Durable captures stay local to the device's conversation database and are never
-synced. Temporary in-process captures are not written to disk until **Save &
-Send** makes the conversation durable.
+synced. A temporary chat records no traces. Saving it (**Save chat** in the
+composer **Menu**, or the **Temporary · not saved** segment of the status
+strip) hands its later sends to its own Capture choice, else the global
+default (a one-time **Next send** choice still decides the next send); the
+Menu row reads **Save chat (enables capture)** only when that is Capture On.
 
-A temporary chat must use **Save & Send** before a durable Capture On call, or
-explicitly send once with Capture Off. In-process temporary trace state remains
-coherent while switching chats but is not restart-durable until saved. A stopped
+If you turn Capture On in a chat that is still temporary, a Capture On call
+needs **Save & Send** first, or you send that message once with Capture Off.
+In-process temporary trace state remains coherent while switching chats but is
+not restart-durable until saved. A stopped
 send keeps its partial trace, marked `[stopped]`; an abandoned regenerate keeps
 its own call, marked `[abandoned regeneration]`.
 
@@ -697,6 +853,10 @@ ends in a `▸` and reads `System: none` while unset) to open the **Edit
 system prompt** modal: "Applies to this session.", the prompt editor, a
 **Name** field with a **Save to Library** button for keeping the prompt
 in Library, and the buttons **Clear**, **Cancel**, and **Apply**.
+While a save runs, its status reads "Saving…", and pressing **Save to
+Library** again does not start a second save. If you edit **Name** before
+the save finishes, the outcome names the prompt that save was for, for example
+`Prompt "Formal Tone": Saved.`
 
 `/system <name>` applies a saved prompt's system part directly (exact
 name match, then unique prefix); anything else opens the **Apply system
@@ -711,7 +871,8 @@ user text (exact match, then unique prefix). Bare `/prompt`, or an
 ambiguous/unknown name, opens the **Insert prompt** picker ("Search
 prompts…"; empty state "No saved prompts yet — create them in Library ▸
 Prompts."). A large prompt body arrives in the composer as a collapsed
-paste token — click it (or press Enter on it) to unfurl.
+paste token. Enter sends it as it is; to expand it, press Ctrl+E or click
+it.
 
 Saved Prompt System and User lanes may contain insertion-time variables such
 as `{customer}`. Names are case-sensitive and must match
@@ -823,8 +984,11 @@ chip opens two independent, text-valued controls for the active conversation:
 
 New conversations ship as **Never** and **Blocked**. The choices are stored
 only on this device and are not synced or exported. A recovered remote or
-imported conversation whose local policy cannot be resolved therefore remains
-inert until you explicitly save a local policy.
+imported conversation (or one saved before these controls existed) has no
+local policy, so it runs under the same safe **Never** and **Blocked**. Its
+first send saves that default as its local policy rather than being refused;
+nothing broader is ever saved on your behalf, and you can change it from the
+chip at any time.
 
 When Assistant is Allowed, **Direct / RAG is a selector**, not a third
 permission. Direct advertises the bounded direct Library tools; RAG advertises
@@ -846,12 +1010,19 @@ composer menu's **Attach file**. The control-bar **Context rail**
 action opens the "Console context" rail; Library staging itself happens
 from the Library surfaces named above.
 
-Media, notes, and conversation handoffs now actually reach the model on
-send — they used to display as staged while delivering nothing. Notes
-send a real excerpt of the note body; media and conversation handoffs
-currently send only a short generic label naming the item (e.g. "Media
-staged: \<title\>"), not an excerpt of the content itself — upgrading
-that to a real excerpt is still open (task-2376). Other handoff kinds
+Media, notes, and conversation handoffs reach the model on send, each as
+a bounded excerpt of its content. A note sends the first 4,000 characters
+of its body. A media item
+("Use in Console") sends the first 500 characters of its stored text,
+followed by its title and ID; Library's Media reader ▸ Info says whether that
+excerpt is complete or truncated. A conversation ("Use as source") sends the
+first 3,000 characters of its transcript, each message labelled with its
+sender, followed by its title and ID; a longer conversation is cut there and
+its later messages are left out. Whenever an excerpt was cut (including a
+note longer than 4,000 characters), its row in the staged-evidence strip reads
+"*title* (partial excerpt)", its row in the Inspector's Sources tray shows
+**Partial** after the status word (for example "Ready · Partial · *title*"),
+and the model receives it under "*title* (partial excerpt)". Other handoff kinds
 (skills, watchlists/collections snapshots, quizzes, personas) cannot
 reach the model at all yet: their Sources rows render **Listed — not
 sent** (expanding a row says so explicitly) instead of Ready, because
@@ -898,44 +1069,123 @@ Escape does not silently commit a dirty choice. If your resolved RAG scope comes
 back **empty**, auto-retrieve short-circuits with the same shared notice
 the manual path shows, rather than searching everything.
 
-While a send is retrieving, the staged-evidence strip briefly shows a
-"Retrieving…" state and the search is capped at a **5-second timeout**.
+While a send is retrieving, the run chip reads **Run: Searching Library…** and
+**Stop** is offered. The search itself is capped at a **5-second timeout**.
+The first automatic send after launch also has to start the Library's search
+service (it loads the embedding model: a few seconds, or about 20 seconds the
+very first time, while the model downloads). That start-up has its own,
+longer 60-second limit and does not count against the 5 seconds, so the first
+send after launch no longer times out just because the service was cold.
 Successful evidence is staged and then consumed by that send. **Zero results**
-is a completed retrieval, so the send continues without evidence and keeps a
-visible zero-results disclosure on the turn.
+is a completed retrieval, so the send continues without evidence.
 
-Failure, timeout, or a RAG service that is still starting pauses the prepared
-send before provider dispatch. The recovery card keeps the exact draft and
-frozen conversation authority visible and offers **Retry**, **Send once**, and
-**Cancel**. Retry makes one fresh retrieval attempt; Send once bypasses
-automatic retrieval for only this prepared send; Cancel restores the draft and
-does not contact the model provider. Nothing is silently downgraded to an
-ungrounded send.
+Each turn sent this way says what its search did, in one quiet line under
+your message:
+
+- **Library: 3 sources sent**: the search found evidence and the send
+  carried it. The count is the number of references it sent.
+- **Library: 0 matches · sent without Library evidence**: the search
+  finished and found nothing.
+- **Library: sent once without Library · search timed out** (or *search
+  stopped* / *search failed*): you chose **Send once without Library** on the
+  recovery card described below.
+
+The line is read from a small record saved with your message, so it is still
+there after you reopen the chat, switch branches or restart the app.
+
+A turn has no line when no automatic search ran for it, or when nothing
+recorded one:
+
+- Auto was set to **Never**.
+- Evidence was already staged (a manual **Search Library** run or a Library
+  **Use in Console** handoff), so the send used that instead of searching.
+- The message was an **Edit & resend**, or started with `/` or `@`.
+- The chat was temporary when you sent it, or the turn was sent before this
+  record existed.
+
+A timeout, a failed search, or **Stop** pauses the prepared send before
+provider dispatch. The model provider is not contacted. A recovery card in
+the transcript says why ("Library search timed out; your message was not
+sent"), the run chip reads **Run: Blocked — Library timeout** (or *error* /
+*stopped*), and the card offers three actions:
+
+- **Retry Library search** makes one fresh retrieval attempt and, if it
+  finishes, sends the message with what it found.
+- **Send once without Library** skips automatic retrieval for only this
+  message and sends it; the Auto setting is unchanged.
+- **Cancel send** sends nothing and puts the message back in the composer,
+  attachments included (when the composer is empty or still shows that
+  message), and takes it off the unsent-turn list.
+
+If Retry or Send once without Library then finds the provider not ready (a
+local server that is down, or a model you switched to meanwhile), the send
+pauses again and the card says so ("Provider not ready or changed; your
+message was not sent", chip **Blocked — check provider**). It then offers
+**Retry send** and **Cancel send**. If the message cannot be saved to the
+conversation on its way out, the send pauses the same way ("Send could not be
+saved; your message was not sent", chip **Blocked — send not saved**) with
+the same two actions; either one ends it, so your next send goes through.
+
+The paused message is also listed as an **unsent turn** above the composer.
+Its **Restore** and **Discard** release the paused send too, so the next
+message you send in that conversation goes through. Once you act on the card,
+the message leaves that list while the card handles it, so it is never sent
+twice. On a busy machine the list can take a moment to catch up; Restore or
+Discard pressed meanwhile only says the unsent turn is no longer available.
+If Cancel finds other text in the composer, that text stays and the message
+goes back on the list for **Restore** later. If you switch to another
+conversation while Cancel runs, the message goes back to its own
+conversation's draft, not to the one on screen; if you had typed something
+new in that draft, your text stays and the message is listed for **Restore**
+instead. If the card is closed while
+**Retry Library search** is still searching (for example you open the
+Console terminal), the search stops, the send pauses as **Library search
+stopped**, and the message is listed again with Restore and Discard; the
+card shows it again when you return. Once a Retry or **Send once without
+Library** has sent the message and its reply is arriving, closing the card
+ends that reply as failed: your message stays in the conversation, it is not
+listed again, and your next send goes through. Nothing is silently
+downgraded to an ungrounded send.
 
 The Inspector tray is not the only place staged evidence shows up: a
 **staged-evidence strip** sits on the main surface itself, at the top of
 the control deck above the status chips, so staging is visible without
 opening the Inspector at all. Staged, it lists the titles (up to three, "+N more"
 beyond that) with an **Un-stage** button that drops the whole bundle in
-one click; after a send that used it, the strip briefly instead reads
-"Evidence sent with this message · N sources". Staged evidence rides only
-the **next** send — once a send consumes it, the field clears itself, so
-the strip and the settings modal's "staged for your next send" wording
-are both literally true (an earlier build let one staged bundle silently
-ride every later send too; that is fixed).
+one click. Staged evidence rides only the **next** send. Once a send
+consumes it, the strip disappears, the **Sources** chip reads 0 and
+Inspect's "What happens if I send now?" card reads "Sources: None
+staged". The reply shows a dim **Sources (N) · attached to this turn**
+line for the accepted capture (or its prompted estimate), and Inspect's Run
+card says "attached to the last message · N sources" until your next send.
+Acceptance may still be followed by a refusal before provider contact; these
+counts do not prove delivery. The existing provider-contact card reports
+confirmed, absent or unknown contact independently. A send with nothing staged claims no sources anywhere.
+Un-stage on an already consumed strip just hides it.
+Retrying a failed reply does not send the evidence again, so the retried
+reply drops its **Sources (N)** line. Restoring a chat also clears this
+session-only count; persisted canonical citations remain available through
+their own source records.
 
-Staged evidence also survives leaving Console and coming back: it lives
-in the Console's own session state, not only in memory, so navigating to
-Library (or anywhere else) and returning still shows the same bundle
-staged — the strip, the Inspector's Sources tray, and the settings
-estimate all keep reporting it. Staging a *new* item from Library while
+Staged evidence belongs to the chat you staged it in. A new tab
+(Ctrl+T), another open chat, or a newly entered workspace chat starts
+with nothing staged and clean Inspect source cards. Switching back to
+the first chat shows its staging again, and a send in another chat never
+uses it. Successful tab close discards only that chat's staging immediately,
+including a background tab. A refused or unfinished close retains it. A cold
+Console handoff binds to the first chat activated, even before a view reads it.
+
+Staged evidence also survives leaving Console and coming back: navigating
+to Library (or anywhere else) and returning still shows the same bundle
+staged in the same chat — the strip, the Inspector's Sources tray, and
+the settings estimate all keep reporting it. Staging a *new* item from Library while
 something is already staged replaces it outright: a fresh "Use in
 Console" click always wins, even over a bundle restored from an earlier
 visit. Whatever is currently staged, the strip's count, the tray's
 "Sources N" count, and the Inspector's Source Readiness line ("Evidence:
 N/N available") always agree on the same number.
 
-Staged evidence also counts toward the Console Settings context estimate
+Staged evidence also counts toward the Chat settings context estimate
 and the running-session cost chip — it used to report zero for anything
 staged but not yet sent. The estimate counts the staged snippets as
 they'll actually be sent (each capped at 4,000 characters, the same cap
@@ -948,10 +1198,45 @@ nothing has actually been sent yet.
 
 ### Citations
 
-When a reply is grounded in sources, a **Sources (N)** button appears
-under it, opening the **Sources** window: `[S1]`-numbered rows, a detail
-pane with the matched snippet, an **Open in Library** button (shown when
-the source can be opened), and **Close**.
+When a reply cites Library evidence, staged by hand or found by
+**Automatic** retrieval, a **Cited sources (N)** button appears under it.
+N is the number of sources the reply cites. The button opens the **Cited
+sources** window: `[S1]`-numbered rows, a detail pane with the exact
+snippet the model saw, an **Open in Library** button (shown when the source
+can be opened), and **Close**. The labels are numbered per reply, so `[S1]`
+in one reply and `[S1]` in the next can be different documents. The window
+is the map from a label to its document.
+
+Chatbook saves which sources each reply cited, so the button and the
+window still work after you restart the app or reopen the chat. These
+citation records are protected by a key that Chatbook creates in your
+system keyring (Keychain, Secret Service or KWallet) the first time it
+needs one, when you send a reply with Library evidence. Until then
+Chatbook doesn't touch the keyring. Once records exist, it reads the key
+in the background just after startup to maintain them.
+
+When citation records can't be saved, Chatbook sends the evidence without
+`[S1]` labels and asks the model to refer to each source by its title.
+The model may still produce labels; these have no saved source map.
+This happens when no secure system keyring is
+available, or when records are turned off (`canonical_writes_enabled =
+false` under `[rag_citations]` in `config.toml`). A reply whose saved
+record can no longer be checked, for example because the keyring was
+reset, shows **Cited sources unavailable**. Its window says why and what to
+do next, such as unlocking or restoring the keyring and restarting
+Chatbook. Chatbook never creates a new key for records that already
+exist.
+
+Two cases work differently for now:
+
+- **Temporary chats** aren't saved, so their replies have no citation
+  records. A reply in a Temporary chat can still show `[S1]` labels, but no
+  **Cited sources** button.
+- **Older installs** may keep citation records off. Chatbook writes its
+  default settings into `config.toml` when a profile is first set up, so a
+  profile set up before records were on by default can have
+  `canonical_writes_enabled = false` there. To turn records on, change it
+  to `true` under `[rag_citations]` and restart Chatbook.
 
 Dim notices under the reply track verification: "Checking citations…",
 then "Citations repaired" or "Citations repaired · View original attempt"
@@ -993,8 +1278,8 @@ Inspector shows what's in play:
 5. **Narrow RAG to two documents** — expand the Inspector, press
    **Narrow…** on the scope row, pick the **Media** tab, filter by title,
    click the two items, press **Save**. The strip shows **Scope: 2**.
-6. **Open a citation's source in Library** — click **Sources (N)** under
-   the reply, select an `[S1]` row, press **Open in Library**.
+6. **Open a citation's source in Library** — click **Cited sources (N)**
+   under the reply, select an `[S1]` row, press **Open in Library**.
 7. **Have ordinary sends ground themselves automatically** — click the
    **Library** chip, choose **Automatic** under Auto, and press **Save**.
    This changes only the active conversation; new conversations default to
@@ -1106,172 +1391,40 @@ exports, and snapshots can retain bytes. Full details are in
   picker refuses with "OpenSSH client (ssh) not found", install an
   OpenSSH client — the feature needs `ssh` on `PATH`.
 
-—
-*Verified against c2cbb8081 — 2026-08-04 (PR-T1 live check S1-S6: staged
-evidence survives Console <-> Library navigation and a fresh handoff
-supersedes a stale restored one. Media/notes/conversation handoffs
-delivering content on send is covered by capture round-trip tests
-(task-2374); the live check's own handoff scenario was blocked on this
-profile by an unrelated Library workspace-eligibility gate, so that part
-is verified at the code level, not live). Verified against e2c706303 —
-2026-08-06 (PR-T2, docs pass against shipped code/tests, live check
-pending Task 9): staged evidence now counts toward the context estimate
-and the cost chip (as an estimated `~` row) instead of reporting zero.
-The 2026-08-07 global auto-toggle walkthrough is superseded by ADR-079. The
-current access modal saves only when **Save** is pressed; Escape discards dirty
-choices. Automatic retrieval is conversation-local and uses the recoverable
-pre-dispatch gate described above. Slash commands, `$skill` invocations, tool
-approvals, and regenerates still do not trigger automatic retrieval.*
+## Assistant archive recovery and Library scope
 
-*Chip and strip positions re-verified against dev @ b6036515e — 2026-08-18
-(task-17662, after the bottom-stack programme moved the status chips above
-the composer and the staged-evidence strip above the status chips).*
+**Assistant Library access** must be **Allowed** for assistant archive recovery.
+This dedicated local archive search is available with Direct tools off in
+**RAG-only** mode and needs no embedding index. It does not change the selected
+RAG sources or general Library tool mode. Blocked access still permits your
+manual Library actions; the app does not enable assistant access automatically.
 
-*Verified against dd4921901 — 2026-08-20 (task-18300 Task 11a, Conversation
-Inspector programme): the token/cost chip, Ctrl+Shift+P, and the palette's
-"Console: View chat context" entry now all open one Conversation Inspector
-modal (Costs / Exchange / Next Send tabs) in place of the former separate
-cost breakdown and Current Context viewer; the retired viewer's content
-lives on unchanged as the Next Send tab. Docs pass against shipped
-code/tests (`console_conversation_inspector.py`, `console_exchange_
-capture.py`, the design spec's UI and Risks sections); live verification of
-the Exchange tab against a real provider is a separate, later pass.*
+The result header shows **All local workspaces** unless a specific workspace
+filter was requested. Search includes Default, active and archived workspaces,
+and saved non-deleted chats whose chat or workspace is archived. It is separate
+from this Chat's selected retrieval items. A closed active chat, a remote-only
+chat or a deleted chat is outside this archive search; “not found” does not
+prove deletion. Use [manual Library search](sessions-tabs-workspaces.md#archive-find-review-and-resume-a-saved-chat)
+to inspect other saved history.
 
-*Verified against the task-23026 working tree — 2026-08-27 (ADR-096 Safe
-capture retention: text above matches `console_exchange_capture.py`'s
-`compact_safe_history_rows`/`CAPTURE_SAFE_HISTORY_TAIL_ROWS`, the Inspector's
-Messages-title counts, and the v52→v53 one-time compaction in
-`ChaChaNotes_DB.py`; code-level pass backed by the pure, gateway, migration,
-and inspector test suites — not a live-provider walkthrough).*
+Archive dates are actual recorded chat and workspace archive events, not
+creation or modification dates. Date searches use a displayed timezone-aware
+interval, including its start and excluding its end. Either applicable event
+can match: a chat archived Monday in a workspace archived Friday appears in a
+Monday search with a **chat** date match. Restoration clears that resource's
+current archive date; this is not an event-history ledger. Device clocks can
+affect dates.
 
-*Verified against `feat/console-inspector-environment` @ 08ca0957b1 —
-2026-09-04 (TASK-31450, Inspect rail Environment redesign): the Environment /
-Tasks / Agents sections above were driven live in tmux at 80x24 and 200x50
-against an isolated scratch profile bound to a real dirty git worktree.
-Confirmed live: the "No git workspace" empty state; real working-tree counts
-(`+121 -24`) matching `git diff --numstat`; the branch row's `up18 down112
-wt:<name>` divergence and worktree marker; `Commit or push - 3 files`; the
-`Refresh` action; per-file expansion via Enter (three files with their own
-counts, then "Review in Change Review"); the Tasks card (`61 doing - 543
-todo`, expanding to the in-progress-first list); collapse of both sections
-surviving an app restart; and — on a workspace with no `backlog/` — the Tasks
-card's silent absence. The PR and check rows were absent in every live
-capture because the isolated profile's `HOME`/`XDG_CONFIG_HOME` hide `gh`'s
-own credentials, which is the documented no-`gh` degradation; the `gh` path
-itself was verified out-of-app against a real open PR (number, state, +/-
-counts, and a 13-check rollup parsed correctly). The Agents section renders
-only once a reply has spawned sub-agents and was not exercised in this pass.*
+Older archives can have **unknown** times. Without a date filter they remain
+searchable. With a date filter, **Include unknown archive times** adds possible
+matches explicitly labeled as unknown; it does not assign a date to them. A
+known date for one resource does not prove the other's date. Search results
+include bounded title/keyword/user/visible-assistant evidence, excluding system
+prompts, hidden reasoning and tool payloads. **Preview** opens the existing
+read-only Library reader without restoring or staging context.
 
-*Amended on the same branch — 2026-09-04 (TASK-31450 final review fixes): the
-Tasks paragraph previously promised a `Scanning backlog…` placeholder row.
-That row exists in the projection but nothing in production ever sets the
-flag that renders it, and the cold scan measured ~0.2s off-thread, so the
-claim is removed rather than restated. Also amended in the same pass: the
-Environment header summary is now column-budgeted (a long branch name used to
-squeeze the section title and collapse chevron off the header at every
-terminal size), expanding a row keeps keyboard focus on that row, an errored
-git tier now says "Environment unavailable — Refresh to retry" instead of
-"No git workspace", and the Refresh action revives a backed-off local tier —
-which is what "until manual refresh or scope change" above always promised.*
-
-*Amended — 2026-09-05 (TASK-31660, state honesty): the table above gained two
-rows because "No git workspace" used to be shown for three different
-situations, only one of which it described. It now means exactly one thing —
-"we looked, and the bound folder is not a git repository". Before any source
-has answered the panel says **Checking workspace…** (it used to assert "No git
-workspace" for the ~20s until the first `git status` landed, inside a real
-worktree), and when the conversation's workspace binds no folder at all it
-says so in Change Review's own words — including that this is not a report
-that nothing changed. Switching to an unbound workspace now clears the
-previous repository's branch, counts and **Commit or push** offer within one
-10-second poll instead of leaving them painted indefinitely, and pressing
-**Refresh** in that state re-checks the binding rather than doing nothing.
-Code-level pass (pure projection, deferred-fake controller, and screen-wiring
-suites); not re-driven live.*
-
-*Amended — 2026-09-05 (TASK-31662, rail density): rows in these three
-sections now take ONE line unless they genuinely need two. A row with no
-detail text no longer paints a blank second line, and a row whose detail
-fits beside its label (a **Changes** row and its `+10 −2`, a file row and
-its counts) puts the detail flush right on the same line; only a pair too
-wide for the rail's 27-column row width — a fleet row's task summary, a
-long file path with its counts — still stacks. Measured on the real
-Console: the Environment section at rest went from eleven lines to seven at
-80x24. Two related changes: an OPEN Environment or Tasks section no longer
-repeats itself in its own header (the summary is what a COLLAPSED section
-shows, and standing it down is what lets "Environment" paint in full at
-80x24 instead of "Environm…"), and the Tasks row without a branch task
-stopped restating the header's counts in different words. The rail's real
-content width is 30 columns at 80x24 and 36 at 200x50; the "34 columns at
-every size" reading in the previous amendment was a width no supported
-terminal produces, and the summary budgets are now derived from the
-measured 30. Code-level pass (widget-geometry, projection, and screen-wiring
-suites, plus a live-geometry probe of the real Console at both sizes); not
-re-driven by hand in tmux.*
-
-*Amended — 2026-09-05 (TASK-31664, affordance and consequence legibility):
-every row's own text now carries a trailing marker naming what Enter does to
-it (`▸`/`▾` expand in place, `…` opens Change Review or the browser, a
-leading `+` pastes into the composer draft; an inert row carries none),
-since Enter previously had five different outcomes on visually identical
-rows. **Commit or push · N files** is renamed **Review & commit… · N files**
-(and the ahead-only **Push ↑n** row gained the same `…`), matching the `…`
-Change Review's own **Commit…**/**Push…** actions already use. Pressing
-**Refresh** now flips its label to **Refreshing…** immediately, closing a gap
-where a fetch that came back unchanged (measured ~12s for a fresh `gh` call)
-looked identical to a dead control. A stale source's row now says `(stale)`
-in its own text, not only in color — the color alone previously matched the
-row's own error hue closely enough to be misread as a failure. The
-"no folder is bound" copy (both here and in Change Review's empty state) is
-now cause-agnostic: the same empty signal can also mean Change Review isn't
-enabled for an otherwise-bound folder, so the panel now says only what is
-always true (changes aren't tracked) and names both fixes (bind AND enable).
-Code-level pass (pure projection, widget, and screen-wiring suites); not
-re-driven live.*
-
-*Amended — 2026-09-05 (TASK-31665, minors batch): the Environment section's
-**Refresh** now sits flush under its last row instead of floating a blank
-line away from it, and its tooltip names its scope (**Refresh — Environment**).
-Rows revealed by expanding another row are indented under it, so a block of
-file rows or task entries reads as belonging to the row above it. Task rows
-show the title the task file's own frontmatter carries rather than the
-hyphenated filename slug. Task ROWS now use the backlog's own vocabulary --
-each entry's status reads **In Progress** / **To Do**, matching the task
-files themselves. The collapsed Tasks header keeps its compact
-**N doing · M todo** summary — it is a one-line teaser, and both counts fit
-there at every width, which the canonical words would not. The collapsed rail
-handles read **Context ▸** and **◂ Inspect**, the same arrow vocabulary the
-open rails' own collapse controls use (`>` / `<` in ASCII-glyph mode). Both
-**Changes** actions — **Review in Change Review…** and
-**Review & commit… · N files** — now open the same working-tree view; a
-Change Review opened from a run (the run inspector's button, a turn card's
-**Review**) still opens that run's recorded turn. Change Review no longer
-flashes "No file changes recorded for this conversation." for a moment on
-entry while it is still looking, and its header says "1 file", not "1 files".
-Code-level pass (compositor contrast sweep at 80x24 and 200x50, pure
-projection, widget, controller and screen-wiring suites) plus a live
-`tmux` capture at 235x52 for the background diagnosis; not re-driven live
-for the rest.*
-
-*Verified against fix/library-decisions-32302-32393-32306 — 2026-09-11
-(task-32303, user decision: this modal adopts the Library glyph legend, so the
-Library search modal's source toggles paint ☑/☐ from the shared constants
-instead of the ✓/○ pair. The per-conversation Library access modal's radio
-buttons still use ●/○ — a separate decision, task-32464.)*
-
-*Verified against fix/library-riders-32461-32464 — 2026-09-14 (task-32464,
-controller's decision, revisitable: the per-conversation Library access
-modal keeps `●`/`○`, and the Library legend now carves radio groups out
-explicitly instead of counting them as the `☑`/`☐` selection pair. The
-glyphs come from the same shared constants as the RAG modal's toggles, so a
-future legend change cannot pass this surface by.)*
-
-*Added — 2026-09-24 (task-33009 Task 21, SSH remote workspace bindings,
-ADR-181): the "SSH workspace folders (remote bindings)" section, its
-`[console_ssh]` settings bullet, and the unreachable-remote quirks entry
-were written against the shipped feature code and its suites (Settings
-editor + picker chips in `Tests/UI/test_settings_ssh_bindings.py`,
-availability refusals in `Tests/test_ssh_feature_availability.py`,
-degradation/status vocabulary in `Tools/remote_binding_status.py` and the
-wire/transport/executor suites) — a code-level pass; live walkthrough
-against a real server is recorded separately on the task.*
+Local storage search can return snippets to the selected model. Normal model
+destination disclosure and tool-history retention still apply; returned
+excerpts are not promised to remain on the device. See
+[agent recovery controls](agent-runs-and-tools.md#find-and-restore-an-archived-chat-with-the-assistant)
+and [ADR-166](../../../backlog/decisions/166-agent-assisted-archive-recovery.md).

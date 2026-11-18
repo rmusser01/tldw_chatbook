@@ -1,0 +1,92 @@
+E                                                                        [100%]
+==================================== ERRORS ====================================
+_______ ERROR at setup of test_local_and_net_use_distinct_worker_groups ________
+
+fixturedef = <FixtureDef argname='_disable_model_catalog_refresh' scope='function' baseid='Tests/UI'>
+request = <SubRequest '_disable_model_catalog_refresh' for <Function test_local_and_net_use_distinct_worker_groups>>
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_fixture_setup(fixturedef: FixtureDef, request) -> object | None:
+        asyncio_mode = _get_asyncio_mode(request.config)
+        if not _is_asyncio_fixture_function(fixturedef.func):
+            if asyncio_mode == Mode.STRICT:
+                # Ignore async fixtures without explicit asyncio mark in strict mode
+                # This applies to pytest_trio fixtures, for example
+                return (yield)
+            if not _is_coroutine_or_asyncgen(fixturedef.func):
+>               return (yield)
+                        ^^^^^
+
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/UI/conftest.py:192: in _disable_model_catalog_refresh
+    monkeypatch.setattr(
+tldw_chatbook/app.py:671: in <module>
+    APP_CONFIG = load_settings()
+                 ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2027: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x109c79dc0>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+---------------------------- Captured stderr setup -----------------------------
+2026-10-03 19:21:03.362 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-10-03 19:21:03.486 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-10-03 19:21:03.580 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-10-03 19:21:03.582 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+2026-10-03 19:21:03.970 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+2026-10-03 19:21:04.787 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+============================= slowest 25 durations =============================
+2.42s setup    Tests/UI/test_console_environment_controller.py::test_local_and_net_use_distinct_worker_groups
+
+(1 durations < 1s hidden.)
+=========================== short test summary info ============================
+ERROR Tests/UI/test_console_environment_controller.py::test_local_and_net_use_distinct_worker_groups
+1 error in 4.98s

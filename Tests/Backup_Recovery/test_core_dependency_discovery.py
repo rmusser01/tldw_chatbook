@@ -16,7 +16,8 @@ from tldw_chatbook.DB.recovery_core import core_adapters,_CoreAdapter
 from tldw_chatbook.Notes.recovery import recovery_adapters as notes_adapters
 from tldw_chatbook.Persona_Visual.recovery import recovery_adapters as asset_adapters
 core=core_adapters()[0]
-db=config.get_chachanotes_db_lazy()
+from tldw_chatbook.app_services import open_chachanotes_db
+db=open_chachanotes_db(config.get_chachanotes_db_path(), client_id=config.CLI_APP_CLIENT_ID, seed_builtin_content=True)
 db.add_note('Before probe','Fixture only')
 assert not core.validate(db.db_path)
 document=tomllib.loads(selected.read_text())

@@ -147,10 +147,12 @@ def test_resolve_vocabulary_accepts_tag_objects_as_well_as_mappings():
 
 
 def test_two_extras_with_the_same_slug_keep_the_last():
-    vocab = resolve_vocabulary([
-        {"slug": "meta", "label": "First", "kind": "notable"},
-        {"slug": "meta", "label": "Second", "kind": "notable"},
-    ])
+    vocab = resolve_vocabulary(
+        [
+            {"slug": "meta", "label": "First", "kind": "notable"},
+            {"slug": "meta", "label": "Second", "kind": "notable"},
+        ]
+    )
     assert tag_by_slug(vocab, "meta").label == "Second"
 
 

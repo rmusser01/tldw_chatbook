@@ -1,0 +1,68 @@
+{
+  "child_xml_sha256": "cc8ad1e31af05df7b8fe3e4b0144a04db5bc77a0a9f83a6f31cbe71b204497f5",
+  "counter_installs": [
+    "tldw_chatbook.Chat.console_session_settings",
+    "tldw_chatbook.UI.Screens.chat_screen",
+    "tldw_chatbook.Chat.console_settings_defaults",
+    "tldw_chatbook.Chat.console_session_settings",
+    "tldw_chatbook.UI.Screens.chat_screen",
+    "tldw_chatbook.Chat.console_settings_defaults"
+  ],
+  "diagnostic_only": true,
+  "results": {
+    "empty": {
+      "callers": {
+        "tldw_chatbook.UI.Screens.chat_screen <- \\UI\\Screens\\chat_screen.py:8924:ChatScreen._active_console_settings_readiness_uncached <- \\UI\\Screens\\chat_screen.py:8898:ChatScreen._active_console_settings_readiness <- \\UI\\Screens\\chat_screen.py:13719:ChatScreen._build_console_workbench_state <- \\UI\\Screens\\chat_screen.py:20939:ChatScreen._sync_console_workbench_actions_from_draft <- \\UI\\Screens\\chat_screen.py:21910:ChatScreen._handle_console_composer_draft_edit": 24,
+        "tldw_chatbook.UI.Screens.chat_screen <- \\UI\\Screens\\chat_screen.py:8924:ChatScreen._active_console_settings_readiness_uncached <- \\UI\\Screens\\chat_screen.py:8898:ChatScreen._active_console_settings_readiness <- \\UI\\Screens\\chat_screen.py:13925:ChatScreen._sync_console_transcript_guidance <- \\UI\\Console_Modules\\console_spend_projection.py:894:console_readiness_presentation.<locals>.wrapped.<locals>.<lambda> <- \\UI\\Console_Modules\\console_spend_projection.py:363:ConsoleReadinessConfigProjection.run <- \\UI\\Console_Modules\\console_spend_projection.py:893:console_readiness_presentation.<locals>.wrapped <- \\UI\\Screens\\chat_screen.py:13917:ChatScreen._dismiss_console_guidance": 1
+      },
+      "ceiling": 72,
+      "counts": {
+        "cleanup_candidate_queries_completed": 0,
+        "context_estimate_max_rows": 0,
+        "context_rows": 0,
+        "cost_projection_estimate_rows": 0,
+        "cost_rows": 0,
+        "cost_snapshot_rows": 0,
+        "messages_for_session": 0,
+        "settings_readiness_builds": 25,
+        "snapshot_rows": 0,
+        "snapshots": 0,
+        "spend_history_rows": 0,
+        "template_default_builds": 0
+      },
+      "existing_guard_would_pass": true
+    },
+    "loaded": {
+      "callers": {
+        "tldw_chatbook.UI.Screens.chat_screen <- \\UI\\Screens\\chat_screen.py:8924:ChatScreen._active_console_settings_readiness_uncached <- \\UI\\Screens\\chat_screen.py:8898:ChatScreen._active_console_settings_readiness <- \\UI\\Console_Modules\\wiring.py:1237:build_console_controllers.<locals>.<lambda> <- \\UI\\Console_Modules\\context_spend.py:634:ConsoleContextSpendController._build_console_settings_summary_state <- \\UI\\Console_Modules\\context_spend.py:651:ConsoleContextSpendController._refresh_settings_summary <- \\UI\\Screens\\chat_screen.py:8559:ChatScreen._sync_console_settings_summary <- \\UI\\Console_Modules\\wiring.py:3031:build_console_controllers.<locals>.<lambda>": 4,
+        "tldw_chatbook.UI.Screens.chat_screen <- \\UI\\Screens\\chat_screen.py:8924:ChatScreen._active_console_settings_readiness_uncached <- \\UI\\Screens\\chat_screen.py:8898:ChatScreen._active_console_settings_readiness <- \\UI\\Screens\\chat_screen.py:13047:ChatScreen._build_console_inspector_state <- \\UI\\Screens\\chat_screen.py:12609:ChatScreen._current_console_rail_state <- \\UI\\Console_Modules\\wiring.py:2724:build_console_controllers.<locals>.<lambda> <- \\UI\\Console_Modules\\agent.py:1817:ConsoleAgentController._console_agent_section_payload <- \\UI\\Screens\\chat_screen.py:8632:ChatScreen._sync_console_agent_section": 4,
+        "tldw_chatbook.UI.Screens.chat_screen <- \\UI\\Screens\\chat_screen.py:8924:ChatScreen._active_console_settings_readiness_uncached <- \\UI\\Screens\\chat_screen.py:8898:ChatScreen._active_console_settings_readiness <- \\UI\\Screens\\chat_screen.py:13122:ChatScreen._build_console_inspector_state <- \\UI\\Screens\\chat_screen.py:12609:ChatScreen._current_console_rail_state <- \\UI\\Console_Modules\\wiring.py:2724:build_console_controllers.<locals>.<lambda> <- \\UI\\Console_Modules\\agent.py:1817:ConsoleAgentController._console_agent_section_payload <- \\UI\\Screens\\chat_screen.py:8632:ChatScreen._sync_console_agent_section": 4,
+        "tldw_chatbook.UI.Screens.chat_screen <- \\UI\\Screens\\chat_screen.py:8924:ChatScreen._active_console_settings_readiness_uncached <- \\UI\\Screens\\chat_screen.py:8898:ChatScreen._active_console_settings_readiness <- \\UI\\Screens\\chat_screen.py:13719:ChatScreen._build_console_workbench_state <- \\UI\\Screens\\chat_screen.py:20771:ChatScreen._sync_console_control_bar_under_config <- \\UI\\Screens\\chat_screen.py:20742:ChatScreen._sync_console_control_bar.<locals>.<lambda> <- \\UI\\Console_Modules\\config_sync.py:77:run_console_config_sync <- \\UI\\Console_Modules\\config_sync.py:108:run_console_presentation_sync.<locals>.render": 1,
+        "tldw_chatbook.UI.Screens.chat_screen <- \\UI\\Screens\\chat_screen.py:8924:ChatScreen._active_console_settings_readiness_uncached <- \\UI\\Screens\\chat_screen.py:8898:ChatScreen._active_console_settings_readiness <- \\UI\\Screens\\chat_screen.py:13719:ChatScreen._build_console_workbench_state <- \\UI\\Screens\\chat_screen.py:20939:ChatScreen._sync_console_workbench_actions_from_draft <- \\UI\\Screens\\chat_screen.py:21910:ChatScreen._handle_console_composer_draft_edit": 24,
+        "tldw_chatbook.UI.Screens.chat_screen <- \\UI\\Screens\\chat_screen.py:8924:ChatScreen._active_console_settings_readiness_uncached <- \\UI\\Screens\\chat_screen.py:8898:ChatScreen._active_console_settings_readiness <- \\UI\\Screens\\chat_screen.py:13925:ChatScreen._sync_console_transcript_guidance <- \\UI\\Console_Modules\\console_spend_projection.py:894:console_readiness_presentation.<locals>.wrapped.<locals>.<lambda> <- \\UI\\Console_Modules\\console_spend_projection.py:363:ConsoleReadinessConfigProjection.run <- \\UI\\Console_Modules\\console_spend_projection.py:893:console_readiness_presentation.<locals>.wrapped <- \\UI\\Screens\\chat_screen.py:13917:ChatScreen._dismiss_console_guidance": 1
+      },
+      "ceiling": 72,
+      "counts": {
+        "cleanup_candidate_queries_completed": 0,
+        "context_estimate_max_rows": 1,
+        "context_rows": 0,
+        "cost_projection_estimate_rows": 0,
+        "cost_rows": 0,
+        "cost_snapshot_rows": 0,
+        "messages_for_session": 0,
+        "settings_readiness_builds": 38,
+        "snapshot_rows": 0,
+        "snapshots": 0,
+        "spend_history_rows": 0,
+        "template_default_builds": 0
+      },
+      "existing_guard_would_pass": true
+    }
+  },
+  "runtime_sources": {
+    "tldw_chatbook.Chat.console_session_settings": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\tldw_chatbook\\Chat\\console_session_settings.py",
+    "tldw_chatbook.Chat.console_settings_defaults": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\tldw_chatbook\\Chat\\console_settings_defaults.py",
+    "tldw_chatbook.UI.Screens.chat_screen": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+    "tldw_chatbook.app": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\tldw_chatbook\\app.py"
+  }
+}

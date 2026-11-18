@@ -1,0 +1,18 @@
+{
+  "mode": "rag",
+  "model_attempts": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "http_200_sse_complete": 4,
+  "complete_capture_calls": 4,
+  "original_fixture_rows_and_messages_unchanged": true,
+  "only_selected_workspace_archive_state_changed_before_open": true,
+  "exact_current_user_call_boundary_pins": true,
+  "predecessor_call_rows_and_reconstruction_unchanged": true,
+  "saved_user_texts_exact": true,
+  "no_duplicate_conversation": true,
+  "source_unsent_draft_verified": "native UI evidence"
+}

@@ -975,7 +975,7 @@ def test_rebase_onto_a_named_endpoint_uses_its_family_request(
     family, dropped, carried
 ) -> None:
     """TASK-33001.2 AC#3: a ``custom-ep`` id sends through its entry's family
-    (ADR-146, the gateway's ``family_execution_key``), so the draft carries
+    (ADR-343, the gateway's ``family_execution_key``), so the draft carries
     exactly the fields that family's request forwards -- an ollama box never
     offers Min P, which the ollama request drops."""
     from tldw_chatbook.Chat.console_provider_support import (

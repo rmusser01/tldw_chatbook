@@ -1,0 +1,13 @@
+{
+  "inventory_sha256": "b9b7e9010218111d31ca3920e4c5c5ccccd5be816dcf895db88bfe90a7bf2472",
+  "report_sha256": "8b3ae16ce55d8d9b125c90f3bd7e994efe8ade7ce0316d104c7196c2e6617c5c",
+  "captured_canonical_3_full_hashes_and_lines_equal": true,
+  "actual_proposals10_pinned5_unpinned5": true,
+  "all13_full_support_original_frozen_pairs": true,
+  "both_options": true,
+  "bounded_metadata3": true,
+  "actual_canonical_named_references_checked": 42,
+  "hash_context_adjudications_checked": 19,
+  "scope": "Captured three canonical files only; not recursive closure or implementation gate; no archive performed",
+  "historical_gaps": "Five filename-only historical identities unpinned; prior65560 metadata input unavailable; no reconstruction"
+}

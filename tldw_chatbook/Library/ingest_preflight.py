@@ -24,9 +24,41 @@ from tldw_chatbook.Library.ingest_capabilities import (
 )
 from tldw_chatbook.Library.ingest_types import PreflightResult
 from tldw_chatbook.Local_Ingestion.local_file_ingestion import is_http_url
-from tldw_chatbook.Utils.egress import EgressBlockedError, check_url_or_raise, log_origin
+from tldw_chatbook.Utils.egress import (
+    EgressBlockedError,
+    check_url_or_raise,
+    log_origin,
+)
 from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.path_validation import validate_path_simple
+
+
+def expand_user_path(raw: str) -> Path | None:
+    """Expand a leading ``~`` the way the shell would; ``None`` when it cannot.
+
+    TASK-34000.20: the pre-check used to hand the raw text to
+    ``validate_path_simple``, whose ``"~/"`` guard then called an ordinary
+    home-relative path a security risk while the submit path expanded the
+    same text and imported it. Expansion happens HERE, before validation,
+    so both readers (``analyze_path`` and the screen's
+    ``_resolve_ingest_source``) see one path. ``validate_path_simple``
+    keeps refusing an unexpanded ``~`` for every other caller (TASK-32927
+    relies on it). ``~nosuchuser/x`` cannot be expanded: ``None`` means
+    "not found".
+
+    Args:
+        raw: The path text as the user typed it.
+
+    Returns:
+        The expanded path, or ``None`` when the ``~user`` prefix names no
+        account on this machine.
+    """
+    try:
+        return Path(raw).expanduser()
+    except (RuntimeError, KeyError, ValueError):
+        # ValueError: an embedded null byte ("~\x00user/x") -- a refusal,
+        # as it was before expansion moved here (fix round 1, M1).
+        return None
 
 
 def _safe_size(path: Path) -> int:
@@ -51,7 +83,9 @@ def _statted_size(path: Path) -> int | None:
         return None
 
 
-def collect_directory_files(directory: Path, scan_limit: int) -> tuple[list[Path], bool]:
+def collect_directory_files(
+    directory: Path, scan_limit: int
+) -> tuple[list[Path], bool]:
     """Expand a directory into the files an ingest submission should cover.
 
     The public seam over :func:`_collect_files`, so that submitting a folder
@@ -124,9 +158,7 @@ def _collect_files(p: Path, scan_limit: int) -> tuple[list[Path], bool, int]:
                         truncated = True
                         break
                     continue
-                sub_files, sub_truncated, sub_skipped = _collect_files(
-                    entry, remaining
-                )
+                sub_files, sub_truncated, sub_skipped = _collect_files(entry, remaining)
                 files.extend(sub_files)
                 skipped += sub_skipped
                 if sub_truncated:
@@ -182,8 +214,7 @@ _PROBE_ENABLED_KEY = "ingest_url_preflight_probe"
 #: link-local, CGNAT, multicast, cloud metadata, bad scheme, DNS failure)
 #: now produces this one string, so there is nothing left to difference.
 _UNVERIFIABLE_NOTE = (
-    "The link could not be checked ahead of time. The import will still be "
-    "attempted."
+    "The link could not be checked ahead of time. The import will still be attempted."
 )
 
 
@@ -348,9 +379,7 @@ def _probe_url(url: str) -> UrlProbe:
         return UrlProbe(error=_plain_unreachable_reason(exc))
     except Exception as exc:
         logger.debug(f"URL probe unexpected failure for {log_origin(url)}: {exc!r}")
-        return UrlProbe(
-            error="URL probe failed — the address could not be checked."
-        )
+        return UrlProbe(error="URL probe failed — the address could not be checked.")
 
 
 def analyze_path(
@@ -418,8 +447,23 @@ def analyze_path(
                     )
                 warnings.extend(get_tooling_warnings(group))
     else:
+        # (TASK-34000.20) Expand ``~`` BEFORE validation: ``validate_path_
+        # simple``'s ``"~/"`` scan runs on ``str(expanded)``, which no
+        # longer starts with ``~``. The not-found message keeps the user's
+        # own text so the line under the field reads back what was typed.
+        expanded = expand_user_path(path_or_url)
+        if expanded is None:
+            return PreflightResult(
+                type_groups=type_groups,
+                warnings=warnings,
+                errors=[f"Path not found: {path_or_url}"],
+                total_size=total_size,
+                truncated=truncated,
+                total_files=total_files,
+                path_invalid=True,
+            )
         try:
-            p = validate_path_simple(path_or_url, require_exists=False)
+            p = validate_path_simple(expanded, require_exists=False)
         except ValueError as e:
             errors.append(f"Invalid path: {e}")
             return PreflightResult(

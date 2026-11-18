@@ -1,0 +1,14 @@
+{
+  "readback_sha256": "7389fdca8b890b609b0ef7caf4bf1cb65bdd81f65805dd26116c93ce75148e6d",
+  "original_source_sha256": "e92c3c92c5fcd01232dcb6f92a214f5262d8a9b7dec99f24af41ec9c419ff22f",
+  "corrected_source_sha256": "56be2bc7b857677c8cf5fad554705a4010c41afb6043a28b91610af70250f253",
+  "exact_corrected_proposed_suffix_sha256": "e3e2dc49cc12ca75af63dbac90711910c9221ed5a2decd7c755cf81d65c4de98",
+  "four_original_prefixes_and_head_index_equal": true,
+  "product_tests_unchanged": true,
+  "files": {
+    "backlog/decisions/285-native-phased-agent-workflows.md": "6e6549a335233199e4e6fa8b8433fb0a8ee70f74d98aebd3138f7ae1be4ba63b",
+    "Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md": "d14f7ea885c40e30c894a77abcbe17c7c95b232452dacd765eb4d77730895035",
+    "Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md": "af96423e70b1617bef5be356fcd43c8e7cd9a43e91c169c9d520c58d2f084fa0",
+    "backlog/tasks/task-38532 - Expose-workflow-setup-and-phase-controls-in-Console.md": "766e9dda859f4312abf5ed5a7b208af9f12dc1f4d31b11b76177814feb78f7ea"
+  }
+}

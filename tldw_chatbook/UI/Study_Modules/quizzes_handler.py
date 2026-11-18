@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Optional
 
 from loguru import logger
+from rich.markup import escape
+from rich.text import Text
 from textual.widgets import Input, Label, ListItem, ListView, Select, Static, TextArea
 
 from ...Study_Interop import LocalQuizService, QuizScopeService, ServerQuizService
@@ -21,6 +24,8 @@ class StudyQuizzesController:
     def __init__(self, window: "StudyWindow"):
         self.window = window
         self.app_instance = window.app_instance
+        self._attempt_start_pending = False
+        self._scope_generation = 0
         self.current_attempt_id: Optional[str] = None
         self.current_attempt_questions: list[dict[str, Any]] = []
         self.current_attempt_answers: list[dict[str, Any]] = []
@@ -385,7 +390,7 @@ class StudyQuizzesController:
 
         quiz_select = self.window.query_one("#quiz-select", Select)
         options = [
-            (str(quiz.get("name") or "Unnamed quiz"), str(quiz.get("backing_id")))
+            (Text(str(quiz.get("name") or "Unnamed quiz")), str(quiz.get("backing_id")))
             for quiz in quizzes
             if quiz.get("backing_id") not in {None, ""}
         ]
@@ -451,7 +456,7 @@ class StudyQuizzesController:
         else:
             for question in questions:
                 label = str(question.get("question_text") or "Untitled question")
-                await list_view.append(ListItem(Label(label)))
+                await list_view.append(ListItem(Label(label, markup=False)))
             list_view.index = 0
 
         if self.current_attempt_id is None:
@@ -465,6 +470,7 @@ class StudyQuizzesController:
         *,
         preserve_selection: bool = True,
         preferred_selection: Optional[str] = None,
+        publication_allowed: Optional[Callable[[], bool]] = None,
     ) -> None:
         service = self._scope_service()
         if service is None:
@@ -485,13 +491,20 @@ class StudyQuizzesController:
             self._set_attempt_history_summary("")
             return
 
-        attempts = await service.list_attempts(
-            mode=self._current_mode(),
-            **self._scope_arguments(),
-            quiz_id=quiz_id,
-            limit=100,
-            offset=0,
-        )
+        try:
+            attempts = await service.list_attempts(
+                mode=self._current_mode(),
+                **self._scope_arguments(),
+                quiz_id=quiz_id,
+                limit=100,
+                offset=0,
+            )
+        except Exception:
+            if publication_allowed is not None and not publication_allowed():
+                return
+            raise
+        if publication_allowed is not None and not publication_allowed():
+            return
         self.current_attempt_history = list(attempts or [])
         options = [
             (
@@ -619,8 +632,10 @@ class StudyQuizzesController:
 
         name_input = self.window.query_one("#new-quiz-name-input", Input)
         description_input = self.window.query_one("#new-quiz-description-input", Input)
-        name = str(name_input.value or "").strip()
-        description = str(description_input.value or "").strip() or None
+        submitted_name = name_input.value
+        submitted_description = description_input.value
+        name = str(submitted_name or "").strip()
+        description = str(submitted_description or "").strip() or None
         if not name:
             self._notify("Quiz name is required.")
             return
@@ -639,8 +654,10 @@ class StudyQuizzesController:
             self._notify("Failed to create quiz.", severity="error")
             return
 
-        name_input.value = ""
-        description_input.value = ""
+        if name_input.value == submitted_name:
+            name_input.value = ""
+        if description_input.value == submitted_description:
+            description_input.value = ""
         created_id = str(
             created.get("backing_id") or created.get("record_id") or Select.BLANK
         )
@@ -671,8 +688,10 @@ class StudyQuizzesController:
         correct_answer_widget = self.window.query_one(
             "#quiz-correct-answer-input", Input
         )
-        question_text = str(question_text_widget.text or "").strip()
-        correct_answer = str(correct_answer_widget.value or "").strip()
+        submitted_question_text = question_text_widget.text
+        submitted_correct_answer = correct_answer_widget.value
+        question_text = str(submitted_question_text or "").strip()
+        correct_answer = str(submitted_correct_answer or "").strip()
         if not question_text:
             self._notify("Question text is required.")
             return
@@ -701,13 +720,22 @@ class StudyQuizzesController:
             self._notify("Failed to create quiz question.", severity="error")
             return
 
-        question_text_widget.text = ""
-        correct_answer_widget.value = ""
+        if question_text_widget.text == submitted_question_text:
+            question_text_widget.text = ""
+        if correct_answer_widget.value == submitted_correct_answer:
+            correct_answer_widget.value = ""
         await self.refresh_questions()
         self._set_attempt_status("Question created.")
         self._notify_shell_state_changed()
 
+    def _start_context_key(self) -> tuple[int, str, dict[str, Any]]:
+        """Capture context lifetime as well as the current service arguments."""
+        return self._scope_generation, self._current_mode(), self._scope_arguments()
+
     async def start_attempt(self) -> None:
+        if self._attempt_start_pending:
+            self._notify("A quiz attempt is already starting.")
+            return
         service = self._scope_service()
         if service is None:
             self._notify("Study quizzes backend is unavailable.")
@@ -728,32 +756,56 @@ class StudyQuizzesController:
             f"quiz.attempt.create.{self._current_mode()}"
         ):
             return
+        answer_input = self.window.query_one("#quiz-answer-input", Input)
+        start_mode = self._current_mode()
+        start_scope = self._scope_arguments()
+        start_context = self._scope_generation, start_mode, start_scope
+        self._attempt_start_pending = True
         try:
-            attempt = await service.start_attempt(
-                mode=self._current_mode(),
-                **self._scope_arguments(),
-                quiz_id=quiz_id,
-            )
-        except Exception:
-            logger.opt(exception=True).error("Failed to start quiz attempt")
-            self._notify("Failed to start quiz attempt.", severity="error")
-            return
+            try:
+                attempt = await service.start_attempt(
+                    mode=start_mode,
+                    **start_scope,
+                    quiz_id=quiz_id,
+                )
+            except Exception:
+                logger.opt(exception=True).error("Failed to start quiz attempt")
+                self._notify(
+                    "Failed to start quiz attempt."
+                    if start_context == self._start_context_key()
+                    else "Failed to start quiz attempt in the previous Study context.",
+                    severity="error",
+                )
+                return
 
-        self.current_attempt_id = str(
-            attempt.get("backing_id") or attempt.get("id") or ""
-        )
-        self.current_attempt_questions = list(attempt.get("questions") or [])
-        self.current_attempt_answers = []
-        self.current_question_index = 0
-        self.window.query_one("#quiz-answer-input", Input).value = ""
+            attempt_id = str(attempt.get("backing_id") or attempt.get("id") or "")
+            if not answer_input.is_attached or self.window.current_view != "quizzes":
+                self._notify(
+                    f"Quiz attempt {escape(attempt_id)} started after its panel closed.",
+                    severity="information",
+                )
+                return
+            if start_context != self._start_context_key():
+                self._notify(
+                    f"Quiz attempt {escape(attempt_id)} started in the previous Study context.",
+                    severity="information",
+                )
+                return
+            self.current_attempt_id = attempt_id
+            self.current_attempt_questions = list(attempt.get("questions") or [])
+            self.current_attempt_answers = []
+            self.current_question_index = 0
+            answer_input.value = ""
 
-        if not self.current_attempt_questions:
-            self.reset_attempt_panel("This quiz has no questions yet.")
-            return
+            if not self.current_attempt_questions:
+                self.reset_attempt_panel("This quiz has no questions yet.")
+                return
 
-        self._show_current_question()
-        self._sync_quiz_controls()
-        self._notify_shell_state_changed()
+            self._show_current_question()
+            self._sync_quiz_controls()
+            self._notify_shell_state_changed()
+        finally:
+            self._attempt_start_pending = False
 
     def _show_current_question(self) -> None:
         if not self.current_attempt_questions:
@@ -789,14 +841,13 @@ class StudyQuizzesController:
         question_id = str(
             current_question.get("backing_id") or current_question.get("id") or ""
         )
-        self.current_attempt_answers.append(
-            {
-                "question_id": question_id,
-                "user_answer": user_answer,
-            }
-        )
+        current_answer = {
+            "question_id": question_id,
+            "user_answer": user_answer,
+        }
 
         if self.current_question_index + 1 < len(self.current_attempt_questions):
+            self.current_attempt_answers.append(current_answer)
             self.current_question_index += 1
             answer_widget.value = ""
             self._show_current_question()
@@ -804,16 +855,47 @@ class StudyQuizzesController:
             self._notify_shell_state_changed()
             return
 
+        submit_mode = self._current_mode()
+        submit_scope = self._scope_arguments()
+        submit_context = self._scope_generation, submit_mode, submit_scope
+        submit_attempt_id = self.current_attempt_id
+        publication_attempt_id = submit_attempt_id
+        publication_questions = self.current_attempt_questions
+
+        def publication_allowed() -> bool:
+            return (
+                submit_context == self._start_context_key()
+                and self.current_attempt_id == publication_attempt_id
+                and self.current_attempt_questions is publication_questions
+                and answer_widget.is_attached
+                and self.window.current_view == "quizzes"
+            )
+
+        previous_success = (
+            f"Quiz attempt {escape(submit_attempt_id)} submitted "
+            "in the previous Study context."
+        )
         try:
             submitted = await service.submit_attempt(
-                mode=self._current_mode(),
-                **self._scope_arguments(),
-                attempt_id=self.current_attempt_id,
-                answers=list(self.current_attempt_answers),
+                mode=submit_mode,
+                **submit_scope,
+                attempt_id=submit_attempt_id,
+                answers=[*self.current_attempt_answers, current_answer],
             )
         except Exception:
             logger.opt(exception=True).error("Failed to submit quiz attempt")
-            self._notify("Failed to submit quiz attempt.", severity="error")
+            self._notify(
+                "Failed to submit quiz attempt."
+                if publication_allowed()
+                else (
+                    f"Failed to submit quiz attempt {escape(submit_attempt_id)} "
+                    "in the previous Study context."
+                ),
+                severity="error",
+            )
+            return
+        if not publication_allowed():
+            self._notify(previous_success, severity="information")
             return
 
         score = submitted.get("score")
@@ -828,10 +910,18 @@ class StudyQuizzesController:
         self.current_attempt_questions = []
         self.current_attempt_answers = []
         self.current_question_index = 0
+        # The completed presentation still owns its history await, until a new
+        # attempt, scope or panel replaces it.
+        publication_attempt_id = None
+        publication_questions = self.current_attempt_questions
         await self.refresh_attempt_history(
             preserve_selection=False,
             preferred_selection=submitted_attempt_id or None,
+            publication_allowed=publication_allowed,
         )
+        if not publication_allowed():
+            self._notify(previous_success, severity="information")
+            return
         self._sync_quiz_controls()
         self._notify_shell_state_changed()
 
@@ -912,6 +1002,7 @@ class StudyQuizzesController:
 
     def handle_scope_changed(self) -> None:
         """Reset controller-local state before scoped study data reloads."""
+        self._scope_generation += 1
         self.reset_quiz_panel(
             self._scope_unavailable_message()
             if not self._scope_is_available()

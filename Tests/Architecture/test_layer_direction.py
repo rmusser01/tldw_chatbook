@@ -1,0 +1,382 @@
+"""No new upward import between layers (TASK-36942.3).
+
+The layer map is in ``Docs/Architecture/layer-map.md``: kernel < DB < domain <
+presentation, and a module may import only from its own layer or a lower one.
+The one exception: DB may import domain model modules (``models`` or
+``*_models``), never domain services.
+
+This scan is stdlib AST only. Its import resolution copies
+``Docs/QA/architecture-review-2026-10-25/scripts/graph.py`` and its layers
+copy ``layers.py`` there, so its counts agree with the review's record.
+Top-level and function-level imports both count; ``if TYPE_CHECKING:`` imports
+are out of scope. An ``importlib.import_module`` call on an absolute
+``tldw_chatbook.`` string literal counts as an import of that module, with the
+kind of the place it sits in (``top`` at module level, ``lazy`` in a function).
+
+``layer_direction_allowlist.tsv`` freezes the upward imports that existed when
+this test landed, one ``src_module<TAB>dst_module<TAB>kind`` row each, where
+kind is ``top`` or ``lazy`` (inside a function). It may only shrink.
+"""
+
+from __future__ import annotations
+
+import ast
+import functools
+import os
+import subprocess
+import sys
+import warnings
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+PACKAGE = "tldw_chatbook"
+ALLOWLIST_NAME = "Tests/Architecture/layer_direction_allowlist.tsv"
+ALLOWLIST = REPO_ROOT / ALLOWLIST_NAME
+LAYER_MAP = "Docs/Architecture/layer-map.md"
+
+LAYERS = ("kernel", "DB", "domain", "presentation")
+KERNEL = frozenset(
+    {
+        "<root>",
+        "Utils",
+        "Logging_Config.py",
+        "Constants.py",
+        "config.py",
+        "Third_Party",
+        "Metrics",
+        "state",
+        "runtime_policy",
+    }
+)
+PRESENTATION = frozenset(
+    {"UI", "Widgets", "Event_Handlers", "css", "app(shell)", "cli.py", "Web_Server"}
+)
+# Root modules ranked with DB despite the app_*.py name, the one place this test
+# departs from the review's layers.py. app_services.py is a composition module
+# (ADR-250 sections 1 and 6, TASK-36947.7): its module level imports only the
+# standard library, and at run time its shared factory's openers import only DB
+# classes and config. DB is the lowest layer those imports allow, so the
+# standalone MCP server and the RAG backfill (domain) may call the factory.
+# test_app_services_imports_only_the_standard_library_at_module_level and this
+# test (every run-time import it makes is checked from rank 1) keep it honest.
+DB_RANKED_ROOT_MODULES = frozenset({"app_services.py"})
+
+
+def _area(module: str, parents: frozenset[str]) -> str:
+    """The package (or root-level module) a module belongs to, as layers.py names it."""
+    parts = module.split(".")
+    if len(parts) == 1:
+        return "<root>"
+    if len(parts) == 2 and module not in parents:
+        name = parts[1]
+        if name + ".py" in DB_RANKED_ROOT_MODULES:
+            return name + ".py"
+        return (
+            "app(shell)" if name == "app" or name.startswith("app_") else name + ".py"
+        )
+    return parts[1]
+
+
+def _rank(area: str) -> int:
+    if area in PRESENTATION:
+        return 3
+    if area == "DB" or area in DB_RANKED_ROOT_MODULES:
+        return 1
+    if area in KERNEL:
+        return 0
+    return 2
+
+
+def _is_model_module(module: str) -> bool:
+    name = module.rsplit(".", 1)[-1]
+    return name == "models" or name.endswith("_models")
+
+
+def _is_type_checking(test: ast.expr) -> bool:
+    return (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
+        isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
+    )
+
+
+def _imports(
+    tree: ast.Module,
+) -> list[tuple[ast.Import | ast.ImportFrom | ast.Call, str]]:
+    """Every import statement and ``import_module("...")`` call, with its kind.
+
+    Kind is top, lazy or typing, for calls the same as for statements.
+    """
+    found: list[tuple[ast.Import | ast.ImportFrom | ast.Call, str]] = []
+
+    def visit(node: ast.AST, kind: str) -> None:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            found.append((node, kind))
+            return
+        if (
+            isinstance(node, ast.Call)
+            and (
+                (isinstance(node.func, ast.Name) and node.func.id == "import_module")
+                or (
+                    isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "import_module"
+                )
+            )
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+        ):
+            found.append((node, kind))
+        if isinstance(node, ast.If) and _is_type_checking(node.test):
+            for stmt in node.body:
+                visit(stmt, "typing")
+            for stmt in node.orelse:
+                visit(stmt, kind)
+            return
+        if kind == "top" and isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+        ):
+            kind = "lazy"
+        for child in ast.iter_child_nodes(node):
+            visit(child, kind)
+
+    visit(tree, "top")
+    return found
+
+
+@functools.cache
+def _upward_imports() -> dict[tuple[str, str, str], str]:
+    """Each executable upward (src, dst, kind) edge, mapped to where it first occurs."""
+    modules: dict[str, Path] = {}
+    for path in sorted((REPO_ROOT / PACKAGE).rglob("*.py")):
+        if "__pycache__" not in path.parts:
+            name = ".".join(path.relative_to(REPO_ROOT).with_suffix("").parts)
+            modules[name.removesuffix(".__init__")] = path
+    parents = frozenset(
+        ".".join(parts[:i])
+        for parts in (name.split(".") for name in modules)
+        for i in range(1, len(parts))
+    )
+
+    def resolve(name: str) -> str | None:
+        """The longest prefix of ``name`` that is a module (None outside the package)."""
+        parts = name.split(".")
+        while parts:
+            if ".".join(parts) in modules:
+                return ".".join(parts)
+            parts.pop()
+        return None
+
+    edges: dict[tuple[str, str, str], str] = {}
+    for src, path in modules.items():
+        src_area = _area(src, parents)
+        src_rank = _rank(src_area)
+        if src_rank == 3:  # nothing sits above presentation
+            continue
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", SyntaxWarning)
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        statements = _imports(tree)
+        # Names this module binds to importlib, and whether it binds import_module
+        # from importlib. ponytail: `import_module as x` aliases are not seen (none
+        # exist); add them here if one appears.
+        importlib_names = {"importlib"} | {
+            alias.asname
+            for node, _ in statements
+            if isinstance(node, ast.Import)
+            for alias in node.names
+            if alias.name == "importlib" and alias.asname
+        }
+        has_import_module = any(
+            isinstance(node, ast.ImportFrom)
+            and node.module == "importlib"
+            and not node.level
+            and any(alias.name == "import_module" for alias in node.names)
+            for node, _ in statements
+        )
+        for node, kind in statements:
+            if kind == "typing":
+                continue
+            if isinstance(node, ast.Call):
+                func = node.func
+                if isinstance(func, ast.Name):
+                    if not has_import_module:
+                        continue
+                elif not (
+                    isinstance(func.value, ast.Name)
+                    and func.value.id in importlib_names
+                ):
+                    continue
+                targets = [resolve(node.args[0].value)]
+            elif isinstance(node, ast.Import):
+                targets = [resolve(alias.name) for alias in node.names]
+            else:
+                if node.level:
+                    package = src.split(".")
+                    if path.name != "__init__.py":
+                        package = package[:-1]
+                    package = package[: len(package) - (node.level - 1)]
+                    base = ".".join(package + ([node.module] if node.module else []))
+                else:
+                    base = node.module or ""
+                targets = [resolve(f"{base}.{alias.name}") for alias in node.names]
+            for dst in targets:
+                if dst is None:
+                    continue
+                dst_rank = _rank(_area(dst, parents))
+                if dst_rank <= src_rank:
+                    continue
+                if src_area == "DB" and dst_rank == 2 and _is_model_module(dst):
+                    continue  # DB may import domain model modules
+                edges.setdefault(
+                    (src, dst, kind),
+                    f"{path.relative_to(REPO_ROOT).as_posix()}:{node.lineno}  "
+                    f"{src} -> {dst}  ({LAYERS[src_rank]} -> {LAYERS[dst_rank]}, {kind})",
+                )
+    return edges
+
+
+def _allowlist() -> set[tuple[str, str, str]]:
+    rows: set[tuple[str, str, str]] = set()
+    lines = ALLOWLIST.read_text(encoding="utf-8").splitlines()
+    for number, line in enumerate(lines, 1):
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split("\t")
+        assert len(fields) == 3, (
+            f"{ALLOWLIST_NAME}:{number}: expected src_module<TAB>dst_module<TAB>kind, "
+            f"got {line!r}"
+        )
+        rows.add((fields[0], fields[1], fields[2]))
+    return rows
+
+
+def test_no_new_upward_import() -> None:
+    edges = _upward_imports()
+    new = sorted(set(edges) - _allowlist())
+    assert not new, (
+        f"{len(new)} new upward import(s) break the layer map in {LAYER_MAP}:\n"
+        + "\n".join(f"  {edges[row]}" for row in new)
+        + "\nFix the direction: move the code that needs the higher layer up into "
+        "that layer, or have the higher layer pass it in (a parameter, callback or "
+        "Protocol). An import inside a function counts too, so moving one there does "
+        "not fix it. If an import truly belongs, explain why in the PR and get the "
+        f"reviewer's agreement first. Never just append a row to {ALLOWLIST_NAME} to "
+        "make this test pass. A move that leaves a re-export shim at the old path "
+        "may add that shim's row only if the same change deletes at least as many "
+        "rows; the shim's row is deleted together with the shim, once its importers "
+        "are retargeted."
+    )
+
+
+def test_allowlist_has_no_stale_rows() -> None:
+    stale = sorted(_allowlist() - set(_upward_imports()))
+    assert not stale, (
+        f"{len(stale)} row(s) in {ALLOWLIST_NAME} no longer match "
+        "an upward import. The allowlist only shrinks: delete these rows.\n"
+        + "\n".join("  " + "\t".join(row) for row in stale)
+    )
+
+
+def test_chachanotes_db_imports_no_chat_module() -> None:
+    """TASK-36949.6: ChaChaNotes_DB imports no ``tldw_chatbook.Chat`` module.
+
+    Every kind counts, ``if TYPE_CHECKING:`` included, unlike the allowlist scan.
+    A backstop also fails on any string literal that names a Chat module,
+    absolute or relative (``".Chat.x"``), which covers ``__import__``,
+    ``import_module`` with a package argument and ``sys.modules`` lookups. A
+    module name computed at runtime cannot be seen statically.
+    """
+    path = REPO_ROOT / PACKAGE / "DB" / "ChaChaNotes_DB.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    chat = f"{PACKAGE}.Chat"
+
+    def is_chat(name: str) -> bool:
+        return name == chat or name.startswith(chat + ".")
+
+    offenders: dict[int, str] = {}
+    for node, kind in _imports(tree):
+        if isinstance(node, ast.Call):
+            names = [node.args[0].value]
+        elif isinstance(node, ast.Import):
+            names = [alias.name for alias in node.names]
+        else:
+            base = (
+                ".".join([PACKAGE, "DB"][: 2 - (node.level - 1)] + [node.module or ""])
+                if node.level
+                else node.module or ""
+            ).strip(".")
+            names = [base] + [f"{base}.{alias.name}" for alias in node.names]
+        matched = next((name for name in names if is_chat(name)), None)
+        if matched:
+            offenders[node.lineno] = f"line {node.lineno} ({kind}): {matched}"
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+            continue
+        relative = node.value.lstrip(".") if node.value.startswith(".") else None
+        if is_chat(node.value) or (
+            relative is not None
+            and (relative == "Chat" or relative.startswith("Chat."))
+        ):
+            offenders.setdefault(
+                node.lineno, f"line {node.lineno} (string): {node.value}"
+            )
+    assert not offenders, (
+        "tldw_chatbook/DB/ChaChaNotes_DB.py must not import tldw_chatbook.Chat; move "
+        "pure code down to the DB layer or have the caller pass it in (a port):\n  "
+        + "\n  ".join(offenders[line] for line in sorted(offenders))
+    )
+
+
+def _widgets_screen_imports_at_module_level() -> list[str]:
+    """Module-level imports in Widgets/** that target UI/Screens (TASK-36944.8)."""
+    found: list[str] = []
+    screens = f"{PACKAGE}.UI.Screens"
+    for path in sorted((REPO_ROOT / PACKAGE / "Widgets").rglob("*.py")):
+        rel = path.relative_to(REPO_ROOT)
+        module = ".".join(rel.with_suffix("").parts)
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node, kind in _imports(tree):
+            if kind != "top" or isinstance(node, ast.Call):
+                continue
+            if isinstance(node, ast.Import):
+                targets = [alias.name for alias in node.names]
+            else:
+                if node.level:
+                    package = module.split(".")
+                    package = package[:-1] if path.name != "__init__.py" else package
+                    package = package[: len(package) - (node.level - 1)]
+                    base = ".".join(package + ([node.module] if node.module else []))
+                else:
+                    base = node.module or ""
+                targets = [base] + [f"{base}.{alias.name}" for alias in node.names]
+            if any(t == screens or t.startswith(screens + ".") for t in targets):
+                found.append(f"{rel.as_posix()}:{node.lineno}")
+    return found
+
+
+def test_widgets_import_nothing_from_ui_screens_at_module_level() -> None:
+    """Scope: runtime module-level imports only.
+
+    ``if TYPE_CHECKING:`` imports, function-local imports and
+    ``importlib.import_module`` calls are out of scope (TASK-36944.8 AC#1).
+    """
+    offenders = _widgets_screen_imports_at_module_level()
+    assert not offenders, (
+        "Widgets must not import tldw_chatbook.UI.Screens at module level; move the "
+        "shared state/helpers to a non-Screens package:\n  " + "\n  ".join(offenders)
+    )
+
+
+def test_change_review_provider_imports_without_textual() -> None:
+    """TASK-36944.7: the provider's non-UI home must not load Textual."""
+    probe = (
+        "import sys\n"
+        "from tldw_chatbook.Workspaces.change_review_provider import "
+        "AgentRunsChangeReviewProvider\n"
+        "assert 'textual' not in sys.modules, 'textual was imported'\n"
+    )
+    # Inherit os.environ: the scratch HOME/XDG/TLDW_CONFIG_PATH must reach the child.
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True, text=True, env=dict(os.environ), timeout=120,
+    )
+    assert result.returncode == 0, result.stderr[-2000:]

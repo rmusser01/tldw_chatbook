@@ -23,7 +23,7 @@ Study. This page is the orientation tour; the details live on these pages:
 
 - Press **Ctrl+3** from anywhere, or click **⌃3 Library** in the nav bar.
 - **Ctrl+P** → "Tab Navigation: Switch to Library" in the command palette.
-- **Ctrl+6** opens **All artifacts**. The Artifacts rail also has Chatbooks and Reports; Reports defaults to All reports with an explicit Kept filter.
+- **Ctrl+6** opens **All artifacts**. The Artifacts rail also has Chatbooks and Reports; Reports defaults to All reports with an explicit Kept filter. An empty Reports view offers **Set up a daily brief…**, which discloses the recurring watchlist, feeds, cadence and billed provider · model and asks you to confirm before creating anything.
 - Old destination names still find it: the six retired screens —
   **notes**, **prompts**, **skills**, **ingest**, **research**, and
   **media** — now live inside Library, and typing any of them into the
@@ -38,24 +38,15 @@ Study. This page is the orientation tour; the details live on these pages:
 
 ## Get started on a new profile
 
-> **You will probably never see this.** "New profile" here means a profile
-> whose `config.toml` was created **in the same run** — the first launch
-> that writes the file. If the config file already existed when the app
-> started, Library opens the **full rail** even on a completely empty
-> profile, and the Get started view below never appears. That includes the
-> ordinary case of quitting during first-run setup and relaunching: setup
-> writes the config, so the next launch is no longer "new". Verified live
-> on an empty profile with a pre-written config: full rail, every count
-> `(0)`, no Get started controls. Making a genuinely empty profile reach
-> Get started regardless of when its config was written is tracked as
-> task-32059.
-
 A new profile starts with a compact rail: **Import…**, **New note**, and
-**Explore all tools**. The Get started canvas offers the same journey as three
-controls that unlock in order — **Import a file**, **Find it**, and **Use it in
-Console**. A step you cannot run yet stays pressable and says why and what to
+**Explore all tools**. It has no search box, so **F6** lands on **Import…**
+(or on **Explore all tools** when Import is not offered). The Get started
+canvas offers the same journey as three controls that unlock in order —
+**Import a file**, **Find it**, and **Use it in Console**. A step you cannot
+run yet stays pressable and says why and what to
 do first ("Find it needs something to search — Import a file first."), on the
-line under the three controls and again if you press it. While Library checks
+line under the three controls and again if you press it. **Use it in
+Console** unlocks once a search result is selected. While Library checks
 its sources, it says
 **Checking existing Library content…** instead of claiming that the Library is
 empty. If a source is unavailable, the same actions stay enabled and one
@@ -89,8 +80,10 @@ the reader had just done.)
 
 Compact presentation never blocks navigation. Deep links and command-palette
 routes, including **Tab Navigation: Library — Skills**, can open a tool that is
-not shown in the Get started rail. Existing profiles without this preference
-open the full Library. A profile created by this app records its Library
+not shown in the Get started rail. A profile with no stored Library choice,
+including one whose `config.toml` was written before its first launch, shows
+the full rail while its sources are checked, then settles on Get started if
+every source is empty and on the full Library if any holds content. A profile created by this app records its Library
 lifecycle when the profile is created, so Get started still appears if you
 complete first-run setup, quit, and come back before ever opening Library.
 
@@ -154,7 +147,7 @@ knows more than the source owners do:
 "Compact" here means the **single-stage** layout below 64 columns, not
 merely a narrow terminal: at 100 columns the rail and the landing canvas
 still paint side by side, with the landing's counts line, **From your
-Library** and **Quick actions** all present (verified live at 100x30). Only
+Library** and **Quick actions** all present. Only
 once the screen drops to one stage does the rail become the sole navigation
 owner and the landing canvas go away. task-32066 settled that the landing
 does not yield earlier than 64 columns.
@@ -163,7 +156,10 @@ At compact widths the landing canvas **stays** beside the rail — both panes
 are kept, the rail narrows, and whatever you had focused (Continue, a recovery
 action, a cached summary, a quick action) keeps focus straight through the
 resize. Only Notes' own workflow routes fold to a single pane at those widths;
-the landing does not.
+the landing does not. Switching rail rows or resizing never leaves the keyboard
+dead: focus is moved only onto controls that are on screen, and if a control
+under focus disappears, the next key you press goes to the Library screen (Tab
+moves on, F1 opens help).
 
 ## Layout tour
 
@@ -299,8 +295,11 @@ readable measure rather than stretched across the whole canvas.
   names the Escape chip for that surface (`esc leave field` where nothing
   else owns the key — a list canvas keeps its own `esc focus rail`), and
   carries the canvas verbs after `after esc:` — they are not live until you
-  leave the field. Under 64 columns there is room for a single chip, so the
-  footer names only what Escape does there and the verbs are not listed.
+  leave the field. A list canvas's own filter lists none: its Escape moves the
+  caret into the rail's "Search Library…" box, another text field, so one
+  Escape would not make them live. Under 64 columns there is room for a
+  single chip, so the footer names only what Escape does there and the verbs
+  are not listed.
 
 One special case: selecting **Notes** adds a
 **Library notes | Folder files** strip above the workbench. **Folder files**
@@ -405,6 +404,13 @@ a prompt to begin.
 [ New prompt ] [ Import... ]        [ Clear filter ]
 ```
 
+On an empty Media page the keyboard lands on that one button (**Import
+media** or **Show all types**), or in the filter box when a typed query found
+nothing. When an open item's page empties under the Reader and the canvas
+returns to its list by itself, focus that was in the Media panes lands there
+too; focus you had put elsewhere, such as the rail's search box, stays where
+it is.
+
 A filtered empty page keeps its submitted type, query, or collection visible
 until you choose the reset action. Loading and failed refreshes do not use this
 empty presentation: they keep their status, pager authority, and **Retry** so a
@@ -508,12 +514,17 @@ lines:
 - **Quizzes** — "Generate or resume quizzes from Library sources."
 
 Each canvas shows the same five elements: the purpose line, a "Carries
-forward: …" line naming up to three source titles (then "and N more."),
-the ownership note "Generation and review run in Study.", a readiness
-line ("Source snapshot is ready.", or a prompt to import sources or
-create notes first), and a **Continue in Study** button ("Open \<X\> with
-the current Library source snapshot, or globally when none is
-available.").
+forward: …" line naming up to three source titles (then "and N more.",
+where N counts the rest of the titles Study keeps — the Study screen's
+own scope banner names and counts the same ones), the ownership note
+"Generation and review run in Study.", a readiness line, and a **Continue
+in Study** button ("Open \<X\> with the current Library source snapshot,
+or globally when none is available."). The readiness line depends on your
+runtime: in server mode it reads "Source snapshot is ready."; in local
+mode it reads "Generating a pack from sources needs a tldw server; you can
+still make cards by hand in Study.", because only a tldw server can build
+a study pack from the snapshot (Study's dashboard says the same). With no
+sources at all it prompts you to import sources or create notes first.
 
 Once you're on the Study screen, its header reads "Library ▸ Study" with
 an "Esc: back to Library" hint — the nav bar shows no highlighted tab
@@ -560,7 +571,8 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 
 Entering a Media, Notes, Prompts, or Skills list (from the rail, or
 returning from its item) focuses the list's first row, so ↑/↓/Enter work
-immediately without tabbing to find it. Escape then reads the surface
+immediately without tabbing to find it. Entering Conversations from the
+rail focuses its first row too. Escape then reads the surface
 you're on:
 
 - **While a long operation is running** (a Folder files folder change, a
@@ -609,13 +621,17 @@ you're on:
   promising a return to the list — "esc save or discard first" while the
   edit is unsaved, "esc busy, try again" while one of its writes is still
   running — see [Prompts](library/prompts.md).
-- **Editing, deleting, or re-analyzing inside the media viewer** — the
-  media viewer's Edit / Delete / Edit analysis forms have no dirty-edit
-  guard, so a first Escape only discards that one form and returns to the
-  plain read-only viewer (matching that form's own **Cancel** button); a
-  *second* Escape from there returns to the list. The footer's hint
-  changes to "back a step" while one of these forms is open, so it never
-  claims "back to list" a step early.
+- **Editing, deleting, or re-analyzing inside the media viewer** — a first
+  Escape only closes that one form and returns to the plain read-only
+  viewer (matching that form's own **Cancel** button); a *second* Escape
+  from there returns to the list. The footer's hint changes to "esc close"
+  while one of these forms is open, so it never claims "back to list" a
+  step early. The Edit metadata and Edit analysis forms keep unsaved text:
+  while what you typed differs from the saved value, Escape (and Back,
+  another row, a rail row, the nav bar, Ctrl+Q) refuses with "Save or
+  Discard changes first", the chip reads "esc save or discard first", and
+  Cancel reads **Discard changes** — the one way to drop the text (see
+  [Media and conversations](library/media-and-conversations.md)).
 
 Escape and Ctrl+S are also bound inside the skill editor specifically
 (back to list / save) — see [Skills](library/skills.md). Escape also
@@ -624,20 +640,6 @@ inside the File Notes surface's own panels and dialogs — see
 [File Notes](library/file-notes.md). On the Study screen (reached via
 **Continue in Study**), Escape returns to the Study decks staging canvas
 here in Library.
-
-*Verified against fix/media-crit7-qodo — 2026-09-08 (task-32046 + task-32085
-AC#2/#4: `/` focuses the active list canvas's own filter — Media/Prompts share
-the per-canvas route the Conversations and Notes canvases already had — instead
-of the rail's global search two panes away; the fallback wording now names the
-filterless tool canvases rather than over-claiming "any" canvas. Pinned at
-235x52 and 100x30 in `test_slash_focuses_the_media_filter_not_the_rail_search`
-and `test_slash_focuses_the_prompts_filter_not_the_rail_search`).*
-
-*Verified against fix/library-crit8-keyboard — 2026-09-08 (task-32051:
-Escape now leaves a focused search/filter box for the canvas, so the next
-printable key is a canvas key; task-32052: Tab stays inside the Library
-screen instead of walking into the top navigation bar. Pinned in
-`Tests/UI/test_library_crit8_keyboard.py`.)*
 
 ## Related settings & docs
 
@@ -676,397 +678,3 @@ screen instead of walking into the top navigation bar. Pinned in
   attempt number; a success replaces the message with the real list.
   Failures a retry cannot clear (a policy denial, a runtime with no
   source services) keep the plain sentence and no button.
-
-—
-*Verified against fix/media-crit7-selreason — 2026-09-08 (task-32045: with
-nothing checked, Select mode's Export/Review/Delete row now carries its own
-always-visible "Select items to enable." line — the same inline-reason
-grammar the Analyze row already used — instead of dimming with only the "○"
-marker and a hover-only tooltip. The line disappears the moment any row is
-checked.)*
-
-—
-*Verified against fix/media-riders-m — 2026-09-07 (task-31943: a bulk delete
-followed by Undo puts the rail's "Media N" back to the restored total without
-leaving the screen; task-31948: the browse-row source-failure message carries
-its own Retry, in the same callout grammar the landing hub uses. Both verified
-live at 235x52 on a scratch profile — the count round trip against a seeded
-media DB, the callout against a profile whose media DB path is a directory.)*
-
-—
-*Verified against fix/media-wave5-g — 2026-09-05 (task-31632: the Library
-landing paints one recovery callout with its own Retry when the source
-snapshot fails, withholds Continue while it shows, and re-runs a timed-out
-read on return. Verified live for the hard failure at 235x52 and 100x30 with
-a scratch profile whose media DB path is a directory; the deadline case is
-covered by the app tests, which is the only way to force it reliably.
-Qodo PR #2451 round: the same callout now also paints on a brand-new
-profile's Get-started view, above the starter content rather than in place
-of it; the shared reason mapper redacts filesystem/database paths out of
-`OSError`/`sqlite3` text before it can reach this or the Media callout; and
-the Media pager's Retry re-requests only the page or type-facet fence that
-actually failed instead of always reloading the page.)*
-
-—
-*Verified against dev @ f0379c035 — 2026-08-07 (TASK-2850: Notes ▸ Folder files
-mode stays inside the Library rail/canvas frame; Escape returns to
-Library notes; TASK-2851: the legacy Media Library screen is retired — "Media &
-Content: Open Media Library" now deep-links into Library's Media row;
-TASK-2854: the Study/Flashcards/Quizzes hand-off rows read "opens staging
-canvas", not "opens Study"; the Study screen names itself "Library ▸
-Study" and no longer boxes the Library nav tab; Escape returns from Study
-to the Study decks staging canvas; TASK-2857: the rail/canvas/toast CTA is
-"Import…" everywhere (was "Add content…"), the Export canvas/button reads
-"Export bundle (.zip)" (was "Export chatbook"), and the full media
-viewer's escape hatch reads "Open in Library ▸ Media" (was "Open in Media
-manager", stale since TASK-2851 retired that route); TASK-2856: entering
-a Media/Notes/Prompts/Skills list now focuses its first row so ↑/↓/Enter
-work immediately (previously nothing was focused there, on entry or on
-return); Escape now moves focus from a list to the rail, and returns from
-that list's viewer/editor to the list, both newly advertised in the
-footer; TASK-2856 re-critique round 3: the media viewer's Edit/Delete/Edit
-analysis sub-states now document their own graduated two-Escape behavior
-and footer hint ("back a step") instead of implying a single Escape
-reaches the list from any viewer sub-state)*
-*Verified against fix/media-crit6-focus — 2026-09-07 (task-31983: a focused
-list row now carries a distinct left-edge cursor bar, so keyboard focus reads
-apart from the selected/open row even when a row is both — the bar moves with
-↑/↓ and never changes the selection. Applied uniformly to the Media,
-Conversations, Notes, Notes-folder and Prompts row canvases.)*
-*Verified against dev @ 6b38a13b8 — 2026-08-07 (task-2858 Task 4: rail
-glosses/counts follow one rule across visits (LIB-15); the search box
-selects a stale query on click too, not just on a second "/" (LIB-17);
-Conversations/Flashcards/Collections fall back to a short label instead
-of a mid-word ellipsis at narrow widths (LIB-18)).*
-*Verified against dev @ 642567627 — 2026-08-10 (task-4011: the Study
-screen's breadcrumb/Escape now name the actual origin — the Library-origin
-round trip described above re-driven live and unchanged; the Home-origin
-variant reads "Home ▸ Study" and Escapes to Home).*
-*Verified against dev @ 023a04a48 — 2026-08-07 (task-2860: the "F6 next
-pane" footer hint above was previously true in description only — a
-`AppFooterStatus` filter silently dropped the landing's own F6 hint and
-substituted the generic global "F6 panes" text instead. The footer now
-renders the screen's own copy, live-verified at 170 and 100 columns; at
-80 columns the whole screen-hint cluster (not just F6) already yields to
-the width ladder described above, unchanged by this fix).*
-*Verified against dev @ 023a04a48 — 2026-08-07 (task-2859 UAT P3 polish
-batch, live-verified at 170x50: the Conversations canvas now opens with a
-"Conversations (N)" title matching every sibling, and its filter box
-renders above the empty-state text instead of below; the Collections
-canvas title reads "Collections (N)" (was "Library Collections"); clicking
-the Details header's LABEL (not just its **▾**/**▸** chip) now opens/closes
-it too; the export quality caption ("keeps a small preview image…" /
-"shrinks media files…" / "copies full media files…") now matches whichever
-option is actually selected, not always "original"; the ingest queue tally
-reads "This queue: N done" instead of the self-contradicting "N done — in
-queue"; DB sizes in the Details disclosure include their `-wal`/`-shm`
-sidecars, and the number/unit pair ("144.0KB") no longer wraps across two
-lines at the rail's narrow width).*
-*Verified against dev @ 023a04a48 — 2026-08-07 (task-3020: Escape now
-cancels an armed Media bulk-delete confirmation instead of moving focus to
-the rail with it still showing, matching the media viewer's own confirm;
-a partial bulk-delete failure now focuses the first still-checked row
-instead of leaving nothing focused).*
-*Verified against dev @ 642567627 — 2026-08-10 (task-4023 AC#1–#4,
-re-critique RC-07/09/10, live-verified with ANSI contrast measurement:
-disabled Library action buttons now render at or above the 3:1 legibility
-floor (they measured 1.39:1–2.30:1 before) and carry a leading "○" marker
-plus a reason tooltip, so colour is never the sole disabled cue; the
-Details disclosure's DB sizes recompute on open (a grown 12.3MB prompts
-DB previously kept reporting its old size across close/reopen); F1's
-panel is titled for the surface it describes ("Library Shortcuts —
-Media"), lists each key exactly once, includes "F6 next pane" on
-Search/RAG (whose footer now spells it verbatim), and a second F1 closes
-the panel.)*
-*Verified against fix/settings-appearance-crash @ 57ad075de — 2026-08-10
-(task-4023 AC#5–#7: one footer grammar everywhere — the Notes workflow's
-run-on hints ("Ctrl+S Save · Esc Notes") became per-key pairs, and the
-global cluster spells the pane key "F6 next pane" to match; value-cycle
-buttons ("type: All", "sort: Newest", "quality: thumbnail", "mode:
-Search") carry a trailing "⇄" with a tooltip listing the full cycle —
-a trailing "▸/▾" is now always a section-header disclosure and a leading
-"▸ " always the selected list row (Collections rows included; narrowed
-by task-32235 — a leading "▸" on a folder-tree node is disclosure, see
-[State glyphs](#state-glyphs)); the Media
-toolbar is a single horizontal row like its siblings; canvas list titles
-render in full instead of the rail's 17-character cut; the landing line
-reads "pick a section" (no "on the left" — at ≤100 columns the shell
-shows one pane at a time); Escape now works on Export (back to the
-canvas that opened it, or the hub), Collections (focus rail), and the
-Study staging canvases (back to hub); the staging rows' second line
-reads "see what carries over".)*
-*Verified against feat/library-queue-batch @ 0662e09f5 — 2026-08-11
-(task-14902: the value-cycle buttons converged on the Notes Sort chooser
-pattern — pressing "type: All" / "sort: Newest" / "quality: thumbnail"
-opens a one-row choice strip with a "✓" on the active option and a direct
-pick (Escape cancels; the footer/F1 read "enter choose … / esc cancel"
-while a strip is open), so the trailing "⇄" now appears only on the
-surviving genuine two-option toggles, sitting between the two enumerated
-options with "✓" on the active one ("mode: ✓ Search ⇄ RAG Answer", the
-skill editor's switches); the prompt collection control — a chooser that
-opens the collection manager — dropped the glyph outright.)*
-*Verified against `feat/rag-p2a-instrument-renewal` at 0c34be595 —
-2026-08-11 (TASK-15020 final review wave, doc-only: correcting the "Find
-anything you've saved" step above to match B3's already-shipped
-behavior — the Search / RAG canvas's per-source count follows Settings ▸
-RAG's Default results, 15 on the shipped default profile, not a fixed 5;
-no code changed here).*
-*Verified against feat/workspace-create-modal @ 64a07a3d7 — 2026-08-17
-(task-18704: **Create local workspace** now opens the shared "New
-Workspace" dialog — the same one Console and Settings use — instead of
-creating a zero-input workspace instantly; documented its name prefill,
-optional validated folder bindings, Browse… picker, and default-on
-"Switch to this workspace" checkbox).*
-*Verified against feat/project-skills-import @ 964cb04df — 2026-08-18
-(task-18705: a bound folder containing `.SKILLS/` now annotates its row
-"— contains N project skill(s)" and a chained import prompt follows
-Create).*
-*Verified against codex/library-top-level-pagination @ 937dfa393 —
-2026-08-20 (TASK-19022: compact Get started rail, truthful unresolved and
-recovery states, remembered Explore/Back disclosure, permanent graduation,
-deep-link and palette bypass, and keyboard/compositor UAT with the production
-stylesheet at 100x30 and 170x48). Per user direction, repository-wide pytest
-was not run; only modified/touched Library component and direct-owner gates are
-claimed.*
-*Verified against fix/task-21116-wave4 (dev @ 30c7e1fe9) — 2026-08-23
-(TASK-21116, performance conversion — no workflow changes: opening a media
-item, leaving the media viewer (Escape / "‹ Back to list", including the
-edit/delete/analysis Cancel steps), opening a Search/RAG result, the
-section "Export…" actions, and the Prompts/Skills inline "Import…" row now
-update only the affected canvas region instead of rebuilding the whole
-screen. One visible refinement: opening the Prompts/Skills Import… row
-parks the caret in its path field, and Cancel returns focus to the Import…
-button.)*
-
-*Verified against fix/task-22207-perf (dev @ 983aa5878) — 2026-08-25
-(TASK-22207, performance — no workflow changes: arrow-keying through Browse
-Media's Items list no longer rebuilds the Reader's document body per
-keystroke; the "Loading preview…" banner paints and clears in place, and
-only the row you settle on renders its document, once. Behavior of the
-settle delay, Read/Analysis/Highlights/Info modes, and Find is unchanged.)*
-
-*Verified against feat/task-22500-reader-virtualization (dev @ 732105c2d) —
-2026-08-26 (TASK-22500, performance — no workflow changes: the Reader's Raw
-text view now paints only the rows in view instead of the whole document.
-On a 2.5 MB document this cuts first paint from roughly 2.3 seconds to
-under a millisecond of render cost, and every search keystroke or
-Prev/Next match click from roughly 1.7 seconds to under a millisecond;
-opening the reader still pays a one-time indexing cost proportional to
-document size (under 150 ms even at 2.5 MB) whenever the pane is resized.
-Scrolling, search highlighting, match navigation, and click-drag text
-selection behave the same as before. The Rendered (Markdown) view was
-measured but not changed by this task — very large documents opened in
-Rendered mode remain slow to first paint; tracked separately in
-TASK-22660.)*
-
-*Verified against fix/task-23025 — 2026-08-28 (TASK-23025, performance — no
-workflow changes: resizing the terminal and Tab/arrow focus moves no longer
-re-walk the Library DOM on every frame, and the model-install progress line
-is now built on first use instead of on every visit. The compact/emergency
-width crossings, the Details disclosure, and install progress all look and
-behave exactly as before.)*
-
-*Verified against fix/media-wave4-d — 2026-09-04 (task-28007 AC#3/AC#4:
-Media ▸ Select mode gained an **Analyze** bulk action on its own row under
-Clear/Export/Review. It generates an analysis for every checked item in
-one run, in list order, and reports progress in place ("Analyzing 3 of 40 ·
-2 failed", then "✓ analyzed · 38 of 40 · 2 failed", or "✗ analyzed · 0 of 3
-· 3 failed" when nothing succeeded) with **Retry failed** and **Dismiss**.
-Items that already have an analysis are never overwritten silently: the
-first press offers "N of M already analysed" with **Skip them** /
-**Overwrite**. With no analysis provider configured the action renders
-disabled as "○ Analyze" carrying the resolver's own reason as its tooltip;
-a second press while a run is in flight says "Analysis already running";
-and leaving Library mid-run stops it with a notice naming where it got to.
-Details on the [media & conversations](library/media-and-conversations.md)
-page.)*
-
-*Verified against fix/media-wave4-d — 2026-09-04 (task-28007 AC#1/AC#2: an
-import run left with analysis-skipped rows (no provider configured at the
-time) can be fixed in one action once a provider IS configured — "Analyze
-N skipped" above the import queue, over every skipped id currently in the
-queue. Details on the
-[import & export](library/import-and-export.md) page.)*
-
-*Verified against fix/library-crit8-polish-shell — 2026-09-08 (task-32066:
-this page claimed the landing hides below 120 columns; it does not, and that is
-deliberate — "keep compact landing alongside rail" (1a6c293761) took it out of
-compact single-stage on purpose and pinned the two-pane result at 80 and 100
-columns together with a focus-stability contract. The page now describes what
-the app does. Confirmed live at 100x30.)*
-
-*Verified against fix/library-crit8-polish-shell — 2026-09-08 (task-32059:
-Get started is no longer skipped for a profile that completed setup and
-relaunched before its first Library visit — the lifecycle is recorded at
-profile creation instead of being inferred from a missing key.)*
-
-*Verified against fix/library-crit8-polish-shell — 2026-09-08 (task-32063:
-"Library tools are now available." *was* fired only when the compact Get
-started rail actually gives way to the full one, not on a populated profile's
-first source read — the toast itself was dropped by task-32555; see the stamp
-at the end of this file. task-32064: the "Chunking Lab / Try selected text" strip left the
-top of every canvas for Details ▸ Actions, with a one-line gloss, and Escape
-in the Lab returns to the Library canvas it was opened from. task-32069: the
-rail search box has an "x" and no longer carries a stale query onto another
-canvas; the three Study rows are one row each. task-32072: Get started's
-"1 Add · 2 Find · 3 Use" is now three live controls.)*
-
-*Verified against fix/library-crit8-polish-shell — 2026-09-08 (fix round:
-task-32063's graduation notice is now the toast and nothing else — the
-in-canvas line that repeated it is gone, so one event has one surface and
-nothing is added to the canvas a reader is working in.)*
-
-*Verified against fix/library-crit8-polish-shell — 2026-09-08 (review of
-PR #2531: Escape leaves the Chunking Lab from its focused sample editor too,
-not only with focus outside a text field; Get started's **Use it in Console**
-unlocks on a *selected* search result and otherwise says "run Find it and pick
-one."; and the graduation toast also reaches a brand-new profile, whose
-lifecycle goes straight from `unknown` to graduated without settling on
-Starter.)*
-
-*Verified against fix/library-crit8-docs — 2026-09-08 (task-32073, three
-corrections from critique #8's docs-vs-live pass, each re-tested live at
-235x52 and 100x30 on a seeded and an empty profile):
-(1) **Get started** is reached only by a profile whose config.toml was
-created in the same run — an empty profile with a pre-written config opens
-the full rail with `(0)` on every row and never sees it (task-32059);
-(2) the landing canvas is **not** hidden merely at narrow widths — at 100
-columns it still paints beside the rail; only the below-64-column
-single-stage layout drops it (task-32066);
-(3) the **Chunking Lab / Try selected text** strip under the header, which
-paints on every Library canvas, was undocumented (task-32064).)*
-
-*Verified against fix/library-crit8-waits — 2026-09-08 (task-32055: Library's
-structural waits report "still working · Cancel" past three seconds and never
-gate Escape, the back cue, the palette or Quit).*
-
-*Verified against fix/library-crit9-grammar — 2026-09-10 (task-32235: one
-meaning per state glyph. "○" had carried three at once — a disabled action,
-an unchecked source toggle and a settled "skipped" outcome; it keeps the
-first (it is the only non-colour cue on tooltip-gated buttons) while
-selection moves to "☐/☑" and the never-attempted outcome to "–". The
-legend is now stated once, under **State glyphs**.
-Fix round 1 adds the Import queue's own `●`/`≡`/`⊘`, and round 2 splits `●`
-by context: leading a queue row it means "still working", inside a line it
-is a count marker or a colour swatch, neither of them a state.)*
-
-*Verified against fix/library-crit9-rail — 2026-09-10 (task-32219: the Layout
-tour no longer claims the Chunking Lab strip sits under every canvas header —
-the control table's "Details ▸ Actions" is now the page's only statement of
-its placement, and the rail says "▾ scroll for more" when its content runs
-past the fold. task-32212: the rail search row keeps the pane's frame at 235,
-100 and 60 columns. task-32220: the rail heading ellipsises instead of
-cutting to "Navigati". task-32226: rail text typed on another canvas and
-never submitted no longer seeds the Search / RAG query box. task-32230: the
-Details DB sizes take a line each, and the Handoff line names the blocked
-item's reason and its next step.)*
-
-*Verified against fix/library-crit9-shell — 2026-09-10 (task-32225: Escape
-returns to the rail below 64 columns on every adaptive-reader destination and
-the footer names it; task-32217: an empty work pane hands its columns to the
-list, and the landing hub is capped at 96 cells).*
-
-*Verified against fix/library-crit9-shell — 2026-09-10, fix round 1
-(task-32225: the return chip stands down wherever a canvas owns Escape itself,
-so the footer never names a return the key would not perform; task-32228:
-Conversations arrives with its first row focused like every other browse list).*
-
-*Verified against fix/library-crit10-notes-details — 2026-09-11 (task-32357:
-the Details panel says what a reader can do about it — the Handoff line reads
-"1 item can't be used in Console yet · \<reason\> · \<next step\>" with
-task-32230's counts and reason untouched, "Server sync WIP · local only" is
-now "Everything here is stored on this machine · syncing to a server isn't
-available yet.", and the DB sizes moved into a closed **Diagnostics**
-disclosure inside Details. The glyph table's claim that `●` marks the blocked
-count was already stale — task-32230 retired that dot — and is corrected
-here.)*
-
-*Verified against fix/library-crit10-viewer — 2026-09-11 (task-32346: with the
-caret in the Search/RAG query box the footer reads "typing in field | esc leave
-field | after esc: u use Library context in Console · o open evidence | enter
-run search | F6 next pane"; the same shape on the Media list keeps "s select"
-behind the same gesture, and "F6 next pane" is last so a narrow footer drops it
-before any verb).*
-
-*Verified against fix/library-crit10-pagers — 2026-09-11 (task-32354: the
-single-page pager rule this page documents now holds for Skills, Collections
-and the media Trash as well as Media, Conversations and Prompts).*
-
-*Verified against fix/library-crit10-onboarding-import — 2026-09-11
-(task-32349: a Library with no content yet lands on Get started however old its
-config file is, so "Back to Get started" is offered only to someone who has
-seen Get started).*
-
-*Verified against fix/library-crit10-layout — 2026-09-11 (task-32355: both
-pane handles paint their own name down the column, and the note editor's
-deliberate claim on the rail's width is stated where the rail is described;
-task-32359: a focused rail row carries the house `█` bar, so it is no longer
-the same picture as the active destination).*
-
-*Verified against fix/library-crit10-docs — 2026-09-11 (task-32366: 14
-critique-10 claims reconciled; surface fixes in task-32346, 32348, 32349,
-32354, 32355).*
-
-*Verified against fix/library-decisions-32302-32393-32306 — 2026-09-11
-(task-32393: a dirty Prompts editor now refuses Back and Escape out loud —
-"Unsaved Prompt changes — Save or Discard changes first." — and its footer
-chip reads "esc save or discard first" while the edit is unsaved.)*
-
-*Verified against fix/library-decisions-32302-32393-32306 — 2026-09-11
-(task-32306, user decision: a Details row that outruns the rail's 34-cell
-column keeps its full copy and hangs its continuation lines two cells in, so
-the blocked Handoff row's reason and next step read as one row — live at
-235x52 on a seeded profile, and pinned on the painted lines at 235x52 and
-60x24.)*
-
-*Verified against fix/library-riders-32461-32464 — 2026-09-14 (task-32464,
-controller's decision, revisitable: radios are carved out of the selection
-pair. `☐`/`☑` stays the multi-select toggle, `●`/`○` is a radio group, and a
-bare `○` outside a group keeps its blocked/disabled meaning — the legend now
-says so rather than leaving Console's Library access modal as its
-counterexample.)*
-
-*Verified against fix/library-notes-w4-console-handoff — 2026-09-14 (task-32555
-AC#2, at 235x52 on a profile stamped `starter` with an empty notes database):
-creating and saving the first note grows the rail from the compact Get started
-list to the full Browse / Create / Study / Import-Export rail and raises no
-toast (`wave4-caps/console-handoff/handoff-13-no-toast`).*
-
-*Verified against fix/library-notes-w4-layout — 2026-09-14 (task-32546: the
-landing's "From your Library" rows marked focus with a background colour
-alone — rgb(30,30,30) to rgb(28,70,102), decoded from an ANSI capture — and
-the footer never named them. They take the house left bar now, and F6 from
-the rail search field lands on "█ Notes · Import checklist" with the footer
-reading "enter open notes" (`wave4-caps/layout/layout-15-f6-after-2`; before,
-`layout-27-f6-2`). Note for anyone re-walking this: from a cold landing, Tab
-walks the top tab bar rather than the canvas, which is why the original
-twelve-Tab capture set differed only on the nav line.)*
-
-*Verified against fix/library-notes-w4-docs — 2026-09-14 (task-32558, the
-wave-4 guide sweep; this stamp re-examined and re-scoped in fix round 2).
-Stamped because a page nobody stamps is a page the next sweep re-does from
-scratch — but scoped to **the four claims actually checked**, not to the
-page, because the sibling stamp on
-[Import & export](library/import-and-export.md) certified a whole page on
-that reasoning and was wrong.
-
-Checked, each against the code or a capture, and **each correct**:
-
-1. The new-profile rail is "Import…, New note and Explore all tools"
-   (`Widgets/Library/library_rail.py:1076-1080`; titles at
-   `Library/library_shell_state.py:611` and `:707`), live at
-   `wave4-caps/docs-sweep/docs-01-empty-rail-235x52:8-10`.
-2. The Get started line "Find it needs something to search — Import a file
-   first." renders as written (`docs-01:11`).
-3. The footer Enter-chip rule — stated in the **Layout tour** footer bullet,
-   not under "Keyboard & commands" — matches
-   `_LIBRARY_NOTES_NAVIGATOR_ENTER_LABELS` (`library_screen.py:961-964`):
-   an Enter action named in Edit and Preview, and in the notes LIST only the
-   delete receipt's Undo and Dismiss. This is the correction wave-4 group 6
-   landed, so it needed nothing further.
-4. The Chunking Lab row places the pair under **Details ▸ Actions** with its
-   Escape route — which is where `file-notes.md` was still wrong, and was
-   fixed against this page.
-
-Claims on this page outside those four were not swept and carry no claim
-from this stamp.)*

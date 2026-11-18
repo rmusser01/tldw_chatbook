@@ -54,10 +54,34 @@ _CSV_RESERVED_HEADERS = frozenset(
     (*_TITLE_ALIASES, *_CONTENT_ALIASES, *_KEYWORD_ALIASES, "template")
 )
 _MARKDOWN_EXTENSIONS = frozenset({".md", ".markdown"})
-_FRONTMATTER_KEYS = ("tags", "aliases")
+_FRONTMATTER_KEYS = ("tags", "keywords", "aliases")
+"""Front matter properties read as keywords, in precedence order.
+
+``keywords`` is a read alias for ``tags`` (TASK-34000.31): the single-note
+**Export Markdown** file wrote ``keywords: a, b`` before that fix, so the files
+users already exported still restore their keywords.
+"""
+_TAG_KEYS = frozenset({"tags", "keywords"})
+_OWN_EXPORT_KEYS = frozenset({"date", "note_id", "id", "created_at", "updated_at"})
+"""Provenance keys the app's own exporters write (``Export Markdown``, bundles).
+
+They are never imported -- the Library has its own ids and stamps -- and, in a
+block that carries an export's own marker (``_carries_export_provenance``), never
+reported as "not imported" either (TASK-34000.31 fix round 1, M3): dropping
+them there loses nothing a user wrote.
+"""
+_EXPORT_MARKDOWN_PROVENANCE_KEY = "note_id"
+"""**Export Markdown** writes ``title``, ``date``, ``tags`` (``keywords`` before
+TASK-34000.31) and this key (``build_note_export_content``)."""
+_BUNDLE_PROVENANCE_KEYS = frozenset({"id", "created_at", "updated_at"})
+"""A bundle's note file always carries all three (``ChatbookCreator``)."""
 _ALIAS_KEYWORD_PREFIX = "alias: "
 """Marks a keyword that came from `aliases:` rather than from `tags:`."""
 _MAX_FRONTMATTER_LINES = 200
+_MAX_FRONTMATTER_BYTES = 64 * 1024
+"""A larger block is read as no front matter (final review M-11): the line cap
+does not bound a line's length, and the YAML reader takes ~0.25 s per MB of a
+file that may be up to 128 MB (a bundle member)."""
 _MAX_WIKILINKS_PER_NOTE = 200
 _TEMPLATE_PLACEHOLDER = re.compile(r"\{\{.*?\}\}")
 """A `{{date}}`-style template placeholder, which never becomes a note title."""
@@ -501,17 +525,35 @@ def _parse_text(
         # `source: "[[README]]"` property is metadata and is never rewritten.
         body = text
         unimported_keys: tuple[str, ...] = ()
-        if obsidian_mode and markdown:
-            metadata, body = _split_frontmatter(text)
+        # TASK-34000.31: the YAML block is read outside a vault too, so a note
+        # exported with Export Markdown and picked through Import once (the
+        # toggle is offered for a vault alone) comes back with its title and
+        # keywords instead of its own ``---`` block as body text (the review's
+        # N-20 symptom, reproduced live). Fix round 1 ruling: outside a vault
+        # the block is stripped ONLY when every key is one the import honours,
+        # or the block is the app's own export (ruling F-1: it carries the
+        # exporters' provenance) -- a user's ``Summary:`` or ``Yes:`` block, or
+        # a daily note's ``date:`` beside ``tags:``, stays in the body exactly
+        # as before, nothing of theirs is dropped. Obsidian mode still governs
+        # what is Obsidian's: the vault's private folders, ``[[wikilinks]]``,
+        # and stripping any block.
+        if markdown:
+            metadata, body = split_frontmatter(text)
+            if (
+                metadata is not None
+                and not obsidian_mode
+                and not _is_own_export_block(metadata)
+            ):
+                metadata, body = None, text
             # A note that is only frontmatter (an Obsidian Properties-only file,
             # a templated daily note) still has to import: keep the original
             # text as the body rather than turning a note this mode understands
             # BETTER into a failure it did not have before.
-            if body.strip():
+            if metadata is not None and body.strip():
                 text = body
                 # Only a stripped block loses anything (task-32262); a
                 # frontmatter-only note keeps every property in its content.
-                unimported_keys = _unimported_frontmatter_keys(metadata)
+                unimported_keys = _unimported_frontmatter_keys(metadata, bounds)
         stem = PurePosixPath(candidate.source.display_path).stem
         title = _frontmatter_title(metadata) or _text_title(text, stem, markdown)
         if len(title) > MAX_IMPORT_TITLE_LENGTH:
@@ -554,19 +596,35 @@ def _text_title(text: str, stem: str, markdown: bool) -> str:
     return stem
 
 
-def _split_frontmatter(text: str) -> tuple[Mapping[Any, Any] | None, str]:
+def split_frontmatter(text: str) -> tuple[Mapping[Any, Any] | None, str]:
     """Split one leading `---` YAML block from the note body.
 
     Anything that is not a complete, safely loadable mapping is left in the body
     exactly as written, so an odd block degrades to today's behaviour.
+
+    Public since TASK-34000.31: the chatbook importer and the exporters' tests
+    read a note file the same way **Add from files…** does, so the one reader
+    is shared rather than re-implemented with a naive ``split("---")``.
+
+    Args:
+        text: The note file's text.
+
+    Returns:
+        ``(metadata, body)`` -- the parsed mapping and the text after the
+        closing fence, or ``(None, text)`` when there is no readable block.
     """
     lines = text.split("\n")
-    if not lines or lines[0].strip() != "---":
+    if not lines or lines[0].rstrip() != "---":
         return None, text
     for index, line in enumerate(lines[1 : _MAX_FRONTMATTER_LINES + 1], start=1):
-        if line.strip() not in {"---", "..."}:
+        # Only a fence at column 0 closes the block (TASK-34000.31 fix round
+        # 1, M1): the dumper folds a multi-line title so a continuation line
+        # can be an indented ``  ---``, which ``strip()`` mistook for the end.
+        if line.rstrip() not in {"---", "..."}:
             continue
         block = "\n".join(lines[1:index])
+        if len(block.encode("utf-8")) > _MAX_FRONTMATTER_BYTES:
+            return None, text
         try:
             for token in yaml.scan(block):
                 if isinstance(token, (yaml.tokens.AnchorToken, yaml.tokens.AliasToken)):
@@ -576,12 +634,45 @@ def _split_frontmatter(text: str) -> tuple[Mapping[Any, Any] | None, str]:
             return None, text
         if not isinstance(metadata, Mapping):
             return None, text
-        return metadata, "\n".join(lines[index + 1 :]).lstrip("\n")
+        metadata = _with_raw_scalar_title(metadata, block)
+        return metadata, re.sub(r"^(?:\r?\n)+", "", "\n".join(lines[index + 1 :]))
     return None, text
 
 
+def _with_raw_scalar_title(metadata: Mapping[Any, Any], block: str) -> Mapping[Any, Any]:
+    """Give ``title`` back the text the author wrote when YAML typed it.
+
+    YAML 1.1 reads ``title: 3.10`` as 3.1, ``12:30`` as 750 (base 60), ``0755``
+    as 493 and ``2026-10-24`` as a date. A title is a name, so when the typed
+    value is not a string the block is re-read with ``yaml.BaseLoader`` (every
+    scalar a string) and that key's raw text is used (TASK-34000.31 fix round
+    2, R2-4). A list or a mapping stays what it is and is reported instead.
+    """
+    value = metadata.get("title")
+    if value is None or isinstance(value, str):
+        return metadata
+    try:
+        raw = yaml.load(block, Loader=yaml.BaseLoader)
+    except (yaml.YAMLError, RecursionError, ValueError, TypeError):
+        return metadata
+    if not isinstance(raw, Mapping) or not isinstance(raw.get("title"), str):
+        return metadata
+    patched = dict(metadata)
+    patched["title"] = raw["title"]
+    return patched
+
+
+_split_frontmatter = split_frontmatter
+"""Pre-TASK-34000.31 name; kept for one release for out-of-tree callers."""
+
+
 def _frontmatter_title(metadata: Mapping[Any, Any] | None) -> str | None:
-    """Return the frontmatter title, unless it is blank or a placeholder."""
+    """Return the frontmatter title, unless it is blank or a placeholder.
+
+    ``split_frontmatter`` already restored a typed scalar (``title: 2026``,
+    ``12:30``) to the text the author wrote; a list or a mapping is not a title
+    and is reported instead.
+    """
     if metadata is None:
         return None
     value = metadata.get("title")
@@ -596,39 +687,123 @@ def _frontmatter_title(metadata: Mapping[Any, Any] | None) -> str | None:
 _IMPORTED_FRONTMATTER_KEYS = frozenset({"title", *_FRONTMATTER_KEYS})
 """Frontmatter properties the import actually keeps."""
 
+_STRIPPABLE_OUTSIDE_A_VAULT = _IMPORTED_FRONTMATTER_KEYS | _OWN_EXPORT_KEYS
+
 _MAX_REPORTED_FRONTMATTER_KEYS = 12
+
+
+def _carries_export_provenance(keys: set[Any]) -> bool:
+    """Does the block name the exporter that wrote it?
+
+    ``note_id`` (Export Markdown) or ``id`` + ``created_at`` + ``updated_at``
+    (a bundle's note file) -- the two markers ruling F-1 names.
+    """
+    return _EXPORT_MARKDOWN_PROVENANCE_KEY in keys or _BUNDLE_PROVENANCE_KEYS <= keys
+
+
+def _is_own_export_block(metadata: Mapping[Any, Any]) -> bool:
+    """Can this block leave the body without losing anything the user wrote?
+
+    Outside a vault that is the only block worth removing from the body: it
+    round-trips the app's own ``Export Markdown`` file and bundles while a
+    block holding anything else -- a user's ``Summary:``, a ``Yes:`` key the
+    YAML reader typed as ``True`` -- stays in the note exactly as written.
+
+    Every key must be one the import honours or one the exporters write, and
+    an exporter's key (``date``, ``id``, ...) counts as noise only when the
+    block carries that exporter's provenance (final review I-2, ruling F-1):
+    an Obsidian daily note's ``{date, tags}`` or a Hugo post's ``{title, date,
+    tags}`` holds nothing but such keys, yet its ``date`` is the user's. A
+    block of only honoured keys (``title``, ``tags``, ``keywords``,
+    ``aliases``) qualifies on its own: all of it is read back.
+    """
+    # Exact match, the way the readers match (``title``, never ``Title``):
+    # a key the readers would not read is a key the user would lose.
+    keys = set(metadata)
+    if not keys <= _STRIPPABLE_OUTSIDE_A_VAULT:
+        return False
+    return not keys & _OWN_EXPORT_KEYS or _carries_export_provenance(keys)
 
 
 def _unimported_frontmatter_keys(
     metadata: Mapping[Any, Any] | None,
+    bounds: ImportBounds | None = None,
 ) -> tuple[str, ...]:
-    """Return the frontmatter property names this import drops, in file order.
+    """Return what this import drops from a stripped frontmatter block, in file order.
+
+    Property names that reach neither the title, the keywords nor the stored
+    body; a non-string key as ``str(key)`` (``Yes:`` reads as ``True``); a
+    ``title`` that is not text; and, when ``bounds`` is given, a ``tags`` /
+    ``keywords`` / ``aliases`` value the import could not keep -- too many
+    entries, or not readable as keywords -- named with its reason. Nothing a
+    stripped block held disappears silently (TASK-34000.31 fix round 1).
+
+    The app's own provenance keys (``date``, ``id``, ...) are left out ONLY
+    when the whole block is the app's own export, provenance marker included
+    (``_is_own_export_block``); beside a ``mood:`` -- or beside only ``tags:``
+    -- a ``date:`` is the user's Obsidian property and is reported like any
+    other (fix round 2, R2-3; final review I-2). Keyword reports come first
+    and are never cut by the cap -- they are the only sign the keywords were
+    lost (R2-5).
 
     Args:
         metadata: One parsed frontmatter mapping, or None when there was none.
+        bounds: The import bounds the keywords are checked against; None skips
+            the keyword report (callers that never keep keywords).
 
     Returns:
-        Bounded, deduplicated property names that reach neither the title, the
-        keywords nor the stored body.
+        Bounded, deduplicated entries for the review row's "not imported".
     """
     if metadata is None:
         return ()
+    own_export = _is_own_export_block(metadata)
     names: list[str] = []
     for key in metadata:
         if not isinstance(key, str):
+            name = str(key).strip()
+            if name:
+                names.append(name[:MAX_IMPORT_KEYWORD_LENGTH])
             continue
         name = key.strip()
-        if not name or name.casefold() in _IMPORTED_FRONTMATTER_KEYS:
+        if not name:
+            continue
+        if key == "title":
+            if metadata[key] is not None and _frontmatter_title(metadata) is None:
+                names.append(name[:MAX_IMPORT_KEYWORD_LENGTH])
+            continue
+        if key in _FRONTMATTER_KEYS or (own_export and key in _OWN_EXPORT_KEYS):
             continue
         names.append(name[:MAX_IMPORT_KEYWORD_LENGTH])
-    return tuple(dict.fromkeys(names))[:_MAX_REPORTED_FRONTMATTER_KEYS]
+    reports = _unkept_keyword_reports(metadata, bounds) if bounds is not None else []
+    capped = tuple(dict.fromkeys(names))[: max(0, _MAX_REPORTED_FRONTMATTER_KEYS - len(reports))]
+    return tuple(dict.fromkeys([*reports, *capped]))
+
+
+def _unkept_keyword_reports(metadata: Mapping[Any, Any], bounds: ImportBounds) -> list[str]:
+    """Name each keyword property ``_frontmatter_keywords`` had to leave out."""
+    reports: list[str] = []
+    for key in _FRONTMATTER_KEYS:
+        if key not in metadata or metadata[key] is None:
+            continue
+        try:
+            _keywords(metadata[key], bounds)
+        except _ParseFailure as error:
+            if error.reason_code == "too_many_keywords":
+                reports.append(f"{key} (more than {bounds.max_keywords_per_note})")
+            else:
+                reports.append(f"{key} (not readable as keywords)")
+    # The combined cap is applied to the DEDUPLICATED list (R2-6): 60 tags
+    # repeated as 60 keywords are 60 keywords, all kept.
+    if len(_collect_frontmatter_keywords(metadata, bounds)) > bounds.max_keywords_per_note:
+        reports.append(f"keywords (more than {bounds.max_keywords_per_note} in total)")
+    return reports
 
 
 def _frontmatter_keywords(
     metadata: Mapping[Any, Any] | None,
     bounds: ImportBounds,
 ) -> tuple[str, ...]:
-    """Return `tags` then `aliases` as deduplicated keywords.
+    """Return `tags`, then `keywords`, then `aliases` as deduplicated keywords.
 
     Aliases are alternate titles in Obsidian and there is no separate note
     metadata store here, so they are kept as keywords: the note stays findable by
@@ -639,6 +814,13 @@ def _frontmatter_keywords(
     """
     if metadata is None:
         return ()
+    return tuple(_collect_frontmatter_keywords(metadata, bounds)[: bounds.max_keywords_per_note])
+
+
+def _collect_frontmatter_keywords(
+    metadata: Mapping[Any, Any], bounds: ImportBounds
+) -> list[str]:
+    """The deduplicated keyword list before the per-note cap (shared by the report)."""
     keywords: list[str] = []
     seen: set[str] = set()
     for key in _FRONTMATTER_KEYS:
@@ -647,7 +829,7 @@ def _frontmatter_keywords(
         except _ParseFailure:
             continue
         for value in values:
-            keyword = value if key == "tags" else f"{_ALIAS_KEYWORD_PREFIX}{value}"
+            keyword = value if key in _TAG_KEYS else f"{_ALIAS_KEYWORD_PREFIX}{value}"
             if len(keyword) > MAX_IMPORT_KEYWORD_LENGTH:
                 # `_keywords` already bounded `value`, so only our display
                 # prefix pushed it over. Keep the alternate name findable
@@ -657,7 +839,7 @@ def _frontmatter_keywords(
                 continue
             seen.add(keyword.casefold())
             keywords.append(keyword)
-    return tuple(keywords[: bounds.max_keywords_per_note])
+    return keywords
 
 
 def _wikilinks(text: str) -> tuple[str, ...]:

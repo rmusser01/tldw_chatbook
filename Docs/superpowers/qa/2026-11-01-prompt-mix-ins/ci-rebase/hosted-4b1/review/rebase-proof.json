@@ -1,0 +1,70 @@
+{
+  "refs": {
+    "published": "4b1e070c972320e1353b6bac7e185035db125571",
+    "backup": "798222b480b587e2f2248de9fbd0edf3a773b34c",
+    "old_dev": "88af9f937908b46e8c5f9f7fddd9e8748c917d46",
+    "new_dev": "2dcf038cb8be0af991f92c43b0c262f02471c51d",
+    "rebased": "e407993a916736ba7175164e716c824379081c54"
+  },
+  "new_dev_is_ancestor_of_rebased_head": true,
+  "incoming_changed_paths": [
+    "Tests/Architecture/test_module_size_ratchet.py",
+    "backlog/tasks/task-31900 - Dev-regressions-rail-handle-geometry-and-compact-access-display.md",
+    "backlog/tasks/task-36512 - UI-Fast-Lane-shards-3-and-11-time-out-at-the-20-minute-cap-on-PR-runs.md",
+    "backlog/tasks/task-36526 - Bootstrap-profile-Settings-hub-tests-assign-into-the-shared-cached-config.md",
+    "backlog/tasks/task-36530 - The-Settings-snapshot-Save-took-over-5-s-in-a-UI-Fast-Lane-run-with-its-save-worker-still-running.md",
+    "backlog/tasks/task-38111 - Tests-several-UI-and-Chat-test-files-error-at-setup-with-RecoveryRequired-raw_source_selection_changed-when-run-on-their-own.md",
+    "backlog/tasks/task-38230 - Modal-wide-tier-reverse-sweep-is-red-at-its-first-assert.md",
+    "backlog/tasks/task-38640 - Eighteen-module-size-ratchet-rows-are-over-budget-on-dev-nine-of-them-fail-every-PR-s-required-check.md",
+    "backlog/tasks/task-38641 - Two-portrait-modals-keep-their-120-column-width-on-full-screen-terminals.md",
+    "backlog/tasks/task-38642 - First-run-setup-cannot-save-a-keyless-local-provider-whose-config-names-an-unset-key-variable.md",
+    "backlog/tasks/task-38643 - Tests-test_console_inspector_compact_access.py-has-six-reds-on-dev-and-no-lane-runs-it.md",
+    "backlog/tasks/task-38644 - Console-the-late-opened-Inspector-parity-test-can-start-its-second-app-with-the-first-app-s-rail-still-open.md",
+    "backlog/tasks/task-38645 - Console-Send-readiness-tests-assert-before-a-deferred-control-bar-sync-lands.md",
+    "backlog/tasks/task-38646 - Folder-Files-capability-test-asserts-Restore-is-enabled-before-Delete-s-path-transition-ends.md"
+  ],
+  "rebase_changed_paths": [
+    "backlog/tasks/task-31900 - Dev-regressions-rail-handle-geometry-and-compact-access-display.md",
+    "backlog/tasks/task-36512 - UI-Fast-Lane-shards-3-and-11-time-out-at-the-20-minute-cap-on-PR-runs.md",
+    "backlog/tasks/task-36526 - Bootstrap-profile-Settings-hub-tests-assign-into-the-shared-cached-config.md",
+    "backlog/tasks/task-36530 - The-Settings-snapshot-Save-took-over-5-s-in-a-UI-Fast-Lane-run-with-its-save-worker-still-running.md",
+    "backlog/tasks/task-38111 - Tests-several-UI-and-Chat-test-files-error-at-setup-with-RecoveryRequired-raw_source_selection_changed-when-run-on-their-own.md",
+    "backlog/tasks/task-38230 - Modal-wide-tier-reverse-sweep-is-red-at-its-first-assert.md",
+    "backlog/tasks/task-38640 - Eighteen-module-size-ratchet-rows-are-over-budget-on-dev-nine-of-them-fail-every-PR-s-required-check.md",
+    "backlog/tasks/task-38641 - Two-portrait-modals-keep-their-120-column-width-on-full-screen-terminals.md",
+    "backlog/tasks/task-38642 - First-run-setup-cannot-save-a-keyless-local-provider-whose-config-names-an-unset-key-variable.md",
+    "backlog/tasks/task-38643 - Tests-test_console_inspector_compact_access.py-has-six-reds-on-dev-and-no-lane-runs-it.md",
+    "backlog/tasks/task-38644 - Console-the-late-opened-Inspector-parity-test-can-start-its-second-app-with-the-first-app-s-rail-still-open.md",
+    "backlog/tasks/task-38645 - Console-Send-readiness-tests-assert-before-a-deferred-control-bar-sync-lands.md",
+    "backlog/tasks/task-38646 - Folder-Files-capability-test-asserts-Restore-is-enabled-before-Delete-s-path-transition-ends.md"
+  ],
+  "source_manifest_paths": 9684,
+  "before_and_after_manifest_exact": true,
+  "all_current_source_hashes_verified": true,
+  "qa_hashes": {
+    "Tests/QA/test_project_chat_uat.py": "bff4182da1994ceb691a644f7c458fd3fc321d64bf58df51be60670eac985681",
+    "Tests/QA/test_project_chat_uat_support.py": "8f22db83a9ebf3e3c5f2921894f838b1e745b181f07d6fa77c2f48c4c5a93329"
+  },
+  "general_guard_sha256": "c927807f17e803816fb6562bf7996fa0abf33c8069dceee8075a71969146f1f9",
+  "guard_exact_to_published_and_backup": true,
+  "general_guard_rows": 100,
+  "incoming_dev_repins": 18,
+  "raised_caps_vs_reference": {
+    "published": {},
+    "backup": {},
+    "new_dev": {}
+  },
+  "post_rebase_targeted_results": {
+    "size_guard": "201 passed in 2.45s",
+    "CI_contracts": "254 passed in 53.80s"
+  },
+  "evidence_hashes": {
+    "protocol.json": "f6d25586311803c2b3039f777e97c62441b176c784c75e0900976b729e70c571",
+    "rebase-proof.json": "66a736a65f00e6c33462916c69ce906ff980d18ea6ffdc69e454f6d7dc013e89",
+    "source-before.json": "6fe9bb23db7fd6e13c0e227d2defdc676a6209dff60661bda6fb11f28e1ee294",
+    "source-after.json": "6fe9bb23db7fd6e13c0e227d2defdc676a6209dff60661bda6fb11f28e1ee294",
+    "size-guards.log": "91b5337b8cecb2e92ed8f6b0faef9420b7c1c3a9337ebd5786179617a972f14e",
+    "ci-contracts.log": "231bae59a3913c474157f838fd9cf43098f44ee5948db15604050bee15658a5f"
+  },
+  "qualification": "Read-only source/Git/hash/log inspection only; no reviewer app, test, native or performance execution. Exact earlier native evidence remains qualified to these identical runtime/QA bytes; fresh published-head CI pending."
+}

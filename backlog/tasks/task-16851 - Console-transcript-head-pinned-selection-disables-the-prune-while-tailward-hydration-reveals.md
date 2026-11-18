@@ -156,3 +156,6 @@ user's drain (218 of 400 messages stranded, second End resumed).
 updated to the new contract), `Docs/User_Guide/console.md` ("Long
 conversations" prose + stamp), `backlog/docs/lessons-testing-evidence.md`
 (bare-scroll_to walk trap + children-walk-under-lock twin), this file.
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/console.md`: Not re-checked live: shipped tests plus isolated 400/500-message mounted probes only.

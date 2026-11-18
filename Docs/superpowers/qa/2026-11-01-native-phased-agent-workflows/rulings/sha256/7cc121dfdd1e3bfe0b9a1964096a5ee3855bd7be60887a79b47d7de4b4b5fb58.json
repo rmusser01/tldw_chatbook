@@ -1,0 +1,34 @@
+{
+  "checks": [
+    {
+      "command": [
+        ".venv/bin/ruff",
+        "check",
+        "--stdin-filename",
+        "Tests/DB/test_workflow_runs.py",
+        "--output-format",
+        "json",
+        "-"
+      ],
+      "exit": 1,
+      "duration_seconds": 0.007431542035192251,
+      "input_git": "1b5db03c8eee8903cf4fb0e109bade41f49c0b4f:Tests/DB/test_workflow_runs.py",
+      "input_sha256": "9013e0d64fddff902ab6638a680a6a8551dce5e9cf6321a9265e31b4e3a1d811"
+    },
+    {
+      "command": [
+        ".venv/bin/ruff",
+        "format",
+        "--check",
+        "--stdin-filename",
+        "tldw_chatbook/DB/workflow_runs.py",
+        "-"
+      ],
+      "exit": 1,
+      "duration_seconds": 0.006700332975015044,
+      "input_git": "1b5db03c8eee8903cf4fb0e109bade41f49c0b4f:tldw_chatbook/DB/workflow_runs.py",
+      "input_sha256": "1b77b29a2b2107538aa286b8a84c51ed4c4405a303847a238773fcb28f990355"
+    }
+  ],
+  "introduced_lint": 0
+}

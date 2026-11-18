@@ -197,6 +197,7 @@ class DictationCaptureHandle:
 
 def _settled_dispatch_call(function):
     """Retain synchronous paths through their out-of-lock idle callbacks."""
+
     @wraps(function)
     def settled(self, *args, **kwargs):
         with self._lock:
@@ -206,6 +207,7 @@ def _settled_dispatch_call(function):
         finally:
             with self._lock:
                 self._publications -= 1
+
     return settled
 
 
@@ -240,8 +242,11 @@ class LocalSTTDispatchCoordinator:
         """Include held PCM and callback settlement, not only inference."""
         with self._lock:
             return not (
-                self._active_kind or self._reservation or self._pending
-                or self._retry_owners or self._publications
+                self._active_kind
+                or self._reservation
+                or self._pending
+                or self._retry_owners
+                or self._publications
             )
 
     async def maintenance_drain(self, deadline: float) -> bool:
@@ -736,7 +741,9 @@ class LocalSTTDispatchCoordinator:
                     and _RETRY_ACTION in envelope.recovery_actions
                 ):
                     capture.retrying, capture.failure = True, None
-                    self._merge_retry_locked(capture, request.source.audio, request.ends)
+                    self._merge_retry_locked(
+                        capture, request.source.audio, request.ends
+                    )
                     if self._pending is not None and self._pending.capture is capture:
                         self._merge_retry_locked(
                             capture,

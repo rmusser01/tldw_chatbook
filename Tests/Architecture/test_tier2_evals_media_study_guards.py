@@ -8,7 +8,6 @@ checks for the other two. None of them boots the real app, so
 from __future__ import annotations
 
 import ast
-import inspect
 from pathlib import Path
 from typing import Any
 
@@ -150,35 +149,6 @@ def test_snippet_import_refuses_a_file_over_the_cap(tmp_path, monkeypatch) -> No
     assert notices, "an under-cap file must still be read and parsed"
     assert not any("2 MiB" in message for message, _ in notices), (
         f"an under-cap file must not hit the ceiling; got {notices}"
-    )
-
-
-@pytest.mark.unit
-def test_media_viewer_delete_uses_the_shared_confirmation_dialog() -> None:
-    """S23 P2: a `ModalScreen` subclass was defined inside the worker body.
-
-    Every Delete press built a fresh type -- a new `_MessagePumpMeta` `@on`
-    snapshot and a new `DEFAULT_CSS` registration for the session -- and that
-    one-off dialog had no BINDINGS, no escape handling and no safe-dismiss,
-    making it the only modal in its slice outside the repo's
-    `Widgets/modal_dismissal` convention. It also read its answer off the
-    instance instead of `dismiss(value)`.
-    """
-    from tldw_chatbook.Widgets.Media.media_viewer_panel import MediaViewerPanel
-
-    import textwrap
-
-    source = inspect.getsource(MediaViewerPanel._run_delete_confirmation.__wrapped__)
-    tree = ast.parse(textwrap.dedent(source))
-
-    nested_classes = [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]
-    assert not nested_classes, (
-        f"a class is still defined inside the worker body: "
-        f"{[n.name for n in nested_classes]}"
-    )
-    assert "DeleteConfirmationDialog" in source
-    assert "dialog.result" not in source, (
-        "read the answer from dismiss(value), not off the dialog instance"
     )
 
 

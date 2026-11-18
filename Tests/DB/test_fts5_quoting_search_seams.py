@@ -105,11 +105,11 @@ def test_notes_filter_caller_built_expression_still_passes_through(
 
 @pytest.fixture()
 def deck(db: CharactersRAGDB) -> tuple[CharactersRAGDB, str]:
-    deck_id = db.create_deck(name="Deck A")
-    db.create_flashcard(
+    deck_id = db.learning.create_deck(name="Deck A")
+    db.learning.create_flashcard(
         {"deck_id": deck_id, "front": 'what is alpha "beta"?', "back": "gamma"}
     )
-    db.create_flashcard({"deck_id": deck_id, "front": "plain card", "back": "delta"})
+    db.learning.create_flashcard({"deck_id": deck_id, "front": "plain card", "back": "delta"})
     return db, deck_id
 
 
@@ -118,14 +118,14 @@ def test_flashcard_search_box_does_not_raise_operationalerror(
 ) -> None:
     """Base raised a bare sqlite3.OperationalError into the Study screen."""
     database, deck_id = deck
-    assert database.list_flashcards(deck_id=deck_id, q=ORDINARY_QUOTED) == []
+    assert database.learning.list_flashcards(deck_id=deck_id, q=ORDINARY_QUOTED) == []
 
 
 def test_flashcard_search_box_finds_a_card_whose_front_contains_a_quote(
     deck: tuple[CharactersRAGDB, str],
 ) -> None:
     database, deck_id = deck
-    rows = database.list_flashcards(deck_id=deck_id, q="beta")
+    rows = database.learning.list_flashcards(deck_id=deck_id, q="beta")
     assert [row["front"] for row in rows] == ['what is alpha "beta"?']
 
 
@@ -133,15 +133,15 @@ def test_flashcard_search_box_ignores_a_typed_column_filter(
     deck: tuple[CharactersRAGDB, str],
 ) -> None:
     database, deck_id = deck
-    assert database.list_flashcards(deck_id=deck_id, q='alpha" OR back:"delta') == []
+    assert database.learning.list_flashcards(deck_id=deck_id, q='alpha" OR back:"delta') == []
 
 
 def test_search_flashcards_is_swept_with_its_sibling(
     deck: tuple[CharactersRAGDB, str],
 ) -> None:
     database, _deck_id = deck
-    assert database.search_flashcards(ORDINARY_QUOTED) == []
-    assert len(database.search_flashcards("alpha")) == 1
+    assert database.learning.search_flashcards(ORDINARY_QUOTED) == []
+    assert len(database.learning.search_flashcards("alpha")) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -193,18 +193,18 @@ def test_conversation_title_search_binds_the_quoted_term(
     db: CharactersRAGDB,
 ) -> None:
     _seed_for_dead_store(db)
-    assert [
-        row["title"] for row in db.search_conversations_by_title("dragons")
-    ] == ["Talk about dragons"]
+    assert [row["title"] for row in db.search_conversations_by_title("dragons")] == [
+        "Talk about dragons"
+    ]
     assert db.search_conversations_by_title("dragons OR nothing") == []
     assert db.search_conversations_by_title(ORDINARY_QUOTED) == []
 
 
 def test_message_content_search_binds_the_quoted_term(db: CharactersRAGDB) -> None:
     _seed_for_dead_store(db)
-    assert [
-        row["content"] for row in db.search_messages_by_content("world")
-    ] == ["hello world"]
+    assert [row["content"] for row in db.search_messages_by_content("world")] == [
+        "hello world"
+    ]
     assert db.search_messages_by_content("world OR nothing") == []
     assert db.search_messages_by_content(ORDINARY_QUOTED) == []
 
@@ -248,8 +248,8 @@ def test_every_chachanotes_search_seam_survives_a_quote(
     _seed_for_dead_store(db)
     db.add_note(title="n", content="c")
     db.add_keyword("k")
-    deck_id = db.create_deck(name="D")
-    db.create_flashcard({"deck_id": deck_id, "front": "f", "back": "b"})
+    deck_id = db.learning.create_deck(name="D")
+    db.learning.create_flashcard({"deck_id": deck_id, "front": "f", "back": "b"})
     probes = (
         lambda q: db.search_notes(q),
         lambda q: db.search_character_cards(q),
@@ -258,8 +258,8 @@ def test_every_chachanotes_search_seam_survives_a_quote(
         lambda q: db.search_messages_by_content(q),
         lambda q: db.search_keywords(q),
         lambda q: db.search_keyword_collections(q),
-        lambda q: db.list_flashcards(q=q),
-        lambda q: db.search_flashcards(q),
+        lambda q: db.learning.list_flashcards(q=q),
+        lambda q: db.learning.search_flashcards(q),
     )
     for probe in probes:
         assert probe(ORDINARY_QUOTED) == []
@@ -314,9 +314,7 @@ def test_task_search_still_finds_plain_terms(evals_db: EvalsDB) -> None:
         config_format="custom",
         config_data={},
     )
-    assert [row["name"] for row in evals_db.search_tasks("math")] == [
-        "math evaluation"
-    ]
+    assert [row["name"] for row in evals_db.search_tasks("math")] == ["math evaluation"]
 
 
 # ---------------------------------------------------------------------------
@@ -525,7 +523,7 @@ def test_no_search_seam_leaks_a_raw_operationalerror(db: CharactersRAGDB) -> Non
     for query in (ORDINARY_QUOTED, COLUMN_FILTER_INJECTION, '"', '""', 'a"b"c'):
         try:
             db.search_notes(query)
-            db.list_flashcards(q=query)
+            db.learning.list_flashcards(q=query)
         except sqlite3.OperationalError as exc:  # pragma: no cover - guard
             pytest.fail(f"raw sqlite error for {query!r}: {exc}")
 
@@ -561,7 +559,9 @@ def recall_corpus(db: CharactersRAGDB) -> CharactersRAGDB:
     is the entire difference, isolated.
     """
     db.add_character_card({"name": "dragon lore keeper", "description": "adjacent"})
-    db.add_character_card({"name": "lore of the dragon reversed", "description": "split"})
+    db.add_character_card(
+        {"name": "lore of the dragon reversed", "description": "split"}
+    )
     conversation = db.add_conversation(
         {"title": "dragon lore session", "character_id": 1}
     )
@@ -569,7 +569,11 @@ def recall_corpus(db: CharactersRAGDB) -> CharactersRAGDB:
         {"title": "lore about the dragon reversed", "character_id": 1}
     )
     db.add_message(
-        {"conversation_id": conversation, "sender": "user", "content": "dragon lore here"}
+        {
+            "conversation_id": conversation,
+            "sender": "user",
+            "content": "dragon lore here",
+        }
     )
     db.add_message(
         {
@@ -578,9 +582,11 @@ def recall_corpus(db: CharactersRAGDB) -> CharactersRAGDB:
             "content": "lore of the dragon reversed",
         }
     )
-    deck_id = db.create_deck(name="Deck R")
-    db.create_flashcard({"deck_id": deck_id, "front": "dragon lore adjacent", "back": "x"})
-    db.create_flashcard(
+    deck_id = db.learning.create_deck(name="Deck R")
+    db.learning.create_flashcard(
+        {"deck_id": deck_id, "front": "dragon lore adjacent", "back": "x"}
+    )
+    db.learning.create_flashcard(
         {"deck_id": deck_id, "front": "lore of the dragon reversed", "back": "y"}
     )
     db.add_note(title="dragon lore adjacent", content="a")
@@ -604,12 +610,22 @@ def test_multi_word_search_still_matches_non_adjacent_words(
 ) -> None:
     """The regression, per seam: both records, not just the adjacent one."""
     callers = {
-        "search_character_cards": lambda q: recall_corpus.search_character_cards(q, limit=50),
-        "search_conversations_by_title": lambda q: recall_corpus.search_conversations_by_title(q, limit=50),
-        "search_conversations_by_content": lambda q: recall_corpus.search_conversations_by_content(q, limit=50),
-        "search_messages_by_content": lambda q: recall_corpus.search_messages_by_content(q, limit=50),
-        "list_flashcards": lambda q: recall_corpus.list_flashcards(q="dragon lore", limit=50),
-        "search_flashcards": lambda q: recall_corpus.search_flashcards(q),
+        "search_character_cards": lambda q: recall_corpus.search_character_cards(
+            q, limit=50
+        ),
+        "search_conversations_by_title": lambda q: (
+            recall_corpus.search_conversations_by_title(q, limit=50)
+        ),
+        "search_conversations_by_content": lambda q: (
+            recall_corpus.search_conversations_by_content(q, limit=50)
+        ),
+        "search_messages_by_content": lambda q: (
+            recall_corpus.search_messages_by_content(q, limit=50)
+        ),
+        "list_flashcards": lambda q: recall_corpus.learning.list_flashcards(
+            q="dragon lore", limit=50
+        ),
+        "search_flashcards": lambda q: recall_corpus.learning.search_flashcards(q),
     }
     assert len(callers[seam]("dragon lore")) == 2, (
         f"{seam}: multi-word search lost the record whose words are not "
@@ -651,8 +667,8 @@ def test_and_form_keeps_every_injection_closed(
         lambda q: recall_corpus.search_conversations_by_title(q, limit=50),
         lambda q: recall_corpus.search_conversations_by_content(q, limit=50),
         lambda q: recall_corpus.search_messages_by_content(q, limit=50),
-        lambda q: recall_corpus.list_flashcards(q=q, limit=50),
-        lambda q: recall_corpus.search_flashcards(q),
+        lambda q: recall_corpus.learning.list_flashcards(q=q, limit=50),
+        lambda q: recall_corpus.learning.search_flashcards(q),
     )
     for probe in probes:
         # `dragon` alone matches both records, so a live OR would return them.
@@ -686,8 +702,8 @@ def test_a_nul_byte_returns_no_rows_rather_than_unterminated_string(
         lambda q: recall_corpus.search_conversations_by_title(q, limit=50),
         lambda q: recall_corpus.search_conversations_by_content(q, limit=50),
         lambda q: recall_corpus.search_messages_by_content(q, limit=50),
-        lambda q: recall_corpus.list_flashcards(q=q, limit=50),
-        lambda q: recall_corpus.search_flashcards(q),
+        lambda q: recall_corpus.learning.list_flashcards(q=q, limit=50),
+        lambda q: recall_corpus.learning.search_flashcards(q),
         lambda q: recall_corpus.search_notes(q, limit=50),
         lambda q: recall_corpus.search_keywords(q, limit=50),
         lambda q: recall_corpus.search_keyword_collections(q, limit=50),
@@ -733,8 +749,8 @@ def test_none_returns_no_rows_rather_than_a_bare_attributeerror(
         lambda: recall_corpus.search_conversations_by_title(None, limit=50),
         lambda: recall_corpus.search_conversations_by_content(None, limit=50),
         lambda: recall_corpus.search_messages_by_content(None, limit=50),
-        lambda: recall_corpus.search_flashcards(None),
-        lambda: recall_corpus.list_flashcards(q=None, limit=50),
+        lambda: recall_corpus.learning.search_flashcards(None),
+        lambda: recall_corpus.learning.list_flashcards(q=None, limit=50),
     )
     for index, probe in enumerate(probes):
         result = probe()
@@ -754,8 +770,8 @@ def test_punctuation_only_search_returns_no_rows_rather_than_raising(
         lambda q: recall_corpus.search_character_cards(q, limit=50),
         lambda q: recall_corpus.search_conversations_by_title(q, limit=50),
         lambda q: recall_corpus.search_messages_by_content(q, limit=50),
-        lambda q: recall_corpus.list_flashcards(q=q, limit=50),
-        lambda q: recall_corpus.search_flashcards(q),
+        lambda q: recall_corpus.learning.list_flashcards(q=q, limit=50),
+        lambda q: recall_corpus.learning.search_flashcards(q),
         lambda q: recall_corpus.search_notes(q, limit=50),
     )
     for probe in probes:

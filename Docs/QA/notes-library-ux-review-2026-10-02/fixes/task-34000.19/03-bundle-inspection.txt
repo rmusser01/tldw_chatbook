@@ -1,0 +1,34 @@
+statistics: {'total_conversations': 2, 'total_notes': 122, 'total_characters': 0, 'total_media_items': 23, 'total_prompts': 0, 'total_kept_briefings': 0, 'total_size_bytes': 0}
+media: 23 items, 23 with tags
+  ('media', 'A field guide to Markdown tables', tags=['article', 'seed']) file=content/media/metadata/media_1.json
+  ('media', 'Voice memo 2026-09-29', tags=['audio', 'seed']) file=content/media/metadata/media_2.json
+note: 122 items, 120 with tags
+  ('note', 'Paper notes 08', tags=['research']) file=content/notes/Paper notes 08.md
+  ('note', 'Study card 07', tags=['study']) file=content/notes/Study card 07.md
+conversation: 2 items, 2 with tags
+  ('conversation', 'Release notes draft v1.0', tags=['launch']) file=content/conversations/conversation_6f048737-fbca-4761-823c-28efe7ce75f1.json
+  ('conversation', 'Japanese study plan', tags=['japanese']) file=content/conversations/conversation_b86e5fc8-3388-4e8f-9f61-1260d79d1cb0.json
+media 1 metadata.media_keywords = ['article', 'seed']
+media 2 metadata.media_keywords = ['audio', 'seed']
+--- head -8 content/notes/Paper notes 08.md
+---
+id: 03a67eac-9167-4f91-8660-63dc4bc7bb2d
+title: Paper notes 08
+created_at: 2026-10-22T19:40:27.862000+00:00
+updated_at: 2026-10-22T19:40:27.862000+00:00
+tags: research
+---
+--- head -8 content/notes/Study card 07.md
+---
+id: 04903ccc-a74c-4bcf-bc66-bb342d14244f
+title: Study card 07
+created_at: 2026-10-22T19:40:27.890000+00:00
+updated_at: 2026-10-22T19:40:27.890000+00:00
+tags: study
+---
+conversation 'Release notes draft v1.0' keywords = ['launch']
+conversation 'Japanese study plan' keywords = ['japanese']
+media items without tags: 0
+--- AC#4 live arm: notes with no keywords
+  ('Scratch', tags=[]) frontmatter has tags line: False
+  ('Untitled', tags=[]) frontmatter has tags line: False

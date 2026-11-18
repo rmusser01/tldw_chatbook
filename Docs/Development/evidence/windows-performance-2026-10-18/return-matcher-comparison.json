@@ -1,0 +1,157 @@
+{
+  "control1": {
+    "input_ms": [
+      172.39009999320842,
+      188.6948999890592,
+      270.5529000086244,
+      145.88289998937398,
+      190.83770000725053,
+      239.31840001023374
+    ],
+    "median_input_ms": 189.76629999815486,
+    "worst_input_ms": 270.5529000086244,
+    "median_attach_ms": 1118.9495500148041,
+    "median_max_heartbeat_ms": 123.88420000206679,
+    "all_drafts_retained": true,
+    "all_attached": true,
+    "network_attempts": 0,
+    "profile_refusals": 0,
+    "exit_code": 0,
+    "sample_counts": {
+      "_check_selectors": 5,
+      "_check_subject_pseudo_classes": 7,
+      "_config_file_posture": 9,
+      "_build_console_inspector_state": 3,
+      "_unread_notification_count": 0,
+      "_checked_display_status": 1
+    }
+  },
+  "after1": {
+    "input_ms": [
+      167.50159999355674,
+      170.0383999850601,
+      204.53709998400882,
+      223.9768000144977,
+      170.6642999779433,
+      154.59239998017438
+    ],
+    "median_input_ms": 170.3513499815017,
+    "worst_input_ms": 223.9768000144977,
+    "median_attach_ms": 1308.2637000043178,
+    "median_max_heartbeat_ms": 153.16014998825267,
+    "all_drafts_retained": true,
+    "all_attached": true,
+    "network_attempts": 0,
+    "profile_refusals": 0,
+    "exit_code": 0,
+    "sample_counts": {
+      "_check_selectors": 1,
+      "_check_subject_pseudo_classes": 6,
+      "_config_file_posture": 8,
+      "_build_console_inspector_state": 3,
+      "_unread_notification_count": 0,
+      "_checked_display_status": 0
+    }
+  },
+  "after2": {
+    "input_ms": [
+      165.1731000165455,
+      201.78380000288598,
+      165.42140001547523,
+      155.4578000213951,
+      169.64939999161288,
+      166.98450001422316
+    ],
+    "median_input_ms": 166.2029500148492,
+    "worst_input_ms": 201.78380000288598,
+    "median_attach_ms": 1128.202699997928,
+    "median_max_heartbeat_ms": 96.34859999641776,
+    "all_drafts_retained": true,
+    "all_attached": true,
+    "network_attempts": 0,
+    "profile_refusals": 0,
+    "exit_code": 0,
+    "sample_counts": {
+      "_check_selectors": 3,
+      "_check_subject_pseudo_classes": 7,
+      "_config_file_posture": 5,
+      "_build_console_inspector_state": 4,
+      "_unread_notification_count": 0,
+      "_checked_display_status": 1
+    }
+  },
+  "control2": {
+    "input_ms": [
+      164.88979998393916,
+      179.31020000833087,
+      165.98720001638867,
+      169.45909999776632,
+      171.8778999929782,
+      160.13219999149442
+    ],
+    "median_input_ms": 167.7231500070775,
+    "worst_input_ms": 179.31020000833087,
+    "median_attach_ms": 1237.480499999947,
+    "median_max_heartbeat_ms": 99.80769999674521,
+    "all_drafts_retained": true,
+    "all_attached": true,
+    "network_attempts": 0,
+    "profile_refusals": 0,
+    "exit_code": 0,
+    "sample_counts": {
+      "_check_selectors": 5,
+      "_check_subject_pseudo_classes": 8,
+      "_config_file_posture": 14,
+      "_build_console_inspector_state": 8,
+      "_unread_notification_count": 0,
+      "_checked_display_status": 1
+    }
+  },
+  "benchmark": {
+    "nodes": 513,
+    "warm_ms": {
+      "before": [
+        114.94570001377724,
+        89.95039999717847,
+        89.67190000112168,
+        98.68049999931827
+      ],
+      "after": [
+        110.13950000051409,
+        93.55910000158474,
+        87.36019997741096,
+        90.12939999229275
+      ]
+    },
+    "cold_ms": {
+      "before": [
+        243.68680000770837,
+        149.93529999628663,
+        126.6190999886021,
+        182.09449999267235
+      ],
+      "after": [
+        131.9489000015892,
+        135.71470000897534,
+        122.14920000405982,
+        134.24089999170974
+      ]
+    },
+    "style_mismatches": 0,
+    "matcher": {
+      "after": {
+        "calls": 4191,
+        "matches": 2040,
+        "total_instrumented_ms": 17.55249866982922
+      },
+      "before": {
+        "calls": 4191,
+        "matches": 2040,
+        "total_instrumented_ms": 23.837599699618295
+      }
+    },
+    "network_attempts": 0,
+    "profile_refusals": 0,
+    "exit_code": 0
+  }
+}

@@ -119,10 +119,14 @@ async def test_console_branching_full_lifecycle_persist_resume_swipe(tmp_path):
         assert a1_prime_count == 2 and a1_prime_index == 1  # "2/2"
         a1_sibs, a1_index, a1_count = store.siblings_at(a1.id)
         assert a1_count == 2 and a1_index == 0  # "1/2"
-        assert {s.id for s in a1_prime_sibs} == {s.id for s in a1_sibs} == {
-            a1.id,
-            a1_prime_id,
-        }
+        assert (
+            {s.id for s in a1_prime_sibs}
+            == {s.id for s in a1_sibs}
+            == {
+                a1.id,
+                a1_prime_id,
+            }
+        )
         assert [m.content for m in store.messages_for_session(session.id)] == [
             "U1",
             "A1-prime",

@@ -46,7 +46,7 @@ from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
     is_curated_audio_cpp_artifact_reference,
 )
 from tldw_chatbook.Model_Artifacts.store import managed_service
-from tldw_chatbook.UI.Screens.model_browser_state import (
+from tldw_chatbook.Model_Artifacts.model_browser_state import (
     InventoryRow,
     UnmanagedRow,
     format_mib,
@@ -1759,8 +1759,7 @@ class InstalledView(Widget):
             logger.warning("Managed model deletion blocked by a lease")
         else:
             logger.error(
-                "Managed model deletion failed "
-                "(error_type={}, code=operation_failed)",
+                "Managed model deletion failed (error_type={}, code=operation_failed)",
                 type(exc).__name__,
             )
         return lifecycle_failure_message(exc, operation="deletion")

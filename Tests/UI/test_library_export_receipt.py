@@ -250,15 +250,15 @@ async def test_apply_library_export_counts_patches_tooltip_alongside_disabled():
         # task-32055: the canvas state now renders the structural wait's own
         # line while an export runs, and the completion path clears the wait.
         fake._library_structural_waits = {}
-        fake._library_export_status_line = (
-            lambda: LibraryScreen._library_export_status_line(fake)
+        fake._library_export_status_line = lambda: (
+            LibraryScreen._library_export_status_line(fake)
         )
-        fake._library_structural_wait_for = (
-            lambda owner: LibraryScreen._library_structural_wait_for(fake, owner)
+        fake._library_structural_wait_for = lambda owner: (
+            LibraryScreen._library_structural_wait_for(fake, owner)
         )
         fake._end_library_structural_wait = lambda owner: None
-        fake._build_library_export_state = (
-            lambda: LibraryScreen._build_library_export_state(fake)
+        fake._build_library_export_state = lambda: (
+            LibraryScreen._build_library_export_state(fake)
         )
 
         LibraryScreen._apply_library_export_counts(
@@ -332,24 +332,22 @@ async def test_update_library_export_canvas_after_run_patches_receipt_and_toolti
             query=pilot.app.query,
         )
         fake._library_structural_waits = {}
-        fake._library_export_status_line = (
-            lambda: LibraryScreen._library_export_status_line(fake)
+        fake._library_export_status_line = lambda: (
+            LibraryScreen._library_export_status_line(fake)
         )
-        fake._library_structural_wait_for = (
-            lambda owner: LibraryScreen._library_structural_wait_for(fake, owner)
+        fake._library_structural_wait_for = lambda owner: (
+            LibraryScreen._library_structural_wait_for(fake, owner)
         )
         fake._end_library_structural_wait = lambda owner: None
-        fake._build_library_export_state = (
-            lambda: LibraryScreen._build_library_export_state(fake)
+        fake._build_library_export_state = lambda: (
+            LibraryScreen._build_library_export_state(fake)
         )
 
         LibraryScreen._update_library_export_canvas_after_run(fake)
 
         last_line = pilot.app.query_one("#library-export-last-line", Static)
         assert last_line.display is True
-        assert "✓ exported · 2 items · 3 KB · /tmp/out.zip" in str(
-            last_line.render()
-        )
+        assert "✓ exported · 2 items · 3 KB · /tmp/out.zip" in str(last_line.render())
         button = pilot.app.query_one("#library-export-submit", Button)
         assert button.disabled is False
         assert button.tooltip == EXPORT_BUTTON_READY_TOOLTIP
@@ -495,20 +493,25 @@ def test_restore_state_rejects_impossible_receipt_counts():
     saved = restored.save_state()
     assert saved["library_export_last_items"] is None
     assert saved["library_export_last_bytes"] is None
-    assert format_last_export_line(
-        restored._export_state.last_path,
-        restored._export_state.last_at,
-        now=12345.0,
-        item_count=restored._export_state.last_items,
-        size_bytes=restored._export_state.last_bytes,
-    ) == "Last export: /tmp/prior.zip · just now"
+    assert (
+        format_last_export_line(
+            restored._export_state.last_path,
+            restored._export_state.last_at,
+            now=12345.0,
+            item_count=restored._export_state.last_items,
+            size_bytes=restored._export_state.last_bytes,
+        )
+        == "Last export: /tmp/prior.zip · just now"
+    )
 
 
 def test_receipt_copy_is_singular_for_one_item():
     """A one-item export reads "1 item", and a one-item failed selection
     reads "1 item was selected" -- the receipts never say "1 items"."""
     assert (
-        format_last_export_line("/tmp/one.zip", 0.0, now=0.0, item_count=1, size_bytes=2048)
+        format_last_export_line(
+            "/tmp/one.zip", 0.0, now=0.0, item_count=1, size_bytes=2048
+        )
         == "✓ exported · 1 item · 2 KB · /tmp/one.zip"
     )
     assert (
@@ -551,10 +554,8 @@ def test_choosing_an_unwritable_destination_refuses_it_with_a_reason(tmp_path):
         _library_export_form=form,
         refresh=lambda **kwargs: refreshed.append(True),
     )
-    fake._refuse_library_export_destination = (
-        lambda reason: LibraryExportController._refuse_library_export_destination(
-            fake, reason
-        )
+    fake._refuse_library_export_destination = lambda reason: (
+        LibraryExportController._refuse_library_export_destination(fake, reason)
     )
 
     LibraryExportController._apply_library_export_destination(
@@ -576,9 +577,7 @@ def test_choosing_a_writable_destination_clears_any_previous_reason(tmp_path):
         refresh=lambda **kwargs: None,
     )
 
-    LibraryExportController._apply_library_export_destination(
-        fake, tmp_path / "bundle"
-    )
+    LibraryExportController._apply_library_export_destination(fake, tmp_path / "bundle")
 
     assert form["destination"] == str(tmp_path / "bundle.zip")
     assert form["destination_error"] == ""

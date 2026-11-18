@@ -14,12 +14,13 @@ from typing import Any, Iterator, Mapping
 
 from loguru import logger
 
+from tldw_chatbook.DB import declare_store
 from tldw_chatbook.Backup_Recovery.participants import (
-    _core_access,
-    _core_cached_connection,
-    _core_getter,
-    _core_transaction,
-    _register_core_connection,
+    core_access,
+    core_cached_connection,
+    core_getter,
+    core_transaction,
+    register_core_connection,
 )
 from tldw_chatbook.DB.base_db import BaseDB
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
@@ -102,6 +103,18 @@ class EventReplayWindow:
     updated_at: str | None = None
 
 
+def _thread_cache(store):
+    """This thread's held connection once no scope uses it, for backup retirement."""
+    with store._held_lock:
+        entry = store._held.get(threading.get_ident())
+        return None if entry is None or entry.depth else entry.conn
+
+
+@declare_store(
+    "runtime.event_state",
+    thread_cache=_thread_cache,
+    policy="notifications.event_state",
+)
 class EventStateRepository(BaseDB):
     """Durable event rows, dedupe records, cursors, and presentation watermarks.
 
@@ -172,7 +185,7 @@ class EventStateRepository(BaseDB):
             self._initialize_schema()
             self._schema_ready = True
 
-    @_core_getter
+    @core_getter
     def _get_connection(self) -> sqlite3.Connection:
         self._ensure_schema()
         return self._open_connection()
@@ -213,15 +226,15 @@ class EventStateRepository(BaseDB):
         # are handed to ``close()`` on another thread; sqlite3's default
         # guard would refuse that and leave every worker-pool connection
         # open for the life of the process.
-        _core_access(self)
+        core_access(self)
         conn = connect_private_sqlite(
             "notifications.event_state",
             self.db_path_str,
             check_same_thread=False,
         )
-        _register_core_connection(self, conn)
+        register_core_connection(self, conn)
         try:
-            _core_access(self)
+            core_access(self)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA journal_mode = WAL")
             # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
@@ -236,7 +249,7 @@ class EventStateRepository(BaseDB):
             # DML on close.
             conn.isolation_level = None
             conn.execute("PRAGMA foreign_keys = ON")
-            _core_access(self)
+            core_access(self)
         except BaseException:
             conn.close()
             raise
@@ -263,11 +276,11 @@ class EventStateRepository(BaseDB):
                 entry.last_used = time.monotonic()
                 return entry
 
-        _core_access(self)
+        core_access(self)
         key = threading.get_ident()
         with self._held_lock:
             entry = self._held.get(key)
-            if entry is not None and _core_cached_connection(self, entry.conn) is None:
+            if entry is not None and core_cached_connection(self, entry.conn) is None:
                 del self._held[key]
                 entry = None
         if entry is not None and (
@@ -289,7 +302,7 @@ class EventStateRepository(BaseDB):
         entry.last_used = time.monotonic()
         return entry
 
-    @_core_transaction
+    @core_transaction
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
         """Yield this thread's held connection (no transaction opened).
@@ -416,9 +429,7 @@ class EventStateRepository(BaseDB):
         try:
             conn.close()
         except Exception as exc:  # noqa: BLE001 - best-effort teardown
-            logger.debug(
-                "Event state connection close failed: {}", type(exc).__name__
-            )
+            logger.debug("Event state connection close failed: {}", type(exc).__name__)
 
     def _initialize_schema(self) -> None:
         # Raw connection: runs under _ensure_schema's lock (TASK-21105), so

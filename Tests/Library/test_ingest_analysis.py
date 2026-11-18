@@ -131,9 +131,10 @@ def test_display_name_variants_normalize_to_dispatch_names() -> None:
 
 
 def test_ready_but_undispatchable_provider_is_rejected_with_reason() -> None:
-    """``custom`` is keyless-known to the readiness gate but has no chat
-    dispatch handler: the seam must reject it, not let it error at runtime."""
-    config = {"analysis_defaults": {"provider": "custom"}}
+    """``local_onnx`` is keyless-known to the readiness gate but has no chat
+    dispatch handler: the seam must reject it, not let it error at runtime.
+    (``custom`` was the example until TASK-41143 mapped it to its handler.)"""
+    config = {"analysis_defaults": {"provider": "local_onnx"}}
 
     resolution = resolve_ingest_analysis_provider(config, environ={})
 

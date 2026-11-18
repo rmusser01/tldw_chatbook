@@ -16,7 +16,7 @@ dependencies:
 references:
   - Docs/superpowers/specs/2026-08-23-research-workspace-design.md
   - Docs/superpowers/plans/2026-08-23-research-workspace-grounded-chat.md
-  - backlog/decisions/078-research-workspace-authority-and-screen-boundaries.md
+  - backlog/decisions/322-research-workspace-authority-and-screen-boundaries.md
 priority: high
 ---
 
@@ -44,9 +44,9 @@ Add a persistent, evidence-focused workspace conversation that can answer genera
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: no new ADR
 
-ADR path: `backlog/decisions/078-research-workspace-authority-and-screen-boundaries.md`
+ADR path: `backlog/decisions/322-research-workspace-authority-and-screen-boundaries.md`
 
-Reason: ADR-078 already fixes chat ownership, server-side processing, local egress disclosure, no-tools scope, and async fencing. This phase adds no new provider or persistence boundary.
+Reason: ADR-322 already fixes chat ownership, server-side processing, local egress disclosure, no-tools scope, and async fencing. This phase adds no new provider or persistence boundary.
 
 Follow `Docs/superpowers/plans/2026-08-23-research-workspace-grounded-chat.md` task-by-task with test-first checkpoints and one scoped commit per completed plan task.
 <!-- SECTION:PLAN:END -->

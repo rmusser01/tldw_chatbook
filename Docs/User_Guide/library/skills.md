@@ -52,7 +52,8 @@ The list canvas, top to bottom:
 - **Filter** — "Filter skills… (Enter)".
 - **Toolbar** — "sort: Name" / "sort: Status" (press to open a one-row
   strip of Name / Status with ✓ on the active one and pick directly;
-  Status puts needs-review skills first) and "Import skill…".
+  Status puts needs-review skills first) and "Import skill…". Escape
+  closes an open sort strip without changing the sort.
 - **Rows** — one per skill: **⚠ name** (blocked — needs review before use)
   or **✓ name** (usable), each followed by its trust state in words —
   `· trusted`, `· needs review`, or `· locked` — and a dimmer description
@@ -67,7 +68,10 @@ Select a row with **Enter** to open **Overview** in the work pane. Choose
 **Edit**, **Trust**, or **Files** above it for that part of the Skill. The list
 stays mounted beside the work pane. At narrow widths, the vertical **Skills**
 grip reveals the list; **Back to list**, **Discard changes**, and new-draft
-**Cancel** reveal it and return keyboard focus there.
+**Cancel** reveal it and return keyboard focus there. Below 64 columns with no
+Skill open, the list takes the whole stage. With a Skill open, the grip gives
+the list the whole stage rather than squeezing the work pane beside it, and
+the same grip returns to the Skill with focus in it.
 
 ## Features & controls
 
@@ -174,7 +178,8 @@ selected skill into the local skill store and never executes repository code.
 - Success: `Imported "name" · re-review it in the trust panel`, with a
   follow-up button `Review "name"…` that jumps straight to its trust
   panel. **Every import lands trust-pending** — it cannot run until you
-  review and approve it.
+  review and approve it. The list and the rail's Skills count update in
+  place.
 - Failures you may see: "Could not find that file or folder.", "No
   SKILL.md found in that folder.", "Could not read that file.",
   "Unsupported file type.", "Skill import is unavailable.", and
@@ -241,7 +246,7 @@ Basic                                  Advanced
 │ Name                         │       │ Basic fields remain mounted  │
 │ Description                  │       │ Run context                  │
 │ Instructions                 │       │ Restrict tools   [Filter…]   │
-│ You can invoke       [on/off]│       │ ┌ SelectionList (bounded) ┐  │
+│ User can invoke      [on/off]│       │ ┌ SelectionList (bounded) ┐  │
 │ Agent can invoke     [on/off]│       │ │ [x] calculator          │  │
 │ Argument hint (when useful)  │       │ │ [x] old-tool unavailable│  │
 │ Trust summary / safe action  │       │ └──────────────────────────┘  │
@@ -256,8 +261,10 @@ Basic fields:
   create a new Skill instead.
 - **Description** — optional list summary.
 - **Instructions** — the Skill's `SKILL.md` body.
-- **You can invoke** and **Agent can invoke** — independent choices. Turning
+- **User can invoke** and **Agent can invoke** — independent choices. Turning
   both off makes the Skill reference-only; the editor says so explicitly.
+  Each is a one-press toggle whose label shows both options with ✓ on the
+  active one ("User can invoke: ✓ yes ⇄ no").
 - **Argument hint** — shown when user invocation is enabled.
 - **Trust** — a healthy Skill is one compact line plus **View details**.
   Changed, blocked, quarantined, script-enabled, or otherwise actionable
@@ -303,7 +310,9 @@ this skill. Try again." If the skill changed elsewhere while you were
 editing, a banner offers one way out: "This skill changed elsewhere —
 Reload discards your edit and refetches it." with a **Reload** button.
 Leaving with unsaved edits is refused: "Unsaved skill changes — Save or
-Discard changes first." **Discard changes** returns to the saved Skill list
+Discard changes first." Quitting with **Ctrl+Q** asks 'Quit and discard
+unsaved changes to "<name>"?' instead, with **Keep editing** selected.
+**Discard changes** returns to the saved Skill list
 without writing the draft; **Cancel** abandons a new Skill and returns to Browse
 Skills. After an existing Skill saves, keyboard focus moves from Save to **Back
 to list**. A field or pane selected while saving keeps focus. Text entered
@@ -475,59 +484,3 @@ through (Esc also cancels the passphrase dialogs).
   project_skills_prompt_enabled = false` in `config.toml` if you don't want
   Chatbook checking project directories for skill folders at startup or on
   workspace creation.
-
-—
-*Verified against dev @ bd05a692a — 2026-07-31*
-
-*Verified against feat/library-queue-batch @ 0662e09f5 — 2026-08-11
-(task-14902: the list's sort control converged on the Library
-chooser-strip pattern (press → Name / Status with ✓ on the active one,
-direct pick, Escape cancels); the editor's three two-state switches stay
-one-press toggles with their full option set now on the label —
-"User can invoke: ✓ yes ⇄ no" — so the option space is on screen.)*
-
-*Verified against feat/project-skills-import @ 964cb04df — 2026-08-18
-(task-18705: documented the new "Project skills (`.SKILLS/`)" convention —
-per-project discovery at startup and workspace creation, the fingerprint
-gated prompt ledger, the quarantine/trust-review expectation, and the
-`[skills] project_skills_prompt_enabled` kill-switch.)*
-
-*Verified against fix/media-riders-n — 2026-09-07 (task-31951: the Skills
-reader's two pane grips are one column each, painting `‹`/`›` instead of the
-five-column `<---`/`--->` run; opened live at 235x52.)*
-
-*Verified against fix/library-crit8-polish-shell — 2026-09-08 (task-32058: an
-accepted skill import now updates the rail count **and** the mounted list in
-place — the list previously kept its old rows until you left the Skills row and
-came back.)*
-
-*Verified against fix/library-crit8-docs — 2026-09-08 (task-32073: the
-Library-wide "Chunking Lab | Try selected text" header strip, which paints
-on this canvas too, was undocumented everywhere; it is described once on
-the [Library overview](../library.md) and cross-referenced here. No other
-claim on this page changed.)*
-
-*Verified against fix/library-crit8-waits — 2026-09-08 (task-32055: a skill
-import that outlives the patience window offers Cancel and never blocks
-leaving the screen).*
-
-*Verified against fix/library-crit8-riders-a — 2026-09-10 (task-32102: a
-cancelled import refreshes the skills list its own receipt tells you to
-check.)*
-
-*Verified against fix/library-crit9-shell — 2026-09-10 (task-32223: a list
-row carries its trust state as a word, so an approved and an unapproved skill
-no longer paint alike; task-32217: with no skill open the list takes the
-columns the "Select a skill to inspect it here." pane was holding).*
-
-*Verified against fix/library-crit10-pagers — 2026-09-11 (task-32363: the
-trust banner says that with no trust store every skill reads "needs review",
-so an approval made earlier is unverifiable rather than lost; task-32354: the
-Skills pager drops "Page 1 of 1", its boundary reasons and the two dead
-controls when everything fits on one page).*
-
-*Verified against feat/character-card-tools @ d35ffeaa04 — 2026-09-25
-(TASK-32954: "Built-in skills" added — the Built-in badge, the read-only
-preview with **Customize** and **Enabled**, "Built-in · Disabled" rows, and
-"overrides built-in" on a customized copy; the trust banner now says only
-the skills you added read "needs review").*

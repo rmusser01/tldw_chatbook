@@ -1,0 +1,23 @@
+{
+  "query": "What colored lights were used during the practice run?",
+  "scope": "media only",
+  "status": "ready",
+  "runtime_backend": "rag-hybrid",
+  "diagnostics": {
+    "semantic_scope_coverage": {
+      "covered": [
+        "media"
+      ],
+      "uncovered": []
+    }
+  },
+  "results": [
+    {
+      "title": "juniper-source",
+      "snippet": "A UAT text fixture. Project Juniper is the launch codename. The rehearsal uses blue lanterns.",
+      "score": 0.11666666666666665,
+      "score_kind": "hybrid_fusion",
+      "vector_score": 0.4168137311935425
+    }
+  ]
+}

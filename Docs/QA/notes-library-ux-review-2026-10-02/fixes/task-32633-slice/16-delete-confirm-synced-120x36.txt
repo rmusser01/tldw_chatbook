@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌────────────────────────────────────────────────────────┐  N  Saved in Notes · ⚠ Sync needs attention · Next:  │
+│   a  │ Library notes · ⚠ A sync folder needs attention        │  o  Open Manage sync folders.                        │
+│   v  │ Notes (123)                                            │  t      ‹ Notes      quotes                          │
+│      │ These notes live in the Library's own database — for   │  e                                                   │
+│      │ notes that live in a folder on disk, switch to Folder  │  s                                                   │
+│      │ files. To copy or keep a folder synced, choose Add     │      In a synced folder · ⚠ Sync needs attention · … │
+│      │ from files.                                            │     Saved                                            │
+│      │                                                        │                                                      │
+│      │ Filter                                                 │                                                      │
+│ ---> │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     ┌──────────────────────────────────────────────┐ │
+│      │ ▊ quotes                                             ▎ │     │Keywords                                     ▁│ │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     │▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │ │
+│      │                                                        │     │▊ Comma-separated keywords                  ▎ │ │
+│      │    New     ○ Sort: Newest     Select                   │<--- │▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │ │
+│      │    Add from files…     Export     Manage sync folders  │     │                                              │ │
+│      │ Folders & placement                                    │     │Created   2026-10-04 11:17 · 7m ago           │ │
+│      │    New folder     Add to folder     ○ Move note        │     │Modified  2026-10-04 11:21 · 3m ago           │ │
+│      │    ○ Remove placement                                  │     │Version   v3                                  │ │
+│ ---> │ Sort unavailable — clear the filter                    │     │Words     16 words                            │ │
+│      │ filter: quotes · 1 result                              │     │Linked from (0) — no notes link here yet      │ │
+│      │                                                        │     │Reuse & Export                                │ │
+│      │   Clear filter                                         │     │      Copy                                    │ │
+│      │  ▾ VSync                                               │     │  Export Markdown                             │ │
+│      │    quotes · VSync · 3m                                 │     │  Export text                                 │ │
+│      │   Recently deleted (2)                                 │     │Danger                                        │ │
+│      │                                                        │     │         Delete                               │ │
+│      │                                                        │     │Delete this note? Its file stays on disk;     │ │
+│      └────────────────────────────────────────────────────────┘     └──────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  enter cancel | tab switch button | esc cancel | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

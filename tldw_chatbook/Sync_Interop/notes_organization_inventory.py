@@ -349,7 +349,9 @@ class LegacyNotesOrganizationInventory:
         deleted: set[tuple[str, str]] = set()
         sync_aliases: dict[tuple[str, str], str] = {}
         for domain, (table, name_column) in _RESOURCE_TABLES.items():
-            parent_column = "NULL AS parent_id" if domain == "notes.keyword" else "parent_id"
+            parent_column = (
+                "NULL AS parent_id" if domain == "notes.keyword" else "parent_id"
+            )
             rows = cursor.execute(
                 f"SELECT id, {parent_column}, {name_column} AS name, version, "
                 f"deleted, sync_id FROM {table} ORDER BY id"
@@ -361,10 +363,14 @@ class LegacyNotesOrganizationInventory:
                 review = resolved.get((domain, local_id))
                 if review is not None and review["resolution"] == "keep_local":
                     continue
-                if row["parent_id"] is not None and (
-                    domain,
-                    str(row["parent_id"]),
-                ) not in final_ids:
+                if (
+                    row["parent_id"] is not None
+                    and (
+                        domain,
+                        str(row["parent_id"]),
+                    )
+                    not in final_ids
+                ):
                     continue
                 original_sync_id = (
                     str(row["sync_id"]) if row["sync_id"] is not None else ""
@@ -415,9 +421,7 @@ class LegacyNotesOrganizationInventory:
                     "upsert",
                     {"keyword": str(row["name"])},
                     int(row["version"]),
-                    self._merge_for(
-                        "notes.keyword", local_id, resource_scan.merges
-                    ),
+                    self._merge_for("notes.keyword", local_id, resource_scan.merges),
                 )
             )
         for domain in ("notes.keyword_collection", "notes.folder"):
@@ -547,9 +551,7 @@ class LegacyNotesOrganizationInventory:
             collection_sync_id = final_ids.get(
                 ("notes.keyword_collection", str(row["collection_id"]))
             )
-            keyword_sync_id = final_ids.get(
-                ("notes.keyword", str(row["keyword_id"]))
-            )
+            keyword_sync_id = final_ids.get(("notes.keyword", str(row["keyword_id"])))
             if collection_sync_id is None or keyword_sync_id is None:
                 continue
             add(
@@ -565,9 +567,7 @@ class LegacyNotesOrganizationInventory:
             "ORDER BY folder_id, note_id, id"
         ).fetchall()
         for row in rows:
-            folder_sync_id = final_ids.get(
-                ("notes.folder", str(row["folder_id"]))
-            )
+            folder_sync_id = final_ids.get(("notes.folder", str(row["folder_id"])))
             if folder_sync_id is None:
                 continue
             add(
@@ -646,8 +646,12 @@ class LegacyNotesOrganizationInventory:
                     }
                     domain = "notes.keyword_collection_link"
                 else:
-                    subject_type = "note" if entity == "note_keywords" else "conversation"
-                    subject_key = "note_id" if subject_type == "note" else "conversation_id"
+                    subject_type = (
+                        "note" if entity == "note_keywords" else "conversation"
+                    )
+                    subject_key = (
+                        "note_id" if subject_type == "note" else "conversation_id"
+                    )
                     wire = {
                         "subject_type": subject_type,
                         "subject_id": str(payload[subject_key]),
@@ -694,8 +698,10 @@ class LegacyNotesOrganizationInventory:
             raise NotesOrganizationRepositoryError(
                 "invalid_inventory_checkpoint", "inventory checkpoint is malformed"
             ) from None
-        if not isinstance(baseline, str) or len(baseline) != 64 or (
-            key is not None and not isinstance(key, str)
+        if (
+            not isinstance(baseline, str)
+            or len(baseline) != 64
+            or (key is not None and not isinstance(key, str))
         ):
             raise NotesOrganizationRepositoryError(
                 "invalid_inventory_checkpoint", "inventory checkpoint is malformed"
@@ -703,14 +709,17 @@ class LegacyNotesOrganizationInventory:
         return baseline, key
 
     @staticmethod
-    def _next_entry(entries: tuple[_Intent, ...], last_key: str | None) -> _Intent | None:
+    def _next_entry(
+        entries: tuple[_Intent, ...], last_key: str | None
+    ) -> _Intent | None:
         if last_key is None:
             return entries[0] if entries else None
         for index, entry in enumerate(entries):
             if entry.key == last_key:
                 return entries[index + 1] if index + 1 < len(entries) else None
         raise NotesOrganizationRepositoryError(
-            "invalid_inventory_checkpoint", "inventory key is not in its source baseline"
+            "invalid_inventory_checkpoint",
+            "inventory key is not in its source baseline",
         )
 
     @staticmethod

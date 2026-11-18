@@ -19,10 +19,15 @@ def _wire(monkeypatch, tmp_path):
     """
     mgr = ConfigProfileManager(profiles_dir=tmp_path / "profiles")
     import tldw_chatbook.RAG_Search.simplified.active_config as ac
+
     monkeypatch.setattr(ac, "_manager", lambda: mgr, raising=False)
     ptr = {"v": None, "marker": False}
-    monkeypatch.setattr(ac, "_active_profile_id", lambda: ptr["v"] or "hybrid_basic", raising=False)
-    monkeypatch.setattr(ac, "_first_run_import_done", lambda: ptr["marker"], raising=False)
+    monkeypatch.setattr(
+        ac, "_active_profile_id", lambda: ptr["v"] or "hybrid_basic", raising=False
+    )
+    monkeypatch.setattr(
+        ac, "_first_run_import_done", lambda: ptr["marker"], raising=False
+    )
 
     def _fake_save_setting(section, key, value):
         if section == "rag.service" and key == "profile":
@@ -31,7 +36,9 @@ def _wire(monkeypatch, tmp_path):
             ptr["marker"] = value
         return True
 
-    monkeypatch.setattr(ac, "save_setting_to_cli_config", _fake_save_setting, raising=False)
+    monkeypatch.setattr(
+        ac, "save_setting_to_cli_config", _fake_save_setting, raising=False
+    )
     monkeypatch.setattr(ac, "reset_shared_rag_service", lambda: None, raising=False)
     # task-635: ensure_imported_profile() now only imports when there is
     # genuine hand-set [AppRAGSearchConfig.rag.*] material (see
@@ -47,7 +54,11 @@ def _wire(monkeypatch, tmp_path):
 def test_first_run_creates_imported_profile_and_sets_active(monkeypatch, tmp_path):
     """A legacy upgrader (has hand-set [AppRAGSearchConfig.rag.*] material)
     gets the first-run "Imported settings" profile created and activated."""
-    from tldw_chatbook.RAG_Search.simplified.active_config import ensure_imported_profile, resolve_active_rag_config
+    from tldw_chatbook.RAG_Search.simplified.active_config import (
+        ensure_imported_profile,
+        resolve_active_rag_config,
+    )
+
     mgr, ptr = _wire(monkeypatch, tmp_path)
     _wire_legacy_rag_config(monkeypatch, {"search": {"default_top_k": 10}})
     new_id = ensure_imported_profile()
@@ -75,8 +86,14 @@ def test_imported_fingerprint_matches_sp1_adoption(monkeypatch, tmp_path):
     chunk_size 400) — so a snapshot that silently fell back to bare defaults
     would fingerprint differently and this test would catch it.
     """
-    from tldw_chatbook.RAG_Search.simplified.active_config import ensure_imported_profile, resolve_active_rag_config
-    from tldw_chatbook.RAG_Search.simplified.collection_fingerprint import fingerprint_collection
+    from tldw_chatbook.RAG_Search.simplified.active_config import (
+        ensure_imported_profile,
+        resolve_active_rag_config,
+    )
+    from tldw_chatbook.RAG_Search.simplified.collection_fingerprint import (
+        fingerprint_collection,
+    )
+
     mgr, ptr = _wire(monkeypatch, tmp_path)
     # task-635: fingerprint continuity is only meaningful for a legacy
     # upgrader (a fresh install has no pre-profile collection to preserve).
@@ -109,8 +126,14 @@ def test_imported_fingerprint_matches_sp1_adoption_with_env_override(
     Also asserts the snapshot's resolved value equals the env value directly:
     this documents that env IS captured into the imported profile (the import
     reflects resolve_active_rag_config(), not a bare base profile)."""
-    from tldw_chatbook.RAG_Search.simplified.active_config import ensure_imported_profile, resolve_active_rag_config
-    from tldw_chatbook.RAG_Search.simplified.collection_fingerprint import fingerprint_collection
+    from tldw_chatbook.RAG_Search.simplified.active_config import (
+        ensure_imported_profile,
+        resolve_active_rag_config,
+    )
+    from tldw_chatbook.RAG_Search.simplified.collection_fingerprint import (
+        fingerprint_collection,
+    )
+
     mgr, ptr = _wire(monkeypatch, tmp_path)
     # task-635: fingerprint continuity is only meaningful for a legacy
     # upgrader (a fresh install has no pre-profile collection to preserve).
@@ -135,21 +158,32 @@ def test_ensure_imported_profile_heals_half_done_first_run(monkeypatch, tmp_path
     be "does the profile exist" alone — it must also heal the pointer, since
     otherwise the profile is created-but-never-activated forever."""
     import tldw_chatbook.RAG_Search.simplified.active_config as ac
+
     mgr, ptr = _wire(monkeypatch, tmp_path)
-    half_done = ProfileConfig(id=ac._IMPORTED_ID,
-                              name="Imported settings",
-                              description="Captured from your existing RAG configuration on first run.",
-                              profile_type="custom",
-                              rag_config=ac.resolve_active_rag_config())
+    half_done = ProfileConfig(
+        id=ac._IMPORTED_ID,
+        name="Imported settings",
+        description="Captured from your existing RAG configuration on first run.",
+        profile_type="custom",
+        rag_config=ac.resolve_active_rag_config(),
+    )
     mgr.save_profile(half_done)
-    assert ptr["v"] is None  # pointer was never flipped -- simulates the half-done crash
-    assert ptr["marker"] is False  # task-639: no marker either -- the new gate condition
+    assert (
+        ptr["v"] is None
+    )  # pointer was never flipped -- simulates the half-done crash
+    assert (
+        ptr["marker"] is False
+    )  # task-639: no marker either -- the new gate condition
 
     result = ac.ensure_imported_profile()
 
     assert result is None  # idempotent: no new profile id returned
-    assert [p for p in mgr.list_profiles() if p == ac._IMPORTED_ID] == [ac._IMPORTED_ID]  # no duplicate created
-    assert ptr["v"] == ac._IMPORTED_ID  # healed: pointer now activates the existing profile
+    assert [p for p in mgr.list_profiles() if p == ac._IMPORTED_ID] == [
+        ac._IMPORTED_ID
+    ]  # no duplicate created
+    assert (
+        ptr["v"] == ac._IMPORTED_ID
+    )  # healed: pointer now activates the existing profile
     assert ptr["marker"] is True  # task-639: marker recorded, so this can't recur
 
 
@@ -158,6 +192,7 @@ def test_ensure_imported_profile_swallows_save_failure(monkeypatch, tmp_path):
     be swallowed (logged, not raised) so it can never block RAG service
     creation, and must not leave a half-activated pointer behind."""
     import tldw_chatbook.RAG_Search.simplified.active_config as ac
+
     mgr, ptr = _wire(monkeypatch, tmp_path)
     # task-635: exercise the real save_profile attempt, which only happens
     # for a legacy upgrader (fresh installs short-circuit before ever
@@ -174,7 +209,9 @@ def test_ensure_imported_profile_swallows_save_failure(monkeypatch, tmp_path):
     assert result is None
     assert mgr.get_profile(ac._IMPORTED_ID) is None
     assert ptr["v"] is None  # never activated a profile that failed to save
-    assert ptr["marker"] is False  # task-639: no activation happened, so no marker either
+    assert (
+        ptr["marker"] is False
+    )  # task-639: no activation happened, so no marker either
 
 
 # --- Task 6: wiring into get_shared_rag_service --------------------------
@@ -186,6 +223,7 @@ def _reset_first_run_wiring():
     each wiring test so they can't leak into each other or into unrelated
     RAG tests that call get_shared_rag_service()."""
     import tldw_chatbook.RAG_Search.ingestion_indexing as ii
+
     ii._first_run_import_attempted = False
     ii.reset_shared_rag_service()
     yield ii
@@ -268,7 +306,9 @@ def test_first_run_import_runs_before_shared_service_lock_is_held(
 
     ii.get_shared_rag_service()  # no service pre-injected: exercises the real fast-path+lock flow up to construction
 
-    assert acquired == [True]  # lock was free (not self-deadlocked) when the wiring call ran
+    assert acquired == [
+        True
+    ]  # lock was free (not self-deadlocked) when the wiring call ran
 
 
 # --- Task-495: merge legacy query-time keys into the first-run snapshot --
@@ -289,17 +329,33 @@ def _wire_legacy_rag_config(monkeypatch, rag_section):
     monkeypatch.setattr(ac, "get_cli_setting", _fake_get_cli_setting, raising=False)
 
 
-def test_imported_profile_preserves_hand_set_legacy_query_time_keys(monkeypatch, tmp_path):
+def test_imported_profile_preserves_hand_set_legacy_query_time_keys(
+    monkeypatch, tmp_path
+):
     """AC #1: hand-set legacy query-time keys (top_k, score_threshold,
     citations, reranking) from [AppRAGSearchConfig.rag.search] /
     [AppRAGSearchConfig.rag.processor] survive into the imported profile
     instead of being silently discarded."""
-    from tldw_chatbook.RAG_Search.simplified.active_config import ensure_imported_profile
+    from tldw_chatbook.RAG_Search.simplified.active_config import (
+        ensure_imported_profile,
+    )
+
     mgr, ptr = _wire(monkeypatch, tmp_path)
-    _wire_legacy_rag_config(monkeypatch, {
-        "search": {"default_top_k": 25, "score_threshold": 0.42, "include_citations": False},
-        "processor": {"enable_reranking": True, "reranker_model": "cross-encoder/legacy", "reranker_top_k": 7},
-    })
+    _wire_legacy_rag_config(
+        monkeypatch,
+        {
+            "search": {
+                "default_top_k": 25,
+                "score_threshold": 0.42,
+                "include_citations": False,
+            },
+            "processor": {
+                "enable_reranking": True,
+                "reranker_model": "cross-encoder/legacy",
+                "reranker_top_k": 7,
+            },
+        },
+    )
 
     new_id = ensure_imported_profile()
 
@@ -324,32 +380,48 @@ def test_imported_profile_preserves_hand_set_legacy_query_time_keys(monkeypatch,
     assert imported_profile.reranking_config.top_k_to_rerank == 7
 
 
-def test_imported_profile_reranking_config_absent_when_legacy_reranking_unset(monkeypatch, tmp_path):
+def test_imported_profile_reranking_config_absent_when_legacy_reranking_unset(
+    monkeypatch, tmp_path
+):
     """No legacy `enable_reranking` key set -> no `reranking_config` is
     fabricated (mirrors today's "nothing to merge" behavior for the other
     legacy keys)."""
-    from tldw_chatbook.RAG_Search.simplified.active_config import ensure_imported_profile
+    from tldw_chatbook.RAG_Search.simplified.active_config import (
+        ensure_imported_profile,
+    )
+
     mgr, ptr = _wire(monkeypatch, tmp_path)
-    _wire_legacy_rag_config(monkeypatch, {
-        "search": {"default_top_k": 25},
-    })
+    _wire_legacy_rag_config(
+        monkeypatch,
+        {
+            "search": {"default_top_k": 25},
+        },
+    )
 
     new_id = ensure_imported_profile()
 
     assert mgr.get_profile(new_id).reranking_config is None
 
 
-def test_imported_profile_reranking_config_keeps_model_default_when_legacy_model_blank(monkeypatch, tmp_path):
+def test_imported_profile_reranking_config_keeps_model_default_when_legacy_model_blank(
+    monkeypatch, tmp_path
+):
     """Legacy reranking enabled but no `reranker_model` hand-set -> the
     fabricated `RerankingConfig`'s `model_name` keeps its own default rather
     than being stomped with an empty/missing value (same "blank means leave
     alone" convention as `apply_defaults_to_profile`)."""
     from tldw_chatbook.RAG_Search.reranker import RerankingConfig
-    from tldw_chatbook.RAG_Search.simplified.active_config import ensure_imported_profile
+    from tldw_chatbook.RAG_Search.simplified.active_config import (
+        ensure_imported_profile,
+    )
+
     mgr, ptr = _wire(monkeypatch, tmp_path)
-    _wire_legacy_rag_config(monkeypatch, {
-        "processor": {"enable_reranking": True, "reranker_top_k": 12},
-    })
+    _wire_legacy_rag_config(
+        monkeypatch,
+        {
+            "processor": {"enable_reranking": True, "reranker_top_k": 12},
+        },
+    )
 
     new_id = ensure_imported_profile()
 
@@ -359,18 +431,37 @@ def test_imported_profile_reranking_config_keeps_model_default_when_legacy_model
     assert imported_profile.reranking_config.top_k_to_rerank == 12
 
 
-def test_imported_profile_fingerprint_invariant_with_legacy_query_keys_set(monkeypatch, tmp_path):
+def test_imported_profile_fingerprint_invariant_with_legacy_query_keys_set(
+    monkeypatch, tmp_path
+):
     """AC #2 (verbatim): with those same legacy query-time keys set, the
     imported profile's fingerprint still equals the fingerprint of the
     unmodified built-in base (SP1's adopted legacy-collection fingerprint) --
     merging query-time-only fields must never move the fingerprint."""
-    from tldw_chatbook.RAG_Search.simplified.active_config import ensure_imported_profile, resolve_active_rag_config
-    from tldw_chatbook.RAG_Search.simplified.collection_fingerprint import fingerprint_collection
+    from tldw_chatbook.RAG_Search.simplified.active_config import (
+        ensure_imported_profile,
+        resolve_active_rag_config,
+    )
+    from tldw_chatbook.RAG_Search.simplified.collection_fingerprint import (
+        fingerprint_collection,
+    )
+
     mgr, ptr = _wire(monkeypatch, tmp_path)
-    _wire_legacy_rag_config(monkeypatch, {
-        "search": {"default_top_k": 25, "score_threshold": 0.42, "include_citations": False},
-        "processor": {"enable_reranking": True, "reranker_model": "cross-encoder/legacy", "reranker_top_k": 7},
-    })
+    _wire_legacy_rag_config(
+        monkeypatch,
+        {
+            "search": {
+                "default_top_k": 25,
+                "score_threshold": 0.42,
+                "include_citations": False,
+            },
+            "processor": {
+                "enable_reranking": True,
+                "reranker_model": "cross-encoder/legacy",
+                "reranker_top_k": 7,
+            },
+        },
+    )
     # Captured BEFORE ensure_imported_profile() repoints the active pointer --
     # same ordering rationale as test_imported_fingerprint_matches_sp1_adoption.
     pre_fp = fingerprint_collection(resolve_active_rag_config())
@@ -381,7 +472,9 @@ def test_imported_profile_fingerprint_invariant_with_legacy_query_keys_set(monke
     assert imported_fp == pre_fp
 
 
-def test_imported_profile_unchanged_when_no_legacy_query_time_keys_set(monkeypatch, tmp_path):
+def test_imported_profile_unchanged_when_no_legacy_query_time_keys_set(
+    monkeypatch, tmp_path
+):
     """A legacy upgrader with SOME hand-set [AppRAGSearchConfig.rag.*]
     material (so import still happens, task-635), but none of it in the
     query-time allow-list -> the imported snapshot is byte-equal to today's
@@ -390,7 +483,11 @@ def test_imported_profile_unchanged_when_no_legacy_query_time_keys_set(monkeypat
     as a "genuine legacy user" presence signal -- it is never merged, so it
     must not affect the captured snapshot either."""
     from dataclasses import asdict
-    from tldw_chatbook.RAG_Search.simplified.active_config import ensure_imported_profile, resolve_active_rag_config
+    from tldw_chatbook.RAG_Search.simplified.active_config import (
+        ensure_imported_profile,
+        resolve_active_rag_config,
+    )
+
     mgr, ptr = _wire(monkeypatch, tmp_path)
     _wire_legacy_rag_config(monkeypatch, {"embedding": {"model": "all-MiniLM-L6-v2"}})
     expected = resolve_active_rag_config()
@@ -401,13 +498,19 @@ def test_imported_profile_unchanged_when_no_legacy_query_time_keys_set(monkeypat
     assert asdict(imported) == asdict(expected)
 
 
-def test_fresh_user_no_legacy_rag_config_stays_on_default_builtin(monkeypatch, tmp_path):
+def test_fresh_user_no_legacy_rag_config_stays_on_default_builtin(
+    monkeypatch, tmp_path
+):
     """task-635: a truly fresh install (no [AppRAGSearchConfig.rag.*]
     material at all) must NOT get an auto-created + auto-activated
     "Imported settings" profile. There is no legacy pre-profile collection
     to preserve continuity for, so ensure_imported_profile() is a no-op and
     the active pointer is never written."""
-    from tldw_chatbook.RAG_Search.simplified.active_config import ensure_imported_profile, _IMPORTED_ID
+    from tldw_chatbook.RAG_Search.simplified.active_config import (
+        ensure_imported_profile,
+        _IMPORTED_ID,
+    )
+
     mgr, ptr = _wire(monkeypatch, tmp_path)
     # _wire() already defaults to no legacy material; assert that
     # explicitly so this test documents the exact scenario it covers.
@@ -420,14 +523,20 @@ def test_fresh_user_no_legacy_rag_config_stays_on_default_builtin(monkeypatch, t
     assert ptr["v"] is None  # pointer never written -- stays on the default builtin
 
 
-def test_fresh_user_unreadable_legacy_section_stays_on_default_builtin(monkeypatch, tmp_path):
+def test_fresh_user_unreadable_legacy_section_stays_on_default_builtin(
+    monkeypatch, tmp_path
+):
     """Exception-safety parity with _hand_set_legacy_query_time_keys: if the
     legacy section can't be read at all (e.g. a non-dict value under
     [AppRAGSearchConfig.rag], or get_cli_setting raising), that must be
     treated the same as "no legacy material" -- never as a reason to import
     anyway -- so a fresh user is never surprised by a profile creation
     triggered by a config-read failure."""
-    from tldw_chatbook.RAG_Search.simplified.active_config import ensure_imported_profile, _IMPORTED_ID
+    from tldw_chatbook.RAG_Search.simplified.active_config import (
+        ensure_imported_profile,
+        _IMPORTED_ID,
+    )
+
     mgr, ptr = _wire(monkeypatch, tmp_path)
     _wire_legacy_rag_config(monkeypatch, "not-a-dict")
 
@@ -438,21 +547,32 @@ def test_fresh_user_unreadable_legacy_section_stays_on_default_builtin(monkeypat
     assert ptr["v"] is None
 
 
-def test_imported_profile_does_not_merge_legacy_index_determining_keys(monkeypatch, tmp_path):
+def test_imported_profile_does_not_merge_legacy_index_determining_keys(
+    monkeypatch, tmp_path
+):
     """Legacy embedding/chunking/distance_metric keys must NEVER be merged
     (that would move the fingerprint and orphan the legacy collection) --
     only the allow-listed query-time keys are eligible, and the fingerprint
     stays equal to the unmodified built-in base's even when those
     index-determining legacy keys are hand-set."""
-    from tldw_chatbook.RAG_Search.simplified.active_config import ensure_imported_profile, resolve_active_rag_config
-    from tldw_chatbook.RAG_Search.simplified.collection_fingerprint import fingerprint_collection
+    from tldw_chatbook.RAG_Search.simplified.active_config import (
+        ensure_imported_profile,
+        resolve_active_rag_config,
+    )
+    from tldw_chatbook.RAG_Search.simplified.collection_fingerprint import (
+        fingerprint_collection,
+    )
+
     mgr, ptr = _wire(monkeypatch, tmp_path)
-    _wire_legacy_rag_config(monkeypatch, {
-        "embedding": {"model": "legacy-embedding-model", "max_length": 9999},
-        "chunking": {"chunk_size": 1, "chunk_overlap": 0},
-        "vector_store": {"distance_metric": "l2"},
-        "search": {"default_top_k": 25},
-    })
+    _wire_legacy_rag_config(
+        monkeypatch,
+        {
+            "embedding": {"model": "legacy-embedding-model", "max_length": 9999},
+            "chunking": {"chunk_size": 1, "chunk_overlap": 0},
+            "vector_store": {"distance_metric": "l2"},
+            "search": {"default_top_k": 25},
+        },
+    )
     pre_fp = fingerprint_collection(resolve_active_rag_config())
 
     new_id = ensure_imported_profile()
@@ -469,7 +589,9 @@ def test_imported_profile_does_not_merge_legacy_index_determining_keys(monkeypat
 # --- never delete a profile on a content guess (review: marker-based fix) --
 
 
-def test_ensure_imported_profile_does_not_reflip_deliberate_switch(monkeypatch, tmp_path):
+def test_ensure_imported_profile_does_not_reflip_deliberate_switch(
+    monkeypatch, tmp_path
+):
     """AC #1: once a user has deliberately activated a DIFFERENT profile
     (neither the default builtin nor imported_settings), a later
     ensure_imported_profile() call (e.g. the next process's first RAG touch)
@@ -479,6 +601,7 @@ def test_ensure_imported_profile_does_not_reflip_deliberate_switch(monkeypatch, 
     above already recorded the first-run-import-done marker, so the healing
     branch's "not marker" gate is skipped entirely on the later call."""
     import tldw_chatbook.RAG_Search.simplified.active_config as ac
+
     mgr, ptr = _wire(monkeypatch, tmp_path)
     _wire_legacy_rag_config(monkeypatch, {"search": {"default_top_k": 10}})
 
@@ -495,7 +618,9 @@ def test_ensure_imported_profile_does_not_reflip_deliberate_switch(monkeypatch, 
     assert ptr["v"] == "fast_search"  # NOT flipped back to imported_settings
 
 
-def test_ensure_imported_profile_still_heals_when_pointer_is_default(monkeypatch, tmp_path):
+def test_ensure_imported_profile_still_heals_when_pointer_is_default(
+    monkeypatch, tmp_path
+):
     """AC #3 (restated for task-639's narrower gate): the healing branch must
     still fire for the one case it exists for -- no marker recorded yet AND
     the pointer never having been successfully written by anyone, i.e. it
@@ -503,12 +628,15 @@ def test_ensure_imported_profile_still_heals_when_pointer_is_default(monkeypatch
     test_ensure_imported_profile_heals_half_done_first_run covers; kept here
     too as an explicit task-639 lock on the new gating condition itself."""
     import tldw_chatbook.RAG_Search.simplified.active_config as ac
+
     mgr, ptr = _wire(monkeypatch, tmp_path)
-    half_done = ProfileConfig(id=ac._IMPORTED_ID,
-                              name="Imported settings",
-                              description="Captured from your existing RAG configuration on first run.",
-                              profile_type="custom",
-                              rag_config=ac.resolve_active_rag_config())
+    half_done = ProfileConfig(
+        id=ac._IMPORTED_ID,
+        name="Imported settings",
+        description="Captured from your existing RAG configuration on first run.",
+        profile_type="custom",
+        rag_config=ac.resolve_active_rag_config(),
+    )
     mgr.save_profile(half_done)
     assert ptr["v"] is None  # pointer still resolves to the default builtin
     assert ptr["marker"] is False
@@ -520,7 +648,9 @@ def test_ensure_imported_profile_still_heals_when_pointer_is_default(monkeypatch
     assert ptr["marker"] is True  # recorded, so this can never recur
 
 
-def test_ensure_imported_profile_marker_present_never_touches_pointer_even_back_to_default(monkeypatch, tmp_path):
+def test_ensure_imported_profile_marker_present_never_touches_pointer_even_back_to_default(
+    monkeypatch, tmp_path
+):
     """Closes the previously-disclosed gap: once the marker is set, the
     pointer is NEVER touched again -- including a user switching all the way
     back to the default builtin itself, which is otherwise indistinguishable
@@ -529,16 +659,21 @@ def test_ensure_imported_profile_marker_present_never_touches_pointer_even_back_
     the healing branch is skipped entirely regardless of what the pointer
     currently names."""
     import tldw_chatbook.RAG_Search.simplified.active_config as ac
+
     mgr, ptr = _wire(monkeypatch, tmp_path)
     imported = _pre635_damage_snapshot(mgr, ac)
     mgr.save_profile(imported)
     ptr["marker"] = True  # a prior run already recorded a deliberate activation
-    ptr["v"] = None  # the user has since switched all the way back to the default builtin
+    ptr["v"] = (
+        None  # the user has since switched all the way back to the default builtin
+    )
 
     result = ac.ensure_imported_profile()
 
     assert result is None
-    assert ptr["v"] is None  # NOT flipped back to imported_settings -- stays on the default
+    assert (
+        ptr["v"] is None
+    )  # NOT flipped back to imported_settings -- stays on the default
     assert mgr.get_profile(ac._IMPORTED_ID) is not None  # untouched either way
 
 
@@ -548,6 +683,7 @@ def test_fresh_user_leaves_marker_unset(monkeypatch, tmp_path):
     absent. This must not, by itself, trigger any different behavior on a
     later call (still a no-op, still no marker)."""
     import tldw_chatbook.RAG_Search.simplified.active_config as ac
+
     mgr, ptr = _wire(monkeypatch, tmp_path)
 
     result = ac.ensure_imported_profile()
@@ -572,13 +708,15 @@ def _pre635_damage_snapshot(mgr, ac):
         id=ac._IMPORTED_ID,
         name="Imported settings",
         description="Snapshot of your active RAG profile (plus any RAG_* env "
-                    "overrides) captured on first run; edit freely.",
+        "overrides) captured on first run; edit freely.",
         profile_type="custom",
         rag_config=ac.resolve_active_rag_config(),  # pointer is still default here
     )
 
 
-def test_ensure_imported_profile_never_deletes_settings_screen_customization(monkeypatch, tmp_path):
+def test_ensure_imported_profile_never_deletes_settings_screen_customization(
+    monkeypatch, tmp_path
+):
     """Critical (task-639 review, reviewer-reproduced): the Settings screen
     editor (apply_defaults_to_profile, settings_rag_profile_adapter.py:150-
     167) can hand-tune SearchConfig fields the prior fingerprint + allow-list
@@ -594,9 +732,12 @@ def test_ensure_imported_profile_never_deletes_settings_screen_customization(mon
     based on comparing its content at all, no matter what differs (or
     doesn't). "Survives every subsequent ensure call": exercised 3x."""
     import tldw_chatbook.RAG_Search.simplified.active_config as ac
+
     mgr, ptr = _wire(monkeypatch, tmp_path)
     customized = _pre635_damage_snapshot(mgr, ac)
-    customized.rag_config.search.hybrid_alpha = 0.95  # real hand-set tuning, default is 0.7
+    customized.rag_config.search.hybrid_alpha = (
+        0.95  # real hand-set tuning, default is 0.7
+    )
     mgr.save_profile(customized)
     ptr["v"] = ac._IMPORTED_ID  # already active; no marker (predates the marker fix)
     assert ptr["marker"] is False
@@ -612,7 +753,9 @@ def test_ensure_imported_profile_never_deletes_settings_screen_customization(mon
     assert ptr["marker"] is True  # adopted as settled after the first call
 
 
-def test_ensure_imported_profile_adopts_preexisting_imported_pointer_without_deleting(monkeypatch, tmp_path):
+def test_ensure_imported_profile_adopts_preexisting_imported_pointer_without_deleting(
+    monkeypatch, tmp_path
+):
     """task-639 AC #2 (revised per review): a config whose pointer is ALREADY
     imported_settings with no marker yet -- whether a pre-635 damage artifact
     or a genuine, deliberately-kept import from before the marker existed,
@@ -622,8 +765,11 @@ def test_ensure_imported_profile_adopts_preexisting_imported_pointer_without_del
     marker is set, and both the profile and the pointer are left completely
     untouched."""
     import tldw_chatbook.RAG_Search.simplified.active_config as ac
+
     mgr, ptr = _wire(monkeypatch, tmp_path)
-    imported = _pre635_damage_snapshot(mgr, ac)  # content-identical to the default builtin
+    imported = _pre635_damage_snapshot(
+        mgr, ac
+    )  # content-identical to the default builtin
     mgr.save_profile(imported)
     ptr["v"] = ac._IMPORTED_ID  # already active, no marker (pre-marker world)
     assert ptr["marker"] is False
@@ -661,7 +807,9 @@ def _wire_pointer_write_fails(monkeypatch, ac, ptr):
             return True
         return True
 
-    monkeypatch.setattr(ac, "save_setting_to_cli_config", _fake_save_setting, raising=False)
+    monkeypatch.setattr(
+        ac, "save_setting_to_cli_config", _fake_save_setting, raising=False
+    )
 
 
 def _wire_pointer_write_succeeds(monkeypatch, ac, ptr):
@@ -676,10 +824,14 @@ def _wire_pointer_write_succeeds(monkeypatch, ac, ptr):
             ptr["marker"] = value
         return True
 
-    monkeypatch.setattr(ac, "save_setting_to_cli_config", _fake_save_setting, raising=False)
+    monkeypatch.setattr(
+        ac, "save_setting_to_cli_config", _fake_save_setting, raising=False
+    )
 
 
-def test_ensure_imported_profile_does_not_mark_when_healing_pointer_write_fails(monkeypatch, tmp_path):
+def test_ensure_imported_profile_does_not_mark_when_healing_pointer_write_fails(
+    monkeypatch, tmp_path
+):
     """Important (task-639 review round 3, reviewer-reproduced): the healing
     branch used to call _mark_first_run_import_done() unconditionally right
     after set_active_profile(_IMPORTED_ID), but set_active_profile() itself
@@ -692,12 +844,15 @@ def test_ensure_imported_profile_does_not_mark_when_healing_pointer_write_fails(
     _IMPORTED_ID, and a later call (once the write starts succeeding) must
     retry the activation rather than being permanently blocked."""
     import tldw_chatbook.RAG_Search.simplified.active_config as ac
+
     mgr, ptr = _wire(monkeypatch, tmp_path)
-    half_done = ProfileConfig(id=ac._IMPORTED_ID,
-                              name="Imported settings",
-                              description="Captured from your existing RAG configuration on first run.",
-                              profile_type="custom",
-                              rag_config=ac.resolve_active_rag_config())
+    half_done = ProfileConfig(
+        id=ac._IMPORTED_ID,
+        name="Imported settings",
+        description="Captured from your existing RAG configuration on first run.",
+        profile_type="custom",
+        rag_config=ac.resolve_active_rag_config(),
+    )
     mgr.save_profile(half_done)
     assert ptr["v"] is None  # pointer still resolves to the default builtin
 
@@ -707,7 +862,9 @@ def test_ensure_imported_profile_does_not_mark_when_healing_pointer_write_fails(
 
     assert result is None
     assert ptr["v"] is None  # pointer write failed -- never actually activated
-    assert ptr["marker"] is False  # MUST NOT be set: the activation never actually happened
+    assert (
+        ptr["marker"] is False
+    )  # MUST NOT be set: the activation never actually happened
 
     # A later call, once the pointer write starts succeeding again, must
     # RETRY the activation -- not be permanently blocked by a marker that
@@ -721,7 +878,9 @@ def test_ensure_imported_profile_does_not_mark_when_healing_pointer_write_fails(
     assert ptr["marker"] is True
 
 
-def test_ensure_imported_profile_does_not_mark_when_fresh_import_pointer_write_fails(monkeypatch, tmp_path):
+def test_ensure_imported_profile_does_not_mark_when_fresh_import_pointer_write_fails(
+    monkeypatch, tmp_path
+):
     """Mirrors the fix at the fresh-import call site (task-639 review round
     3): if set_active_profile() fails right after a brand-new "Imported
     settings" profile is created, the marker must not be set either --
@@ -729,6 +888,7 @@ def test_ensure_imported_profile_does_not_mark_when_fresh_import_pointer_write_f
     None`, the marker already True, and skip retrying the failed activation
     forever, even though the pointer was never actually updated."""
     import tldw_chatbook.RAG_Search.simplified.active_config as ac
+
     mgr, ptr = _wire(monkeypatch, tmp_path)
     _wire_legacy_rag_config(monkeypatch, {"search": {"default_top_k": 10}})
     _wire_pointer_write_fails(monkeypatch, ac, ptr)

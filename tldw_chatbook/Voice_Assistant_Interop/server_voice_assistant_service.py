@@ -2,19 +2,37 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Mapping, Optional, Protocol
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
 
 if TYPE_CHECKING:
     from ..tldw_api import (
-        TLDWAPIClient,
         VoiceCommandDefinition,
         VoiceCommandDryRunRequest,
         VoiceCommandRequest,
         VoiceCommandToggleRequest,
     )
+
+
+class ServerVoiceAssistantClient(Protocol):
+    """Client methods ServerVoiceAssistantService calls (TASK-36953.1)."""
+
+    async def create_voice_command(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def delete_voice_command(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def delete_voice_session(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def dry_run_voice_command(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_voice_analytics(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_voice_command(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_voice_command_usage(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_voice_session(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_voice_commands(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_voice_sessions(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def process_voice_command(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def toggle_voice_command(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def update_voice_command(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def validate_voice_command(self, *args: Any, **kwargs: Any) -> Any: ...
 
 
 class ServerVoiceAssistantService:
@@ -24,7 +42,7 @@ class ServerVoiceAssistantService:
 
     def __init__(
         self,
-        client: Optional[TLDWAPIClient],
+        client: Optional[ServerVoiceAssistantClient],
         *,
         client_provider: Any | None = None,
         policy_enforcer: Any | None = None,
@@ -59,7 +77,7 @@ class ServerVoiceAssistantService:
             policy_enforcer=policy_enforcer,
         )
 
-    def _require_client(self) -> TLDWAPIClient:
+    def _require_client(self) -> ServerVoiceAssistantClient:
         if self.client is not None:
             return self.client
         if self.client_provider is not None:

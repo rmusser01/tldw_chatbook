@@ -1,8 +1,9 @@
 ---
 id: TASK-31249
 title: Library UI test debt on dev - six pre-existing failures nobody owns
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - rmusser01
 created_date: '2026-09-04 04:59'
 labels:
   - library
@@ -59,9 +60,115 @@ Wave 8 (2026-09-08, the notes series -- the FINAL extraction wave) -- each prove
 - Not a failing test, but found by the same wave and filed rather than left: the `canvas_sync.py` shared dispatchers take two receiver types with no guard, and 8 of the 10 controllers this program created declare no state accessor. One live production defect had already shipped from this shape (media Select-all/Clear silently full-screen recomposing) and was fixed at the program close. **Filed as TASK-32089** (filed as TASK-32041, renumbered to 32047 when dev minted its own 32041, renumbered AGAIN to 32089 at the round-2 reconciliation when dev minted its own 32047 — twice-struck by the same collision within one wave endgame)
 - Wave 8 is the SECOND wave to pay TASK-31880's bill: the receiver defect above had to be guarded with a hand-built screen double, because `test_library_honesty_accessibility.py::test_row_toggle_patcher_rebuilds_marker_label_both_directions` -- the only real-row Pilot test that drives the `_apply_library_row_toggle` path end to end -- is still RED. Phase C changes exactly that path, in the widgets, for real
 
+## Implementation Plan (added 2026-10-02, at base 2612fc56b2 = origin/dev tip)
+
+1. Verify the premise at this base: run the eight census names (the four AC#3 files' named failures) and classify each as fixed-upstream / live defect / known class. Result recorded in Implementation Notes.
+2. Root-cause the `#library-media-edit never mounted` group (AC#2): trace the media row press -> viewer mount path in the current (post media-series decomposition) code.
+3. Enroll only the tests this task needs in the bootstrap profile (per-node `@pytest.mark.bootstrap_profile`, TASK-32873/ADR-179 precedent) to clear the config-participant admission class (`RecoveryRequired("raw_source_selection_changed")`) that masks every scenario at this base.
+4. Fix each live defect red -> green with targeted runs only; baseline A/B via `git checkout HEAD -- <paths>`.
+5. Verify AC#3: each of the four files green in its own process (separate invocations).
+6. Close honestly: tick what is verified, annotate anything unreachable at this base, one commit.
+
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Each of the six tests passes on dev, or is rewritten/removed with the reason recorded in this task (no bare skip markers)
-- [ ] #2 The root cause of the `#library-media-edit never mounted` group is identified and recorded, whether the fix lands in production code or in the test contract
+- [x] #1 Each of the six tests passes on dev, or is rewritten/removed with the reason recorded in this task (no bare skip markers)
+- [x] #2 The root cause of the `#library-media-edit never mounted` group is identified and recorded, whether the fix lands in production code or in the test contract
 - [ ] #3 test_library_shell.py, test_library_per_click_recompose_t21116.py, test_library_review_round_t21116.py and test_library_choice_strips.py run green in separate processes on dev
+  - **task-31249 closeout (2026-10-02, base 2612fc56b2): PARTIAL, and the unmet half is not this task's to take.** The three focused files are green in separate processes (9, 6 and 16 passed, 0 failed, commands in Implementation Notes) after whole-module `bootstrap_profile` enrollment (TASK-32873 precedent: these suites are 100% real-app mounts). `test_library_shell.py` whole-file green is unreachable at this base by this task: at the plain dev tip the whole-file run is 788 failed / 55 passed, and a 150-test sample under temporary module enrollment still shows 30 scenario-level residual failures (~20%) beyond the admission class -- so module-wide enrollment for the big Library file (explicitly reserved to the config-admission class owner per TASK-32873/ADR-179) would not even finish the job; the residual ~160-name set needs its own triage owner. Left unticked per the TASK-14877 precedent rather than laundering a partial pass.
 <!-- AC:END -->
+
+## Implementation Notes (2026-10-02, base 2612fc56b2 = origin/dev tip, worktree fix/task-31249-library-test-debt)
+
+### Premise verification
+
+Every named test was masked at this base by the config-participant admission class
+(`RecoveryRequired("raw_source_selection_changed")`, TASK-32628): the description's first
+failure list names eight tests across the four AC#3 files (the title says six; the census
+list is authoritative). After per-node `@pytest.mark.bootstrap_profile` enrollment
+(TASK-32873 precedent), the ORIGINAL 2026-09-04 signatures re-emerged on all eight --
+none had been fixed upstream. All eight were live defects (class (b)), fixed red -> green.
+
+### Per-test disposition
+
+| Test | Signature at base (enrolled) | Root cause | Disposition |
+|---|---|---|---|
+| per_click `test_media_viewer_substate_escape_is_viewer_scoped` | `#library-media-edit never mounted within 30.0s` | AC#2 root cause below | Contract fix: disclose "More" first; green |
+| per_click `test_open_item_by_id_media_is_canvas_scoped` | 5x `refresh(recompose=True)` storm | task-31797 fired browse+facet requests BEFORE the media canvas existed (each sync missed the canvas and took the whole-screen fallback, racing the mount -- the M3 DuplicateIds shape); the detail worker's callback added a 5th racing refresh | Production fix (mount-first projection + M3 suppression, below); contract updated to the adaptive-architecture reality (structural `Screen.recompose()` rebuilds the rail -- measured: a plain rail conversations->media press rebuilds it too); green |
+| per_click `test_export_open_from_media_is_canvas_scoped` | DEADLOCK: press hung >300s (pytest-timeout kill; reproduced at base with `git checkout HEAD -- <prod files>` A/B) | `_open_library_export_canvas` awaited the open-item projection inline from the media canvas's own press handler; the projection's structural branch `await self.recompose()` tears down the very canvas whose dispatch is running the handler -- Textual waits for that dispatch forever (instrumented: `recompose` ENTER, never EXIT) | Production fix: schedule the projection via `call_after_refresh` (screen helper `LibraryScreen._project_library_export_canvas`); counts worker starts after the surface lands; contract updated; green |
+| review_round `test_viewer_substate_escape_refreshes_the_footer_shortcut_set` | edit never mounted, then footer set diff | AC#2 root cause + product change: entering metadata edit switches the Reader to its Info tab (`set_mode(..., "info")`, d3c4b44a9b) and Escape mirrors Cancel by dropping only the sub-state, so the post-Escape footer is the Info-tab set (no `ctrl+f find` -- correctly gated on the no-text tab) | Contract fix: disclose More; assert post-Escape set != sub-state set, then Read-tab press re-registers exactly the captured plain set; green |
+| choice_strips `test_media_type_strip_works_in_both_layouts` | `compact class never reached True at (100, 30)` | The adaptive media reader (40a1b99576, 2026-09-20) deliberately drops the legacy `library-notes-compact` class off the canvas ("Adaptive readers share only the shell box-model contract") and paints `library-adaptive-compact` on the shell grid instead; `_notes_state.compact` was True all along | Contract fix: the regime probe accepts the mounted evidence from either regime (loop-safe bindings); green |
+| shell `test_library_starter_deep_link_opens_hidden_collection_or_note_route` | worker `AttributeError: 'SimpleNamespace' object has no attribute 'active_authority'` | The census's own suspect, confirmed: `_LibraryEvidenceGates.install` faked `collections_capture_scope_service` with only the evidence method; the capture controller's entry load reads `scope_service.active_authority` first | Test-double fix (TASK-21232 class): fake extended with `active_authority=None` (the real contract's "no active authority" -> unavailable state, where the entry load correctly stops); green |
+| shell `..._inplace_search_preserves_identity_focus_and_parse_count` | `Markdown(...) is Markdown(...)` | The Find bar composes only while open (task-31237's collapsed bar): OPENING it legitimately recomposes the viewer once to mount `LibraryMediaContentSearchControls`; the tests captured their identity baseline BEFORE the Find press | Contract fix: baseline captured after the bar mounts; submit + Next must not rebuild (still fully pinned); green |
+| shell `..._inplace_search_chrome_paints_above_content` | same identity trap under the layout assertions | same | Contract fix: viewer/markdown baseline captured after the submit; layout assertions unchanged and passing; green |
+
+### AC#2 root cause (recorded as required)
+
+`#library-media-edit` has composed ONLY inside the viewer's collapsed "More" actions
+disclosure since d3c4b44a9b (2026-08-24, "organize media reader modes and actions";
+guarded further by task-31633/a4682f17e9). It no longer mounts merely because the viewer
+opened, and no test-side contract was updated. Recorded in the new shared helper
+`_disclose_media_viewer_more_actions` (Tests/UI/test_library_shell.py). The fix landed in
+the test contract (the product change is intentional UX).
+
+### Production changes (2 files, targeted)
+
+1. `tldw_chatbook/UI/Screens/library_screen.py`
+   - `_open_library_item_by_id` media branch: mount the media surface FIRST through the
+     sanctioned `_apply_library_open_item_surface` projection, THEN issue task-31797's
+     browse+facets requests (they now find the mounted canvas and patch in place).
+     Removes the 5-refresh storm and the mount race.
+   - `_apply_library_open_item_surface`: hold `_library_canvas_projection_depth` across
+     the structural `await self.recompose()` too, so worker callbacks landing inside the
+     window suppress instead of racing (extends the documented M3 rule).
+   - `_sync_library_media_surfaces_or_recompose`: M3 suppression + resync-pending replay
+     while a projection owns the surface (mirrors `_sync_library_canvas`'s rule).
+   - New `_project_library_export_canvas` (the out-of-band export projection + counts).
+2. `tldw_chatbook/UI/Library_Modules/library_export_controller.py`
+   - `_open_library_export_canvas` schedules the projection via `call_after_refresh`
+     instead of awaiting it inline (deadlock fix above). Net-zero line delta -- the file
+     is at its size-ratchet budget (1453); helper lives on the screen.
+
+### Enrollment decisions
+
+- The three focused suites (per_click/review_round/choice_strips) are 100% real-app
+  mounts: whole-module `pytestmark = pytest.mark.bootstrap_profile` (TASK-32873
+  precedent). No per-node markers left inside them.
+- test_library_shell.py: only the three named tests carry per-node markers. Module-wide
+  enrollment for the big Library files belongs to the config-admission class owner; see
+  the AC#3 annotation for the measurement that shows enrollment alone would not finish
+  that file anyway.
+
+### Evidence (exact commands + results, all `-p no:randomly`)
+
+- Eight named tests: `8 passed` (36.40s).
+- Separate processes: per_click `9 passed`, review_round `6 passed`, choice_strips
+  `16 passed` (multiple runs).
+- Base A/B (prod files at HEAD via checkout swap, same seven temporarily-enrolled
+  neighbor suites): base 86 failed / 245 passed vs fixed 82 failed / 249 passed.
+  Name-diff: 81 both (pre-existing drift in reader_flow/render_fixes -- the stale
+  `#library-media-edit` contract extends there: `test_edit_metadata_from_read_routes_to_info_form_actions`
+  et al. -- mapped to the class owner, NOT fixed here); 5 base-only (fixed by this work:
+  reader escape/filter-anchor/l/t-key flows, empty-find-bar focus); 1 fixed-only
+  (`test_more_reads_as_an_open_disclosure_while_it_is_open`) which passes 3/3 in
+  isolation -- load flake, the documented Library-under-load churn class.
+- Export deadlock at base: `git checkout HEAD -- <2 prod files>` -> test killed at
+  --timeout=90 (93.68s) with the press hung; with the fix: `1 passed` in ~9s.
+- Ratchets: `test_library_modules_size_ratchet.py` export_controller + library_screen
+  rows pass (net-zero line delta in the controller; verified red before the trim).
+  `test_library_media_wiring.py` passes; `test_library_recompose_ratchet.py` source
+  pins pass (its 6 app-mounting tests error with the admission class at setup --
+  pre-existing, unenrolled, not this task's).
+- Lint: `ruff check` on all six changed files -- zero new findings vs the base tree
+  (fixed the one B023 and one F401 my first pass introduced).
+- test_library_shell.py whole-file baseline at this tip: 788 failed / 55 passed
+  (1628s); enrollment probe (first 150 tests, temporary module marker, removed):
+  120 passed / 30 failed.
+
+ADR required: no -- test-contract updates plus bug fixes that route existing seams
+(the task-21116 projection, the documented M3 suppression rule, `call_after_refresh`)
+through their intended paths; no new boundary, storage, or service-contract decision.
+
+Modified files: Tests/UI/test_library_per_click_recompose_t21116.py,
+Tests/UI/test_library_review_round_t21116.py, Tests/UI/test_library_choice_strips.py,
+Tests/UI/test_library_shell.py, tldw_chatbook/UI/Screens/library_screen.py,
+tldw_chatbook/UI/Library_Modules/library_export_controller.py, this task file.

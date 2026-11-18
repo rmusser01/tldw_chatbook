@@ -1,0 +1,6 @@
+Direct GET https://api.openai.com/v1/models with the repo-root OpenAI key (key never printed), 2026-10-02:
+  HTTP 200, 137 model ids.
+  Contains gpt-5.6-terra, gpt-5.6-sol, gpt-5.6-luna, gpt-5.4-mini, gpt-4.1-mini.
+=> The wizard probe line '✓ Reached the server, but your chosen model was not in its list.' (05-provider-key-enter.txt)
+   is false for the prefilled default: FirstRunSetupWizard.py:3198 hard-codes model="unconfirmed" in _render_provider_evidence.
+=> The P0 block is NOT 'model does not exist': gpt-5.6-terra is a real, listed model; Console pre-blocks it on capacity.

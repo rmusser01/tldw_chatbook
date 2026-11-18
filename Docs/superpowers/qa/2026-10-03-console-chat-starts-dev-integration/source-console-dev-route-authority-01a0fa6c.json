@@ -1,0 +1,15 @@
+{
+  "before_sha256": {
+    "tldw_chatbook/DB/recovery_operations.py": "14301b1732fccbbcb02536ab6df98b3876927c3d1b98a59b87270cdad0890ef9",
+    "tldw_chatbook/Backup_Recovery/sqlite_validation.py": "409a73fbe556df53e68bc6faee68ab949f55748d9a0061fa500bfd87c3638821"
+  },
+  "patch_sha256": "1fe8e7a17158950a92eca86f8ed08a80e86585778dd9d06165f954991d6ef14a",
+  "root_cause_red": ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/recovery-route-root-red.json",
+  "notes": [
+    "Proposal only. Current authorizer refuses first fixed ALTER TABLE automatic_work_chains.",
+    "Table/index/trigger pairs enumerate only native v22 migration objects.",
+    "Schema sqlite_master DELETE supports replacing one named immutable trigger; unrelated DROP_TRIGGER remains denied, sqlite_master writable_schema remains denied.",
+    "No domain row delete/update grant, no other database, owner or ordinary runtime authority.",
+    "18\u219221 route retained; strict catalogs/progress/deadline/rollback and intermediate exact-schema verification retained."
+  ]
+}

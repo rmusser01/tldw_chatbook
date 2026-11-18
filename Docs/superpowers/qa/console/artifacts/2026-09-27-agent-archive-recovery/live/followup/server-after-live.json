@@ -1,0 +1,10 @@
+{
+  "health_status": 200,
+  "slots": [
+    {
+      "id": 0,
+      "is_processing": false,
+      "n_ctx": 64000
+    }
+  ]
+}

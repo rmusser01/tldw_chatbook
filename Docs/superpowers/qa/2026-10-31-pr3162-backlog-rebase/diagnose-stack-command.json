@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-c",
+    "import pytest,traceback,time,sys,threading,faulthandler\nfrom pathlib import Path\nclass Diagnostic:\n @pytest.fixture(autouse=True)\n def observe(self,monkeypatch):\n  from tldw_chatbook.Chat.console_runtime import ConsoleRuntime\n  original=ConsoleRuntime.wait_for_turn\n  async def wrapped(self,*args,**kwargs):\n   start=time.monotonic()\n   try:\n    result=await original(self,*args,**kwargs);print('TURN_RESULT',result,flush=True);return result\n   finally:print('TURN_FINISH',time.monotonic()-start,flush=True)\n  monkeypatch.setattr(ConsoleRuntime,'wait_for_turn',wrapped)\n  def dump():\n   with Path('Docs/superpowers/qa/2026-10-31-pr3162-backlog-rebase/threads-at10.txt').open('w') as f:faulthandler.dump_traceback(file=f,all_threads=True)\n  timer=threading.Timer(10,dump);timer.daemon=True;timer.start()\n  yield\n  timer.cancel()\n def pytest_runtest_makereport(self,item,call):\n  if call.when=='call' and call.excinfo:\n   for entry in call.excinfo.traceback:\n    values=entry.frame.f_locals\n    if 'gateway' in values:\n     g=values['gateway'];print('GATEWAY_CALLS',getattr(g,'stream_calls',None));print('TOOLS_SEEN',getattr(g,'tools_seen',None));print('CARD_COUNT',len(values.get('cards',[])));print('STATE',values['controller'].run_state_for(values['source'].id))\nsys.exit(pytest.main(sys.argv[1:],plugins=[Diagnostic()]))\n",
+    "Tests/Chat/test_console_archive_recovery_dispatch.py::test_real_console_native_dispatch_waits_for_exact_confirmation[True-True-None]",
+    "-q",
+    "--tb=short",
+    "--show-capture=all",
+    "--maxfail=1"
+  ],
+  "profile": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3162-resync\\test-runtime\\diagnose-stack-07d66ed57c3447eabd8e55d98eb963b4"
+}

@@ -1,0 +1,31 @@
+{
+  "results": [
+    {
+      "label": "task2-red-cleanup",
+      "tests": 10,
+      "failures": 4,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "label": "task2-green",
+      "tests": 16,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "label": "integration-contracts-correct-path",
+      "tests": 167,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  ],
+  "source_sha256": {
+    "tldw_chatbook/UI/Screens/study_screen.py": "f86984a25ef972e3fba63d9578b14c7c4abcf71ecda141f1440f5ee0b520aaf7",
+    "tldw_chatbook/UI/Study_Window.py": "2e3ae3a7628f7e7a3eb93fb8f3ce01a38483069b271c17a7831fc81c13457b97",
+    "tldw_chatbook/UI/Study_Modules/quizzes_handler.py": "dbf079e7e20d38f967397a8c02fccb0945f6e8e612964a78a2c229f275071317",
+    "Tests/UI/test_study_quiz_start_responsiveness.py": "aa48b0c6fe3358fbcbd6fbd9616b7c13e5d750aadfb81556c8d15fe168c7b0b3"
+  }
+}

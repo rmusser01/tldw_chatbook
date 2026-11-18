@@ -59,9 +59,7 @@ def test_sensitive_conflict_rejected(tmp_path, monkeypatch):
     project.mkdir()
     import tldw_chatbook.Workspaces.registry_service as rs
 
-    monkeypatch.setattr(
-        rs, "find_root_binding_conflict", lambda p: Path("/protected")
-    )
+    monkeypatch.setattr(rs, "find_root_binding_conflict", lambda p: Path("/protected"))
     with pytest.raises(WorkspaceRegistryServiceError, match="protected path"):
         validate_folder_binding_path(project)
 

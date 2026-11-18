@@ -1,0 +1,42 @@
+...........................................FF........................... [ 33%]
+.......FF.FF.....FF..................................F......F........... [ 67%]
+.....F..............................................................     [100%]
+=================================== FAILURES ===================================
+/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Chat/test_console_trace_current_turn_transforms.py:278: AssertionError: (ConsoleSubmitResult(accepted=True, should_clear_draft=True, visible_copy='Trace capture could not start. Retry, Send ...='c6015d7e-5305-4699-8775-e75911762ff8', provider_started=False, queue_notice=''), ['completed_tool_turn_unavailable'])
+/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Chat/test_console_trace_current_turn_transforms.py:267: AssertionError: assert 'error' == 'stopped'
+/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Chat/test_console_regenerate_branching.py:170: AssertionError: assert '61ee0599-397...-68bed6a5cc16' == '8d49cdc4-8a2...-e912cf5023da'
+/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Chat/test_console_regenerate_branching.py:197: AssertionError: assert ['7b0ff232-cf...a747d22e9a1a'] == ['7b0ff232-cf...00bd27605f4c']
+/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Chat/console_chat_store.py:17758: RuntimeError: Generation projection persistence is unavailable.
+/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Chat/console_chat_store.py:17758: RuntimeError: Generation projection persistence is unavailable.
+/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Chat/console_chat_controller.py:20022: TypeError: test_edit_and_resend_skill_refusal_leaves_no_pending_node.<locals>._refuse() takes 1 positional argument but 2 were given
+/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Chat/test_console_edit_resend.py:369: assert False is True
+/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Chat/test_console_turn_resend.py:547: ValueError: not enough values to unpack (expected 2, got 1)
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: RuntimeError: coroutine raised StopIteration
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: RuntimeError: coroutine raised StopIteration
+============================= slowest 25 durations =============================
+5.18s call     Tests/Chat/test_console_turn_resend.py::test_resend_runs_granted_required_hooks_before_clear[SessionStart-stopped]
+5.15s call     Tests/Chat/test_console_turn_resend.py::test_resend_runs_granted_required_hooks_before_clear[SessionStart-failed]
+5.15s call     Tests/Chat/test_console_turn_resend.py::test_resend_runs_granted_required_hooks_before_clear[UserPromptSubmit-stopped]
+5.13s call     Tests/Chat/test_console_turn_resend.py::test_resend_runs_granted_required_hooks_before_clear[UserPromptSubmit-failed]
+5.04s call     Tests/Chat/test_console_turn_resend.py::test_runtime_bound_queued_retry_keeps_scheduled_hook_semantics
+4.57s call     Tests/Chat/test_console_turn_resend.py::test_resend_hook_wait_retains_rows_and_retires_its_owner[switch]
+4.49s call     Tests/Chat/test_console_turn_resend.py::test_resend_hook_wait_retains_rows_and_retires_its_owner[configuration]
+4.48s call     Tests/Chat/test_console_turn_resend.py::test_resend_delivers_granted_hook_context_once
+4.35s call     Tests/Chat/test_console_turn_resend.py::test_resend_hook_wait_retains_rows_and_retires_its_owner[cancel]
+1.61s call     Tests/Chat/test_console_trace_current_turn_transforms.py::test_dictionary_send_and_successors_keep_exact_saved_source[False]
+1.39s call     Tests/Chat/test_console_trace_current_turn_transforms.py::test_dictionary_send_and_successors_keep_exact_saved_source[True]
+
+(14 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_console_trace_current_turn_transforms.py::test_next_send_after_failed_transformed_call[error]
+FAILED Tests/Chat/test_console_trace_current_turn_transforms.py::test_next_send_after_failed_transformed_call[stopped]
+FAILED Tests/Chat/test_console_regenerate_branching.py::test_regenerate_stream_failure_retains_failed_sibling_and_restores_anchor
+FAILED Tests/Chat/test_console_regenerate_branching.py::test_regenerate_mid_conversation_failure_restores_selected_anchor_not_former_tail
+FAILED Tests/Chat/test_console_regenerate_branching.py::test_regenerate_persists_new_sibling_when_store_has_persistence
+FAILED Tests/Chat/test_console_edit_resend.py::test_edit_and_resend_forks_user_sibling_and_streams_reply
+FAILED Tests/Chat/test_console_edit_resend.py::test_edit_and_resend_skill_refusal_leaves_no_pending_node
+FAILED Tests/Chat/test_console_edit_resend.py::test_edit_and_resend_carries_anchor_attachments
+FAILED Tests/Chat/test_console_turn_resend.py::test_refused_echo_resend_consumes_its_recovery_and_the_composer_copy
+FAILED Tests/Chat/test_console_turn_resend.py::test_resend_applies_the_vision_gate_to_the_turns_attachments
+FAILED Tests/Chat/test_console_turn_resend.py::test_refused_echo_resend_sends_its_own_restaged_attachments_once
+11 failed, 201 passed in 111.17s (0:01:51)

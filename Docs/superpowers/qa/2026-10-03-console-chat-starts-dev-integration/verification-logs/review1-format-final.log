@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "/private/tmp/console-task1-round1-format.py", line 19, in <module>
+    assert result.returncode==0, records[-1]
+           ^^^^^^^^^^^^^^^^^^^^
+AssertionError: {'argv': ['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python', '-m', 'ruff', 'format', '--range', '19733-19735', 'tldw_chatbook/Chat/console_chat_controller.py'], 'cwd': '/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook', 'env': {'TLDW_TEST_GC_EVERY': '1'}, 'returncode': 2, 'output': 'error: Failed to parse tldw_chatbook/Chat/console_chat_controller.py:19087:21: Expected `,`, found name\n'}

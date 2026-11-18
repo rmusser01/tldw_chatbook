@@ -52,6 +52,12 @@ from tldw_chatbook.Widgets.Console.console_inspector_section import (
 )
 from tldw_chatbook.Workspaces.change_tracking import ChangedFile
 
+# TASK-39141: `_build_test_app()` reads config (app_factory's
+# `load_settings()`), which the per-test TLDW_CONFIG_PATH redirect refuses
+# (RecoveryRequired raw_source_selection_changed). The focus-carrier helpers'
+# module marker does not carry over to this file.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 #: WCAG AA for body text.
 AA_TEXT = 4.5

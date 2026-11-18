@@ -78,14 +78,18 @@ import signal
 import subprocess
 import threading
 import time
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from tldw_chatbook.Tools.local_tool_impls import (
     LocalToolError,
+    _folded_exclusions,
+    _is_relative_sensitive_path,
     _relative_target_is_safe,
     resolve_workspace_path,
 )
+from tldw_chatbook.Utils.path_validation import fold_path_part
 from tldw_chatbook.Utils.sensitive_paths import (
     SensitiveExclusion,
     SensitivePathContext,
@@ -199,6 +203,18 @@ def _read_bounded_stream(stream, max_output_bytes: int) -> tuple[bytes, bool]:
     return bytes(output[:max_output_bytes]), True
 
 
+@dataclass(frozen=True, slots=True)
+class GitBytesResult:
+    """Internal bounded bytes; a failed stream is never successful empty output."""
+
+    returncode: int
+    stdout: bytes
+    stderr: bytes
+    truncated: bool = False
+    stdout_truncated: bool = False
+    stderr_truncated: bool = False
+
+
 def run_git(
     argv: list[str],
     *,
@@ -208,45 +224,75 @@ def run_git(
     timeout: float = GIT_TIMEOUT_SECONDS,
     max_output_bytes: int = GIT_MAX_OUTPUT_BYTES,
 ) -> GitCommandResult:
-    """Run an allowlisted git command with bounded output and a timeout.
-
-    Fixed argv only: ``argv[0]`` must be logical ``git``, the only permitted
-    global option is ``--no-pager`` (``--version`` must stand alone), and the
-    subcommand must be in ``_ALLOWED_GIT_SUBCOMMANDS``. The absolute executable
-    replaces logical argv zero only at launch. The environment is sanitized
-    (PATH + git safety vars only) and stdin is
-    DEVNULL. Output per stream is capped at ``max_output_bytes`` — the
-    process is killed when the cap is exceeded (never fully buffered) and a
-    truncation marker is appended. Timeout kills the process and raises.
-
-    NOTE: validation stops at the subcommand. Everything AFTER the
-    subcommand is caller-constructed and NOT validated at this layer — e.g.
-    ``["git", "diff", "--output=/tmp/pwn"]`` passes ``_validate_argv``.
-    Callers (the tool cores below) must therefore build argv only from
-    fixed literals plus values they have validated themselves (see the
-    ``commit_range`` leading-dash/regex checks in :func:`git_diff`) and
-    must never splice raw model-controlled strings into flag positions.
-
-    Raises:
-        LocalToolError: argv validation failure, git unavailable, or timeout.
-    """
+    """Preserve the allowlisted public text API over the bounded byte runner."""
     _validate_argv(argv)
+    result = _run_git_bytes(
+        argv,
+        cwd=cwd,
+        executable=executable,
+        own_process_group=own_process_group,
+        timeout=timeout,
+        max_output_bytes=max_output_bytes,
+    )
+    return GitCommandResult(
+        argv=list(argv),
+        returncode=result.returncode,
+        stdout=result.stdout.decode("utf-8", errors="replace")
+        + (
+            GIT_TRUNCATED_MARKER if result.truncated and result.stdout_truncated else ""
+        ),
+        stderr=result.stderr.decode("utf-8", errors="replace")
+        + (
+            GIT_TRUNCATED_MARKER if result.truncated and result.stderr_truncated else ""
+        ),
+        truncated=result.truncated,
+    )
+
+
+def _run_git_bytes(
+    argv: list[str],
+    *,
+    cwd: Path | None = None,
+    executable: Path | None = None,
+    own_process_group: bool = True,
+    timeout: float = GIT_TIMEOUT_SECONDS,
+    max_output_bytes: int = GIT_MAX_OUTPUT_BYTES,
+    immutable_objects: bool = False,
+) -> GitBytesResult:
+    """Run host-built fixed argv, preserving bytes and bounded failure signals.
+
+    Public callers enter through run_git's allowlist. Internal object readers
+    construct every flag here themselves and validate their OIDs and paths.
+    """
     resolved_executable = executable or (
         Path(found) if (found := shutil.which("git")) is not None else None
     )
     if resolved_executable is None:
         raise LocalToolError("git is not available on this system")
     resolved_executable = resolved_executable.resolve()
-    if not isinstance(max_output_bytes, int) or isinstance(max_output_bytes, bool) or max_output_bytes <= 0:
+    if (
+        not isinstance(max_output_bytes, int)
+        or isinstance(max_output_bytes, bool)
+        or max_output_bytes <= 0
+    ):
         max_output_bytes = GIT_MAX_OUTPUT_BYTES
 
+    environment = _git_environment()
+    if immutable_objects:
+        environment.update(
+            {
+                "GIT_NO_REPLACE_OBJECTS": "1",
+                "GIT_NO_LAZY_FETCH": "1",
+                "GIT_GRAFT_FILE": os.devnull,
+            }
+        )
     process = subprocess.Popen(
         [str(resolved_executable), *argv[1:]],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         cwd=cwd,
-        env=_git_environment(),
+        env=environment,
         # Own process group so the timeout/cap kills can reap grandchildren
         # too (a bare process.kill() leaves e.g. a textconv child alive —
         # and a live grandchild holding the pipe write end would stall the
@@ -255,13 +301,15 @@ def run_git(
     )
 
     results: dict[str, tuple[bytes, bool]] = {}
+    read_errors: list[Exception] = []
     done: queue.Queue[tuple[str, tuple[bytes, bool]]] = queue.Queue()
 
     def _reader(name: str, stream) -> None:  # noqa: ANN001 - pipe reader
         try:
             done.put((name, _read_bounded_stream(stream, max_output_bytes)))
-        except Exception:  # defensive: a broken pipe must not hang the join loop
-            done.put((name, (b"", False)))
+        except Exception as exc:  # a broken pipe must not become an empty tree
+            read_errors.append(exc)
+            done.put((name, (b"", True)))
 
     for name, stream in (("stdout", process.stdout), ("stderr", process.stderr)):
         threading.Thread(target=_reader, args=(name, stream), daemon=True).start()
@@ -273,7 +321,11 @@ def run_git(
             _kill_process(process, own_process_group=own_process_group)
             with contextlib.suppress(Exception):
                 process.wait()
-            raise LocalToolError(f"git command timed out after {timeout} seconds: {list(argv)}")
+            # Only argv before `--`: the pathspecs after it name excluded paths.
+            shown = argv[: argv.index("--")] if "--" in argv else argv
+            raise LocalToolError(
+                f"git command timed out after {timeout} seconds: {list(shown)}"
+            )
         try:
             name, data = done.get(timeout=min(remaining, 0.05))
         except queue.Empty:
@@ -289,25 +341,19 @@ def run_git(
 
     stdout_bytes, stdout_truncated = results.get("stdout", (b"", False))
     stderr_bytes, stderr_truncated = results.get("stderr", (b"", False))
-    stdout = stdout_bytes.decode("utf-8", errors="replace")
-    stderr = stderr_bytes.decode("utf-8", errors="replace")
-    if stdout_truncated:
-        stdout += GIT_TRUNCATED_MARKER
-    if stderr_truncated:
-        stderr += GIT_TRUNCATED_MARKER
-    return GitCommandResult(
-        argv=list(argv),
+    if read_errors:
+        raise LocalToolError("git output read failed") from read_errors[0]
+    return GitBytesResult(
         returncode=int(process.returncode if process.returncode is not None else -1),
-        stdout=stdout,
-        stderr=stderr,
-        timed_out=False,
+        stdout=stdout_bytes,
+        stderr=stderr_bytes,
         truncated=stdout_truncated or stderr_truncated,
+        stdout_truncated=stdout_truncated,
+        stderr_truncated=stderr_truncated,
     )
 
 
-def _kill_process(
-    process: subprocess.Popen, *, own_process_group: bool = True
-) -> None:
+def _kill_process(process: subprocess.Popen, *, own_process_group: bool = True) -> None:
     """Kill the whole process group on POSIX; fall back to the direct child."""
     if own_process_group and os.name == "posix":
         # process was started with start_new_session=True, so its pid is
@@ -366,6 +412,7 @@ def _denylist_pathspecs(
     *,
     workspace_root: Path | None = None,
     sensitive_exclusions: tuple[SensitiveExclusion, ...] | None = None,
+    exclusions: tuple[SensitiveExclusion, ...] | None = None,
 ) -> tuple[str, ...]:
     """Render the sensitive-path denylist as git exclude pathspecs.
 
@@ -376,8 +423,12 @@ def _denylist_pathspecs(
 
     Excluding by PATHSPEC rather than filtering git's output is the
     deliberate choice: git stays the authority on what matches, and no
-    unified-diff or porcelain text is ever parsed to decide what to
-    withhold -- a half-parsed diff is worse than none. Direct callers
+    unified-diff text is ever parsed to decide what to withhold -- a
+    half-parsed diff is worse than none. TASK-38463 adds the folded matcher
+    behind these pathspecs, because git's ``icase`` is ASCII-only:
+    ``git_status`` drops denied entries from the ``-z`` records it already
+    parses to render, and ``git_diff`` excludes denied stored names
+    byte-exactly (``_withheld_names``). Direct callers
     recompute the live denylist on each call. The pinned helper instead
     consumes the bounded snapshot admitted by its parent before the helper
     environment is scrubbed.
@@ -416,6 +467,9 @@ def _denylist_pathspecs(
             process's working directory.
         context: Optional pre-resolved ``SensitivePathContext``, so one
             tool call resolves the denylist once.
+        exclusions: The rules already read by ``_repo_exclusions``; when
+            given, nothing is read again, so the folded matcher a caller runs
+            beside these pathspecs judges the same snapshot.
 
     Returns:
         Exclude pathspecs, possibly empty of location-based entries but
@@ -428,33 +482,200 @@ def _denylist_pathspecs(
             or the denylist produced an exclusion kind this renderer does
             not know how to express.
     """
-    if sensitive_exclusions is None:
-        exclusions = sensitive_exclusions_under(repo_root, context=context)
-    else:
-        if workspace_root is None:
-            raise LocalToolError("workspace root is required for admitted exclusions")
-        exclusions = _repo_relative_exclusions(
-            Path(workspace_root).resolve(), repo_root, sensitive_exclusions
+    if exclusions is None:
+        exclusions = _repo_exclusions(
+            repo_root,
+            context,
+            workspace_root=workspace_root,
+            sensitive_exclusions=sensitive_exclusions,
         )
 
     specs: list[str] = []
-    for kind, value in exclusions:
-        if kind in {"subtree", "file"}:
-            if not value:
+    for kind, raw_value in exclusions:
+        # TASK-37655: git matches pathspecs byte-wise and, with
+        # core.precomposeunicode off, keeps a name in the normalization it was
+        # created in, so each rule excludes both its NFC and NFD spellings.
+        # TASK-38463: a non-ASCII rule that folds to ASCII (``Straße`` ->
+        # ``strasse``) also gets that spelling: an unscoped ``git_diff`` scans
+        # only non-ASCII names (``_withheld_names``), so there a stored ASCII
+        # name is excluded here or not at all. (A scoped diff scans every
+        # name in its scope; ``git_status`` filters every entry.) A stored
+        # non-ASCII spelling these miss (non-ASCII case, mixed normalization)
+        # is ``git_diff``'s scan's job.
+        spellings = [unicodedata.normalize(form, raw_value) for form in ("NFC", "NFD")]
+        if not raw_value.isascii() and (folded := fold_path_part(raw_value)).isascii():
+            spellings.append(folded)
+        for value in dict.fromkeys(spellings):
+            if kind in {"subtree", "file"}:
+                if not value:
+                    raise LocalToolError(
+                        f"repository root ({repo_root}) is a protected path; refusing"
+                    )
+                specs.append(f":(exclude,literal,icase){value}")
+            elif kind == "direct_children":
+                prefix = f"{_glob_escape(value)}/" if value else ""
+                specs.append(f":(exclude,glob,icase){prefix}*")
+            elif kind == "name":
+                specs.append(f":(exclude,glob,icase)**/{_glob_escape(value)}")
+            else:  # pragma: no cover - defensive; see the docstring
                 raise LocalToolError(
-                    f"repository root ({repo_root}) is a protected path; refusing"
+                    f"unsupported sensitive-path exclusion kind: {kind!r}"
                 )
-            specs.append(f":(exclude,literal,icase){value}")
-        elif kind == "direct_children":
-            prefix = f"{_glob_escape(value)}/" if value else ""
-            specs.append(f":(exclude,glob,icase){prefix}*")
-        elif kind == "name":
-            specs.append(f":(exclude,glob,icase)**/{_glob_escape(value)}")
-        else:  # pragma: no cover - defensive; see the docstring
-            raise LocalToolError(
-                f"unsupported sensitive-path exclusion kind: {kind!r}"
-            )
     return tuple(specs)
+
+
+def _repo_exclusions(
+    repo_root: Path,
+    context: SensitivePathContext | None,
+    *,
+    workspace_root: Path | None,
+    sensitive_exclusions: tuple[SensitiveExclusion, ...] | None,
+) -> tuple[SensitiveExclusion, ...]:
+    """The denylist rules, relative to ``repo_root`` (live or parent-admitted)."""
+    if sensitive_exclusions is None:
+        return sensitive_exclusions_under(repo_root, context=context)
+    if workspace_root is None:
+        raise LocalToolError("workspace root is required for admitted exclusions")
+    return _repo_relative_exclusions(
+        Path(workspace_root).resolve(), repo_root, sensitive_exclusions
+    )
+
+
+#: Positive pathspecs selecting every path with a non-ASCII byte in any
+#: component (TASK-38463). Only those can differ from a rule in a way git's
+#: ``icase`` (ASCII-only) does not fold; a rule that folds to ASCII is
+#: rendered in that spelling by ``_denylist_pathspecs`` instead.
+_NON_ASCII_PATHSPECS = (":(glob)**/*[!\x01-\x7f]*", ":(glob)**/*[!\x01-\x7f]*/**")
+#: Bounds on the withheld-name check: the scan's output and the bytes of the
+#: pathspecs it adds. Past either, ``git_diff`` refuses rather than run with a
+#: partial list.
+_WITHHELD_SCAN_MAX_BYTES = 8_000_000
+_WITHHELD_PATHSPEC_BUDGET = 16_000
+#: ``git_diff``'s one refusal when that check cannot complete. Neutral on
+#: purpose: naming excluded paths would announce that an exclusion took
+#: effect (see ``git_diff``), and the post-run check can fail every time, so
+#: it must not invite a retry.
+_UNVERIFIED_EXCLUSIONS = "git diff output withheld: could not verify path exclusions"
+
+
+def _exact_exclude_pathspec(stored: str, *, subtree: bool) -> str:
+    """Exclude exactly the stored bytes of ``stored`` (``subtree``: and below).
+
+    With ``core.precomposeunicode`` on (macOS's default) git precomposes its
+    argv, so a literal NFD or mixed-normalization name is rewritten to NFC
+    before it is matched and misses the stored entry (measured, git 2.39.5).
+    Each non-ASCII byte therefore goes in its own bracket: wildmatch compares
+    bytes, and an element that is not valid UTF-8 is left alone by the
+    precomposition. The bytes are the stored ones: ``stored`` was decoded as
+    UTF-8 with surrogateescape (``_withheld_names``), so it is re-encoded the
+    same way, never by the filesystem encoding. Windows git does not
+    precompose and its argv is UTF-16, so it gets the literal form, whose
+    plain prefix already covers a subtree.
+    """
+    if os.name == "nt":
+        return f":(exclude,literal){stored}"
+    pattern = "".join(
+        _glob_escape(char)
+        if char.isascii()
+        else "".join(
+            f"[{chr(0xDC00 + byte)}]"
+            for byte in char.encode("utf-8", "surrogateescape")
+        )
+        for char in stored
+    )
+    return f":(exclude,glob){pattern}{'/**' if subtree else ''}"
+
+
+def _withheld_names(
+    mode_args: list[str],
+    pathspecs: list[str],
+    exclusions: tuple[SensitiveExclusion, ...],
+    *,
+    scoped: bool,
+    cwd: Path,
+    executable: Path | None,
+    own_process_group: bool,
+) -> list[str]:
+    """Names ``pathspecs`` let into the diff but the folded matcher denies.
+
+    Unscoped, scans every non-ASCII name. ``scoped`` (``pathspecs`` carries
+    the diff's ``path``): scans every name under that scope and nothing else,
+    since git ORs positive pathspecs and the non-ASCII globs would add names
+    from the whole repository. ``--no-renames``: both sides of a rename are
+    listed. ``-z``: names come back as stored, unquoted. A truncated or failed
+    scan refuses.
+    """
+    argv = [
+        "git",
+        "--no-pager",
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-renames",
+        "--name-only",
+        "-z",
+        *mode_args,
+        "--",
+        *pathspecs,
+    ]
+    if not scoped:
+        argv.extend(_NON_ASCII_PATHSPECS)
+    result = _run_git_bytes(
+        argv,
+        cwd=cwd,
+        executable=executable,
+        own_process_group=own_process_group,
+        max_output_bytes=_WITHHELD_SCAN_MAX_BYTES,
+    )
+    if result.truncated:
+        raise LocalToolError(_UNVERIFIED_EXCLUSIONS)
+    if result.returncode != 0:
+        gist = result.stderr.decode("utf-8", errors="replace").strip().splitlines()
+        raise LocalToolError(
+            f"git diff failed: {gist[0][:200] if gist else result.returncode}"
+        )
+    folded = _folded_exclusions(exclusions)
+    names = (
+        raw.decode("utf-8", "surrogateescape") for raw in result.stdout.split(b"\0")
+    )
+    return [
+        name
+        for name in dict.fromkeys(names)
+        if name
+        and _is_relative_sensitive_path(
+            PurePosixPath(name),
+            exclusions,
+            is_directory=False,
+            folded_exclusions=folded,
+        )
+    ]
+
+
+def _withheld_name_pathspecs(
+    names: list[str], exclusions: tuple[SensitiveExclusion, ...]
+) -> list[str]:
+    """Byte-exact exclusions for ``names``; a denied directory covers its files."""
+    subtrees = tuple(rule for rule in exclusions if rule.kind == "subtree")
+    folded_subtrees = _folded_exclusions(subtrees)
+    specs: dict[str, None] = {}
+    for name in names:
+        parts = name.split("/")
+        for depth in range(1, len(parts)):
+            if _is_relative_sensitive_path(
+                PurePosixPath(*parts[:depth]),
+                subtrees,
+                is_directory=True,
+                folded_exclusions=folded_subtrees,
+            ):
+                specs[
+                    _exact_exclude_pathspec("/".join(parts[:depth]), subtree=True)
+                ] = None
+                break
+        else:
+            specs[_exact_exclude_pathspec(name, subtree=False)] = None
+    if sum(len(spec) for spec in specs) > _WITHHELD_PATHSPEC_BUDGET:
+        raise LocalToolError(_UNVERIFIED_EXCLUSIONS)
+    return list(specs)
 
 
 def _repo_relative_exclusions(
@@ -464,8 +685,7 @@ def _repo_relative_exclusions(
 ) -> tuple[SensitiveExclusion, ...]:
     """Translate parent-admitted workspace exclusions to repository-relative."""
     repo_parts = tuple(
-        part.casefold()
-        for part in repo_root.relative_to(workspace_root).parts
+        fold_path_part(part) for part in repo_root.relative_to(workspace_root).parts
     )
     translated: list[SensitiveExclusion] = []
     for exclusion in exclusions:
@@ -473,7 +693,7 @@ def _repo_relative_exclusions(
             translated.append(exclusion)
             continue
         value_parts = PurePosixPath(exclusion.value).parts if exclusion.value else ()
-        folded_value = tuple(part.casefold() for part in value_parts)
+        folded_value = tuple(fold_path_part(part) for part in value_parts)
         if folded_value[: len(repo_parts)] == repo_parts:
             relative_parts = value_parts[len(repo_parts) :]
             translated.append(
@@ -487,7 +707,9 @@ def _repo_relative_exclusions(
             continue
         if exclusion.kind in {"subtree", "file"}:
             translated.append(SensitiveExclusion(exclusion.kind, ""))
-        elif exclusion.kind == "direct_children" and len(repo_parts) == len(folded_value):
+        elif exclusion.kind == "direct_children" and len(repo_parts) == len(
+            folded_value
+        ):
             translated.append(SensitiveExclusion("direct_children", ""))
     return tuple(translated)
 
@@ -785,14 +1007,17 @@ def git_status(
 
     Args:
         workspace_root: The confinement root ``path`` must resolve inside.
-        path: Used ONLY to discover which repository to report on (a file
-            or directory anywhere inside the target repo works, since
-            discovery walks up to the repo root). It is NOT applied as a
-            scoping pathspec: unlike ``git_diff``/``git_log``, this
-            function's argv carries no positive pathspec for ``path``, so
-            the status returned always covers the WHOLE repository —
-            asking for a subdirectory's status still returns every
-            changed file in the repo, not just that subdirectory's.
+        path: Scopes the reported entries to this path (a file or
+            directory), relative to the workspace root, exactly as
+            ``git_diff``/``git_log`` apply theirs. The path ALSO discovers
+            which repository to report on (discovery walks up to the repo
+            root from it). TASK-19874: this used to be discovery-only --
+            a model narrowing to a subdirectory silently received every
+            changed file in the whole repository; the argv now carries
+            the path as a ``:(literal)`` positive pathspec ahead of the
+            denylist exclusions, so a magic-shaped filename cannot invert
+            the scope and the exclusions still apply on top (both pinned
+            by tests).
 
     Returns:
         The branch header line, one ``category: XY path`` (or
@@ -810,6 +1035,32 @@ def git_status(
         executable=executable,
         own_process_group=own_process_group,
     )
+    pathspecs: list[str] = []
+    if path not in (None, "."):
+        # TASK-19874: the positive scoping pathspec, spelled exactly like
+        # git_diff/git_log's (``_literal_pathspec`` -- ``:(literal)`` kills
+        # pathspec magic, so a repository file named like a magic prefix
+        # cannot invert the scope; TASK-19632's tripwire covers this call
+        # site like the other two).
+        pathspecs.append(
+            _literal_pathspec(
+                _repo_relative_path(
+                    workspace_root,
+                    repo_root,
+                    path,
+                    context=context,
+                    sensitive_exclusions=sensitive_exclusions,
+                )
+            )
+        )
+    # TASK-38463: one rule snapshot backs the pathspecs and the folded filter.
+    exclusions = _repo_exclusions(
+        repo_root,
+        context,
+        workspace_root=workspace_root,
+        sensitive_exclusions=sensitive_exclusions,
+    )
+    pathspecs.extend(_denylist_pathspecs(repo_root, exclusions=exclusions))
     result = _run_git_checked(
         [
             "git",
@@ -820,22 +1071,20 @@ def git_status(
             "--branch",
             "--untracked-files=all",
             "--",
-            *_denylist_pathspecs(
-                repo_root,
-                context=context,
-                workspace_root=workspace_root,
-                sensitive_exclusions=sensitive_exclusions,
-            ),
+            *pathspecs,
         ],
         subcommand="status",
-        cwd=_git_cwd(
-            workspace_root, repo_root, own_process_group=own_process_group
-        ),
+        cwd=_git_cwd(workspace_root, repo_root, own_process_group=own_process_group),
         executable=executable,
         own_process_group=own_process_group,
     )
+    # TASK-38463: the pathspecs above fold ASCII case only, and git
+    # precomposes argv on macOS; every entry is parsed to be rendered anyway,
+    # so the folded matcher drops any spelling they missed before it counts.
     branch, entries, truncated = _parse_status_porcelain_v2(
-        result.stdout, limit=GIT_STATUS_MAX_ENTRIES
+        result.stdout,
+        limit=GIT_STATUS_MAX_ENTRIES,
+        exclusions=exclusions,
     )
     lines = [_format_branch_header(branch)]
     lines.extend(_format_status_entry(entry) for entry in entries)
@@ -847,8 +1096,9 @@ def git_status(
 
 
 def _parse_status_porcelain_v2(
-    stdout: str, *, limit: int
+    stdout: str, *, limit: int, exclusions: tuple[SensitiveExclusion, ...] = ()
 ) -> tuple[dict[str, object], list[dict[str, object]], bool]:
+    folded = _folded_exclusions(exclusions)
     branch: dict[str, object] = {
         "branch": None,
         "upstream": None,
@@ -864,7 +1114,12 @@ def _parse_status_porcelain_v2(
         if record.startswith("! "):
             continue
         entry = _parse_status_entry(record)
-        if entry is None:
+        if entry is None or _is_relative_sensitive_path(
+            PurePosixPath(str(entry["path"])),
+            exclusions,
+            is_directory=False,
+            folded_exclusions=folded,
+        ):
             continue
         total += 1
         if len(entries) < limit:
@@ -980,9 +1235,7 @@ def git_branches(
             "--format=%(HEAD)%00%(refname:short)%00%(upstream:short)%00%(objectname)",
         ],
         subcommand="branch",
-        cwd=_git_cwd(
-            workspace_root, repo_root, own_process_group=own_process_group
-        ),
+        cwd=_git_cwd(workspace_root, repo_root, own_process_group=own_process_group),
         executable=executable,
         own_process_group=own_process_group,
     )
@@ -1080,9 +1333,7 @@ def git_log(
     result = _run_git_checked(
         argv,
         subcommand="log",
-        cwd=_git_cwd(
-            workspace_root, repo_root, own_process_group=own_process_group
-        ),
+        cwd=_git_cwd(workspace_root, repo_root, own_process_group=own_process_group),
         executable=executable,
         own_process_group=own_process_group,
     )
@@ -1158,7 +1409,9 @@ def git_diff(
         # machine-safe --no-textconv/--no-ext-diff already present —
         # verified as a command-execution escape via a hostile repo's
         # .gitattributes diff driver. Refuse outright.
-        if commit_range.startswith("-") or not _COMMIT_RANGE_PATTERN.match(commit_range):
+        if commit_range.startswith("-") or not _COMMIT_RANGE_PATTERN.match(
+            commit_range
+        ):
             raise LocalToolError(
                 f"invalid commit_range {commit_range!r}: "
                 "must be a ref/range matching [A-Za-z0-9._/~^-] and not start with '-'"
@@ -1187,10 +1440,10 @@ def git_diff(
         # --unified implies patch output; combining it with --stat would
         # emit BOTH formats, so patch context is only set in patch mode.
         argv.append("--unified=3")
-    if staged:
-        argv.append("--cached")
+    mode_args = ["--cached"] if staged else []
     if commit_range is not None:
-        argv.append(commit_range)
+        mode_args.append(commit_range)
+    argv.extend(mode_args)
     pathspecs: list[str] = []
     if path is not None:
         pathspecs.append(
@@ -1207,24 +1460,45 @@ def git_diff(
     # Exclusions come LAST and are never empty (the name rule always
     # applies), so `--` is always present: an exclude-only pathspec list
     # is applied to the whole tree, which is exactly the no-`path` case.
-    pathspecs.extend(
-        _denylist_pathspecs(
-            repo_root,
-            context=context,
-            workspace_root=workspace_root,
-            sensitive_exclusions=sensitive_exclusions,
-        )
+    # One rule snapshot backs these pathspecs and the scan below.
+    exclusions = _repo_exclusions(
+        repo_root,
+        context,
+        workspace_root=workspace_root,
+        sensitive_exclusions=sensitive_exclusions,
     )
+    pathspecs.extend(_denylist_pathspecs(repo_root, exclusions=exclusions))
+    # TASK-38463: git's `icase` folds ASCII only and git precomposes argv on
+    # macOS, so the pathspecs above miss a stored name that differs from a
+    # rule by non-ASCII case or is in a mixed normalization. The folded
+    # matcher decides: scan the names the diff would include, exclude the
+    # ones it denies byte-exactly, and re-scan after the run. A name still
+    # there means the file changed mid-call or git ignored the exclusion, so
+    # the output is dropped (fail closed).
+    cwd = _git_cwd(workspace_root, repo_root, own_process_group=own_process_group)
+
+    def _scan() -> list[str]:
+        return _withheld_names(
+            mode_args,
+            pathspecs,
+            exclusions,
+            scoped=path is not None,
+            cwd=cwd,
+            executable=executable,
+            own_process_group=own_process_group,
+        )
+
+    pathspecs.extend(_withheld_name_pathspecs(_scan(), exclusions))
     argv.extend(["--", *pathspecs])
     result = _run_git_checked(
         argv,
         subcommand="diff",
-        cwd=_git_cwd(
-            workspace_root, repo_root, own_process_group=own_process_group
-        ),
+        cwd=cwd,
         executable=executable,
         own_process_group=own_process_group,
     )
+    if _scan():
+        raise LocalToolError(_UNVERIFIED_EXCLUSIONS)
     return result.stdout if result.stdout.strip() else "(no changes)"
 
 
@@ -1299,13 +1573,13 @@ def git_blame(
     result = _run_git_checked(
         argv,
         subcommand="blame",
-        cwd=_git_cwd(
-            workspace_root, repo_root, own_process_group=own_process_group
-        ),
+        cwd=_git_cwd(workspace_root, repo_root, own_process_group=own_process_group),
         executable=executable,
         own_process_group=own_process_group,
     )
-    lines = [f"{ln}: {author}: {text}" for ln, author, text in _parse_blame(result.stdout)]
+    lines = [
+        f"{ln}: {author}: {text}" for ln, author, text in _parse_blame(result.stdout)
+    ]
     return "\n".join(lines) if lines else "(no blame output)"
 
 
@@ -1334,7 +1608,9 @@ def _parse_blame(stdout: str) -> list[tuple[int, str, str]]:
         if raw_line.startswith("author "):
             author_name = raw_line.removeprefix("author ")
             current["author_name"] = author_name
-            commit_metadata.setdefault(str(current["commit"]), {})["author_name"] = author_name
+            commit_metadata.setdefault(str(current["commit"]), {})["author_name"] = (
+                author_name
+            )
     return lines
 
 

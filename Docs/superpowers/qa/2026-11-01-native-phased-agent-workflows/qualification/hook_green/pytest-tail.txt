@@ -1,0 +1,8 @@
+..                                                                       [100%]
+- generated xml file: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-hook_green/tests.xml -
+============================= slowest 25 durations =============================
+4.45s call     Tests/Chat/test_workflow_native_journeys.py::test_original_workflow_hook_validation_preserves_capture_return[overlap]
+4.12s call     Tests/Chat/test_workflow_native_journeys.py::test_original_workflow_hook_validation_preserves_capture_return[event]
+
+(4 durations < 1s hidden.)
+2 passed in 8.96s

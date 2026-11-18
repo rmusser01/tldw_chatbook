@@ -22,6 +22,7 @@ Generations are cached to `generations.json` beside this file so the run is
 reproducible and the generator's actual output is auditable rather than
 summarized.
 """
+
 from __future__ import annotations
 
 import json
@@ -39,6 +40,7 @@ if str(REPO) not in sys.path:
 
 HERE = Path(__file__).resolve().parent
 CACHE = HERE / "generations.json"
+
 
 def _validated_endpoint(raw: str) -> str:
     """Validate the generator endpoint before any request is built.
@@ -84,12 +86,14 @@ ENDPOINT = _validated_endpoint(
     os.environ.get("HYDE_ENDPOINT", "http://localhost:9099/v1/chat/completions")
 )
 MODEL = _validated_model(
-    os.environ.get("HYDE_MODEL", "gemma-4-26B-A4B-it-ultra-uncensored-heretic-Q4_K_M.gguf")
+    os.environ.get(
+        "HYDE_MODEL", "gemma-4-26B-A4B-it-ultra-uncensored-heretic-Q4_K_M.gguf"
+    )
 )
 K = 10
-BAR = 5             # registered in TASK-18514 before any measurement
+BAR = 5  # registered in TASK-18514 before any measurement
 MODE = "semantic"
-MAX_TOKENS = 220    # generation budget; also reported in the run header
+MAX_TOKENS = 220  # generation budget; also reported in the run header
 GEN_TIMEOUT_S = 180
 
 #: Deliberately plain. A prompt tuned against these 60 queries would measure
@@ -178,7 +182,9 @@ def main() -> int:
     import tempfile
 
     if os.environ.get("RAG_EVAL") != "1":
-        raise SystemExit("refusing to run without RAG_EVAL=1 (this builds a real index)")
+        raise SystemExit(
+            "refusing to run without RAG_EVAL=1 (this builds a real index)"
+        )
 
     import tldw_chatbook
     from tldw_chatbook.Library.library_local_rag_search_service import (
@@ -217,12 +223,14 @@ def main() -> int:
                 print(f"  !! {q.id}: {type(exc).__name__}: {exc}")
                 cache[q.id] = ""
             if i % 10 == 0 or i == len(todo):
-                print(f"  {i}/{len(todo)}  ({time.time()-t0:.0f}s)")
+                print(f"  {i}/{len(todo)}  ({time.time() - t0:.0f}s)")
         CACHE.write_text(json.dumps(cache, indent=1, sort_keys=True))
     empty = [qid for qid, txt in cache.items() if not txt.strip()]
     print(f"\nPROBE PROOF: generations={len(cache)}, EMPTY={len(empty)} {empty}")
-    print(f"PROBE PROOF: mean generated words = "
-          f"{sum(len(t.split()) for t in cache.values()) / max(len(cache),1):.0f}")
+    print(
+        f"PROBE PROOF: mean generated words = "
+        f"{sum(len(t.split()) for t in cache.values()) / max(len(cache), 1):.0f}"
+    )
     if empty:
         print("  NOTE: an empty generation makes that query's HyDE arm meaningless;")
         print("        it is reported, never scored as a HyDE result.")
@@ -254,7 +262,7 @@ def main() -> int:
                             seam.search(text, SOURCE_TYPES, "rag", top_k=K, scope=scope)
                         )
                         rows, _b, err = _extract_rows(res)
-                    except Exception as exc:                       # noqa: BLE001
+                    except Exception as exc:  # noqa: BLE001
                         rows, err = [], f"{type(exc).__name__}: {exc}"
                     if err:
                         errors.append(f"{arm}/{q.id}: {err}")
@@ -281,11 +289,15 @@ def main() -> int:
     scored, unmeasurable, gains, losses = score_arms(
         {q.id: bool(q.relevant_slugs) for q in golden}, base, hyde, empty_ids
     )
-    print(f"\n=== HyDE vs baseline, mode={MODE}, k={K} "
-          f"({len(scored)} target-bearing queries scored) ===")
+    print(
+        f"\n=== HyDE vs baseline, mode={MODE}, k={K} "
+        f"({len(scored)} target-bearing queries scored) ==="
+    )
     if unmeasurable:
-        print(f"  EXCLUDED, empty generation (no HyDE arm ran): "
-              f"{len(unmeasurable)} {unmeasurable}")
+        print(
+            f"  EXCLUDED, empty generation (no HyDE arm ran): "
+            f"{len(unmeasurable)} {unmeasurable}"
+        )
         print("    -- reported, NOT scored as losses: an unmeasurable query is")
         print("       not a query that got worse.")
     print(f"  baseline hits : {sum(base[q] for q in scored)}")
@@ -302,10 +314,14 @@ def main() -> int:
     print(f"\n  negative queries (no target; reported, not scored): {len(negs)}")
 
     print(f"\n=== VERDICT vs the pre-registered bar ===")
-    print(f"  clause 1 -- rescues >= {BAR}          : {len(gains)} -> "
-          f"{'PASS' if len(gains) >= BAR else 'FAIL'}")
-    print(f"  clause 2 -- zero hitters lose target : {len(losses)} -> "
-          f"{'PASS' if not losses else 'FAIL'}")
+    print(
+        f"  clause 1 -- rescues >= {BAR}          : {len(gains)} -> "
+        f"{'PASS' if len(gains) >= BAR else 'FAIL'}"
+    )
+    print(
+        f"  clause 2 -- zero hitters lose target : {len(losses)} -> "
+        f"{'PASS' if not losses else 'FAIL'}"
+    )
     verdict = len(gains) >= BAR and not losses
     print(f"  RESULT: {'ADMIT candidate' if verdict else 'NULL -- HyDE not admitted'}")
     return 0

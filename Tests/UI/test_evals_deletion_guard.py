@@ -108,7 +108,9 @@ def test_no_source_imports_removed_module(stem: str) -> None:
             text = path.read_text(encoding="utf-8", errors="replace")
             for lineno, line in enumerate(text.splitlines(), start=1):
                 if pattern.search(line):
-                    offenders.append(f"{path.relative_to(ROOT)}:{lineno}: {line.strip()}")
+                    offenders.append(
+                        f"{path.relative_to(ROOT)}:{lineno}: {line.strip()}"
+                    )
     assert not offenders, (
         f"'{stem}' was retired in PR 1 of the Evals rebuild but is still imported:\n"
         + "\n".join(offenders)

@@ -24,6 +24,27 @@ from scripts import check_persistent_diagnostic_inventory as diagnostic_inventor
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+@pytest.mark.parametrize(
+    ("receiver", "expected_count"),
+    [
+        ('source_globals["logger"]', 1),
+        ('source_globals["logging"]', 1),
+        ('source_globals["logger"].opt(exception=True)', 1),
+        ('source_globals["caption"]', 0),
+        ("source_globals[logger_key]", 0),
+        ("source_globals[0]", 0),
+    ],
+)
+def test_literal_dependency_loggers_remain_in_the_diagnostic_inventory(
+    receiver, expected_count
+):
+    diagnostics, sinks = diagnostic_inventory.scan_source(
+        f"{receiver}.warning('reviewed metadata only')\n"
+    )
+    assert len(diagnostics) == expected_count
+    assert sinks == []
+
+
 REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
     "tldw_chatbook/Agents/agent_service.py": {
         "autowake_enabled is not boolean; using default": (),
@@ -39,13 +60,12 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Local tool approval callback failed": (),
     },
     "tldw_chatbook/Agents/mcp_tool_provider.py": {
-        "MCPToolProvider: persona_policy_provider failed": (
-            "tool.name",
-            "type(exc).__name__",
-        ),
+        # TASK-39060: the class is bound, not formatted; the tool name is gone.
+        "MCPToolProvider: persona_policy_provider failed": ("type(exc).__name__",),
     },
     "tldw_chatbook/Agents/persona_policy.py": {
-        "Dropping non-mapping persona policy rule": ("type(entry).__name__",),
+        # TASK-39127: constant, nothing bound (owner decision 2026-11-06).
+        "Dropping a non-mapping policy rule": (),
         "Dropping malformed persona policy rule": ("type(exc).__name__",),
     },
     "tldw_chatbook/Agents/run_log_eviction.py": {
@@ -78,9 +98,6 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
             "type(exc).__name__",
         ),
         "Failed to enqueue roleplay Sync v2 chat message": ("type(exc).__name__",),
-        "Failed to persist Console roleplay message projection": (
-            "type(exc).__name__",
-        ),
         "Failed to persist Console roleplay system prompt projection": (
             "type(exc).__name__",
         ),
@@ -88,10 +105,10 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Failed to flush Console roleplay context on first persist": (),
     },
     "tldw_chatbook/Chat/console_agent_bridge.py": {
-        "fleet drain consumer raised": ("type(exc).__name__",),
         "model-call loop did not stop": (),
         "could not open the post-turn window": (),
         "post-turn window failed": (),
+        "fleet settlement consumer raised": ("type(exc).__name__",),
     },
     "tldw_chatbook/Character_Chat/Character_Chat_Lib.py": {
         "Skipping malformed usage_json on message export": (),
@@ -109,15 +126,10 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "fleet toast session-title fallback failed": ("type(exc).__name__",),
     },
     "tldw_chatbook/Chat/console_fleet_wake.py": {
-        "fleet wake drain intake failed": ("type(exc).__name__",),
-        "wake send gate raised; deferring": ("type(exc).__name__",),
-        "wake user-priority probe raised; deferring": ("type(exc).__name__",),
         "wake delivery failed": ("type(exc).__name__",),
-        "wake delivery ledger stamp failed (exception_type=": ("type(exc).__name__",),
-        "wake delivery ledger stamp failed after dispose": ("type(exc).__name__",),
-        "wake mark listing failed": ("type(exc).__name__",),
-        "wake ledger read failed": ("type(exc).__name__",),
         "wake session resolution failed": ("type(exc).__name__",),
+        "wake pause could not be saved": ("type(exc).__name__",),
+        "wake recovery failed": ("type(exc).__name__",),
     },
     "tldw_chatbook/DB/ChaChaNotes_DB.py": {
         "Database error restoring a note": ("type(e).__name__",),
@@ -153,7 +165,7 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Could not open the ChaChaNotes database": ("type(e).__name__",),
         "Notes keyword sub-leg failed": ("type(e).__name__",),
         "Conversations keyword sub-leg failed": ("type(e).__name__",),
-        "Query truncated": ("len(query)", "MAX_QUERY_LENGTH"),
+        "Query truncated": ("len(query)", "_rag_const('MAX_QUERY_LENGTH')"),
         "Unknown fts_match_construction; using conservative fallback": (),
     },
     "tldw_chatbook/UI/Console_Modules/fleet.py": {
@@ -164,15 +176,15 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "console fleet wake mount-claim failed": ("type(exc).__name__",),
         "fleet survivor check failed": ("type(exc).__name__",),
     },
-    "tldw_chatbook/UI/Screens/chat_screen.py": {
-        "Pending sidebar-state write failed": ("type(error).__name__",),
-    },
+    "tldw_chatbook/UI/Screens/chat_screen.py": {},
     "tldw_chatbook/UI/Console_Modules/video.py": {
         # TASK-15600: the per-operation video failure events were consolidated
         # into one "Console video operation={} failed error_type={}" family
         # whose first argument is shared across ~14 call sites, so they cannot
         # be pinned individually by this registry's unique-label contract; the
-        # inventory manifest owns them.
+        # inventory manifest owns them. The same holds for TASK-33621.45's
+        # "Console video operation={} stopped remote_cancel={}" pair
+        # (generation / regeneration; remote_cancel is a closed literal).
         "stream resolution failed": ("type(exc).__name__",),
     },
     "tldw_chatbook/UI/Screens/library_screen.py": {
@@ -269,9 +281,10 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
     "tldw_chatbook/UI/Console_Modules/session.py": {
         "Character swap: roleplay template seed failed": ("type(exc).__name__",),
         "Start Chat: roleplay template seed/persist failed": ("type(exc).__name__",),
-        "Console turn context: persona policy rules resolution failed": (
-            "type(exc).__name__",
-        ),
+        # The "Console turn context: persona policy rules resolution failed"
+        # row was removed: the persona posture now degrades to the identity
+        # posture silently (narrowing-only), so there is no resolution-failure
+        # diagnostic left to review.
         # The two "Console session startup: ..." diagnostics were removed by
         # 11150b849d (independent Buddy management), which retired the
         # startup persona/settings resolution they reported on.
@@ -279,10 +292,7 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
     "tldw_chatbook/UI/Console_Modules/workspace.py": {
         "Star-toggle cancellation re-sync failed": (),
     },
-    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": {
-        "MCP Tools-mode local master save failed": ("type(exc).__name__",),
-        "MCP Tools-mode workspace root save failed": ("type(exc).__name__",),
-    },
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": {},
     "tldw_chatbook/UI/Screens/settings_screen.py": {
         "Console identity refresh hook failed after settings save": (
             "type(screen).__name__",
@@ -290,7 +300,6 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
             "type(exc).__name__",
         ),
         "Settings post-pane-swap callback failed": (),
-        "Failed to persist render_remote_images": (),
         "Failed to persist model_catalog settings": (),
     },
     "tldw_chatbook/UI/Dictation_Window_Improved.py": {
@@ -316,35 +325,30 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Could not attach the world book": (),
         "Could not show the dictionary attach picker": (),
         "Could not show the world-book attach picker": (),
-        "Error saving persona policy rules": (
-            "len(rules)",
-            "type(exc).__name__",
-        ),
+        # TASK-39060: the count is dropped (owner decision, 2026-11-06).
+        "Error saving persona policy rules": ("type(exc).__name__",),
     },
     "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": {
         "Wizard commit rejected non-owned sections": (),
     },
-    "tldw_chatbook/UI/Screens/settings_video_gen_defaults.py": {
+    "tldw_chatbook/UI/Settings_Modules/settings_video_gen_defaults.py": {
         "could not resolve config path": ("type(exc).__name__",),
         "could not parse video-generation config": ("type(exc).__name__",),
     },
     "tldw_chatbook/UI/Screens/video_player_screen.py": {
         "component=modal_player": ("phase", "type(exc).__name__"),
     },
-    "tldw_chatbook/Video_Generation/adapter_registry.py": {
-        "Failed to initialize video adapter": ("name", "type(exc).__name__"),
-        "Failed to resolve video adapter class": (
-            "name",
-            "type(exc).__name__",
-        ),
-    },
+    "tldw_chatbook/Video_Generation/adapter_registry.py": {},
     "tldw_chatbook/Video_Generation/adapters/minimax_video_adapter.py": {
-        "remote task cancel failed": ("type(exc).__name__",),
+        # TASK-33621.50: four fixed-label cancel outcomes.
+        # Every field is a closed value: an HTTP status int, MiniMax's numeric
+        # error code, and an exception class name or a fixed reason literal.
+        "refused the remote task cancel": ("http_status", "error_code"),
+        "remote task cancel confirmed": (),
+        "MiniMax finished task record deleted": (),
+        "remote task cancel unconfirmed": ("reason", "http_status", "error_code"),
     },
-    "tldw_chatbook/Video_Generation/config.py": {
-        "unknown-key scan failed": ("type(e).__name__",),
-        "keyring lookup failed": ("backend", "type(e).__name__"),
-    },
+    "tldw_chatbook/Video_Generation/config.py": {},
     "tldw_chatbook/Video_Generation/video_store.py": {
         "VideoStore: startup removal failed": ("type(exc).__name__",),
         "failed to remove unpublished sibling": ("'OSError'",),
@@ -378,18 +382,12 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
             "route.screen_name",
             "type(exc).__name__",
         ),
-        "Generated CSS is stale during module entry; rebuilding": (),
-        "Generated CSS is stale during CLI entry; rebuilding": (),
     },
     # TASK-33011: moved verbatim out of app.py with ServiceWiringMixin.
     "tldw_chatbook/app_service_wiring.py": {
-        "Deferred workspace agent provisioning wiring failed": (
-            "type(exc).__name__",
-        ),
+        "Deferred workspace agent provisioning wiring failed": ("type(exc).__name__",),
         "Workspace agent provisioning skipped": (),
-        "Workspace agent backfill failed during app wiring": (
-            "type(exc).__name__",
-        ),
+        "Workspace agent backfill failed during app wiring": ("type(exc).__name__",),
         "Workspace agent backfill provisioned": ("provisioned",),
     },
     # TASK-33011: moved verbatim out of app.py with LibraryIngestQueueMixin.
@@ -404,9 +402,7 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
     },
     "tldw_chatbook/Workspaces/agent_provisioning.py": {
         "Workspace agent provisioning failed": ("type(exc).__name__",),
-        "Workspace agent backfill could not persist defaults": (
-            "type(exc).__name__",
-        ),
+        "Workspace agent backfill could not persist defaults": ("type(exc).__name__",),
         "Workspace agent backfill had failures": (),
         "Workspace agent backfill completion flag could not be stored": (
             "type(exc).__name__",
@@ -415,12 +411,8 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
     "tldw_chatbook/Workspaces/registry_service.py": {
         "Workspace agent provisioning hook failed": ("type(exc).__name__",),
         "Workspace agent provisioning returned no defaults": (),
-        "Workspace agent defaults could not be persisted": (
-            "type(exc).__name__",
-        ),
-        "Ignoring malformed workspace assistant_defaults": (
-            "type(exc).__name__",
-        ),
+        "Workspace agent defaults could not be persisted": ("type(exc).__name__",),
+        "Ignoring malformed workspace assistant_defaults": ("type(exc).__name__",),
     },
     "tldw_chatbook/Event_Handlers/LLM_Management_Events/llm_management_events.py": {
         "GGUF launch lease close failed": ("provider",),
@@ -430,8 +422,36 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "server claim resource close failed": ("provider",),
     },
     "tldw_chatbook/config.py": {
-        "Invalid chat display name in [chat_defaults]": (),
         "Refusing to write CLI config": ("type(exc).__name__",),
+    },
+    # Moved verbatim out of config.py's get_chat_defaults_user_display_name
+    # (ab17bcbaea, module size ratchet).
+    "tldw_chatbook/Chat/console_roleplay_identity.py": {
+        "Invalid chat display name in [chat_defaults]": (),
+    },
+    "tldw_chatbook/Media_Generation/adapter_registry.py": {
+        "Failed to initialize {} adapter for '{}' (error_type={})": (
+            "self.modality",
+            "name",
+            "type(exc).__name__",
+        ),
+        "Failed to resolve {} adapter class for '{}' (error_type={})": (
+            "self.modality",
+            "name",
+            "type(exc).__name__",
+        ),
+    },
+    "tldw_chatbook/Media_Generation/config_machinery.py": {
+        "{} unknown-key scan failed": ("tables.section_name", "type(e).__name__"),
+        "keyring lookup failed for {}/{}": (
+            "tables.keyring_label",
+            "backend",
+            "type(e).__name__",
+        ),
+    },
+    "tldw_chatbook/app_entry.py": {
+        "Generated CSS is stale during module entry; rebuilding": (),
+        "Generated CSS is stale during CLI entry; rebuilding": (),
     },
 }
 
@@ -443,7 +463,9 @@ TASK_15743_FINAL_REBASE_DIAGNOSTICS = {
             ("CONSOLE_RUNTIME_ATTR",),
         ),
     },
-    "tldw_chatbook/Chat/console_agent_bridge.py": {
+    # Moved verbatim out of console_agent_bridge.py (ab17bcbaea, module size
+    # ratchet); the bridge's own logger is passed in as bridge.logger.
+    "tldw_chatbook/Chat/console_streaming_request.py": {
         "usage accounting failed after a successful provider turn": (
             1,
             ("type(exc).__name__",),
@@ -463,7 +485,6 @@ TASK_15743_FINAL_REBASE_DIAGNOSTICS = {
         "fleet unseen mark set failed": (1, ("type(exc).__name__",)),
     },
     "tldw_chatbook/Chat/console_fleet_wake.py": {
-        "wake delivery UI hook raised": (1, ("type(exc).__name__",)),
         "wake view probe raised; keeping the unseen mark": (
             1,
             ("type(exc).__name__",),
@@ -1019,7 +1040,8 @@ def test_task_15743_exception_types_survive_loguru_forwarding() -> None:
             # Receipt degradation also supports a missing exception. Only its
             # literal fallback is safe; arbitrary conditional payloads are not.
             if not any(
-                value in {
+                value
+                in {
                     "type(exc).__name__",
                     "type(exc).__name__ if exc is not None else 'invalid_state'",
                 }
@@ -1154,7 +1176,9 @@ def test_build_inventory_projects_schema_v3_path_candidates(
     assert "summary" not in inventory
     assert inventory["path_privacy_rules"]["candidate_status"] == ("legacy_unreviewed")
     assert (
-        diagnostic_inventory.inventory_summary(inventory)["path_privacy_candidate_calls"]
+        diagnostic_inventory.inventory_summary(inventory)[
+            "path_privacy_candidate_calls"
+        ]
         == 1
     )
     assert inventory["path_privacy_candidates"] == [
@@ -3475,7 +3499,9 @@ def test_inventory_excludes_nested_virtualenv_but_keeps_application_sources(
 
 def test_buddy_uat_lifecycle_diagnostics_do_not_capture_private_errors(monkeypatch):
     owners = {
-        "tldw_chatbook/UI/LLM_Management_Window.py": {"Lazy LLM view mount failed: view={}": ("safe_view",)},
+        "tldw_chatbook/UI/LLM_Management_Window.py": {
+            "Lazy LLM view mount failed: view={}": ("safe_view",)
+        },
         "tldw_chatbook/UI/Screens/library_screen.py": {
             "Pending Library lifecycle write failed during unmount.": ()
         },
@@ -3485,3 +3511,75 @@ def test_buddy_uat_lifecycle_diagnostics_do_not_capture_private_errors(monkeypat
             assert REVIEWED_METADATA_ONLY_DIAGNOSTICS[owner][label] == fields
     monkeypatch.setitem(globals(), "REVIEWED_METADATA_ONLY_DIAGNOSTICS", owners)
     test_reviewed_diagnostic_changes_are_metadata_only()
+
+
+# Retired log sites now use retained result/projection channels. Keep their
+# absence explicit so a private exception sink cannot silently return.
+@pytest.mark.parametrize(
+    "owner,function",
+    [
+        ("tldw_chatbook/Chat/console_fleet_wake.py", "_notify_ui"),
+        ("tldw_chatbook/UI/MCP_Modules/mcp_workbench.py", "_observe_local_master_save"),
+        (
+            "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+            "_observe_workspace_root_save",
+        ),
+        ("tldw_chatbook/UI/Screens/settings_screen.py", "_persist_console_toggle"),
+    ],
+)
+def test_retired_projection_failure_owners_have_no_diagnostic_sink(owner, function):
+    tree = ast.parse((REPO_ROOT / owner).read_text())
+    symbols = diagnostic_inventory._logger_symbols(tree)
+    functions = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == function
+    ]
+    assert len(functions) == 1
+    assert not [
+        node
+        for node in ast.walk(functions[0])
+        if isinstance(node, ast.Call)
+        and diagnostic_inventory._is_diagnostic_call(node, symbols)
+    ]
+
+
+def test_sidebar_failure_receipts_expose_only_exception_types():
+    source = (REPO_ROOT / "tldw_chatbook/UI/Screens/chat_screen.py").read_text()
+    tree = ast.parse(source)
+    function = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef)
+        and node.name == "_persist_sidebar_state_off_loop"
+    )
+    calls = [
+        node
+        for node in ast.walk(function)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "error"
+    ]
+    assert len(calls) == 2
+    assert all(
+        ast.literal_eval(call.args[0]) == "Sidebar-state write failed: {}"
+        for call in calls
+    )
+    assert all(
+        ast.unparse(call.args[1]) == "self._sidebar_state_persistence_error"
+        for call in calls
+    )
+    assignments = [
+        node
+        for node in ast.walk(function)
+        if isinstance(node, ast.Assign)
+        and any(
+            ast.unparse(target) == "self._sidebar_state_persistence_error"
+            for target in node.targets
+        )
+    ]
+    assert [ast.unparse(node.value) for node in assignments] == [
+        "type(outcome.error).__name__ if outcome.error is not None else None",
+        "type(error).__name__",
+    ]

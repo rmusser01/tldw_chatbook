@@ -105,9 +105,7 @@ def test_send_to_agent_is_a_registered_runtime_tool():
     # no meaning, unlike wait_agents' optional ids.
     assert SEND_TO_AGENT_SCHEMA.parameters["required"] == ["id", "message"]
     assert SEND_TO_AGENT_SCHEMA.parameters["properties"]["id"]["type"] == "string"
-    assert (
-        SEND_TO_AGENT_SCHEMA.parameters["properties"]["message"]["type"] == "string"
-    )
+    assert SEND_TO_AGENT_SCHEMA.parameters["properties"]["message"]["type"] == "string"
 
 
 def test_the_schema_teaches_ids_latency_and_never_cancels():
@@ -248,7 +246,11 @@ def test_supervisor_steers_a_live_child_end_to_end(db, tmp_path, monkeypatch):
     child_turns = chat.child_calls["steer target"]
     assert len(child_turns) == 2
     second_payload = child_turns[1]["messages_payload"]
-    assert second_payload[-1] == {"role": "user", "content": labeled, "_tldw_exchange_continuation": True}
+    assert second_payload[-1] == {
+        "role": "user",
+        "content": labeled,
+        "_tldw_exchange_continuation": True,
+    }
     assert str(second_payload[-2]["content"]).startswith(
         f"{FENCE_TOOL_RESULT_PREFIX}calculator:"
     )
@@ -269,8 +271,7 @@ def test_supervisor_steers_a_live_child_end_to_end(db, tmp_path, monkeypatch):
     send_step = next(
         step
         for step in parent["steps"]
-        if step["kind"] == "tool_call"
-        and step["tool_name"] == SEND_TO_AGENT_TOOL_NAME
+        if step["kind"] == "tool_call" and step["tool_name"] == SEND_TO_AGENT_TOOL_NAME
     )
     send_event_id = f"agent-step:{run_id}:{send_step['index']}"
     child = next(row for row in db.list_runs("c") if row["agent_kind"] == "subagent")
@@ -448,9 +449,7 @@ def test_an_unknown_id_is_refused_naming_the_live_ids(db):
         assert entered.wait(_JOIN_TIMEOUT)
         handle = _live_running_handle(holder["coordinator"])
         holder["handle_id"] = handle.handle_id
-        return fence(
-            SEND_TO_AGENT_TOOL_NAME, {"id": "nope", "message": "hello?"}
-        )
+        return fence(SEND_TO_AGENT_TOOL_NAME, {"id": "nope", "message": "hello?"})
 
     def release_then_wait():
         released.set()
@@ -606,11 +605,13 @@ def test_a_run_id_reaches_the_same_mailbox_as_the_handle_id(db):
         api_endpoint="llama_cpp",
     )
     assert outcome.status == RUN_DONE
-    labeled = format_steering_message(
-        STEERING_SOURCE_SUPERVISOR, "addressed by run id"
-    )
+    labeled = format_steering_message(STEERING_SOURCE_SUPERVISOR, "addressed by run id")
     second_payload = chat.child_calls["run id target"][1]["messages_payload"]
-    assert second_payload[-1] == {"role": "user", "content": labeled, "_tldw_exchange_continuation": True}
+    assert second_payload[-1] == {
+        "role": "user",
+        "content": labeled,
+        "_tldw_exchange_continuation": True,
+    }
     # The ok copy names the HANDLE the run id resolved to -- proof the two
     # vocabularies land on one mailbox, not two.
     sends = _sends(db, run_id)
@@ -703,9 +704,7 @@ def test_a_live_handle_id_beats_a_colliding_run_id(db):
     assert coordinator.get(holder["b"]).queued_steering == 0
     retained_b = coordinator.get_retained(holder["b"])
     assert retained_b is not None
-    assert list(retained_b.steering) == [
-        (STEERING_SOURCE_SUPERVISOR, "for b only")
-    ]
+    assert list(retained_b.steering) == [(STEERING_SOURCE_SUPERVISOR, "for b only")]
     retained_a = coordinator.get_retained(holder["a"])
     assert retained_a is not None and retained_a.steering == ()
     assert coordinator.get(holder["a"]).queued_steering == 0
@@ -782,9 +781,7 @@ def test_steering_never_cancels_the_child(db):
         hid = holder["handle_id"]
         holder["status_after_post"] = coordinator.get(hid).status
         holder["row_after_post"] = _child_row(db)["status"]
-        holder["cancel_set_after_post"] = (
-            holder["service"]._fleet_cancels[hid].is_set()
-        )
+        holder["cancel_set_after_post"] = holder["service"]._fleet_cancels[hid].is_set()
         steered.set()
         return fence(WAIT_AGENTS_TOOL_NAME, {})
 
@@ -829,7 +826,11 @@ def test_steering_never_cancels_the_child(db):
     assert _child_row(db)["status"] == RUN_DONE
     labeled = format_steering_message(STEERING_SOURCE_SUPERVISOR, "keep going")
     second_payload = chat.child_calls["steady task"][1]["messages_payload"]
-    assert second_payload[-1] == {"role": "user", "content": labeled, "_tldw_exchange_continuation": True}
+    assert second_payload[-1] == {
+        "role": "user",
+        "content": labeled,
+        "_tldw_exchange_continuation": True,
+    }
 
 
 # -- steering never satisfies an approval ---------------------------------
@@ -873,9 +874,7 @@ def test_steering_never_satisfies_a_pending_approval(db):
         holder["answered"] = answered.is_set()
         holder["child_turns"] = len(holder["chat"].child_calls["gated task"])
         child_row = _child_row(db)
-        holder["calc_steps"] = _tool_results(
-            db.get_run(child_row["id"]), "calculator"
-        )
+        holder["calc_steps"] = _tool_results(db.get_run(child_row["id"]), "calculator")
         holder["queued"] = coordinator.get(hid).queued_steering
         holder["cancel_set"] = holder["service"]._fleet_cancels[hid].is_set()
         return "parent answered early"
@@ -924,7 +923,11 @@ def test_steering_never_satisfies_a_pending_approval(db):
     assert len(child_turns) == 2
     payload = child_turns[1]["messages_payload"]
     labeled = format_steering_message(STEERING_SOURCE_SUPERVISOR, "steer at the card")
-    assert payload[-1] == {"role": "user", "content": labeled, "_tldw_exchange_continuation": True}
+    assert payload[-1] == {
+        "role": "user",
+        "content": labeled,
+        "_tldw_exchange_continuation": True,
+    }
     assert str(payload[-2]["content"]).startswith(
         f"{FENCE_TOOL_RESULT_PREFIX}calculator:"
     )
@@ -1015,11 +1018,13 @@ def test_a_foreign_live_survivor_is_steerable(db):
     _wait_until(coordinator.all_finished, "the survivor never completed")
     assert coordinator.get(holder["handle_id"]).status == RUN_DONE
     assert coordinator.get(holder["handle_id"]).result == "released"
-    labeled = format_steering_message(
-        STEERING_SOURCE_SUPERVISOR, "focus on the tests"
-    )
+    labeled = format_steering_message(STEERING_SOURCE_SUPERVISOR, "focus on the tests")
     second_payload = chat.child_calls["survivor"][1]["messages_payload"]
-    assert second_payload[-1] == {"role": "user", "content": labeled, "_tldw_exchange_continuation": True}
+    assert second_payload[-1] == {
+        "role": "user",
+        "content": labeled,
+        "_tldw_exchange_continuation": True,
+    }
 
 
 # -- SubagentStop at the settle seam (console run hooks Task 8) ---------------

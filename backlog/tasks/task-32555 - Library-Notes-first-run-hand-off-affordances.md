@@ -91,4 +91,7 @@ Known, pre-existing and NOT introduced here: Tab does not cycle between the
 card's three actions (focus stays on the first). The affordance and focus cue
 are correct; the tab order was the same before this change, when all three were
 text lines. Worth a rider.
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/console.md`: Capture `10b-console-card-100x30`.
 <!-- SECTION:NOTES:END -->

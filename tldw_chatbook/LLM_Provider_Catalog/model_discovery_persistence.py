@@ -34,13 +34,24 @@ def append_models_to_provider_list(
     provider_list_key: str,
     model_ids: Sequence[object],
 ) -> dict[str, list[str]]:
-    """Return a providers mapping with new model IDs appended to one exact key."""
+    """Return a providers mapping with new model IDs appended to one exact key.
+
+    The list it rewrites also loses the shipped sample ids (TASK-35010): a
+    Settings write is when an older file's samples leave it.
+    """
+    from tldw_chatbook.config import SHIPPED_SAMPLE_MODEL_IDS
+
     updated = {
         str(provider): _valid_model_list(models)
         for provider, models in providers.items()
     }
-    existing_models = list(updated.get(provider_list_key, []))
-    seen_model_ids = set(existing_models)
+    seen_model_ids = set(SHIPPED_SAMPLE_MODEL_IDS)
+    existing_models = [
+        model
+        for model in updated.get(provider_list_key, [])
+        if model not in seen_model_ids
+    ]
+    seen_model_ids.update(existing_models)
     for raw_model_id in model_ids:
         model_id = _valid_model_id(raw_model_id)
         if model_id is None or model_id in seen_model_ids:
@@ -68,13 +79,103 @@ def _newly_saved_model_ids(
     return tuple(saved)
 
 
-def _default_save_callback(
-    section_values: Mapping[str, Mapping[str, list[str]]],
-) -> bool:
-    """Persist via the shared CLI config writer."""
-    from tldw_chatbook.config import save_settings_to_cli_config
+def refresh_providers_models(app: object, *, force: bool = False) -> bool:
+    """Make ``app.providers_models`` the config file's saved lists, in place.
 
-    return save_settings_to_cli_config(section_values)
+    The Default model picker keeps the dict it was composed with, so the
+    dict is updated, never rebound (TASK-35010). Call it after a config
+    write or reload, never inside a config transaction.
+
+    Args:
+        app: The running app.
+        force: Republish the config caches from the file first. Config
+            reload needs it: an in-place edit keeps the file's identity, so
+            the settings cache still matches it.
+
+    Returns:
+        False when ``force``'s republish failed: the lists are then the
+        caches' old ones, and a reload must not say they were refreshed.
+    """
+    from tldw_chatbook import config
+
+    refreshed = (
+        not force or config.refresh_runtime_config_from_cli_config().caches_reloaded
+    )
+    fresh = config.get_cli_providers_and_models()
+    current = getattr(app, "providers_models", None)
+    if isinstance(current, dict):
+        current.clear()
+        current.update(fresh)
+    else:
+        app.providers_models = fresh
+    return refreshed
+
+
+def _persist_under_config_lock(
+    requested_provider: str,
+    provider_list_key: str,
+    model_ids: Sequence[object],
+) -> PersistenceResult:
+    """Append to the list the file holds, read under the config write lock.
+
+    One read-modify-write: the list, the ids added and "already saved" all
+    come from the locked snapshot, never from the app's startup copy, so a
+    model added or removed elsewhere is respected (TASK-35010, C3).
+    """
+    from tldw_chatbook.config import (
+        LiteralSettingsMutation,
+        apply_literal_settings_transaction_to_cli_config,
+    )
+
+    added: list[str] | None = None
+
+    def build(snapshot) -> LiteralSettingsMutation:
+        # TASK-33641.6: pure. Only the snapshot it is handed; no config read
+        # or write and no task, which the write lock would refuse.
+        nonlocal added
+        providers = snapshot.effective_values.get("providers")
+        if not isinstance(providers, Mapping) or provider_list_key not in providers:
+            return LiteralSettingsMutation(section_values={}, delete_keys={})
+        existing = _valid_model_list(providers[provider_list_key])
+        updated = append_models_to_provider_list(
+            {provider_list_key: existing}, provider_list_key, model_ids
+        )[provider_list_key]
+        added = [model for model in updated if model not in existing]
+        if updated == existing:
+            return LiteralSettingsMutation(section_values={}, delete_keys={})
+        # D-a: a list that only lost its sample ids is written too.
+        return LiteralSettingsMutation(
+            section_values={("providers",): {provider_list_key: updated}},
+            delete_keys={},
+        )
+
+    result = apply_literal_settings_transaction_to_cli_config(build)
+    if result.failure_phase is not None:
+        return PersistenceResult(
+            provider=requested_provider,
+            provider_list_key=provider_list_key,
+            status="error",
+            saved_model_ids=(),
+            message="Could not save discovered models to the providers list.",
+        )
+    if added is None:
+        return PersistenceResult(
+            provider=requested_provider,
+            provider_list_key=None,
+            status="missing_provider_key",
+            message="No matching provider model list exists in [providers].",
+        )
+    return PersistenceResult(
+        provider=requested_provider,
+        provider_list_key=provider_list_key,
+        status="saved",
+        saved_model_ids=tuple(added),
+        message=(
+            f"Saved {len(added)} discovered model(s) to {provider_list_key}."
+            if added
+            else f"No new discovered models to save for {provider_list_key}."
+        ),
+    )
 
 
 def persist_discovered_models_to_settings(
@@ -84,7 +185,12 @@ def persist_discovered_models_to_settings(
     model_ids: Sequence[object],
     save_callback: SaveCallback | None = None,
 ) -> PersistenceResult:
-    """Explicitly append discovered raw model IDs to the existing provider list."""
+    """Explicitly append discovered raw model IDs to the existing provider list.
+
+    ``providers_config`` resolves the list key. With no ``save_callback``
+    (production), the list itself is read from the file under the config
+    write lock; an injected callback keeps the in-memory contract.
+    """
     resolution = resolve_provider_list_key(requested_provider, providers_config)
     if resolution.status == "missing":
         return PersistenceResult(
@@ -102,6 +208,10 @@ def persist_discovered_models_to_settings(
         )
 
     provider_list_key = resolution.provider_list_key or ""
+    if save_callback is None:
+        return _persist_under_config_lock(
+            requested_provider, provider_list_key, model_ids
+        )
     existing_models = providers_config.get(provider_list_key, [])
     saved_model_ids = _newly_saved_model_ids(existing_models, model_ids)
     if not saved_model_ids:
@@ -118,10 +228,9 @@ def persist_discovered_models_to_settings(
         provider_list_key,
         model_ids,
     )
-    save = save_callback or _default_save_callback
     try:
         saved = bool(
-            save(
+            save_callback(
                 {"providers": {provider_list_key: updated_providers[provider_list_key]}}
             )
         )

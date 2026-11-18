@@ -39,7 +39,7 @@ the indexer's PREFIXED document id (`f"note_{id}"`, `f"media_{id}"`,
 
 from __future__ import annotations
 
-from typing import Any, Dict, NamedTuple, Optional, Tuple
+from typing import Any, Callable, Dict, NamedTuple, Optional, Tuple
 
 from loguru import logger
 
@@ -161,36 +161,34 @@ def _as_int_id(value: str) -> Optional[int]:
         return None
 
 
-def _require(db: Any, label: str) -> Any:
+def _require(storage: Any, field: str, label: str) -> Any:
+    """Return ``storage.<field>``, the host-supplied database, or raise."""
+    db = getattr(storage, field, None)
     if db is None:
         raise ExpansionUnavailableError(f"the {label} database is unavailable")
     return db
 
 
-def _fetch_note(note_id: str) -> Optional[_Document]:
-    from ..config import get_chachanotes_db_lazy
-
-    db = _require(get_chachanotes_db_lazy(), "notes")
+def _fetch_note(storage: Any, note_id: str) -> Optional[_Document]:
+    db = _require(storage, "chachanotes", "notes")
     row = db.get_note_by_id(note_id)
     if not row:
         return None
     return _Document(str(row.get("title") or ""), str(row.get("content") or ""))
 
 
-def _fetch_media(media_id: str) -> Optional[_Document]:
-    from ..config import get_media_db_lazy
-
+def _fetch_media(storage: Any, media_id: str) -> Optional[_Document]:
     numeric = _as_int_id(media_id)
     if numeric is None:
         return None
-    db = _require(get_media_db_lazy(), "media")
+    db = _require(storage, "media", "media")
     row = db.get_media_by_id(numeric)
     if not row:
         return None
     return _Document(str(row.get("title") or ""), str(row.get("content") or ""))
 
 
-def _fetch_conversation(conversation_id: str) -> Optional[_Document]:
+def _fetch_conversation(storage: Any, conversation_id: str) -> Optional[_Document]:
     """Render a conversation as the role-prefixed transcript.
 
     `f"{sender}: {content}"`, joined by newlines -- byte-identical to
@@ -210,9 +208,7 @@ def _fetch_conversation(conversation_id: str) -> Optional[_Document]:
     `image_mime_type` is still returned, so nothing downstream loses the
     fact that an image exists.
     """
-    from ..config import get_chachanotes_db_lazy
-
-    db = _require(get_chachanotes_db_lazy(), "conversations")
+    db = _require(storage, "chachanotes", "conversations")
     conversation = db.get_conversation_by_id(conversation_id)
     if not conversation:
         return None
@@ -237,13 +233,11 @@ def _fetch_conversation(conversation_id: str) -> Optional[_Document]:
     return _Document(str(title), "\n".join(lines), note)
 
 
-def _fetch_prompt(prompt_id: str) -> Optional[_Document]:
-    from ..config import get_prompts_db_lazy
-
+def _fetch_prompt(storage: Any, prompt_id: str) -> Optional[_Document]:
     numeric = _as_int_id(prompt_id)
     if numeric is None:
         return None
-    db = _require(get_prompts_db_lazy(), "prompts")
+    db = _require(storage, "prompts", "prompts")
     row = db.get_prompt_by_id(numeric)
     if not row:
         return None
@@ -336,6 +330,19 @@ def _empty_result(status: str, source_type: str, source_id: str) -> Dict[str, An
 
 class ExpandDocumentTool(Tool):
     """Expand one retrieval hit into a bounded window of its document."""
+
+    #: Read by ``build_gateable_tool`` to decide whether to pass the provider.
+    accepts_storage_provider = True
+
+    def __init__(self, storage_provider: Optional[Callable[[], Any]] = None) -> None:
+        """Bind the tool to its host's databases (ADR-250 section 6).
+
+        Args:
+            storage_provider: Zero-argument callable returning the host's
+                ``ProfileStorage``. Without one, every expansion reports its
+                database unavailable.
+        """
+        self._storage_provider = storage_provider
 
     @property
     def name(self) -> str:
@@ -476,12 +483,13 @@ class ExpandDocumentTool(Tool):
 
         try:
             fetch = _FETCHERS[requested_type]
+            storage = self._storage_provider() if self._storage_provider else None
             resolved_id = ""
             document: Optional[_Document] = None
             for candidate in _candidate_ids(
                 requested_type, requested_id, note_id, media_id, doc_id
             ):
-                document = fetch(candidate)
+                document = fetch(storage, candidate)
                 if document is not None:
                     resolved_id = candidate
                     break
@@ -520,5 +528,61 @@ class ExpandDocumentTool(Tool):
                 f"expand_document failed for {requested_type}:{requested_id}: {exc}"
             )
             failure = _empty_result("error", requested_type, requested_id)
-            failure["error"] = f"Could not expand {requested_type} {requested_id}: {exc}"
+            failure["error"] = (
+                f"Could not expand {requested_type} {requested_id}: {exc}"
+            )
             return failure
+
+
+# Definition-time closed builtin implementations; no tool is constructed here.
+_NATIVE_ORDINARY_TOOL_CLASSES = (ExpandDocumentTool,)
+_NATIVE_ORDINARY_TOOL_DESCRIPTORS = tuple(
+    (cls, name, descriptor)
+    for cls in _NATIVE_ORDINARY_TOOL_CLASSES
+    for name, descriptor in vars(cls).items()
+    if callable(descriptor)
+    or isinstance(descriptor, (staticmethod, classmethod, property))
+)
+_NATIVE_ORDINARY_TOOL_FUNCTIONS = tuple(
+    (
+        name,
+        value,
+        value.__code__,
+        value.__defaults__,
+        value.__kwdefaults__,
+        tuple((value.__kwdefaults__ or {}).items()),
+    )
+    for name, value in tuple(globals().items())
+    if isinstance(value, type(lambda: None)) and value.__module__ == __name__
+)
+
+from inspect import getattr_static as _ordinary_getattr_static
+
+_NATIVE_ORDINARY_TOOL_DESCRIPTORS += tuple(
+    (cls, name, _ordinary_getattr_static(cls, name))
+    for cls in _NATIVE_ORDINARY_TOOL_CLASSES
+    for name in ("__init__", "__new__")
+)
+_NATIVE_ORDINARY_TOOL_IMPLEMENTATIONS = tuple(
+    (
+        function,
+        function.__code__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        tuple((function.__kwdefaults__ or {}).items()),
+        function.__closure__,
+        tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+    )
+    for function in (
+        *(record[1] for record in _NATIVE_ORDINARY_TOOL_FUNCTIONS),
+        *(
+            descriptor.__func__
+            if isinstance(descriptor, (staticmethod, classmethod))
+            else descriptor.fget
+            if isinstance(descriptor, property)
+            else descriptor
+            for _cls, _name, descriptor in _NATIVE_ORDINARY_TOOL_DESCRIPTORS
+        ),
+    )
+    if isinstance(function, type(lambda: None))
+)

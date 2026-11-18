@@ -1,0 +1,74 @@
+# Wizard Provider step list, grouped exactly as ProviderStep._grouped_sections renders it
+# source: FirstRunSetupWizard.py:1391-1438, step_guard.first_run_provider_catalog -> settings_provider_catalog
+
+== Popular (4 rows)
+   OpenAI                                        key=openai             requires_api_key=True
+   Anthropic                                     key=anthropic          requires_api_key=True
+   Ollama                                        key=ollama             requires_api_key=False
+   llama.cpp                                     key=llama_cpp          requires_api_key=False
+
+== Cloud (42 rows)
+   Arcee AI                                      key=arcee              requires_api_key=True
+   Azure OpenAI                                  key=azure              requires_api_key=True
+   Baidu Qianfan                                 key=qianfan            requires_api_key=True
+   Baseten                                       key=baseten            requires_api_key=True
+   ByteDance Seed (BytePlus)                     key=byteplus           requires_api_key=True
+   Cerebras                                      key=cerebras           requires_api_key=True
+   Cloudflare Workers AI                         key=cloudflare         requires_api_key=True
+   Cohere                                        key=cohere             requires_api_key=True
+   Command Code                                  key=commandcode        requires_api_key=True
+   Databricks                                    key=databricks         requires_api_key=True
+   DeepInfra                                     key=deepinfra          requires_api_key=True
+   DeepSeek                                      key=deepseek           requires_api_key=True
+   Fireworks                                     key=fireworks          requires_api_key=True
+   GMI Cloud                                     key=gmi                requires_api_key=True
+   Google Gemini                                 key=google             requires_api_key=True
+   Groq                                          key=groq               requires_api_key=True
+   Hugging Face                                  key=huggingface        requires_api_key=True
+   Kilo Gateway                                  key=kilo               requires_api_key=True
+   Meta (Muse Spark)                             key=meta               requires_api_key=True
+   MiniMax                                       key=minimax            requires_api_key=True
+   Mistral AI                                    key=mistralai          requires_api_key=True
+   Moonshot AI                                   key=moonshot           requires_api_key=True
+   Nebius Token Factory                          key=nebius             requires_api_key=True
+   Nous Research                                 key=nous               requires_api_key=True
+   Novita AI                                     key=novita             requires_api_key=True
+   NVIDIA NIM                                    key=nvidia             requires_api_key=True
+   Ollama Cloud                                  key=ollama_cloud       requires_api_key=True
+   OpenCode Zen                                  key=opencode_zen       requires_api_key=True
+   OpenRouter                                    key=openrouter         requires_api_key=True
+   QwenCloud                                     key=qwencloud          requires_api_key=True
+   SambaNova                                     key=sambanova          requires_api_key=True
+   SiliconFlow                                   key=siliconflow        requires_api_key=True
+   StepFun                                       key=stepfun            requires_api_key=True
+   Tencent TokenHub                              key=tokenhub           requires_api_key=True
+   Together                                      key=together           requires_api_key=True
+   Upstage                                       key=upstage            requires_api_key=True
+   Venice                                        key=venice             requires_api_key=True
+   Vercel AI Gateway                             key=vercel             requires_api_key=True
+   W&B Inference (CoreWeave)                     key=wandb              requires_api_key=True
+   Xiaomi MiMo                                   key=mimo               requires_api_key=True
+   Z.ai                                          key=zai                requires_api_key=True
+   ZenMux                                        key=zenmux             requires_api_key=True
+
+== Local (7 rows)
+   Aphrodite Engine                              key=aphrodite          requires_api_key=False
+   KoboldCpp                                     key=koboldcpp          requires_api_key=False
+   Llamafile                                     key=local_llamafile    requires_api_key=False
+   MLX-LM (Apple silicon)                        key=local_mlx_lm       requires_api_key=False
+   TabbyAPI                                      key=tabbyapi           requires_api_key=False
+   Text Generation WebUI (Oobabooga)             key=oobabooga          requires_api_key=False
+   vLLM                                          key=vllm               requires_api_key=False
+
+== Other (7 rows)
+   Custom OpenAI-compatible                      key=custom             requires_api_key=False
+   Custom OpenAI-compatible #2                   key=custom_2           requires_api_key=False
+   llama.cpp (legacy alias)                      key=local_llamacpp     requires_api_key=False
+   Local LLM (legacy generic)                    key=local_llm          requires_api_key=False
+   Mistral AI (legacy alias)                     key=mistral            requires_api_key=True
+   Ollama (legacy alias)                         key=local_ollama       requires_api_key=False
+   vLLM (legacy alias)                           key=local_vllm         requires_api_key=False
+
+TOTAL selectable provider rows: 60 (+4 non-selectable group headings)
+Rows naming tldw_server / tldw API:  []
+Rows labelled 'legacy': ['llama.cpp (legacy alias)', 'Local LLM (legacy generic)', 'Ollama (legacy alias)', 'vLLM (legacy alias)', 'Mistral AI (legacy alias)']

@@ -1,0 +1,14 @@
+$ find /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/.p1b-t5-live -name '*notes_sync_state*'
+(no matches = absent)
+$ ls /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/.p1b-t5-live/data/p1b_t5/
+actor_pack_imports
+chat_dicts
+collections_archives
+faulthandler.log
+mcp_server_targets.json
+persona_visual
+research_paste_staging
+scheduler_heartbeat.json
+tldw_chatbook_library_ingest_jobs.db
+tldw_chatbook_scheduled_tasks.db
+tldw_cli_app.log

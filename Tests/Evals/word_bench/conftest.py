@@ -30,8 +30,13 @@ def targets(db):
     steered_id = db.create_model(name="steered", provider="llama_cpp", model_id="m")
     return [
         Target(id=base_id, name="base", provider="llama_cpp", model_id="m"),
-        Target(id=steered_id, name="steered", provider="llama_cpp", model_id="m",
-               prefix="Be careful. "),
+        Target(
+            id=steered_id,
+            name="steered",
+            provider="llama_cpp",
+            model_id="m",
+            prefix="Be careful. ",
+        ),
     ]
 
 
@@ -52,8 +57,12 @@ def dataset(db):
 @pytest.fixture
 def config(targets, dataset):
     from tldw_chatbook.Evals.word_bench.models import BenchConfig
+
     return BenchConfig(
-        name="loaded-nouns v1", prompt_mode="raw", top_k=20,
-        dataset_id=dataset, target_ids=tuple(t.id for t in targets),
+        name="loaded-nouns v1",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset,
+        target_ids=tuple(t.id for t in targets),
         probes=(" Sure", " I"),
     )

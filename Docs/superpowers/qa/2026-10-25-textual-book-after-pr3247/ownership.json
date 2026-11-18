@@ -1,0 +1,483 @@
+{
+  "new_tasks": [
+    {
+      "id": 36899,
+      "priority": "medium",
+      "rank": 1,
+      "path": "backlog/tasks/task-36899 - Keep-pending-quiz-Start-within-its-runtime-and-scope-lifetime.md"
+    },
+    {
+      "id": 36900,
+      "priority": "medium",
+      "rank": 2,
+      "path": "backlog/tasks/task-36900 - Keep-Watchlists-navigation-responsive-during-article-body-reads.md"
+    }
+  ],
+  "existing_owner": {
+    "id": "33283",
+    "action": "Appended Sources editing-context witness to Description; retained To Do/medium, dependency and all four ACs."
+  },
+  "allocation": {
+    "utc": "2026-10-25T19:29:00.620581+00:00",
+    "unique_ref_oids": 308,
+    "tree_task_paths": 1361441,
+    "max_id": 36869,
+    "errors": [],
+    "frontmatter_claims": 5758
+  },
+  "registered_worktrees": 52,
+  "related_full_criteria": {
+    "1035": {
+      "path": "backlog/tasks/task-1035 - Create-source-form-cannot-be-filled-in-through-the-UI.md",
+      "sha256": "83007e1a40d9081765aab2a4090d5bb166658ee0636685186d181dca288ff51b",
+      "status": "Done",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 Whether the form can be filled at all is established in code, and the answer recorded here\n- [x] #2 If broken: a source can be created end to end through the form, verified live from a clean profile\n- [x] #3 The form focuses its first field on open, matching the New-watchlist dialog\n- [x] #4 `Tab` moves through the form's fields in visual order\n- [x] #5 A test drives the form the way a user does — focus, type, submit — and fails against current code\n- [x] #6 `Create` and `Cancel` are laid out consistently with the New-watchlist dialog\n<!-- AC:END -->"
+    },
+    "1345": {
+      "path": "backlog/tasks/task-1345 - Select-Input-mount-race-makes-the-Watchlists-create-form-tests-order-dependent.md",
+      "sha256": "82913bafe2cfbcd45f9046e14086d6c134661d8f6e02833b6a35bd2ed352495a",
+      "status": "Done",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 The root cause of the mount race is identified and stated, not worked around with a sleep\n- [x] #2 The create-form tests pass regardless of the order the UI suite runs in, demonstrated by running them immediately after the content-pane suite -- **narrowed 2026-08-02: scoped to the focus-drop race this task's confirmed root cause covers.** See split note below.\n- [x] #3 A deliberately re-introduced form of the race fails the tests, proving they discriminate it\n<!-- AC:END -->\n\n**Split 2026-08-02.** This task's title and original description named two symptoms sharing one\nhistory: focus silently dropped (`_pending_create_focus`), and `NoMatches` on `SelectCurrent`. Only\nthe first has a confirmed, understood root cause (TASK-1362 Task 5, above) and is what this task's\nImplementation Plan and fix actually address. AC#2 is fully met for that scope: every test that\ndepends on the focus-restoration mechanism passes, in either order, across repeated runs of the\ncontent-pane -> create-form pair and repeated isolated runs (see Implementation Notes for counts).\n\nThe second symptom (`test_a_source_can_be_created_end_to_end_through_the_form`, `NoMatches` on\n`SelectCurrent`) does **not** share this task's confirmed root cause -- it reproduces identically\nwhether the focus fix is applied or not, and a bounded follow-up attempt at fixing it directly\n(below) reduced but did not eliminate it, which this task's own history already established as not\nshippable (\"a shrunk race is a hidden race\"). Split out to **task-1960**\n(`backlog/tasks/task-1960 - SelectCurrent-label-mount-race-on-watchlists-form-close.md`), which\ncarries the `TEXTUAL=debug` diagnosis and both rejected mitigations forward so the next attempt does\nnot have to re-derive them."
+    },
+    "1482": {
+      "path": "backlog/tasks/task-1482 - Bench-authoring-targets-probes-and-top-K-editable-with-Duplicate-and-Delete.md",
+      "sha256": "691eb8565229e9da946802b4e9a02c771cb0a544eea9af73ff3d5500386bdcc4",
+      "status": "Done",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 A bench's targets can be added and removed from the bench editor (target picker over configured models)\n- [x] #2 Probes and top-K are editable on a bench\n- [x] #3 A bench can be created against any existing dataset (closing the imported-dataset dead end)\n- [x] #4 Duplicate and Delete exist for benches per the spec's inspector actions\n- [x] #5 The Probe and Δ baseline lenses are reachable with real data through UI-authored benches\n<!-- AC:END -->"
+    },
+    "1483": {
+      "path": "backlog/tasks/task-1483 - Cancel-affordance-for-in-flight-Evals-bench-runs.md",
+      "sha256": "6d9e364e1ea8d60de1cecfb6e42891de934a7b9c5c6fa18132b6197c87038758",
+      "status": "Done",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 A visible Cancel affordance exists while a run is in flight\n- [x] #2 Cancelling preserves already-captured cells and the grid renders the partial run\n- [x] #3 The cancelled run group is labeled as cancelled in the rail and grid\n<!-- AC:END -->"
+    },
+    "15460": {
+      "path": "backlog/tasks/task-15460 - Watchlists---replace-per-keystroke-pane-teardowns-with-in-place-updates.md",
+      "sha256": "8737dd1e3b189646c0411b587131031d524b01a6ca633145ba546b6da1d93268",
+      "status": "Done",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 Typing in Watchlists search/filter boxes causes no pane recompose (evidence)\n- [x] #2 Filtering results identical, including the debounced DB reload path (tests)\n- [x] #3 Focus stays in the input while typing (regression test replacing the re-focus override)\n<!-- AC:END -->"
+    },
+    "15461": {
+      "path": "backlog/tasks/task-15461 - Watchlists---one-scoped-rebuild-per-section-or-tree-interaction.md",
+      "sha256": "3869454a8ecbb0f419ba92108a37b13a7475c1798446bda30a8105495711621e",
+      "status": "Done",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 A section switch performs one scoped rebuild of the changed section only (evidence)\n- [x] #2 A tree-node click causes at most one update per affected pane; briefing arrow-key selection no longer triggers 3 recomposes\n- [x] #3 z/Z/[/] layout keys rebuild only the toggled region; all behavior unchanged (tests)\n<!-- AC:END -->"
+    },
+    "15463": {
+      "path": "backlog/tasks/task-15463 - Watchlists-backend---one-SubscriptionsDB-instance-and-scheduler-work-off-the-event-loop.md",
+      "sha256": "5039ff04859d6eba10e8afe73784a6e7689e6f32c9980e64e9d9de0ffa4c0dc6",
+      "status": "Done",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 Exactly one SubscriptionsDB is constructed per app session in production wiring (evidence); tests keep an injectable factory\n- [x] #2 No synchronous sqlite or feed parsing runs on the event loop during a due check (evidence)\n- [x] #3 Scheduler behavior — due detection, run records, item upserts, briefings — unchanged (existing surface green)\n<!-- AC:END -->"
+    },
+    "15464": {
+      "path": "backlog/tasks/task-15464 - Watchlists-items-feed---narrow-projection-and-indexed-effective-date-ordering.md",
+      "sha256": "9298290fbb8c00c6880170618ed4ba53804845f349e143de6212a7bfdcb43b34",
+      "status": "Done",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 Items list queries no longer select the content column for list rows (evidence); item detail still loads full content\n- [x] #2 Ordering uses an indexed column with sort order identical to today for both legacy and new rows (migration + tests)\n- [x] #3 Items-pane refresh latency before/after on a large corpus recorded\n<!-- AC:END -->"
+    },
+    "16221": {
+      "path": "backlog/tasks/task-16221 - Make-Watchlists-Read-list-and-Content-independently-scrollable-with-explicit-pagination.md",
+      "sha256": "e85a729a379bffb1c90fc5017ada43da254ef314baae1b22996e13e189bf2a54",
+      "status": "Done",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 The Watchlists centre column scrolls vertically while the left Watchlists rail and right Inspector remain fixed.\n- [x] #2 On Read, the item-list region sizes from 10 to 50 terminal rows and its ListView scrolls internally after reaching the cap.\n- [x] #3 On Read, the Content region sizes from 20 to 50 terminal rows and its article body scrolls internally after reaching the cap.\n- [x] #4 The Read list exposes explicit Previous, Page N, and Next controls with 50 visible items per backend page and correct boundary/loading states.\n- [x] #5 Page state survives scoped region replacement, resets for agreed context changes, corpus-search results remain authoritative, and failed explicit page loads preserve the current page and selected Content.\n- [x] #6 Existing collapse, solo/restore, mark-read, filtering, and in-page reader navigation behavior remains functional.\n- [x] #7 Focused automated geometry, pagination, state, and error tests pass, and isolated live TUI QA verifies nested scrolling at representative terminal sizes.\n<!-- AC:END -->"
+    },
+    "19559": {
+      "path": "backlog/tasks/task-19559 - exclusive=True without group= makes every worker on a node cancel its siblings.md",
+      "sha256": "e453b86a8f758d5afaee057a478da8606d3acc77256f2203f7c1da117553e506",
+      "status": "Done",
+      "acceptance_criteria": "- [x] A lint or test fails on `exclusive=True` scheduled without an explicit\n      `group=`, covering both `@work(...)` decorators and `run_worker(...)`\n      calls, including multi-line forms\n- [x] The guard has an explicit, documented allowlist mechanism for any site\n      that genuinely wants default-group mutual exclusion, so suppressing it is\n      a deliberate recorded choice rather than a silent one\n- [x] The four named user-visible instances are fixed: Study rating submission,\n      Media analysis generation, the four unfixed Watchlists section loaders,\n      and the Settings advanced-config backup load\n- [x] Fast consecutive flashcard ratings all persist — pinned by a test that\n      drives consecutive submissions, not by inspection\n- [x] The Settings advanced-config editor is never overwritten by a background\n      load while the user has unsaved typing in it\n- [x] Handlers in this family no longer rely on `except Exception:` to observe\n      cancellation, given `CancelledError` is a `BaseException`\n- [x] The remaining sites are triaged with the user-visible ones fixed and the\n      rest either grouped or allowlisted — the count is driven to a number the\n      guard can hold"
+    },
+    "19870": {
+      "path": "backlog/tasks/task-19870 - Mutation-workers-refresh-inline-instead-of-dispatching-into-the-loader-group.md",
+      "sha256": "b99cfee560d84ac357053b0062d1ffffb073781aa472ea9846198a87a46d3616",
+      "status": "Done",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 A refresh triggered by a mutation worker is subject to the same worker\n      group as a refresh triggered directly by the user\n- [x] #2 Two refreshes that overlap — one from a mutation, one from a user action —\n      cannot interleave their writes to the same list\n- [x] #3 A test drives a mutation and a concurrent user refresh and asserts the\n      resulting list contents, and is mutation-checked (restoring the inline\n      `await` makes it red)\n- [x] #4 The schedules workbench, watchlists notification handlers, and watchlists\n      briefing generation/cast/audio handlers are covered\n- [x] #5 TASK-19559's worker-group guard is extended to notice an inline loader\n      call inside a worker body, or the reason it cannot is recorded\n<!-- AC:END -->"
+    },
+    "2200": {
+      "path": "backlog/tasks/task-2200 - Watchlists screen stops full-screen recomposing from background loaders.md",
+      "sha256": "b34ef46719aacabc35e5550a1381e679fa63f712fc67e932abaf103a1890cc17",
+      "status": "Done",
+      "acceptance_criteria": "- [x] Completing a background load (`_load_tree_data`) or applying a local\n      watchlists snapshot (`_apply_local_wc_snapshot`) no longer rebuilds the\n      whole screen: the affected panes/regions are updated in place, and\n      unrelated in-flight pane recomposes (e.g. the Sources create-form\n      open/close) are not torn down by it.\n- [x] The rendered result after a background refresh is equivalent to what the\n      full recompose produced today, covering the overview/first-run/loading\n      states (the TASK-1347-strengthened tests stay green).\n- [x] The TASK-1960 e2e reproduction\n      (`test_a_source_can_be_created_end_to_end_through_the_form`) stays green\n      10/10 in isolation and in the poisoned order after\n      `Tests/UI/test_watchlists_content_pane.py` — now with the destroyer\n      removed rather than merely guarded against.\n- [x] The masked SourcesPane defect is addressed or made impossible: closing the\n      create form yields a correctly-populated pane without depending on a\n      screen-level rebuild to paper over an empty recompose.\n- [x] `PruneSafeSelect` remains in place as defense-in-depth (this task removes\n      the known destroyer; it does not un-fix TASK-1960)."
+    },
+    "22450": {
+      "path": "backlog/tasks/task-22450 - Stabilize-Watchlists-Feed-Items-snapshots-and-atomic-scope-commits.md",
+      "sha256": "589174d9ff9baf10b91a4d3d3e63ac67a7b3651622a0345e0f33c5028232909d",
+      "status": "Done",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 Scope navigation keeps the committed highlight, rows, and Reader active until the replacement snapshot succeeds, then commits scope, rows, and Reader clearing atomically.\n- [x] #2 Feed Items pagination uses the canonical effective-date and item-id keyset with an initial item-id high-water mark and a seen-id guard instead of offset paging.\n- [x] #3 New arrivals remain behind the new-items affordance and do not reorder or relabel the mounted snapshot before explicit refresh.\n- [x] #4 Failed and superseded loads preserve the committed view and cannot publish stale results.\n- [x] #5 Search, status filters, page navigation, and open-item pinning operate within the stable snapshot contract.\n- [x] #6 Affected Watchlists tests, modified-file Ruff, and branch diff checks pass.\n<!-- AC:END -->"
+    },
+    "3071": {
+      "path": "backlog/tasks/task-3071 - SourcesPane-search-loses-focus-and-query-on-recompose.md",
+      "sha256": "9e014f7a1a15f6d1549e82f1d921a99be5ce0756e5b1d8cc20b8198eef862729",
+      "status": "Done",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 Typing in sources search survives a pane recompose with focus and caret intact\n- [x] #2 Half-typed query is not replaced on refocus\n- [x] #3 Regression tests mirror the ItemsPane focus tests\n<!-- AC:END -->"
+    },
+    "3072": {
+      "path": "backlog/tasks/task-3072 - Watchlists-reader-first-re-IA-phase-2-list-and-reader-quality.md",
+      "sha256": "0608acb907909098b9ab0a6c554df04363b9a06960747070c468020bd7e9cac5",
+      "status": "Done",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 Article list rows show source+relative time, bold-when-unread title, 1-2 line snippet, unread dot, star/queued/ingested markers, and Today/Yesterday/locale-date group headers,s toggles star and a Starred smart feed with count appears in the rail; flags persist across re-fetch,Reading-pane action row (Star/Mark unread/Open in browser/Ingest/Queue) calls the same shared helpers as the inspector,o opens the item in the browser,Item body renders via content_render.py with stdlib fallback; hostile HTML renders safely as text and failure never blanks the pane,Position footer shows N of M within the displayed list plus a Next Unread control,Tests/Watchlists green\n<!-- AC:END -->"
+    },
+    "32802.1": {
+      "path": "backlog/tasks/task-32802.1 - Replace-rich.markup.escape-with-the-repos-own-bracket-escaper-across-all-Textual-8-surfaces.md",
+      "sha256": "7e819a00966f1d77be9ab345866c2aa113034be518ccd50b1367fec02ab085fe",
+      "status": "In Progress",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [ ] #1 A row or label whose title contains `[TODO]`, `[WIP]` or `[IMPORTANT]` renders that text verbatim\n- [ ] #2 The correct escaper is used at every site that currently calls `rich.markup.escape` for a Textual surface\n- [ ] #3 Pinning tests cover an uppercase-initial bracket, not only the lowercase tag the broken escape happens to handle\n<!-- AC:END -->"
+    },
+    "33268": {
+      "path": "backlog/tasks/task-33268 - PERF-09-Private-SQLite-connection-lifecycle---stop-close-per-call-reuse-per-thread-handles.md",
+      "sha256": "ad2a4342e415850935eab213c9e52f77adea528895eb5eaf72bbfa3db651c090",
+      "status": "To Do",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [ ] #1 Library, Notes, media-reader, Watchlists and Schedules operations reuse long-lived per-thread connections; repeated operations spawn no new helper (census-pinned)\n- [ ] #2 Closing a connection no longer runs a blocking wal_checkpoint(TRUNCATE) on hot paths\n- [ ] #3 Handles owned by exited threads do not stay registered (leak test)\n- [ ] #4 Helper spawns during an idle minute on Console are 0, and during a warm Library visit at most 1\n<!-- AC:END -->"
+    },
+    "33283": {
+      "path": "backlog/tasks/task-33283 - PERF-24-Watchlists-and-Schedules---incremental-panes-DB-off-the-event-loop.md",
+      "sha256": "dab3d8713a738d0dd1a299dcd1b392b860ba84fd8e6ef679c9aa9ff4c072c2ec",
+      "status": "To Do",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [ ] #1 No Schedules interaction performs synchronous sqlite on the event loop\n- [ ] #2 SchedulingService async methods do their DB work off the loop\n- [ ] #3 Mark-all-read runs as a batched write\n- [ ] #4 Watchlists tree and panes update in place on count refresh and selection changes\n<!-- AC:END -->"
+    },
+    "33287": {
+      "path": "backlog/tasks/task-33287 - PERF-28-DB-query-hygiene---N-1s-unbounded-scans-planner-traps.md",
+      "sha256": "a27f1904ecad93a56ab1ef7ca2707cd412a6dd479339a5c61cbc5c059bc64f6c",
+      "status": "To Do",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [ ] #1 Each P2 query item in the appendix is fixed or closed with an EXPLAIN QUERY PLAN captured without sqlite_stat1\n- [ ] #2 Any new or changed index has a plan pin per the CLAUDE.md index rule\n- [ ] #3 media sync_log has a retention bound\n<!-- AC:END -->"
+    },
+    "34425": {
+      "path": "backlog/tasks/task-34425 - Structural-sharing-for-ReaderItemSnapshot-pages.md",
+      "sha256": "e423e7a72387700ee3a0f21d36a324c635a4161ee4d0175dfd105b7c14f7881e",
+      "status": "Done",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 Paging performs zero deepcopies,Rows from page 1 remain identical objects after N turns,No mutation of shared rows by callers,Tests pass\n<!-- AC:END -->"
+    },
+    "34752": {
+      "path": "backlog/tasks/task-34752 - Study-quizzes-one-writer-for-the-question-list.md",
+      "sha256": "2722d171a0692f17439da89e99eb3296a4c29258d6a61a2fe8fc5c1d60b175a7",
+      "status": "To Do",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [ ] #1 Two overlapping question-list rebuilds leave exactly one row per question, in order, and current_quiz_questions matches the rows\n- [ ] #2 A question-list rebuild still in flight when the Quizzes view is torn down (or the app shuts down) stops without writing, and no caller writes the attempt panel after it\n- [ ] #3 A regression test fails on origin/dev for the stated reason and passes with the fix\n<!-- AC:END -->"
+    },
+    "34967": {
+      "path": "backlog/tasks/task-34967 - Gate-Watchlists-per-visit-section-loads-on-staleness.md",
+      "sha256": "aa0455d389124edd376f4568fd2be0456bdf12281dbadadfee80057fd12a6188",
+      "status": "To Do",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [ ] Re-entering Watchlists with unchanged data skips redundant section re-queries (two attempts reverted; see notes)\n- [x] Forced refresh action still reloads everything\n- [ ] Overview and tree stay correct after data changes\n<!-- AC:END -->"
+    },
+    "35868": {
+      "path": "backlog/tasks/task-35868 - Preserve-unsaved-Watchlists-rule-fields-across-refresh-and-section-return.md",
+      "sha256": "58410337599621aa3af763b4d73152c86693c37b1441ee0725df00f190dbc392",
+      "status": "Done",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 A changed Rules-list refresh preserves unsaved Name, Condition, Threshold, Severity and Enabled values in both New and Edit forms, with the same target rule identity.\n- [x] #2 A settled focused editable control retains its instance, focus, cursor and selection during list-only refresh; tests establish these preconditions before refreshing.\n- [x] #3 Switching Rules to another Watchlists section and back restores the unsaved new/edit draft and its original target without an implicit save.\n- [x] #4 Explicit Save and Cancel retire only the appropriate draft; validation failure retains it, and existing condition-guidance, backend eligibility and mutation behavior remain intact.\n- [x] #5 Mounted tests type real changes before both triggers, cover New/Edit and Save/Cancel, and retain the completed visibility/seeding/guidance regressions.\n<!-- AC:END -->"
+    },
+    "36099": {
+      "path": "backlog/tasks/task-36099 - Keep-newer-Study-quiz-drafts-when-earlier-creates-complete.md",
+      "sha256": "0fff6daf7f24266d9159503cdcd3b45602bf6f2a7f6b79b01e75aef405b421f2",
+      "status": "Done",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 A quiz create completing after newer name or description edits preserves those exact raw values without implicitly persisting them.\n- [x] #2 A question create completing after newer edits to the question text or correct answer preserves those values and their active editing context.\n- [x] #3 Successful unchanged submissions still persist once and clear their submitted form normally; failed creates preserve current drafts and permit retry.\n- [x] #4 Bounded mounted regressions drive both existing create handlers through controlled awaits and verify live fields separately from actual stored records. TASK-34752 question-list ownership remains independently scoped.\n<!-- AC:END -->"
+    },
+    "36360": {
+      "path": "backlog/tasks/task-36360 - Keep-quiz-final-answer-retry-from-duplicating-answers-and-inflating-scores.md",
+      "sha256": "0c02bdc4c2c5a2394ecdc6380432b1a66fa33f72120b166c5419579cbec10205",
+      "status": "Done",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 A final-answer definite pre-write failure followed by retry sends and persists exactly one answer for each quiz question, and the resulting score does not exceed the total possible score.\n- [x] #2 Changing the final answer after that failure uses its current value once; earlier completed-question answers remain intact.\n- [x] #3 Ordinary successful multi-question attempts preserve grading/history behavior, and definite failure leaves the current question, answer and retry usable.\n- [x] #4 Bounded mounted regressions exercise actual Start/Submit dispatch and independently verify service payload, real SQLite answers/score and visible result, retaining the ordinary passing control; uncertain-commit or server-wide idempotency is not introduced.\n<!-- AC:END -->"
+    },
+    "36729": {
+      "path": "backlog/tasks/task-36729 - Keep-Study-navigation-responsive-while-shell-Start-quiz-awaits-the-server.md",
+      "sha256": "a62f9107f4f1bd1645dc2dbd015706c1794ef4414095fd99b5280355a55c65b8",
+      "status": "Done",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 With the production service awaiting a controlled server Start response, the Study shell Start quiz action allows a subsequent enabled Dashboard section action to take effect before that response is released.\n- [x] #2 An ordinary successful shell Start still creates one attempt and presents its result; existing validation/refusal and failed-request feedback remain recoverable without duplicate dispatch.\n- [x] #3 The inner Start attempt path retains its current responsive behavior, and existing question-list, draft, panel-retirement and attempt ownership contracts remain unchanged.\n- [x] #4 Mounted production-owner tests compare shell and inner Start under the same held service boundary, prove independent App-queue responsiveness, and retain ordinary completion and error controls.\n- [x] #5 A pending Start that completes after its quiz panel is removed or replaced does not terminate the app or publish into the replacement panel; the created remote attempt is reported truthfully, and returning to Quizzes remains usable.\n<!-- AC:END -->"
+    },
+    "643": {
+      "path": "backlog/tasks/task-643 - Make-runtime-policy-the-sole-application-runtime-source-authority.md",
+      "sha256": "bffa678b0cd9d38b3c7878b79c41fd265a19c266384644b622154c7dbce2ed00",
+      "status": "Done",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 TldwCli no longer imports or instantiates AppState while the exported legacy state models remain importable and retain their documented serialization behavior\n- [x] #2 RuntimePolicyContext exposes read-only state plus creating-thread-affine revision snapshots and persist-before-publish compare-and-swap commits whose persistence failures leave the prior state unchanged, with no direct setter or persistence escape hatch\n- [x] #3 Stale asynchronous capability refresh results cannot overwrite a newer runtime source or server identity\n- [x] #4 All production runtime-source and capability writers use the authoritative context and app-level compatibility projections have no independent writers\n- [x] #5 Runtime-policy persistence follows the effective config path, uses the ADR-029 private read/atomic-write boundary, fails closed for unsafe POSIX targets, reports Windows privacy posture as unverified, and neither falls back to nor migrates from the ordinary default path under an override\n- [x] #6 Focused runtime-policy, off-owner mutation, persistence-failure recovery, privacy-sentinel, scoped static, ownership-guard, and architecture checks pass\n<!-- AC:END -->"
+    },
+    "644": {
+      "path": "backlog/tasks/task-644 - Move-cross-visit-screen-snapshots-behind-an-in-memory-owner.md",
+      "sha256": "16a8c369dca8c128d93d7bd8743de065996a5f0ad4bb6d013067e55f4557e9b0",
+      "status": "Done",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 ScreenStateStore owns canonical-tab snapshot envelopes in memory, rejects off-owner mutation, treats restored inputs as read-only, and never inserts policy metadata into domain snapshot dictionaries\n- [x] #2 Runtime-source or active-server incompatibility discards stale snapshots while compatible snapshots restore without exposing the backing mapping\n- [x] #3 TldwCli navigation no longer creates or reads _screen_states and recent-snapshot consumers use the truthful store API\n- [x] #4 Fresh screen construction, canonical alias-configured startup, alias sharing by resolved canonical tab, pending-work vetoes, corrupt snapshot recovery, and explicit Library, Settings, and Watchlists navigation-context precedence are preserved\n- [x] #5 Focused mounted, nested Settings-draft, large Console snapshot, off-owner mutation, payload-redaction sentinel, scoped static, and ownership-guard checks pass\n<!-- AC:END -->"
+    },
+    "646": {
+      "path": "backlog/tasks/task-646 - Complete-destination-handoff-ownership-and-ACP-target-recovery.md",
+      "sha256": "93813aa77b9ce56b183008947da735ff5229de1173461e57d40d1c57ea1a0cff",
+      "status": "Done",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 Typed Study, Artifacts, and ACP slots preserve revisioned single-slot replacement semantics\n- [x] #2 Artifacts resolves only an exact canonical local:chatbook target, never substitutes the latest first-page record, releases transient failures for later lifecycle or user retry, and acknowledges success or terminal missing-target outcomes\n- [x] #3 ACP consumes its canonical local:acp_session record target by reconstructing the same identifier from the current runtime session; an exact match keeps that row selected and exposes the mounted detail pane, while malformed, stale, or unsupported targets receive explicit recovery\n- [x] #4 All listed raw application pending fields and the dead pending_notes_workspace_context slot are removed and an AST ownership guard prevents their return\n- [x] #5 Focused exact-target, replacement-race, privacy-sentinel, mounted full-production-app, and static checks plus the installed-wheel gate, app-independent product-maturity sentinel, and authorized integrated suite pass without collecting legacy surrogate applications\n<!-- AC:END -->"
+    }
+  },
+  "remote_only_candidate_criteria": [
+    {
+      "ref_oid": "38316811c5a3634e6dd36cd6d38f283014eaaf8f",
+      "path": "backlog/tasks/task-1346 - Watchlists-tab-strip-diverges-from-the-approved-spec.md",
+      "blob": "17c7a8c2c9b501853edda9a14bf2d72fbb3e308f",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [ ] #1 A decision is recorded on whether the spec adopts the six-section strip or the implementation adopts the spec's five tabs\n- [ ] #2 Whichever is chosen, the spec and the implementation agree, and the spec's Empty states section no longer references a tab that does not exist\n- [ ] #3 If Artifacts is added, its empty state names the next slice rather than showing a bare table\n<!-- AC:END -->"
+    },
+    {
+      "ref_oid": "4972be0c34f93f2a0c1b27ae069811f30bf03825",
+      "path": "backlog/tasks/task-1346 - Watchlists-tab-strip-diverges-from-the-approved-spec.md",
+      "blob": "d036ac74ec50601123833a061aed1586af1fb5f5",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 A decision is recorded on whether the spec adopts the six-section strip or the implementation adopts the spec's five tabs\n- [x] #2 Whichever is chosen, the spec and the implementation agree, and the spec's Empty states section no longer references a tab that does not exist\n- [x] #3 (moot in its original form — see notes) If Artifacts is added, its empty state names the next slice rather than showing a bare table\n<!-- AC:END -->"
+    },
+    {
+      "ref_oid": "50ca9843676539c03cdb43d0516746044a1cf1eb",
+      "path": "backlog/tasks/task-31656 - Wait-for-mounted-Watchlists-artifact-geometry-after-generation.md",
+      "blob": "c08dd73d6aed0b1216867ce350256263f4990a4f",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 Generation readiness waits for the current visible mounted table geometry as well as database row agreement.\n- [x] #2 A controlled delayed-layout regression retains the original list, button, body placement and painted-label assertions.\n- [x] #3 The complete affected Watchlists test file and scoped static checks pass.\n- [x] #4 Cast readiness likewise tolerates replacement-table absence and waits for the current mounted geometry while preserving script row and content assertions.\n- [x] #5 Synthesize readiness waits for its current mounted script detail before audio-content assertions, including transient replacement absence.\n<!-- AC:END -->"
+    },
+    {
+      "ref_oid": "50ca9843676539c03cdb43d0516746044a1cf1eb",
+      "path": "backlog/tasks/task-31670 - Remove-orphaned-Watchlists-lookup-and-recognize-bound-service-callbacks.md",
+      "blob": "bf7f2e409e8d5729bed5e87c07bf793a80347c57",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 The unused case-insensitive lookup is removed while atomic collection reuse behavior stays covered.\n- [x] #2 The caller audit recognizes exact WatchlistBundleService bound callbacks and rejects unrelated objects with colliding method names.\n- [x] #3 Affected Watchlists collection and subscription tests and scoped static checks pass.\n<!-- AC:END -->"
+    },
+    {
+      "ref_oid": "50ca9843676539c03cdb43d0516746044a1cf1eb",
+      "path": "backlog/tasks/task-31680 - Settle-Watchlists-startup-snapshots-before-direct-fixture-navigation.md",
+      "blob": "e31a630b06fa976ac605646fb37879dc45743c5d",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 The scoped item fixture waits for initial startup work and publishes its newly seeded tree before direct scope navigation.\n- [x] #2 A controlled delayed startup snapshot demonstrates the original failure and the corrected fixture preserves exact member-only assertions.\n- [x] #3 The complete affected Watchlists collection test file passes without changing production reconciliation.\n<!-- AC:END -->"
+    },
+    {
+      "ref_oid": "50ca9843676539c03cdb43d0516746044a1cf1eb",
+      "path": "backlog/tasks/task-31681 - Exercise-lazy-Watchlists-filters-in-painted-toolbar-coverage.md",
+      "blob": "a35e89fb59fae569df72c67985a548c4edfc74b1",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 The visibility test opens Filters through the real control and waits for its mounted laid-out editor.\n- [x] #2 Every original toolbar control stays within its pane and its expected labels paint on the correct current row at both terminal sizes.\n- [x] #3 Affected Watchlists visual cases pass without weakening viewport or paint assertions or changing product layout.\n- [x] #4 Painted reverse-video checks are bounded to their table region and reject duplicate labels in adjacent panes.\n- [x] #5 Tree highlight coverage uses a real paged Reader service so successful navigation can commit before the original style assertions.\n<!-- AC:END -->"
+    },
+    {
+      "ref_oid": "50ca9843676539c03cdb43d0516746044a1cf1eb",
+      "path": "backlog/tasks/task-31694 - Align-Watchlists-refresh-and-retry-tests-with-committed-Reader-contracts.md",
+      "blob": "cb1c8dc20ffb4b42c77d64637ebeef25a9da7030",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 Refresh tests assert the open row is retained while new page contents and selected Reader content remain correct.\n- [x] #2 Reader failure coverage asserts visible retry chrome with stale content cleared and recovery still available.\n<!-- AC:END -->"
+    },
+    {
+      "ref_oid": "50ca9843676539c03cdb43d0516746044a1cf1eb",
+      "path": "backlog/tasks/task-31725 - Refresh-Watchlists-regression-contracts.md",
+      "blob": "f8e785ca2a7a5c68c79bdbbb66bcc3b57ae675f3",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 The four reproduced Watchlists failures pass.\n- [x] #2 The affected Watchlists modules pass in full.\n<!-- AC:END -->"
+    },
+    {
+      "ref_oid": "50ca9843676539c03cdb43d0516746044a1cf1eb",
+      "path": "backlog/tasks/task-31914 - Watchlists-failure-policy-test-bypasses-the-live-check-coordinator.md",
+      "blob": "e3ff719de14e6c2ee9d09c5d9e2bc5680b2700d4",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 The unexpected-failure test intercepts the current local Check now execution boundary.\n- [x] #2 The test records a warning-or-higher failure without attempting network egress.\n- [x] #3 The complete Watchlists check-now failure-policy module passes.\n<!-- AC:END -->"
+    },
+    {
+      "ref_oid": "50ca9843676539c03cdb43d0516746044a1cf1eb",
+      "path": "backlog/tasks/task-31915 - Verify-current-Watchlists-source-creation-off-loop.md",
+      "blob": "3fadf033e0cf8be86a6b7a41d4c122ebd747330f",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 Real file-backed creation and exact-source reuse execute the batch transaction off loop and return the durable source.\n- [x] #2 An inline-offload mutation fails the updated guard, without loosening nonempty thread assertions.\n- [x] #3 Complete affected Watchlists files and scoped lint pass.\n<!-- AC:END -->"
+    }
+  ],
+  "open_prs": [
+    {
+      "number": 3246,
+      "head": "79da83a8dca98eab6ca854a7505b8abd264eb959",
+      "files_checked": 3000
+    },
+    {
+      "number": 3245,
+      "head": "0eca4d34ff85f4b2e8c859406d6e32ce216a9cdb",
+      "files_checked": 12
+    },
+    {
+      "number": 3242,
+      "head": "10f59cf6e7d91c2f57aa0d44706ec2f51fcfbf3b",
+      "files_checked": 12
+    },
+    {
+      "number": 3237,
+      "head": "dee2f1edc2855afd7270e53a57307814c0f5491c",
+      "files_checked": 497
+    },
+    {
+      "number": 3235,
+      "head": "bba16bb74d0bf81b3b6740b33e29e9178ed22f5f",
+      "files_checked": 15
+    },
+    {
+      "number": 3234,
+      "head": "872a05fd42df168ca38f723d758c80f1d4757717",
+      "files_checked": 167
+    },
+    {
+      "number": 3233,
+      "head": "791f585d42c88e7aaceacdf46d48f09be4c7120b",
+      "files_checked": 8
+    },
+    {
+      "number": 3232,
+      "head": "3071ac5a2fe9cbf24875f2da76c8aed1cd5fa090",
+      "files_checked": 4
+    },
+    {
+      "number": 3227,
+      "head": "6a9a00554d0406681d2021ccafdeadec7625fce1",
+      "files_checked": 11
+    },
+    {
+      "number": 3225,
+      "head": "a1bc9155dbdb2c878bdbe389b5cd6238faf9c5f0",
+      "files_checked": 14
+    },
+    {
+      "number": 3224,
+      "head": "d8a0456cc9c13cf110ff8b33262917621de18ff4",
+      "files_checked": 7
+    },
+    {
+      "number": 3211,
+      "head": "0e3b5419df2eafbd6607687ce0a0596eebe2705e",
+      "files_checked": 29
+    },
+    {
+      "number": 3200,
+      "head": "0d085eda773bc1385119d533366edb2ca2632b0d",
+      "files_checked": 5
+    },
+    {
+      "number": 3192,
+      "head": "37e82b8f06a3f8db06be47c33b8de05a96df161f",
+      "files_checked": 4
+    },
+    {
+      "number": 3183,
+      "head": "0945d280e258515c0763d67d46e4fd024d5de46a",
+      "files_checked": 8
+    },
+    {
+      "number": 3173,
+      "head": "fcc6066d51857869c332e9d9779d5fb1098bb8f4",
+      "files_checked": 14
+    },
+    {
+      "number": 3172,
+      "head": "a3da967db73d582e6902cc8060e39f4a02553ce9",
+      "files_checked": 4
+    },
+    {
+      "number": 3166,
+      "head": "34f88d6322ee2819d3e189e97eda5bc0e3f419f1",
+      "files_checked": 435
+    },
+    {
+      "number": 3162,
+      "head": "366bd3dbfa620b466c6fecb38c363e3093130841",
+      "files_checked": 796
+    },
+    {
+      "number": 3157,
+      "head": "ebba583bd1ae2ceea1e87e78f3d07597cc76a7e6",
+      "files_checked": 15
+    },
+    {
+      "number": 3156,
+      "head": "58d8425296c3d2c095a574331249dbd0e9c736ac",
+      "files_checked": 11
+    },
+    {
+      "number": 3155,
+      "head": "082ed66b5b5867cf6b5494758ff90c6fcfcce7e3",
+      "files_checked": 11
+    },
+    {
+      "number": 3148,
+      "head": "97ac608aba159bd8696ea50d279261867d97e16a",
+      "files_checked": 265
+    },
+    {
+      "number": 3134,
+      "head": "0334fa4ca84008e5a06980807e1a06e7987042a7",
+      "files_checked": 1
+    },
+    {
+      "number": 3096,
+      "head": "5afd95ddf931b4a0c5a856f7ca9edb6018c7fd0a",
+      "files_checked": 163
+    },
+    {
+      "number": 3050,
+      "head": "2557f186f6e635567c370824fa43e2aadec6b82d",
+      "files_checked": 721
+    },
+    {
+      "number": 3049,
+      "head": "bdff2a2d957c9b3ee4cf532589562b901c193df3",
+      "files_checked": 675
+    },
+    {
+      "number": 3036,
+      "head": "0b9ae198219290eea25b41561d0eeba0e260fa29",
+      "files_checked": 98
+    },
+    {
+      "number": 2819,
+      "head": "d55a54e0eed3fdfa30d818aa20d7f33b3917fc2c",
+      "files_checked": 1
+    },
+    {
+      "number": 1655,
+      "head": "a1e4c2920a9d566496a7be8c4d76023972089c05",
+      "files_checked": 31
+    }
+  ],
+  "overlaps": {
+    "utc": "2026-10-25T19:28:45.949718+00:00",
+    "open_prs": 30,
+    "all_paginated": true,
+    "overlaps": [
+      {
+        "number": 3246,
+        "head": "79da83a8dca98eab6ca854a7505b8abd264eb959",
+        "files": [
+          "Docs/Architecture/study.md",
+          "Docs/Architecture/subscriptions-watchlists.md",
+          "Docs/QA/notes-library-ux-review-2026-10-02/fixes/task-34000.6/02-study-dashboard-120x36.ansi",
+          "Docs/QA/notes-library-ux-review-2026-10-02/fixes/task-34000.6/02-study-dashboard-120x36.txt",
+          "Docs/QA/notes-library-ux-review-2026-10-02/fixes/task-34000.6/02-study-dashboard-160x45.ansi",
+          "Docs/QA/notes-library-ux-review-2026-10-02/fixes/task-34000.6/02-study-dashboard-160x45.txt",
+          "Docs/QA/notes-library-ux-review-2026-10-02/fixes/task-34000.6/02-study-dashboard-160x70.ansi",
+          "Docs/QA/notes-library-ux-review-2026-10-02/fixes/task-34000.6/02-study-dashboard-160x70.txt"
+        ]
+      },
+      {
+        "number": 3162,
+        "head": "366bd3dbfa620b466c6fecb38c363e3093130841",
+        "files": [
+          "tldw_chatbook/css/screen_feature_watchlists.tcss"
+        ]
+      },
+      {
+        "number": 3148,
+        "head": "97ac608aba159bd8696ea50d279261867d97e16a",
+        "files": [
+          "tldw_chatbook/css/screen_feature_watchlists.tcss"
+        ]
+      },
+      {
+        "number": 3096,
+        "head": "5afd95ddf931b4a0c5a856f7ca9edb6018c7fd0a",
+        "files": [
+          "tldw_chatbook/css/screen_feature_watchlists.tcss"
+        ]
+      },
+      {
+        "number": 3036,
+        "head": "0b9ae198219290eea25b41561d0eeba0e260fa29",
+        "files": [
+          "tldw_chatbook/css/screen_feature_watchlists.tcss"
+        ]
+      }
+    ],
+    "remote_only_candidate_records": 10
+  },
+  "overlap_ruling": "No candidate controller, reader handler, Sources pane or owner task overlap. PR3246 promotes already-audited dev docs to main; other matches only Watchlists stylesheet files.",
+  "prepublish": {
+    "utc": "2026-10-25T19:37:18.192310+00:00",
+    "dev": "79da83a8dca98eab6ca854a7505b8abd264eb959",
+    "all_ref_new_id_claims": [],
+    "new_id_worktree_claims": 2,
+    "allocation": {
+      "unique_ref_oids": 308,
+      "tree_task_paths": 1361441,
+      "max_id": 36900,
+      "errors": []
+    },
+    "open_pr_heads_unchanged": true
+  }
+}

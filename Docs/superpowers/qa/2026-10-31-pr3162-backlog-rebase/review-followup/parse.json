@@ -1,0 +1,10 @@
+{
+  "files": [
+    "tldw_chatbook/Chat/archive_recovery/runtime.py",
+    "tldw_chatbook/UI/Console_Modules/archive_recovery.py",
+    "Tests/Chat/test_archive_recovery_coordinator.py",
+    "Tests/UI/test_console_archive_recovery_cards.py"
+  ],
+  "parse_errors": [],
+  "duplicate_tests": []
+}

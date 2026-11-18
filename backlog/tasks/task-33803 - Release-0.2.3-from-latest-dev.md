@@ -38,7 +38,7 @@ Publish current committed dev changes as a verified new release on main and PyPI
 5. Merge verified preparation to dev, publish to TestPyPI, then merge dev to main for production publication.
 6. Verify published artifacts and fresh installs, create annotated tag and GitHub release, and record evidence.
 ADR required: no
-ADR path: backlog/decisions/032-immutable-installed-distribution-assets.md; backlog/decisions/098-low-latency-speculative-duplex-voice-pipeline.md; backlog/decisions/097-boot-budget-ratchets.md
+ADR path: backlog/decisions/032-immutable-installed-distribution-assets.md; backlog/decisions/338-low-latency-speculative-duplex-voice-pipeline.md; backlog/decisions/097-boot-budget-ratchets.md
 Reason: Existing app-only release policy and first-use import deferral implement accepted ADRs without changing boundaries.
 <!-- SECTION:PLAN:END -->
 
@@ -49,7 +49,7 @@ Prepared 0.2.3 from dev f80d3e0090130658918ccd519d85ca700028ce98 and merged
 main 64ab237bde673919d47e4f33f3b10cf14ccbf05d without conflicts, retaining the
 evaluation case-sensitivity fix. Updated app/runtime/native source versions,
 README, changelog, and app-only release documentation. Native qualification
-and unavailable duplex voice remain unchanged under ADR-098; installed artifact
+and unavailable duplex voice remain unchanged under ADR-338; installed artifact
 verification follows ADR-032. No new ADR is required for this release.
 
 Targeted baseline: 63 passed. Expanded metadata, native boundary, digest, and

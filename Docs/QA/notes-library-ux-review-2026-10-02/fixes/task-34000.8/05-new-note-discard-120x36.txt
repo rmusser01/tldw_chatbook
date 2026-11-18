@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌────────────────────────────────────────────────────────┐  N  Empty note — type to keep it · Next: Start       │
+│   a  │ Library notes · Ready                                  │  o  typing.                                          │
+│   v  │ Notes (123)                                            │  t    ‹ Notes   Untitled                             │
+│      │ These notes live in the Library's own database — for   │  e                                                   │
+│      │ notes that live in a folder on disk, switch to Folder  │  s                                                   │
+│      │ files. To copy or keep a folder synced, choose Add     │      In the Library database only — no file on disk  │
+│      │ from files.                                            │     Empty note — type to keep it                     │
+│      │                                                        │         Edit     Preview     Info                    │
+│      │ Filter                                                 │         Save     Use in Console        Discard       │
+│ ---> │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     Title                                            │
+│      │ ▊ Filter notes… (Enter)                              ▎ │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     ▊ Untitled                                     ▎ │
+│      │                                                        │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │    New     Sort: Newest     Select                     │<---                                                  │
+│      │    Add from files…     Export                          │     Keywords                                         │
+│      │ Folders & placement                                    │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │    New folder     Add to folder     Move note          │     ▊ Comma-separated keywords                     ▎ │
+│      │    ○ Remove placement                                  │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│ ---> │                                                        │                                                      │
+│      │                                                        │     Body                                             │
+│      │  ▸ Agent_Lessons                                       │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │  ▸ Journal                                             │     ▊                                              ▎ │
+│      │  ▾ Meetings                                            │     ▊                                              ▎ │
+│      │    Advisor meeting 2026-09-24 · now                    │     ▊                                              ▎ │
+│      │    Standup 2026-09-29 · 5m                             │     ▊                                              ▎ │
+│      │    Advisor meeting 2026-09-10 · 5m                     │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │    ملاحظات الاجتماع — مراجعة المشروع · 5m              │                                                      │
+│      └────────────────────────────────────────────────────────┘                                       0 words · 1:1  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  esc back to notes | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

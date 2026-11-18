@@ -2,6 +2,12 @@
 
 This guide covers building distributable packages for tldw_chatbook on Windows and macOS.
 
+An experimental self-contained Windows x64 ZIP with bundled WezTerm and a
+separate `Data` profile is documented in [portable/README.md](windows/portable/README.md).
+It includes reviewed destination-only relocation into fresh recovery authority
+and a modified terminal whose filesystem state stays in Data. It is an unsigned
+prototype with local NTFS/same-account qualification.
+
 ## Overview
 
 The packaging system supports creating native installers and portable distributions for:

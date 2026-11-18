@@ -1,0 +1,724 @@
+{
+  "final_snapshot": {
+    "file": "rulings-final-progress-22f52b8e22845eace2d0b3230966f0a88ce512eee26235fbcbc53601e700748d.snapshot.md",
+    "sha256": "22f52b8e22845eace2d0b3230966f0a88ce512eee26235fbcbc53601e700748d",
+    "bytes": 1094090,
+    "lines": 3292,
+    "captured_utc": "2026-11-05T06:33:13.571789+00:00",
+    "two_full_reads_identical": true,
+    "complete_newline": true,
+    "last_nonempty_paragraph": "Ruling: Freeze the final chronological disclosure once after this paragraph and delegate the complete final census/archival closeout to the existing documentation helper using root-final-disclosure-brief.md \u2014 all substantive implementation/review/adjudication decisions are now made; old631 disclosure excludes accepted Task9fix2/Task10/final work and must not be the final handoff \u2014 cost if wrong: omitted late decisions or altered old cost/history could hide agent choices; require exact old631 raw objects/body/prefix preservation, every new literal and nonempty context line, immutable one-cut source, complete human-readable Rulings artifact and independent root audit before any cleanup. After acceptance, perform only the already-authorized mechanical task Done/canonical status/link checks, exact owned-path archival commit with gc.auto0, staged61/protected279 audits and removal of ONLY this plan scratch after durable copies are verified. No new native/source gate or runtime work. If a new substantive decision becomes necessary, disclose it explicitly rather than silently calling the frozen cutoff complete. FINAL_CENSUS_CUTOFF_READY",
+    "old_prefix_file": "rulings-task9-fix1-progress-f9ea4bf3b2bf31fcb5ab2fb644c7d022feaa3e8665c3148bc0df29db992288fb.snapshot.md",
+    "old_prefix_sha256": "f9ea4bf3b2bf31fcb5ab2fb644c7d022feaa3e8665c3148bc0df29db992288fb",
+    "old_prefix_bytes": 1030783,
+    "old_prefix_lines": 3114,
+    "old_complete_prefix_exact": true,
+    "capture_rule": "One final immutable cutoff; later mechanical root audits/status/Git/archive/cleanup are outside this census; no later capture."
+  },
+  "final_totals": {
+    "records": 707,
+    "literals": 434,
+    "NONINDEPENDENT": 273
+  },
+  "old_trio_backups": [
+    {
+      "original": "rulings-user-complete-draft.md",
+      "backup": "rulings-final-backup-9ee035fc2e7d22369ac0d8a8c24c9de82a7c8cf06d2db36ff03489c343b7ca0c.md",
+      "sha256": "9ee035fc2e7d22369ac0d8a8c24c9de82a7c8cf06d2db36ff03489c343b7ca0c",
+      "bytes": 576725
+    },
+    {
+      "original": "rulings-combined-map.json",
+      "backup": "rulings-final-backup-b2124024b813e112925fb6aab6eaf3d37f1fcacad76428ed20879bffaa143f65.json",
+      "sha256": "b2124024b813e112925fb6aab6eaf3d37f1fcacad76428ed20879bffaa143f65",
+      "bytes": 1610993
+    },
+    {
+      "original": "rulings-combined-report.md",
+      "backup": "rulings-final-backup-f41648f9ea0663b4f5c70a3cf6319e0e007cc2409918c4a6b33fa1220378894f.md",
+      "sha256": "f41648f9ea0663b4f5c70a3cf6319e0e007cc2409918c4a6b33fa1220378894f",
+      "bytes": 28093
+    }
+  ],
+  "old_source_index": {
+    "file": "index.json",
+    "sha256": "5ab935c47631d2fd20ac05e913c53307a32e4dc9a1f8c148636926bab240241a",
+    "bytes": 224206,
+    "backup": "rulings-final-index-before-5ab935c47631d2fd20ac05e913c53307a32e4dc9a1f8c148636926bab240241a.json",
+    "old_records": 134,
+    "old_bodies": 107
+  },
+  "completed_source_selection": {
+    "count": 81,
+    "bytes": 1990976,
+    "explicit_task10_names": [
+      "task-10-report.md",
+      "task-10-review.md"
+    ],
+    "existing_exact_reused": 6
+  },
+  "files": [
+    {
+      "file": "task-1-report.md",
+      "sha256": "d76eabcace6af4e460be89a085c7c0bf0fb42ea563a066a8b914dd4ae26b038d",
+      "bytes": 18804,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-1-review.md",
+      "sha256": "a112a304fd11ae1f3df35d5a1390e8e5d16dbc458249efdfdbf2f8c1811b5d6f",
+      "bytes": 7023,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-10-report.md",
+      "sha256": "7b48554a9ccf711767c55bde0ca22f84933c2362317bcf91ca6dc087bb431d07",
+      "bytes": 39728,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-10-review.md",
+      "sha256": "310931472fb9e279a490058f4b15aa8b2cc40c65216ab35f91d910c6d9865965",
+      "bytes": 19333,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-2-report.md",
+      "sha256": "b46496b699fadc479095049995d66f6bb6be1ebb234c93d1ff90c4fbe76b496f",
+      "bytes": 25606,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-2-review.md",
+      "sha256": "5f5e6e70c1e6e09d0a2d05c84a8616056f7bdb56240973fcdeba7b5f74b848ff",
+      "bytes": 9574,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-3-report.md",
+      "sha256": "82273ab5e9dcedce99f8ede67fad10e28ec1c6ac8102015b1e2f31777f226a38",
+      "bytes": 17802,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-3-review.md",
+      "sha256": "4063b959ea08fdb24594b18884d6493ea8cb8e4aa45c9c021137ff52143f2ec4",
+      "bytes": 6930,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-4-report.md",
+      "sha256": "46c25c12d9e831fc31d6f016d7dcee7fe91b6ed5ee29a2967f9fba5dc2266e8d",
+      "bytes": 20670,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-4-review.md",
+      "sha256": "ec6dcc906b76ce206cec99da21eab1535b66ae682465ff24b7bdceebdfdd3931",
+      "bytes": 8867,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-5-report.md",
+      "sha256": "b6ba13c01bb5e085a6aeabd512764d644ae677aeec97db6bf422f7967505627b",
+      "bytes": 23205,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-5-review.md",
+      "sha256": "623a220dcffe42cecaf6d27b0f3be86bbaf63aa14b676a1256068d2a7a8f429e",
+      "bytes": 12309,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-6-report.md",
+      "sha256": "6249247f403528e7fc9a8338ff13a018f1afd8ec2ab434084e9ab097116a7c43",
+      "bytes": 25894,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-6-review.md",
+      "sha256": "5039af374dcfcfc2572bf63ad180e733aac891c2a432915610addb42acb4090e",
+      "bytes": 7370,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-7-report.md",
+      "sha256": "7a27b0fae6fcad2aa02e82d6aaafae1a75dd987a9d73248e7989ad3e6dc8648e",
+      "bytes": 27144,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-7-review.md",
+      "sha256": "91fd88f3e293233cd998bacc25b62035c68e1268dcb3656c8d00a5f192c39bb9",
+      "bytes": 10911,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8-controller-recovery-report.md",
+      "sha256": "5462fcd6a1bd161db6b8a6954519a38bef5cd1fcb439158db905ea4f7d31e799",
+      "bytes": 165881,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8-controller-report.md",
+      "sha256": "87b9ed6b4e834aa791849018d62eb7eea225cbcabc46487750e4ceff8a086002",
+      "bytes": 163254,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8-report.md",
+      "sha256": "e4b22d4fcd331a8c1d3df50578ebfdea41c37d9ebff645c9946a1b1aca6079ce",
+      "bytes": 12379,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8-stop-source-helper-report.md",
+      "sha256": "cb8b6bc33b7f56931e89ba94a778ad27d9198a2dad4bf6a066da0117540a546d",
+      "bytes": 18963,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8-whole-fix1-report.md",
+      "sha256": "fcdfe60757ff6aea703acbb9e0b1ebc923a9685b6733e237b329444220283107",
+      "bytes": 16808,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8-whole-fix1-review.md",
+      "sha256": "c2ad4c91386b204aa6eddd0b4488cd61e42289c379676413528f49e251c59ccc",
+      "bytes": 14104,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8-whole-review.md",
+      "sha256": "a98463f6c59356e1af7a0d0ab34dfb624b94015910d9231936570826df4bce73",
+      "bytes": 25175,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8a-report.md",
+      "sha256": "12cc88c8b6156f1b1c116338f44d7586778e99ebc2fa15b127f07ccc16d0da54",
+      "bytes": 12045,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8a-review.md",
+      "sha256": "162d90a5bcd6b28842a92df8711b95122aad2d4c7c673b017b0ddfc29dbeaa5b",
+      "bytes": 7078,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8b-report.md",
+      "sha256": "98bf331df284c33b8e7301025ddefd55b6cdc468971cc492c42e899d3e43ba83",
+      "bytes": 24575,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8b-review.md",
+      "sha256": "86bd9289ade581d53535f3fe6219d6c2808f34ae7a8fe8e2825e898eeafb4f38",
+      "bytes": 11304,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8c-report.md",
+      "sha256": "17c289620028472848504c9b8471f2d46d3831740e2ccc17ce33e08c8a3613bc",
+      "bytes": 15668,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8c-review.md",
+      "sha256": "d2e80727c222ba6d6daad6e61eb96c36dffa289a906154dbcc29f58493927bd5",
+      "bytes": 7298,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8d1-report.md",
+      "sha256": "3bc9bacf44cb811b285099dd198ba838db187a428dbaf90e5d9e2e7bbcccf038",
+      "bytes": 33324,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8d1-review.md",
+      "sha256": "aa70fbf316fa0954db949f7d39535a3fa1727cded56f7155de3a2b21840586a2",
+      "bytes": 15598,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8d2-confirmed-undo-report.md",
+      "sha256": "6c3016007292a45e9270a7a36a77d458946a9746a11ab3c3f2ba26e513bf8e92",
+      "bytes": 21699,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8d2-confirmed-undo-review.md",
+      "sha256": "01311469837dffd17389497b577af824996b29ec7c85b7560a435d6678c18fc2",
+      "bytes": 19234,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8d2-git-custody-report.md",
+      "sha256": "476288059f0dccee3ad2aea0b22ab75424613911fce85bdd7ebf579b65f4456c",
+      "bytes": 15880,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8d2-git-custody-review.md",
+      "sha256": "f88bb9c340299b5dfbd55ee7f8265351bcf1331d1451702c42dbc8afc0e37623",
+      "bytes": 12134,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8d2-ordinary-integration-fix1-report.md",
+      "sha256": "3b44d4081b28891d2c24907bad47e812a83fa6387379c96cdf275c4a05e46b28",
+      "bytes": 13183,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8d2-ordinary-integration-fix2-report.md",
+      "sha256": "6ab328e248fe8ec725a44e153dd2043eeebbeebc4b940a2b5a3d266bee631d99",
+      "bytes": 10116,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8d2-ordinary-integration-report.md",
+      "sha256": "c021f127bd6c1bfe96fffd13aa7436a2fbf3ffb04dfdec09f302fb5e744b329e",
+      "bytes": 80817,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8d2-ordinary-integration-review.md",
+      "sha256": "df89847a1eb48431a6c1f83758ed4eb203836123ab67eb52fe5d502e3398287c",
+      "bytes": 29783,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8d2-ordinary-physical-report.md",
+      "sha256": "b5fe0e8c578105e7f3bb092280a9c4eed717cecda70a0a5182961cc9a8e2a9d4",
+      "bytes": 2730,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8d2-ordinary-source-report.md",
+      "sha256": "7da0acb5d0526e8f9a70c1a83a57b9c3a44ed9c71dd2577a9eac62a6e8dc6fda",
+      "bytes": 24831,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8d2-ordinary-source-review.md",
+      "sha256": "57ffc57a948e9463f384ffc34d1ccbb8b4bfad79fa1a92d449970f8f8e49d35f",
+      "bytes": 13185,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8d2-raw-cli-report.md",
+      "sha256": "522b0858403489657961cc178a3aaeea7d2bd45597b20ab6e07f08c34f602990",
+      "bytes": 30728,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8d2-raw-cli-review.md",
+      "sha256": "26cf759890feabcadd59de3e26250b4a3fd13b8335732d4bfe3b782fbdc36d16",
+      "bytes": 14726,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8d2-ssh-request-report.md",
+      "sha256": "82183a5105f83f1d04fdb2c9d049f1eae1f96872b849b70f3e5caf554a804114",
+      "bytes": 38903,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8d2-ssh-request-review.md",
+      "sha256": "c5c3df6f6219a75dcf12e7cf57b7ff711dd7dedd3ab4ee5360682da96fcb5734",
+      "bytes": 18425,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8d2-wave-fix1-report.md",
+      "sha256": "efa32bd006bb633d443fb43c0b77134663c3b911deeab638f54bd7432151326d",
+      "bytes": 6256,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8d2-wave-fix2-report.md",
+      "sha256": "2bc1c0ef0a0f6d66b52dbbfa34507b1047f9b6937385ca99654236288f22786a",
+      "bytes": 7551,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8d2-wave-report.md",
+      "sha256": "bc71438edd109a9d3c15cc63b1603badc771f28782f6e4e9955e41ced70ed51f",
+      "bytes": 13085,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8d2-wave-review.md",
+      "sha256": "3902d8c0063865bf22b820427e7d22cc5d376f5369af79713bb9f4d6240317a2",
+      "bytes": 22158,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8d2a-report.md",
+      "sha256": "37e89e743a1ae4d5de74498c3a5b9f752ed6d616a955dff8a32da9107a675979",
+      "bytes": 25298,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8d2a-review.md",
+      "sha256": "7cf090468ae7fb60ac87d9a67639576d45f65b5e6a5f5fdb7838e3556e526828",
+      "bytes": 12945,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8d2b-report.md",
+      "sha256": "7457dc3b14cf12844a2ceacf0948688a43953374af6da51ec1553281d291e3fb",
+      "bytes": 23969,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8d2b1-review.md",
+      "sha256": "1644543ecc4332c60d1014bc310257e3f16b49b211b3e789c083c69c2a24690b",
+      "bytes": 10539,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8d2b2-report.md",
+      "sha256": "3ce50680b7aecfb2d7618ed2810d43699a953f8059f807720e5b8eecbbe0996e",
+      "bytes": 25963,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8d2b2a-review.md",
+      "sha256": "2d40aed49fa7bdd36b6215d0fab6b7b2e064ef0c8b007ff46cbdbe0ddcfd2144",
+      "bytes": 11982,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8d2b2b-report.md",
+      "sha256": "51f390e46e5a0ae12d4f2e06efe09957afdfcdce750210e7169197dfaaa5e8bb",
+      "bytes": 20215,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8d2b2b1-review.md",
+      "sha256": "5b9ffe7882cfbf90111b9093199d779ddf7224032b60e31fed73f193e00588c6",
+      "bytes": 15692,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8d2b2b2-report.md",
+      "sha256": "a87f285ea04296094165516ab4ce1e9a9cfb5fea69f7e1c8432736b811f8e166",
+      "bytes": 44580,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8d2b2b2-review.md",
+      "sha256": "e8033be7cee238b754eef849c22c4c150628a0e861774f0f8dcefe4b923b655a",
+      "bytes": 12698,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8d2c-references-report.md",
+      "sha256": "80f4968f12d4234e6bdab34f056c5e1089a924efed0b4acc54030967de8cff13",
+      "bytes": 26055,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8d2c-references-review.md",
+      "sha256": "634f6842f3a6fcc9878685f5720f0b24cfc4ac59085cd9f7fb886ef64c584487",
+      "bytes": 18057,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8e-fix1-report.md",
+      "sha256": "a19a02dae06ca8cfc42c0c44ef88ed66a89fad0bd1b3ae2f0faaaaf2a91cc298",
+      "bytes": 12757,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8e-fix2-report.md",
+      "sha256": "83e5bb83cd50949a191ab051b0d1582a17683ea96b3c2d88752c431f2b35b80c",
+      "bytes": 8459,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8e-report.md",
+      "sha256": "911e5a3f6a3d6d8ef6189082ab1def72173ff6671f3ae4807f133044899cb817",
+      "bytes": 13008,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8e-review.md",
+      "sha256": "c0b042a31171b6a6c5d07e642c293f895d84b994f104490577dc00da4fa7c72e",
+      "bytes": 31469,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8f-fix1-report.md",
+      "sha256": "906e98a376691038c04efd65ea5bb7d34ad21c5cafc86ad29f409e19fed06df0",
+      "bytes": 23499,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8f-fix1-review.md",
+      "sha256": "35318fe73c928a66d50aa458df3c06b7ede2ea23959269e28cc884c274c0687e",
+      "bytes": 36616,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8f-fix2-review.md",
+      "sha256": "9397f137cc0bad3126be04f8c66389af49358bb3839eed30ed80a299b6f6936d",
+      "bytes": 15046,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8f-report.md",
+      "sha256": "1d9fe0253b2fcc2289ef51ef91b4d3d3fd778c317a5218388063c4bfdf0d2e77",
+      "bytes": 24253,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8f-review.md",
+      "sha256": "89ddf70d620f526a6f572332c3aa209fc459d0b7802fc72ae0d2dd9202d8882e",
+      "bytes": 33138,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8g-fix1-final-report.md",
+      "sha256": "8e24ffb8862407cb3de3c98a89d41649b700ce38b8bb86cc81bb06d642e04460",
+      "bytes": 16177,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8g-fix1-q1-self-review.md",
+      "sha256": "fdcd086fdaf58429b283babf0bf806868af4c8660715c307ec2d807caf251bee",
+      "bytes": 7189,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8g-fix1-report.md",
+      "sha256": "f52dd695f82fbc13140e679f75b31eb743fb3d6fac473837cc5bcb8b1b924b55",
+      "bytes": 166818,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8g-fix1-review.md",
+      "sha256": "813924bda92e6477885f520380f6cc03313b8dcd5a748499276107e113d53933",
+      "bytes": 12500,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8g-fix2-final-report.md",
+      "sha256": "a058e46c49a8eb7da873c1e1bee2efd0455ec2fd90c6c42d3ca1ee5e55253848",
+      "bytes": 12602,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8g-fix2-review.md",
+      "sha256": "8a917921e1b6162cd452c075b7acd299d077961b50fed14a6bdea4a66abad91b",
+      "bytes": 7908,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8g-fix3-final-report.md",
+      "sha256": "7a423b7acaf2fb1581a17d3cf619c083c48ca6876547ca3d8bed167868dfd6e7",
+      "bytes": 17933,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8g-fix3-review.md",
+      "sha256": "f231675fba40591e84931cccee2a182c9d09e9338104d0a4555d6ffa8415f4d4",
+      "bytes": 7415,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8g-report.md",
+      "sha256": "d837ec154b0bb647b5f167354d2e00c4a80ee29ce0db8b11eaf0e275cd97d6e0",
+      "bytes": 35119,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "task-8g-review.md",
+      "sha256": "680a020018004283c0f062d18ded4c8eeb34f94e3e1888ddca3b22c7576a8e53",
+      "bytes": 41029,
+      "role": "finite completed current report/review source"
+    },
+    {
+      "file": "final-scoped-review.md",
+      "sha256": "89efdf9c44c505ad309a0c9577b0e8b110efe42d654b72526cb2d546aaf8bf29",
+      "bytes": 16561,
+      "role": "completed final scoped gate/provenance source"
+    },
+    {
+      "file": "final-scoped-review.frozen-89efdf9c44c505ad309a0c9577b0e8b110efe42d654b72526cb2d546aaf8bf29.md",
+      "sha256": "89efdf9c44c505ad309a0c9577b0e8b110efe42d654b72526cb2d546aaf8bf29",
+      "bytes": 16561,
+      "role": "completed final scoped gate/provenance source"
+    },
+    {
+      "file": "final-scoped-evidence-audit.json",
+      "sha256": "27bfa05126a3b21daf1530b0829d1f108e4ce7e1dc4c01063165706b1736132c",
+      "bytes": 27402,
+      "role": "completed final scoped gate/provenance source"
+    },
+    {
+      "file": "root-durable-final-correction-archive-report.md",
+      "sha256": "8676bee9e4b67f4b3519e3982419b881456a7fb23aa8ba8e1ad6402eba71457d",
+      "bytes": 8922,
+      "role": "completed final scoped gate/provenance source"
+    },
+    {
+      "file": "root-durable-final-correction-archive-audit.json",
+      "sha256": "43500227bd6a709c869a5b2a87d774b1004344231982193727019b0612c92a22",
+      "bytes": 1477,
+      "role": "completed final scoped gate/provenance source"
+    },
+    {
+      "file": "root-final-scoped-review-context.md",
+      "sha256": "1c4a0bb6bf0ab51187601e301d1908d1d3dd0ffb440bb99127744eda06d4cf00",
+      "bytes": 3273,
+      "role": "completed final scoped gate/provenance source"
+    },
+    {
+      "file": "root-final-disclosure-brief.md",
+      "sha256": "958958f1a274786aec22ca77774647e149fea93516f2759a92928d9650b5f032",
+      "bytes": 6390,
+      "role": "completed final scoped gate/provenance source"
+    },
+    {
+      "file": "rulings-final-adjudication.md",
+      "sha256": "12420d11d845a2e4bc422eea08e40ecde9017d90f749acd7b49a2ecb5008f7f5",
+      "bytes": 109361,
+      "role": "final census/freeze/input/preservation metadata or historical byte backup"
+    },
+    {
+      "file": "rulings-final-backup-9ee035fc2e7d22369ac0d8a8c24c9de82a7c8cf06d2db36ff03489c343b7ca0c.md",
+      "sha256": "9ee035fc2e7d22369ac0d8a8c24c9de82a7c8cf06d2db36ff03489c343b7ca0c",
+      "bytes": 576725,
+      "role": "final census/freeze/input/preservation metadata or historical byte backup"
+    },
+    {
+      "file": "rulings-final-backup-b2124024b813e112925fb6aab6eaf3d37f1fcacad76428ed20879bffaa143f65.json",
+      "sha256": "b2124024b813e112925fb6aab6eaf3d37f1fcacad76428ed20879bffaa143f65",
+      "bytes": 1610993,
+      "role": "final census/freeze/input/preservation metadata or historical byte backup"
+    },
+    {
+      "file": "rulings-final-backup-f41648f9ea0663b4f5c70a3cf6319e0e007cc2409918c4a6b33fa1220378894f.md",
+      "sha256": "f41648f9ea0663b4f5c70a3cf6319e0e007cc2409918c4a6b33fa1220378894f",
+      "bytes": 28093,
+      "role": "final census/freeze/input/preservation metadata or historical byte backup"
+    },
+    {
+      "file": "rulings-final-census.json",
+      "sha256": "aaa5f643b29bd4a47c298e72e1788aad04880bb7549df81a23cfe42edc31c068",
+      "bytes": 273435,
+      "role": "final census/freeze/input/preservation metadata or historical byte backup"
+    },
+    {
+      "file": "rulings-final-completed-source-selection.json",
+      "sha256": "1f60e026d79093bfe25b28a1f55c27f79545325f51e55220c52188eedc1013c8",
+      "bytes": 45710,
+      "role": "final census/freeze/input/preservation metadata or historical byte backup"
+    },
+    {
+      "file": "rulings-final-freeze.json",
+      "sha256": "ae54bec5d96e318deda97204553f59a46ca564a0f3b5fc4a1318fb7ff4a29a4b",
+      "bytes": 2004,
+      "role": "final census/freeze/input/preservation metadata or historical byte backup"
+    },
+    {
+      "file": "rulings-final-index-before-5ab935c47631d2fd20ac05e913c53307a32e4dc9a1f8c148636926bab240241a.json",
+      "sha256": "5ab935c47631d2fd20ac05e913c53307a32e4dc9a1f8c148636926bab240241a",
+      "bytes": 224206,
+      "role": "final census/freeze/input/preservation metadata or historical byte backup"
+    },
+    {
+      "file": "rulings-final-input-verification.json",
+      "sha256": "c1559adc50170559db2765ecbe3c6d6e862bf7c0d0b6c2255b50afa8f84f1674",
+      "bytes": 110341,
+      "role": "final census/freeze/input/preservation metadata or historical byte backup"
+    },
+    {
+      "file": "rulings-final-preservation-proof.json",
+      "sha256": "dc2f06fd975fc1e86813a94832e25ffe5a5b3faa93ec710deee27c010b16e60e",
+      "bytes": 2842,
+      "role": "final census/freeze/input/preservation metadata or historical byte backup"
+    },
+    {
+      "file": "rulings-final-progress-22f52b8e22845eace2d0b3230966f0a88ce512eee26235fbcbc53601e700748d.snapshot.md",
+      "sha256": "22f52b8e22845eace2d0b3230966f0a88ce512eee26235fbcbc53601e700748d",
+      "bytes": 1094090,
+      "role": "final census/freeze/input/preservation metadata or historical byte backup"
+    },
+    {
+      "file": "rulings-user-complete-draft.md",
+      "sha256": "497bcd5d19023024556faab656ea6b89c3ec9978f0ffcf42994bfa4d7b3b3580",
+      "bytes": 658827,
+      "role": "final complete chronological disclosure draft/map/report"
+    },
+    {
+      "file": "rulings-combined-map.json",
+      "sha256": "513bd781eb6c817bf091aaf55ccde32a06e18be1608aaefa6d78d151740bf6de",
+      "bytes": 1886493,
+      "role": "final complete chronological disclosure draft/map/report"
+    },
+    {
+      "file": "rulings-combined-report.md",
+      "sha256": "916a5b2d6c5c77486c71459424657c41a7116a1595fe00cc98203b810916a413",
+      "bytes": 32445,
+      "role": "final complete chronological disclosure draft/map/report"
+    },
+    {
+      "file": "rulings-task9-fix1-progress-f9ea4bf3b2bf31fcb5ab2fb644c7d022feaa3e8665c3148bc0df29db992288fb.snapshot.md",
+      "sha256": "f9ea4bf3b2bf31fcb5ab2fb644c7d022feaa3e8665c3148bc0df29db992288fb",
+      "bytes": 1030783,
+      "role": "historical prior631 source snapshot"
+    },
+    {
+      "file": "rulings-final-refresh-report.md",
+      "sha256": "36558399126f6246ef878a9b59e6d06533939a3d7e5e43d4e2bc68576ed8ae41",
+      "bytes": 24424,
+      "role": "complete final disclosure/archival report"
+    }
+  ],
+  "complete_rulings": {
+    "file": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/rulings/complete-rulings.md",
+    "sha256": "d28a2f434c4df5d320f044d1d40bcd7ab8f3c666a2f16b680a7719e96f8ccef4",
+    "bytes": 661978,
+    "preface_bytes": 3151,
+    "preface_sha256": "5445a92e9ef7807de17a5e42804475eae1b396f4c651bdacb47dd7baedf9f2cc",
+    "unchanged_draft_sha256": "497bcd5d19023024556faab656ea6b89c3ec9978f0ffcf42994bfa4d7b3b3580",
+    "unchanged_draft_bytes": 658827,
+    "complete_draft_tail_byte_exact": true
+  },
+  "existing_zip_manifests_unchanged": [
+    {
+      "zip_file": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/rulings/final-correction-evidence.zip",
+      "zip_sha256": "7344ac68d0050f973f02df4fceb8fd5e2a29905dcb75f4db1796219fba104820",
+      "zip_bytes": 3469999,
+      "manifest_file": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/rulings/final-correction-evidence-manifest.json",
+      "manifest_sha256": "abad58747ebc916c6f6684bf62689ef7ceb2bd8680fc6652de0a57fab139352a",
+      "manifest_bytes": 27658,
+      "verified_unchanged": true
+    },
+    {
+      "zip_file": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/rulings/provenance-history.zip",
+      "zip_sha256": "6df38a23c474440005d5995d4cda35caf4650531b5912905fcc53b00868f84a6",
+      "zip_bytes": 10037132,
+      "manifest_file": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/rulings/provenance-history-manifest.json",
+      "manifest_sha256": "d87eb4d930f0347c5d18055f304d2e871d77186dac0af093e61d5781256cb7ac",
+      "manifest_bytes": 272451,
+      "verified_unchanged": true
+    }
+  ],
+  "cycle_note": "Output manifest includes the completed report/wrapper, not its own digest or the containing final source-index digest. Root final audit supplies final index/self-output acceptance without circular claims.",
+  "limits": [
+    "Five filename-only proposal identities remain historically unpinned despite available current complete bodies.",
+    "Expected65560/currentc3a09 historical metadata gap remains unavailable; no repeat search/reconstruction.",
+    "Twelve early Task10 driver bodies remain missing/null, sixteen retained; no all-historical-inputs claim.",
+    "Source-qualified prior failures, Darwin-only physical coverage, dirty-source dependencies, inherited static debt, raw-data whitespace, missing process receipts and composite live/source versions remain disclosed.",
+    "Final scoped review accepted I1/I2/M2 and retains unexplained nonblocking UI coroutine Minor M1; no new correctness/native verdict by disclosure helper."
+  ]
+}

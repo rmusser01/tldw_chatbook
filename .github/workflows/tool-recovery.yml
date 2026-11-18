@@ -1,0 +1,124 @@
+name: Tool Recovery
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - .github/workflows/tool-recovery.yml
+      - tldw_chatbook/Agents/**
+      - Tests/Agents/**
+      - tldw_chatbook/Tools/**
+      - tldw_chatbook/Utils/windows_files.py
+      - Tests/Tools/**
+      - Tests/CI/test_cli_recovery_workflow.py
+      - Tests/hooks_v2_process_support.py
+      - Tests/conftest.py
+      - Tests/UI/test_console_turn_resend_ui.py
+      - Tests/UI/test_console_composer_run_controls.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tool-recovery-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  linux:
+    name: Linux tool recovery and command hooks (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.12', '3.14']
+    env:
+      PYTHONUNBUFFERED: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHON_KEYRING_BACKEND: keyring.backends.null.Keyring
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install targeted test dependencies
+        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2
+      - name: Record Linux runtime
+        run: python -c "import platform; print(platform.platform()); print(platform.python_version())"
+      - name: Verify CLI regression routing
+        run: python -m pytest Tests/CI/test_cli_recovery_workflow.py --confcutdir=Tests/CI -q -o addopts=
+      # Keep agent admission/profile tests in their own invocation.
+      - name: Run raw shell agent recovery contracts
+        run: >-
+          python -m pytest
+          Tests/Agents/test_raw_shell_recovery.py
+          Tests/Agents/test_raw_shell_tool_provider.py
+          Tests/Agents/test_raw_shell_integration.py
+          -q -o addopts= --timeout=120 --junitxml=cli-agent-results.xml
+      - name: Run real CLI worker and virtual listing contracts
+        run: >-
+          python -m pytest
+          Tests/Tools/test_virtual_cli_listing_recovery.py
+          Tests/Tools/test_virtual_cli_impls.py
+          Tests/Tools/test_workspace_atomic_writes.py
+          Tests/Tools/test_remote_worker_bundle.py
+          Tests/Tools/test_raw_cli_executor_process.py
+          Tests/Tools/test_raw_cli_executor_contract.py
+          Tests/Tools/test_remote_executor_loopback.py::test_fs_list_long_roundtrip_retains_exclusions_and_plain_output
+          -q -o addopts= --timeout=120 --junitxml=cli-worker-results.xml
+      - name: Run host review Git source contracts
+        run: >-
+          python -m pytest
+          Tests/Agents/test_code_review_source.py
+          Tests/Tools/test_git_tool_impls.py
+          Tests/Tools/test_git_tool_sensitive_paths.py
+          -q -o addopts= --timeout=120 --junitxml=cli-review-results.xml
+      - name: Check generated CLI worker bundle
+        run: |
+          python -m tldw_chatbook.Tools.build_remote_worker_bundle --check
+          python -m pytest \
+            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Tools/remote_worker_bundle.py]' \
+            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/Tools/remote_worker_bundle.py]' \
+            --confcutdir=Tests/Architecture -q -o addopts=
+      - name: Run recovery and real command contracts
+        run: >-
+          python -m pytest
+          Tests/Agents/test_tool_disclosure_refusals.py
+          Tests/Agents/test_first_request_window_honest_plan.py
+          Tests/Chat/test_console_agent_project_instructions.py
+          Tests/UI/test_console_turn_resend_ui.py::test_select_llamacpp_console_enables_send_while_another_thread_holds_the_config_locks
+          Tests/UI/test_console_composer_run_controls.py::test_slash_stop_stops_the_viewed_tabs_run_and_clears_itself
+          Tests/Agents/test_fleet_message_tools.py
+          Tests/Tools/test_file_tools_workspace_roots.py
+          Tests/Agents/test_tool_disclosure_diagnostics.py
+          Tests/Agents/test_agent_runtime_review_hook.py
+          Tests/Agents/test_agent_loop_load_dedupe.py
+          Tests/Agents/test_hooks_v2_tool_pipeline.py
+          Tests/Agents/test_hooks_v2_execution.py
+          Tests/Agents/test_skill_tool_spawn.py::test_undisclosed_skill_tool_is_refused_without_find_load
+          Tests/Agents/test_skill_tool_spawn.py::test_skill_tool_executes_after_find_load_discloses_it
+          Tests/Agents/test_skill_tool_spawn.py::test_native_spawn_child_cannot_call_a_skill_tool
+          Tests/Agents/test_agent_service.py::test_definitive_result_observer_receives_structured_success_and_failure_only
+          Tests/Agents/test_agent_service.py::test_call_with_timeout_pauses_deadline_while_predicate_holds
+          Tests/Agents/test_agent_service.py::test_call_with_timeout_deadline_resumes_after_pause_ends
+          Tests/Agents/test_agent_service.py::test_runtime_observation_and_concurrent_cancellation_share_owner_sequence
+          Tests/Agents/test_agent_service.py::test_replacement_updates_permission_set_in_lockstep
+          Tests/Agents/test_agent_service.py::test_initial_project_instruction_rows_are_verified_and_marked_before_provider
+          Tests/Agents/test_agent_service.py::test_bounding_that_drops_pending_instruction_row_stops_without_send_or_mark
+          Tests/Agents/test_agent_service.py::test_real_ledger_one_over_final_limit_stops_without_mark_or_send
+          Tests/Agents/test_agent_service.py::test_real_ledger_exact_final_limit_marks_and_sends
+          Tests/Agents/test_agent_service.py::test_later_batch_context_retries_before_review_and_is_marked_on_exact_request
+          -q -o addopts= --timeout=120 --junitxml=tool-recovery-results.xml
+      - name: Retain targeted test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-tool-recovery-${{ matrix.python-version }}-results
+          path: |
+            tool-recovery-results.xml
+            cli-agent-results.xml
+            cli-worker-results.xml
+            cli-review-results.xml
+          if-no-files-found: warn

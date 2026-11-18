@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="2" time="6.250" timestamp="2026-11-04T20:38:20.895990-08:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.Agents.test_native_legacy_hooks" name="test_parallel_finalization_joins_each_original_operation_return[0]" time="2.566"><failure message="assert (1 == 2)&#10; +  where 1 = len([&lt;tldw_chatbook.Agents.execution_capacity.OwnedOperation object at 0x11aaaba40&gt;])">Tests/Agents/test_native_legacy_hooks.py:331: in test_parallel_finalization_joins_each_original_operation_return
+    assert len(returned) == 2 and returned == entries
+E   assert (1 == 2)
+E    +  where 1 = len([&lt;tldw_chatbook.Agents.execution_capacity.OwnedOperation object at 0x11aaaba40&gt;])</failure></testcase><testcase classname="Tests.Agents.test_native_legacy_hooks" name="test_parallel_finalization_joins_each_original_operation_return[1]" time="2.066"><failure message="assert (1 == 2)&#10; +  where 1 = len([&lt;tldw_chatbook.Agents.execution_capacity.OwnedOperation object at 0x11adb18b0&gt;])">Tests/Agents/test_native_legacy_hooks.py:331: in test_parallel_finalization_joins_each_original_operation_return
+    assert len(returned) == 2 and returned == entries
+E   assert (1 == 2)
+E    +  where 1 = len([&lt;tldw_chatbook.Agents.execution_capacity.OwnedOperation object at 0x11adb18b0&gt;])</failure></testcase></testsuite></testsuites>

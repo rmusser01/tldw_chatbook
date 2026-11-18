@@ -46,8 +46,11 @@ def _conversation(card_id=1, probe_index=0, sample_index=0, target_id="t-1"):
 
 def _seed_run(db):
     task_id = db.create_task(
-        name="probe bench", description="", task_type="generation",
-        config_format="custom", config_data={"bench_type": "character_probe"},
+        name="probe bench",
+        description="",
+        task_type="generation",
+        config_format="custom",
+        config_data={"bench_type": "character_probe"},
     )
     model_id = db.create_model(name="m", provider="llama_cpp", model_id="m")
     run_id = db.create_run(name="r", task_id=task_id, model_id=model_id)
@@ -79,15 +82,21 @@ def test_save_conversations_rejects_a_stale_run_id(db):
 def test_turns_are_stored_in_metadata_not_actual_output(db):
     """actual_output is shaped for a single answer; a conversation is not one."""
     run_id, target_id = _seed_run(db)
-    save_conversations(db, "rg-1", {target_id: run_id}, [_conversation(target_id=target_id)])
+    save_conversations(
+        db, "rg-1", {target_id: run_id}, [_conversation(target_id=target_id)]
+    )
     row = db.get_run_results(run_id)[0]
     assert "Reply one" in str(row.get("metadata"))
 
 
 def test_a_turn_annotation_persists_with_its_tags_and_note(db):
     run_id, target_id = _seed_run(db)
-    save_conversations(db, "rg-1", {target_id: run_id}, [_conversation(target_id=target_id)])
-    annotate_turn(db, "rg-1", 1, 0, 0, target_id, 1, ["broke-character"], "drifted here")
+    save_conversations(
+        db, "rg-1", {target_id: run_id}, [_conversation(target_id=target_id)]
+    )
+    annotate_turn(
+        db, "rg-1", 1, 0, 0, target_id, 1, ["broke-character"], "drifted here"
+    )
     stored = load_turn_annotations(db, "rg-1")[(1, 0, 0, target_id, 1)]
     assert stored["tags"] == ["broke-character"]
     assert stored["note"] == "drifted here"
@@ -231,7 +240,12 @@ def test_create_probe_run_group_returns_a_run_per_target(db, bench):
     config, task_id = bench
     targets = [_target_row(db, "base"), _target_row(db, "steered")]
     group_id, run_ids = create_probe_run_group(
-        db, task_id, config, _cards(), ProbeSet(probes=(Probe(turns=("One",)),)), targets
+        db,
+        task_id,
+        config,
+        _cards(),
+        ProbeSet(probes=(Probe(turns=("One",)),)),
+        targets,
     )
     assert set(run_ids) == {t["id"] for t in targets}
     assert len(db.list_runs(run_group_id=group_id)) == 2
@@ -466,7 +480,7 @@ def test_character_probe_never_imports_the_word_bench_measurement_stack():
     stderr_tail = result.stderr[-4000:]
 
     if stdout.startswith("VIOLATION:"):
-        loaded = stdout[len("VIOLATION:"):].strip()
+        loaded = stdout[len("VIOLATION:") :].strip()
         pytest.fail(
             "importing tldw_chatbook.Evals.character_probe (every module of "
             f"it) loaded word_bench's measurement stack: {loaded}"
@@ -490,7 +504,13 @@ def test_character_probe_never_imports_the_word_bench_measurement_stack():
     # this package's own source either. package_dir is computed from
     # repo_root above, not a relative literal, for the same cwd-independence
     # reason as the subprocess check.
-    forbidden_tokens = ("capture_client", "normalize_logprobs", "CANARY", "top_k", "logprobs")
+    forbidden_tokens = (
+        "capture_client",
+        "normalize_logprobs",
+        "CANARY",
+        "top_k",
+        "logprobs",
+    )
     for module in package_dir.glob("*.py"):
         source = module.read_text()
         for token in forbidden_tokens:
@@ -542,8 +562,15 @@ def test_an_unknown_run_group_raises_naming_it(db):
 
 def test_a_known_tag_is_stored(db, probe_run_group):
     annotate_turn(
-        db, probe_run_group, 1, 0, 0, "t-1", 0,
-        tags=["broke-character"], note="third turn",
+        db,
+        probe_run_group,
+        1,
+        0,
+        0,
+        "t-1",
+        0,
+        tags=["broke-character"],
+        note="third turn",
     )
     stored = load_turn_annotations(db, probe_run_group)
     assert stored[(1, 0, 0, "t-1", 0)]["tags"] == ["broke-character"]
@@ -552,29 +579,46 @@ def test_a_known_tag_is_stored(db, probe_run_group):
 def test_an_unknown_tag_is_rejected_naming_it(db, probe_run_group):
     with pytest.raises(ValueError) as exc:
         annotate_turn(
-            db, probe_run_group, 1, 0, 0, "t-1", 0,
-            tags=["brok-charcter"], note="",
+            db,
+            probe_run_group,
+            1,
+            0,
+            0,
+            "t-1",
+            0,
+            tags=["brok-charcter"],
+            note="",
         )
     assert "brok-charcter" in str(exc.value)
 
 
-def test_nothing_is_written_when_one_tag_of_several_is_unknown(
-    db, probe_run_group
-):
+def test_nothing_is_written_when_one_tag_of_several_is_unknown(db, probe_run_group):
     with pytest.raises(ValueError):
         annotate_turn(
-            db, probe_run_group, 1, 0, 0, "t-1", 0,
-            tags=["broke-character", "no-such-tag"], note="",
+            db,
+            probe_run_group,
+            1,
+            0,
+            0,
+            "t-1",
+            0,
+            tags=["broke-character", "no-such-tag"],
+            note="",
         )
     assert load_turn_annotations(db, probe_run_group) == {}
 
 
-def test_a_non_canonical_tag_is_canonicalised_rather_than_rejected(
-    db, probe_run_group
-):
+def test_a_non_canonical_tag_is_canonicalised_rather_than_rejected(db, probe_run_group):
     annotate_turn(
-        db, probe_run_group, 1, 0, 0, "t-1", 0,
-        tags=["Broke Character"], note="",
+        db,
+        probe_run_group,
+        1,
+        0,
+        0,
+        "t-1",
+        0,
+        tags=["Broke Character"],
+        note="",
     )
     stored = load_turn_annotations(db, probe_run_group)
     assert stored[(1, 0, 0, "t-1", 0)]["tags"] == ["broke-character"]
@@ -582,19 +626,32 @@ def test_a_non_canonical_tag_is_canonicalised_rather_than_rejected(
 
 def test_duplicate_tags_are_stored_once(db, probe_run_group):
     annotate_turn(
-        db, probe_run_group, 1, 0, 0, "t-1", 0,
-        tags=["broke-character", "broke-character"], note="",
+        db,
+        probe_run_group,
+        1,
+        0,
+        0,
+        "t-1",
+        0,
+        tags=["broke-character", "broke-character"],
+        note="",
     )
     stored = load_turn_annotations(db, probe_run_group)
     assert stored[(1, 0, 0, "t-1", 0)]["tags"] == ["broke-character"]
 
 
-def test_an_annotation_with_no_tags_but_a_note_is_allowed(
-    db, probe_run_group
-):
+def test_an_annotation_with_no_tags_but_a_note_is_allowed(db, probe_run_group):
     """A note without a tag is a real observation, not an empty write."""
     annotate_turn(
-        db, probe_run_group, 1, 0, 0, "t-1", 0, tags=[], note="odd phrasing",
+        db,
+        probe_run_group,
+        1,
+        0,
+        0,
+        "t-1",
+        0,
+        tags=[],
+        note="odd phrasing",
     )
     stored = load_turn_annotations(db, probe_run_group)
     assert stored[(1, 0, 0, "t-1", 0)]["note"] == "odd phrasing"
@@ -602,8 +659,15 @@ def test_an_annotation_with_no_tags_but_a_note_is_allowed(
 
 def test_a_benchs_extra_tag_is_accepted(db, probe_run_group_with_extra_tags):
     annotate_turn(
-        db, probe_run_group_with_extra_tags, 1, 0, 0, "t-1", 0,
-        tags=["meta-commentary"], note="",
+        db,
+        probe_run_group_with_extra_tags,
+        1,
+        0,
+        0,
+        "t-1",
+        0,
+        tags=["meta-commentary"],
+        note="",
     )
     stored = load_turn_annotations(db, probe_run_group_with_extra_tags)
     assert stored[(1, 0, 0, "t-1", 0)]["tags"] == ["meta-commentary"]
@@ -632,8 +696,15 @@ def test_an_explicit_vocabulary_accepts_a_tag_not_in_the_runs_snapshot(
         Tag("meta-commentary", "Meta commentary", "failure"),
     )
     annotate_turn(
-        db, probe_run_group, 1, 0, 0, "t-1", 0,
-        tags=["meta-commentary"], note="",
+        db,
+        probe_run_group,
+        1,
+        0,
+        0,
+        "t-1",
+        0,
+        tags=["meta-commentary"],
+        note="",
         vocabulary=live_vocabulary,
     )
     stored = load_turn_annotations(db, probe_run_group)
@@ -650,8 +721,15 @@ def test_an_explicit_vocabulary_still_rejects_a_slug_outside_it(db, probe_run_gr
     )
     with pytest.raises(ValueError, match="no-such-tag"):
         annotate_turn(
-            db, probe_run_group, 1, 0, 0, "t-1", 0,
-            tags=["no-such-tag"], note="",
+            db,
+            probe_run_group,
+            1,
+            0,
+            0,
+            "t-1",
+            0,
+            tags=["no-such-tag"],
+            note="",
             vocabulary=live_vocabulary,
         )
     assert load_turn_annotations(db, probe_run_group) == {}
@@ -666,8 +744,15 @@ def test_omitting_vocabulary_still_validates_against_the_runs_captured_vocabular
     `probe_run_group`'s own captured snapshot has no such extra tag."""
     with pytest.raises(ValueError, match="meta-commentary"):
         annotate_turn(
-            db, probe_run_group, 1, 0, 0, "t-1", 0,
-            tags=["meta-commentary"], note="",
+            db,
+            probe_run_group,
+            1,
+            0,
+            0,
+            "t-1",
+            0,
+            tags=["meta-commentary"],
+            note="",
         )
     assert load_turn_annotations(db, probe_run_group) == {}
 
@@ -689,12 +774,18 @@ def test_an_explicit_vocabulary_given_as_mappings_is_accepted(db, probe_run_grou
     """A caller holding a vocabulary read back from JSON -- the mapping
     form, not `Tag` objects -- can still pass it to `vocabulary` directly."""
     mapping_vocabulary = [
-        {"slug": tag.slug, "label": tag.label, "kind": tag.kind}
-        for tag in BUILTIN_TAGS
+        {"slug": tag.slug, "label": tag.label, "kind": tag.kind} for tag in BUILTIN_TAGS
     ] + [{"slug": "meta-commentary", "label": "Meta commentary", "kind": "failure"}]
     annotate_turn(
-        db, probe_run_group, 1, 0, 0, "t-1", 0,
-        tags=["meta-commentary"], note="",
+        db,
+        probe_run_group,
+        1,
+        0,
+        0,
+        "t-1",
+        0,
+        tags=["meta-commentary"],
+        note="",
         vocabulary=mapping_vocabulary,
     )
     stored = load_turn_annotations(db, probe_run_group)
@@ -711,8 +802,15 @@ def test_a_malformed_explicit_vocabulary_entry_raises_a_named_valueerror(
     `resolve_vocabulary`)."""
     with pytest.raises(ValueError) as exc:
         annotate_turn(
-            db, probe_run_group, 1, 0, 0, "t-1", 0,
-            tags=["broke-character"], note="",
+            db,
+            probe_run_group,
+            1,
+            0,
+            0,
+            "t-1",
+            0,
+            tags=["broke-character"],
+            note="",
             vocabulary=[{"label": "No slug here", "kind": "failure"}],
         )
     assert not isinstance(exc.value, AttributeError)
@@ -731,8 +829,15 @@ def test_an_explicit_vocabulary_cannot_change_a_builtins_kind(db, probe_run_grou
     ]
     with pytest.raises(ValueError, match="refused"):
         annotate_turn(
-            db, probe_run_group, 1, 0, 0, "t-1", 0,
-            tags=["refused"], note="",
+            db,
+            probe_run_group,
+            1,
+            0,
+            0,
+            "t-1",
+            0,
+            tags=["refused"],
+            note="",
             vocabulary=tampered_vocabulary,
         )
     assert load_turn_annotations(db, probe_run_group) == {}
@@ -807,8 +912,15 @@ def seeded_word_bench_id(db):
 def test_deleting_a_bench_removes_its_turn_annotations(db, probe_run_group, bench):
     _config, task_id = bench
     annotate_turn(
-        db, probe_run_group, 1, 0, 0, "t-1", 0,
-        tags=["broke-character"], note="",
+        db,
+        probe_run_group,
+        1,
+        0,
+        0,
+        "t-1",
+        0,
+        tags=["broke-character"],
+        note="",
     )
     assert load_turn_annotations(db, probe_run_group)
 
@@ -832,11 +944,26 @@ def test_deleting_a_bench_leaves_another_benchs_annotations_alone(
 ):
     _config, task_id = bench
     annotate_turn(
-        db, probe_run_group, 1, 0, 0, "t-1", 0, tags=["refused"], note="",
+        db,
+        probe_run_group,
+        1,
+        0,
+        0,
+        "t-1",
+        0,
+        tags=["refused"],
+        note="",
     )
     annotate_turn(
-        db, second_probe_run_group, 1, 0, 0, "t-1", 0,
-        tags=["refused"], note="",
+        db,
+        second_probe_run_group,
+        1,
+        0,
+        0,
+        "t-1",
+        0,
+        tags=["refused"],
+        note="",
     )
 
     db.delete_task(task_id)
@@ -848,7 +975,15 @@ def test_deleting_a_word_bench_touches_no_probe_annotation_rows(
     db, probe_run_group, seeded_word_bench_id
 ):
     annotate_turn(
-        db, probe_run_group, 1, 0, 0, "t-1", 0, tags=["refused"], note="",
+        db,
+        probe_run_group,
+        1,
+        0,
+        0,
+        "t-1",
+        0,
+        tags=["refused"],
+        note="",
     )
     db.delete_task(seeded_word_bench_id)
     assert db.list_probe_turn_annotations(probe_run_group)

@@ -211,7 +211,7 @@ async def test_hands_free_escape_closes_an_open_popup_before_exiting_the_loop(
     async with host.run_test(size=APP_SIZE) as pilot:
         console, composer, popup = await _mounted_parts(host, pilot)
 
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await _wait_for_mic_label(composer, pilot, "Dictating")
         assert console._console_hands_free is not None
 

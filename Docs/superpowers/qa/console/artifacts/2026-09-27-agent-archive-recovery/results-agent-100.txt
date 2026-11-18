@@ -1,0 +1,30 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedul  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and c… Speak replies   ▌   Hands-free   ▌     Running
+   New tab     Settings     Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────
+                             │ Conversation | Source                                     │
+                  Context ◂  │        ● Source        ✕    New tab     Temporary         │
+   Terminal                  │  │                                                    │   │
+ ──────────────────────────  │  │ Archived chats · All local workspaces              │   │
+ Workspaces             ▸    │  │ Archive dates: any time (inclusive) to no upper    │▁  │
+ ──────────────────────────  │  │ bound (exclusive)                                  │   │
+ Conversations          ▾    │  │ 1. Original · Project                              │   │
+     Archive this chat       │  │ Chat archived · Workspace archived                 │   │
+      Archived chats         │  │ Archive events: chat:                              │   │
+     Search all chats…       │  │ 2026-09-27T20:01:22.033000+00:00, workspace:       │▂  │◂ Inspect
+   Source                    │  │ 2026-09-27T20:01:22.018116+00:00                   │   │
+                           ▇ │  │ Match basis: chat, workspace                       │   │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │  │ Original retained history                          │   │
+  ▊  Filter      ▎           │  │                                                    │   │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │  │                                                    │   │
+                             │  │                      Preview                       │   │
+   New conversation          │  │                                                    │   │
+  Chats                 ▾    │  │                                                    │   │
+ ▼ Character · Model · +2    │  │                                                    │   │
+                             │            ▼ streaming below — jump to latest             │  setup
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Run: Agent running.     Library · Auto off · Agent allowed     Provider: llama_cpp
+█  Composer ▾  Menu  Unrelated unfinished draft                     Queue | $       Dictate   Redir
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Ctrl+P · Ctrl+Q

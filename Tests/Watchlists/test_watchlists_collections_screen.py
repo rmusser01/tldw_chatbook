@@ -17,7 +17,9 @@ from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from Tests.UI.test_destination_shells import DestinationHarness, _static_text
 from tldw_chatbook.Subscriptions.watchlist_item_page import WatchlistItemPage
 from tldw_chatbook.UI.Screens import watchlists_collections_screen as collections_module
-from tldw_chatbook.UI.Screens.watchlists_collections_screen import WatchlistsCollectionsScreen
+from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
+    WatchlistsCollectionsScreen,
+)
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (
     BreadcrumbScopeSelected,
@@ -173,8 +175,7 @@ async def test_item_inspector_keeps_advanced_actions(content_kind: str) -> None:
     )
     async with app.run_test():
         action_ids = [
-            button.id
-            for button in app.query_one("#inspector-actions").query(Button)
+            button.id for button in app.query_one("#inspector-actions").query(Button)
         ]
 
         assert "inspector-ingest-button" in action_ids
@@ -309,13 +310,13 @@ async def test_import_opml_handler_calls_controller(fake_controller):
         top_screen = screen.app.screen
         assert isinstance(top_screen, OpmlImportDialog)
         text_area = top_screen.query_one("#opml-import-text", TextArea)
-        text_area.text = "<opml><outline text=\"A\" xmlUrl=\"http://a.com/feed\"/>"
+        text_area.text = '<opml><outline text="A" xmlUrl="http://a.com/feed"/>'
         top_screen.query_one("#opml-import-confirm", Button).press()
         await pilot.pause(0.2)
 
         fake_controller.import_opml.assert_awaited_once_with(
             runtime_backend="local",
-            xml_text="<opml><outline text=\"A\" xmlUrl=\"http://a.com/feed\"/>",
+            xml_text='<opml><outline text="A" xmlUrl="http://a.com/feed"/>',
         )
 
 
@@ -480,9 +481,7 @@ async def test_read_snapshot_count_and_arrivals_fit_the_feed_items_pane(size):
             strips = widget.screen._compositor.render_strips()
             region = widget.region
             return "\n".join(
-                "".join(segment.text for segment in strips[y])[
-                    region.x : region.right
-                ]
+                "".join(segment.text for segment in strips[y])[region.x : region.right]
                 for y in range(region.y, region.bottom)
             )
 
@@ -607,9 +606,12 @@ async def test_server_backed_read_recovers_through_the_normal_local_load_path(
         switch = screen.query_one("#watchlists-switch-local", Button)
         assert switch.disabled is False
         assert "Switch to Local" in str(switch.label)
-        assert "local" in _static_text(
-            screen.query_one("#watchlists-read-local-only-copy", Static)
-        ).lower()
+        assert (
+            "local"
+            in _static_text(
+                screen.query_one("#watchlists-read-local-only-copy", Static)
+            ).lower()
+        )
 
         screen.post_message(ItemsFilterChanged("unread", "server search"))
         screen.action_refresh_all()
@@ -629,9 +631,7 @@ async def test_server_backed_read_recovers_through_the_normal_local_load_path(
             count_spies,
         ):
             assert spy.call_count == 0, name
-        assert not screen.query_one(
-            "#watchlists-items-pane", ArticleListPane
-        ).items
+        assert not screen.query_one("#watchlists-items-pane", ArticleListPane).items
 
         switch.press()
         assert await _wait_until(pilot, local_load_entered.is_set)
@@ -644,9 +644,7 @@ async def test_server_backed_read_recovers_through_the_normal_local_load_path(
         assert screen.query_one("#watchlists-switch-local", Button).disabled is False
         assert screen.query("#watchlists-read-local-only-copy")
         assert not screen.query("#watchlists-content-pane")
-        assert not screen.query_one(
-            "#watchlists-items-pane", ArticleListPane
-        ).items
+        assert not screen.query_one("#watchlists-items-pane", ArticleListPane).items
 
         release_local_load.set()
         await host.workers.wait_for_complete()
@@ -738,9 +736,7 @@ async def test_failed_switch_to_local_retries_the_normal_load_path() -> None:
         assert screen.query_one("#watchlists-switch-local", Button).disabled is False
         assert screen.query("#watchlists-read-local-only-copy")
         assert not screen.query("#watchlists-content-pane")
-        assert not screen.query_one(
-            "#watchlists-items-pane", ArticleListPane
-        ).items
+        assert not screen.query_one("#watchlists-items-pane", ArticleListPane).items
         assert screen._tree_watchlists[0]["name"] == "Recovery local watchlist"
         failed_render = host.export_screenshot()
         assert "Recovery local watchlist" not in failed_render
@@ -864,14 +860,10 @@ async def test_same_tab_switch_to_server_replaces_local_reader_without_queries(
         assert selector.value == "server"
         assert selector.disabled is True
         assert not screen.query("#watchlists-content-pane")
-        assert not screen.query_one(
-            "#watchlists-items-pane", ArticleListPane
-        ).items
+        assert not screen.query_one("#watchlists-items-pane", ArticleListPane).items
         assert screen._selected_content_item is None
         assert not screen.query(f"#wl-tree-node-watchlist-{watchlist['id']}")
-        assert not screen.query(
-            f"#wl-tree-node-source-{watchlist['id']}-{source_id}"
-        )
+        assert not screen.query(f"#wl-tree-node-source-{watchlist['id']}-{source_id}")
         rendered = host.export_screenshot()
         assert "Same-tab local watchlist" not in rendered
         assert "Same-tab local source" not in rendered
@@ -892,9 +884,10 @@ async def test_same_tab_switch_to_server_replaces_local_reader_without_queries(
         for name, spy in local_spies.items():
             assert spy.call_count == 0, name
         assert screen._items_page_loading is False
-        assert screen.query_one(
-            "#watchlists-items-pane", ArticleListPane
-        ).page_loading is False
+        assert (
+            screen.query_one("#watchlists-items-pane", ArticleListPane).page_loading
+            is False
+        )
 
 
 @pytest.mark.asyncio
@@ -935,9 +928,7 @@ async def test_entering_server_read_hides_local_reader_navigation_without_querie
         await screen._load_tree_data().wait()
         assert await _wait_until(
             pilot,
-            lambda: bool(
-                screen.query(f"#wl-tree-node-watchlist-{watchlist['id']}")
-            ),
+            lambda: bool(screen.query(f"#wl-tree-node-watchlist-{watchlist['id']}")),
         )
         assert service.list_source_rows(watchlist["id"])[0]["name"] == (
             "Local counted feed"
@@ -956,16 +947,12 @@ async def test_entering_server_read_hides_local_reader_navigation_without_querie
         assert screen.query_one("#watchlists-items-pane", ArticleListPane).items
         screen.query_one(f"#wl-tree-expand-{watchlist['id']}", Button).press()
         screen.post_message(
-            TreeScopeChanged(
-                TreeScope(kind="watchlist", watchlist_id=watchlist["id"])
-            )
+            TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=watchlist["id"]))
         )
         assert await _wait_until(
             pilot,
             lambda: bool(
-                screen.query(
-                    f"#wl-tree-node-source-{watchlist['id']}-{source_id}"
-                )
+                screen.query(f"#wl-tree-node-source-{watchlist['id']}-{source_id}")
             ),
         )
         await host.workers.wait_for_complete()
@@ -1024,9 +1011,7 @@ async def test_entering_server_read_hides_local_reader_navigation_without_querie
         assert screen._local_watchlist_count == parked_snapshot_count
         assert screen._wc_loaded is True
         assert not screen.query(f"#wl-tree-node-watchlist-{watchlist['id']}")
-        assert not screen.query(
-            f"#wl-tree-node-source-{watchlist['id']}-{source_id}"
-        )
+        assert not screen.query(f"#wl-tree-node-source-{watchlist['id']}-{source_id}")
         rendered = host.export_screenshot()
         assert "Cross-tab local watchlist" not in rendered
         assert "Local counted feed" not in rendered
@@ -1056,14 +1041,12 @@ async def test_entering_server_read_hides_local_reader_navigation_without_querie
         await host.workers.wait_for_complete()
         assert await _wait_until(
             pilot,
-            lambda: bool(screen.query(f"#wl-tree-node-watchlist-{watchlist['id']}"))
+            lambda: bool(screen.query(f"#wl-tree-node-watchlist-{watchlist['id']}")),
         )
         assert await _wait_until(
             pilot,
             lambda: bool(
-                screen.query(
-                    f"#wl-tree-node-source-{watchlist['id']}-{source_id}"
-                )
+                screen.query(f"#wl-tree-node-source-{watchlist['id']}-{source_id}")
             ),
         )
         assert screen.query("#wc-watchlists-summary")
@@ -1262,9 +1245,7 @@ def test_unread_context_forces_effective_filter_without_overwriting_manual_choic
     screen = WatchlistsCollectionsScreen(Mock())
     screen.__dict__["_reactive_runtime_backend"] = "local"
     screen._items_status_filter = "all"
-    unread_source = TreeScope(
-        kind="source", source_id=9, parent_context="unread"
-    )
+    unread_source = TreeScope(kind="source", source_id=9, parent_context="unread")
 
     assert screen._effective_items_status_filter(unread_source) == "unread"
     assert screen._items_status_filter == "all"
@@ -1326,9 +1307,15 @@ def test_contextual_scope_reconciliation_chooses_nearest_existing_parent(
 ) -> None:
     screen = WatchlistsCollectionsScreen(Mock())
     snapshot = collections_module.TreeDataSnapshot(
-        tuple({"id": watchlist_id, "name": f"List {watchlist_id}"} for watchlist_id in watchlists),
+        tuple(
+            {"id": watchlist_id, "name": f"List {watchlist_id}"}
+            for watchlist_id in watchlists
+        ),
         tuple({"id": source_id, "name": f"Feed {source_id}"} for source_id in all_ids),
-        tuple({"id": source_id, "name": f"Feed {source_id}"} for source_id in unassigned_ids),
+        tuple(
+            {"id": source_id, "name": f"Feed {source_id}"}
+            for source_id in unassigned_ids
+        ),
         {},
         {},
         watchlist_source_ids={
@@ -1466,9 +1453,7 @@ def test_committed_read_scope_reconciliation_requests_atomic_fallback() -> None:
             TreeScope(kind="source", source_id=9, parent_context="unassigned"),
             [
                 TreeScope(kind="unassigned"),
-                TreeScope(
-                    kind="source", source_id=9, parent_context="unassigned"
-                ),
+                TreeScope(kind="source", source_id=9, parent_context="unassigned"),
             ],
         ),
         (
@@ -1532,7 +1517,9 @@ def test_server_management_disables_only_individual_feed_navigation():
 # `_build_test_app()`'s isolated temp-dir SQLite file.
 
 
-def _seed_item(db, subscription_id: int, title: str, created_at: str | None = None) -> int:
+def _seed_item(
+    db, subscription_id: int, title: str, created_at: str | None = None
+) -> int:
     """Insert one `subscription_items` row for `subscription_id`.
 
     `created_at` (ISO text) pins the display order when a test seeds several
@@ -1903,9 +1890,7 @@ async def test_last_unread_item_keeps_contextual_feed_and_reader_pinned():
         await pilot.click("#wl-tree-expand-root-unread")
         assert await _wait_until(
             pilot,
-            lambda: bool(
-                screen.query(f"#wl-tree-node-source-unread-{source_id}")
-            ),
+            lambda: bool(screen.query(f"#wl-tree-node-source-unread-{source_id}")),
         )
         await pilot.click(f"#wl-tree-node-source-unread-{source_id}")
         expected_scope = TreeScope(
@@ -1933,8 +1918,7 @@ async def test_last_unread_item_keeps_contextual_feed_and_reader_pinned():
         page_before_refresh = pane.page_number
         assert await _wait_until(
             pilot,
-            lambda: screen._tree_source_counts.get(source_id, {}).get("unread")
-            == 0,
+            lambda: screen._tree_source_counts.get(source_id, {}).get("unread") == 0,
             ticks=140,
         )
 
@@ -1957,9 +1941,7 @@ async def test_last_unread_item_keeps_contextual_feed_and_reader_pinned():
         assert screen._tree_source_counts[source_id]["unread"] == 1
         assert await _wait_until(
             pilot,
-            lambda: bool(
-                screen.query(f"#wl-tree-node-source-unread-{source_id}")
-            ),
+            lambda: bool(screen.query(f"#wl-tree-node-source-unread-{source_id}")),
         )
 
 
@@ -2117,9 +2099,7 @@ async def test_star_toggle_requested_toggles_the_same_path():
         await pilot.pause(0.3)
         assert screen._selected_content_item is not None, "precondition: item open"
 
-        screen.post_message(
-            StarToggleRequested(dict(screen._selected_content_item))
-        )
+        screen.post_message(StarToggleRequested(dict(screen._selected_content_item)))
         for _ in range(60):
             await pilot.pause()
             if _flagged_value(db, item_id) == 1:
@@ -2153,6 +2133,7 @@ async def _open_item_and_get_url(pilot, screen, db, title: str, url: str) -> int
 
 def _successful_browser_recorder(opened: list[str]):
     """Return a browser stub that records its URL and reports success."""
+
     def record(url: str) -> bool:
         opened.append(url)
         return True
@@ -2283,9 +2264,7 @@ async def test_open_in_browser_requested_takes_the_same_path(monkeypatch):
         )
         app.notify = Mock()
 
-        screen.post_message(
-            OpenInBrowserRequested(dict(screen._selected_content_item))
-        )
+        screen.post_message(OpenInBrowserRequested(dict(screen._selected_content_item)))
         await host.workers.wait_for_complete()
         await pilot.pause()
         assert opened == ["https://example.com/via-button"]
@@ -2305,6 +2284,7 @@ async def test_open_validates_on_ui_thread_then_opens_in_worker(
     ui_thread = threading.get_ident()
     validation_threads: list[int] = []
     browser_threads: list[int] = []
+
     def validate_on_recorded_thread(url: str) -> bool:
         validation_threads.append(threading.get_ident())
         return real_validate_url(url)
@@ -2348,7 +2328,7 @@ async def test_open_validates_on_ui_thread_then_opens_in_worker(
 
 @pytest.mark.asyncio
 async def test_the_reader_footer_numbers_the_open_item():
-    """"N of M": M is the displayed list, N the open item's 1-based place in
+    """ "N of M": M is the displayed list, N the open item's 1-based place in
     it; `j` advances the reader and the footer together."""
     from textual.widgets import Static
 
@@ -2384,9 +2364,9 @@ async def test_the_reader_footer_numbers_the_open_item():
             if screen._selected_content_item.get("title") == "a":
                 break
         assert screen._selected_content_item["title"] == "a", "precondition: j moved"
-        assert str(screen.query_one("#content-position", Static).renderable) == "3 of 3", (
-            "the footer must walk with the reader"
-        )
+        assert (
+            str(screen.query_one("#content-position", Static).renderable) == "3 of 3"
+        ), "the footer must walk with the reader"
 
 
 @pytest.mark.asyncio
@@ -2455,7 +2435,9 @@ async def test_a_hostile_item_stars_queues_and_still_renders_inert():
     from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
 
     hostile_title = "[bold red]x[/]<script>alert('TITLE_LITERAL')</script>\x1b[31m"
-    hostile_body = "<script>alert('BODY_PAYLOAD')</script> [bold red]injected[/]\x00\x07"
+    hostile_body = (
+        "<script>alert('BODY_PAYLOAD')</script> [bold red]injected[/]\x00\x07"
+    )
 
     app = _build_test_app()
     host = DestinationHarness(app, "watchlists_collections")
@@ -2776,7 +2758,9 @@ async def test_mark_all_read_then_undo_roundtrip():
         )
         for minute in range(3):
             _seed_item(
-                db, source_id, f"item {minute}",
+                db,
+                source_id,
+                f"item {minute}",
                 created_at=f"2026-08-06 09:0{minute}:00",
             )
         await screen._replace_items_snapshot(reason="initial")
@@ -2996,7 +2980,9 @@ async def test_selecting_a_pane_row_keeps_the_header_summary_on_the_tree_scope()
         assert [row["id"] for row in screen.scoped_source_rows()] == [a]
         assert summary == "Local Watchlists snapshot: Morning AI Brief (1 source)"
 
-        screen.post_message(SourceSelected({"id": "source-1", "name": "Some Feed", "url": "https://x"}))
+        screen.post_message(
+            SourceSelected({"id": "source-1", "name": "Some Feed", "url": "https://x"})
+        )
         await pilot.pause()
 
         assert screen.tree_scope == TreeScope(
@@ -3220,7 +3206,9 @@ async def test_centre_header_summary_follows_the_tree_scope_off_the_read_tab():
             if "Morning AI Brief" in summary_after:
                 break
 
-        assert summary_after == "Local Watchlists snapshot: Morning AI Brief (1 source)", (
+        assert (
+            summary_after == "Local Watchlists snapshot: Morning AI Brief (1 source)"
+        ), (
             f"the header must reflect the NEW scope's counts, not the old: "
             f"{summary_after!r}"
         )
@@ -3265,8 +3253,7 @@ async def test_centre_header_summary_follows_the_tree_scope_on_the_read_tab_too(
         screen.refresh(recompose=True)
         await pilot.pause(0.2)
         assert screen.query_one("#wl-centre-status"), (
-            "precondition: the header exists on the Read tab too "
-            "(TASK-2312)"
+            "precondition: the header exists on the Read tab too (TASK-2312)"
         )
 
         summary_before = _static_text(
@@ -3286,7 +3273,9 @@ async def test_centre_header_summary_follows_the_tree_scope_on_the_read_tab_too(
             if "Morning AI Brief" in summary_after:
                 break
 
-        assert summary_after == "Local Watchlists snapshot: Morning AI Brief (1 source)", (
+        assert (
+            summary_after == "Local Watchlists snapshot: Morning AI Brief (1 source)"
+        ), (
             f"the header must reflect the NEW scope's counts on the Read "
             f"tab too, not just every other section: {summary_after!r}"
         )
@@ -3393,7 +3382,9 @@ async def test_load_tree_data_failure_notifies_the_user():
     behaviour (`_load_sources`/`_load_runs`/`_load_notifications`, etc.).
     """
     app = _build_test_app()
-    app.watchlist_bundle_service.list_watchlists = Mock(side_effect=RuntimeError("boom"))
+    app.watchlist_bundle_service.list_watchlists = Mock(
+        side_effect=RuntimeError("boom")
+    )
     app.notify = Mock()
     host = DestinationHarness(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
@@ -3456,15 +3447,15 @@ async def test_tree_snapshot_owns_complete_aggregate_rows_not_management_cache(
         assert [row["id"] for row in screen._tree_unassigned_source_rows] == [
             unassigned_id
         ]
-        assert screen._loaded_sources == [
-            {"id": 999, "name": "Capped management row"}
-        ]
+        assert screen._loaded_sources == [{"id": 999, "name": "Capped management row"}]
         for name, spy in spies.items():
             assert spy.call_count == 1, name
 
 
 @pytest.mark.asyncio
-async def test_root_and_watchlist_expansion_persist_independently_across_rebuilds() -> None:
+async def test_root_and_watchlist_expansion_persist_independently_across_rebuilds() -> (
+    None
+):
     app = _build_test_app()
     watchlist = app.watchlist_bundle_service.create("Persistent branch")
     host = DestinationHarness(app, "watchlists_collections")
@@ -3485,9 +3476,7 @@ async def test_root_and_watchlist_expansion_persist_independently_across_rebuild
 
         assert tree.expanded_root_kinds == frozenset({"all", "unassigned"})
         assert tree.expanded == frozenset({watchlist["id"]})
-        assert screen._tree_expanded_root_kinds == frozenset(
-            {"all", "unassigned"}
-        )
+        assert screen._tree_expanded_root_kinds == frozenset({"all", "unassigned"})
         assert screen._tree_expanded_watchlist_ids == frozenset({watchlist["id"]})
 
 
@@ -3709,9 +3698,9 @@ async def test_a_duplicate_name_is_rejected_and_the_reason_escapes_the_name():
 
         screen.query_one("#wl-tree-new", Button).press()
         dialog = await _wait_for_dialog(host, WatchlistNameDialog, pilot)
-        dialog.query_one("#watchlist-name-input", Input).value = (
-            "[bold red]alpha[/bold red]"
-        )
+        dialog.query_one(
+            "#watchlist-name-input", Input
+        ).value = "[bold red]alpha[/bold red]"
         dialog.query_one("#watchlist-name-submit", Button).press()
         await pilot.pause()
         await pilot.pause()
@@ -3769,8 +3758,10 @@ async def test_renaming_a_watchlist_updates_the_rail():
         service = app.watchlist_bundle_service
         assert await _wait_until(
             pilot,
-            lambda: [row["name"] for row in service.list_watchlists()]
-            == ["Morning AI Brief"],
+            lambda: (
+                [row["name"] for row in service.list_watchlists()]
+                == ["Morning AI Brief"]
+            ),
         )
         assert await _wait_until(
             pilot,
@@ -3787,9 +3778,11 @@ async def test_renaming_a_watchlist_updates_the_rail():
         # header refresh, so poll for it.
         assert await _wait_until(
             pilot,
-            lambda: bool(screen.query("#wc-watchlists-summary"))
-            and _static_text(screen.query_one("#wc-watchlists-summary", Static))
-            == "Local Watchlists snapshot: Morning AI Brief (1 source)",
+            lambda: (
+                bool(screen.query("#wc-watchlists-summary"))
+                and _static_text(screen.query_one("#wc-watchlists-summary", Static))
+                == "Local Watchlists snapshot: Morning AI Brief (1 source)"
+            ),
         )
         assert screen._breadcrumb_labels == ["Morning AI Brief"]
         # ...and the MOUNTED Inspector, not only the screen's mirror of it
@@ -3935,7 +3928,8 @@ async def test_adding_a_source_to_a_watchlist_from_the_tree():
         dialog.query_one(f"#wl-add-source-option-{candidate}", Button).press()
 
         assert await _wait_until(
-            pilot, lambda: set(service.list_sources(watchlist["id"])) == {member, candidate}
+            pilot,
+            lambda: set(service.list_sources(watchlist["id"])) == {member, candidate},
         )
         assert service.list_unassigned_source_rows() == []
 
@@ -3986,8 +3980,10 @@ async def test_removing_a_source_from_a_watchlist_keeps_the_source():
         # a source node that no longer exists.
         assert await _wait_until(
             pilot,
-            lambda: screen.tree_scope
-            == TreeScope(kind="watchlist", watchlist_id=watchlist["id"]),
+            lambda: (
+                screen.tree_scope
+                == TreeScope(kind="watchlist", watchlist_id=watchlist["id"])
+            ),
         )
 
 
@@ -4027,7 +4023,9 @@ async def test_the_server_backend_disables_all_five_verbs_with_a_stated_reason()
             "#wl-tree-remove-source",
         ):
             button = screen.query_one(action_id, Button)
-            assert button.disabled, f"{action_id} must be disabled on the server backend"
+            assert button.disabled, (
+                f"{action_id} must be disabled on the server backend"
+            )
             assert "no wire path" in str(button.tooltip)
 
         note = screen.query_one("#wl-tree-actions-unavailable", Static)
@@ -4099,7 +4097,10 @@ def test_every_watchlist_bundle_service_method_has_a_production_caller():
                 and node.func.id == "WatchlistBundleService"
             ):
                 return True
-            if isinstance(node, ast.Attribute) and node.attr == "watchlist_bundle_service":
+            if (
+                isinstance(node, ast.Attribute)
+                and node.attr == "watchlist_bundle_service"
+            ):
                 return True
             return isinstance(node, ast.Name) and node.id in self.aliases
 
@@ -4114,15 +4115,16 @@ def test_every_watchlist_bundle_service_method_has_a_production_caller():
             for argument in (*node.args.posonlyargs, *node.args.args):
                 annotation = argument.annotation
                 if annotation is not None and any(
-                    isinstance(part, ast.Name)
-                    and part.id == "WatchlistBundleService"
+                    isinstance(part, ast.Name) and part.id == "WatchlistBundleService"
                     for part in ast.walk(annotation)
                 ):
                     self.aliases.add(argument.arg)
             self.generic_visit(node)
 
         def visit_Call(self, node: ast.Call) -> None:
-            if isinstance(node.func, ast.Attribute) and self._is_service(node.func.value):
+            if isinstance(node.func, ast.Attribute) and self._is_service(
+                node.func.value
+            ):
                 self.called.add(node.func.attr)
             self.generic_visit(node)
 
@@ -4146,8 +4148,7 @@ def test_every_watchlist_bundle_service_method_has_a_production_caller():
     public_methods = {
         name
         for name, member in vars(WatchlistBundleService).items()
-        if not name.startswith("_")
-        and callable(getattr(member, "__func__", member))
+        if not name.startswith("_") and callable(getattr(member, "__func__", member))
     }
     # Guard the guard: if the reflection above ever stops seeing the class's
     # own methods, the emptiness check below would pass vacuously.
@@ -4261,7 +4262,9 @@ async def test_a_search_reaches_beyond_the_first_page():
             day = 1 + index // 24
             hour = index % 24
             _seed_item(
-                db, source_id, f"generic {index:03d}",
+                db,
+                source_id,
+                f"generic {index:03d}",
                 created_at=f"2026-08-0{day} {hour:02d}:00:00",
             )
         _seed_item(db, source_id, "zzqtoken oldest", created_at="2026-08-01 00:00:00")
@@ -4279,8 +4282,7 @@ async def test_a_search_reaches_beyond_the_first_page():
         for _ in range(80):
             await pilot.pause(0.05)
             if any(
-                "zzqtoken" in str(item.get("title"))
-                for item in pane.displayed_items()
+                "zzqtoken" in str(item.get("title")) for item in pane.displayed_items()
             ):
                 found = True
                 break
@@ -4402,9 +4404,7 @@ def _seed_checkable_sources(app):
         name="Paused", type="rss", source="https://c.example/f"
     )
     with db.transaction() as conn:
-        conn.execute(
-            "UPDATE subscriptions SET is_paused = 1 WHERE id = ?", (paused,)
-        )
+        conn.execute("UPDATE subscriptions SET is_paused = 1 WHERE id = ?", (paused,))
     return active_a, active_b, paused
 
 
@@ -4470,7 +4470,8 @@ async def test_r_checks_every_active_source_once_and_aggregates():
             "every active source exactly once; the paused one never"
         )
         toasts = [
-            str(call.args[0]) for call in app.notify.call_args_list
+            str(call.args[0])
+            for call in app.notify.call_args_list
             if "Checked" in str(call.args[0])
         ]
         assert len(toasts) == 1, "one aggregated toast, never one per source"
@@ -4572,9 +4573,7 @@ async def test_arrivals_respect_scope_and_stay_outside_the_cached_snapshot():
         assert screen._items_pending_arrivals == 0
 
         arrival_id = _seed_item(db, active, "Matching arrival")
-        count_arrivals = AsyncMock(
-            wraps=screen._controller.count_reader_item_arrivals
-        )
+        count_arrivals = AsyncMock(wraps=screen._controller.count_reader_item_arrivals)
         screen._controller.count_reader_item_arrivals = count_arrivals
         await screen._load_tree_data().wait()
         await pilot.pause(0.1)
@@ -4622,9 +4621,7 @@ async def test_r_with_no_eligible_sources_notifies_and_dispatches_nothing():
         name="Paused", type="rss", source="https://c.example/f"
     )
     with db.transaction() as conn:
-        conn.execute(
-            "UPDATE subscriptions SET is_paused = 1 WHERE id = ?", (paused,)
-        )
+        conn.execute("UPDATE subscriptions SET is_paused = 1 WHERE id = ?", (paused,))
 
     host = DestinationHarness(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
@@ -4733,16 +4730,15 @@ async def test_r_names_a_failed_source_and_finishes_the_batch():
                 break
 
         toasts = [
-            str(call.args[0]) for call in app.notify.call_args_list
+            str(call.args[0])
+            for call in app.notify.call_args_list
             if "Checked" in str(call.args[0])
         ]
         assert len(toasts) == 1
         assert "1" in toasts[0] and "failed" in toasts[0], (
             "the aggregate names the failure count"
         )
-        assert "1 new items" in toasts[0], (
-            "the delta counts what actually arrived"
-        )
+        assert "1 new items" in toasts[0], "the delta counts what actually arrived"
 
 
 # --- TASK-3791 plan task 6: the hostile-search end-to-end pin ------------------
@@ -4827,40 +4823,54 @@ def test_opml_import_summary_text_tells_the_whole_story():
         _opml_import_summary_text,
     )
 
-    text = _opml_import_summary_text({
-        "created": 12,
-        "existing": 3,
-        "watchlists_created": ["AI", "News"],
-        "watchlists_reused": ["Tech"],
-        "assignments": 13,
-    })
+    text = _opml_import_summary_text(
+        {
+            "created": 12,
+            "existing": 3,
+            "watchlists_created": ["AI", "News"],
+            "watchlists_reused": ["Tech"],
+            "assignments": 13,
+        }
+    )
     assert "12 new" in text and "3 already present" in text
     assert "13 into 3 watchlists, 2 new" in text
     assert "2 unassigned" in text
 
-    shared = _opml_import_summary_text({
-        "created": 2,
-        "existing": 0,
-        "watchlists_created": ["News", "Tech"],
-        "watchlists_reused": [],
-        "assignments": 2,
-        "unassigned": 1,
-    })
+    shared = _opml_import_summary_text(
+        {
+            "created": 2,
+            "existing": 0,
+            "watchlists_created": ["News", "Tech"],
+            "watchlists_reused": [],
+            "assignments": 2,
+            "unassigned": 1,
+        }
+    )
     assert "1 unassigned" in shared, (
         "membership edges cannot be subtracted from unique source count"
     )
 
-    assert _opml_import_summary_text({
-        "created": 5, "existing": 0,
-        "watchlists_created": [], "watchlists_reused": [], "assignments": 0,
-    }) == "Imported 5 new source(s) from OPML.", (
-        "a folderless import reads exactly like the old toast"
-    )
+    assert (
+        _opml_import_summary_text(
+            {
+                "created": 5,
+                "existing": 0,
+                "watchlists_created": [],
+                "watchlists_reused": [],
+                "assignments": 0,
+            }
+        )
+        == "Imported 5 new source(s) from OPML."
+    ), "a folderless import reads exactly like the old toast"
 
-    noop = _opml_import_summary_text({
-        "created": 0, "existing": 15,
-        "watchlists_created": [], "watchlists_reused": ["Tech"],
-        "assignments": 15,
-    })
+    noop = _opml_import_summary_text(
+        {
+            "created": 0,
+            "existing": 15,
+            "watchlists_created": [],
+            "watchlists_reused": ["Tech"],
+            "assignments": 15,
+        }
+    )
     assert "0 new + 15 already present" in noop
     assert "unassigned" not in noop, "a full round-trip leaves no remainder"

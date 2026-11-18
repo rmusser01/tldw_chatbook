@@ -1,0 +1,16 @@
+{
+  "HEAD": "b084d720e98e4c2a7aaaf17ab5c8386c84495aa9",
+  "all_owned_subprocesses_closed": true,
+  "branch": "codex/console-chat-starts-dev",
+  "changed_lines": 2,
+  "index_clean": true,
+  "new_harness_proposal_not_implemented": true,
+  "no_external_PR_push_arm_merge": true,
+  "only_authorized_uncommitted_changes": [
+    "Tests/UI/test_console_ask_user_typed_answers.py",
+    "Tests/UI/test_personas_workbench.py"
+  ],
+  "owned_live_app_pytest_workers": 0,
+  "root_next_gate": "Amend tracked plan/Backlog for exact five-keyword typed harness seam proposal; same implementer resumes.",
+  "source_overlay_commits": 0
+}

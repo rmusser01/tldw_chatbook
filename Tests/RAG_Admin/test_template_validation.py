@@ -53,9 +53,7 @@ def _counts_by_field(entries: list[dict[str, Any]]) -> dict[str, int]:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "case", _CASES, ids=[case["id"] for case in _CASES]
-)
+@pytest.mark.parametrize("case", _CASES, ids=[case["id"] for case in _CASES])
 def test_fixture_table(case: dict[str, Any]) -> None:
     result = validate_template(_expand(case["input"]))
     expected = case["expected"]
@@ -197,9 +195,7 @@ async def test_scope_service_local_mode_returns_validator_verdict() -> None:
     scope = RAGAdminScopeService(
         local_service=_MinimalLocalService(), server_service=None
     )
-    result = await scope.validate_template_config(
-        mode="local", template_config={}
-    )
+    result = await scope.validate_template_config(mode="local", template_config={})
     assert result["valid"] is False
     assert [error["field"] for error in result["errors"]] == ["chunking"]
 

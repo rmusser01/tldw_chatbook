@@ -1,0 +1,12 @@
+{
+  "old_session": "7e5ce373-688b-42d8-883c-befe9f59570a",
+  "snapshot_owner": "7e5ce373-688b-42d8-883c-befe9f59570a",
+  "known_revision": 2,
+  "live_draft_length": 0,
+  "stage": "resume suspended at original tree read, before hydration; no test field mutation",
+  "close_error": "KeyError('Unknown Console chat session: 7e5ce373-688b-42d8-883c-befe9f59570a')",
+  "old_session_gone": true,
+  "active_after_close": "5c3fc3c6-5849-4e12-a9ca-f43e76f31e00",
+  "resume_result": true,
+  "diagnostic_confirmed_retired_snapshot_read": true
+}

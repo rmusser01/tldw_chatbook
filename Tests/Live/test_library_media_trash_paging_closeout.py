@@ -691,7 +691,7 @@ async def _walk_size(
                 message="Initial real normal-Media page never settled.",
             )
             await _ensure_items_open(screen, pilot)
-            screen._request_library_media_page(2, focus_identity=None)
+            screen._media_controller._request_library_media_page(2, focus_identity=None)
             await _wait_for_condition(
                 pilot,
                 lambda: normal.applied_scope == MediaBrowseScope(page=2),
@@ -992,7 +992,7 @@ async def _walk_size(
                 call["offset"] for call in probe.calls[calls_before_shrink:]
             ] == [40, 20]
             await asyncio.to_thread(_restore_shrunk_rows, db)
-            screen._request_library_media_trash_page(
+            screen._media_controller._request_library_media_trash_page(
                 1, focus_identity="#library-media-trash-previous"
             )
             await _wait_for_trash_page(
@@ -1021,7 +1021,7 @@ async def _walk_size(
                 )
                 assert screen._media_state.reader_layout.items_open is False
                 _assert_media_reader_geometry(screen)
-                screen._request_library_media_trash_page(
+                screen._media_controller._request_library_media_trash_page(
                     2, focus_identity="#library-media-trash-next"
                 )
                 await _wait_for_condition(
@@ -1074,7 +1074,7 @@ async def _walk_size(
                 row_delta = expanded_geometry["row"] - split_geometry["row"]
                 assert items_delta == row_delta
                 assert items_delta > 0
-                screen._request_library_media_trash_page(
+                screen._media_controller._request_library_media_trash_page(
                     2, focus_identity="#library-media-trash-next"
                 )
                 await _wait_for_condition(
@@ -1089,7 +1089,7 @@ async def _walk_size(
                 assert screen._media_state.reader_layout.library_open is False
                 await _toggle_pane(screen, pilot, pane="library", expected_open=True)
                 await _toggle_pane(screen, pilot, pane="items", expected_open=False)
-                screen._request_library_media_trash_page(
+                screen._media_controller._request_library_media_trash_page(
                     1, focus_identity="#library-media-trash-previous"
                 )
                 await _wait_for_condition(

@@ -1,0 +1,18 @@
+Windows startup preflight, local origin/dev 6bd97b112f
+
+Reproduction
+Launch python -m tldw_chatbook.app with TLDW_CONFIG_PATH pointing at
+config.toml under a new private UAT directory inside this checkout.
+The checkout itself has shared-write permissions. The launched app
+shows "Recovery required: configuration_unavailable", with only
+"Open Backup & Restore" and "Exit".
+
+Diagnostic rerun against the same disposable config path
+Visible startup reason: configuration_unavailable
+Underlying exception: PrivatePathError unsafe_parent: shared_writable_parent
+The Windows permission inspection reported the checkout as drwxrw-rw- (0o766).
+No archive, recovery operation, or existing configuration was needed.
+
+Control
+A new private UAT profile under the private Windows user home passed storage
+admission and reached the setup wizard on the same revision.

@@ -220,7 +220,9 @@ def _inspector(snapshot_factory) -> ConsoleConversationInspector:
 
 
 @pytest.mark.asyncio
-async def test_console_conversation_inspector_snapshots_do_not_leak_across_instances() -> None:
+async def test_console_conversation_inspector_snapshots_do_not_leak_across_instances() -> (
+    None
+):
     """Two ConsoleConversationInspector instances must not share the default
     snapshot's ``current_messages``/``next_send_payload`` containers
     (task-16843).
@@ -259,9 +261,9 @@ async def test_console_conversation_inspector_snapshots_do_not_leak_across_insta
         # OVERLAY) that this pane's own Next Send fetch flag must not
         # shadow; see ``ConsoleConversationInspector``'s own comment on its
         # ``next_send_loading`` reactive declaration.
-        assert (
-            modal_a.next_send_loading
-        ), "expected modal_a still waiting on its (blocked) factory"
+        assert modal_a.next_send_loading, (
+            "expected modal_a still waiting on its (blocked) factory"
+        )
         modal_a.snapshot.current_messages.append(
             ConsoleChatMessage(role=ConsoleMessageRole.USER, content="leaked-from-a")
         )
@@ -270,9 +272,9 @@ async def test_console_conversation_inspector_snapshots_do_not_leak_across_insta
         await app.push_screen(modal_b)
         await pilot.pause()
 
-        assert (
-            modal_b.next_send_loading
-        ), "expected modal_b still waiting on its (blocked) factory"
+        assert modal_b.next_send_loading, (
+            "expected modal_b still waiting on its (blocked) factory"
+        )
         assert modal_b.snapshot is not modal_a.snapshot
         assert modal_b.snapshot.current_messages == []
         assert modal_b.snapshot.next_send_payload == {}

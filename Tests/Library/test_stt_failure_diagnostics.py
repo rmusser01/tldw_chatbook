@@ -13,6 +13,11 @@ from tldw_chatbook.app import LibraryIngestQueueMixin
 from tldw_chatbook.Library.library_ingest_jobs import IngestJobState, LibraryIngestJob
 from tldw_chatbook.STT.contracts import TranscriptionFailureCode
 from tldw_chatbook.STT.executor import ExecutorEvent, ExecutorFailure, WorkerPhase
+from tldw_chatbook.STT.failure_diagnostics import (
+    STTExceptionCategory,
+    STTFailureDiagnostic,
+    STTFailureStage,
+)
 
 
 class _FailureHost(LibraryIngestQueueMixin, App):
@@ -71,9 +76,15 @@ def test_failure_callback_normalizes_progress_without_app_or_file_sink(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("phase", [WorkerPhase.LOADING, WorkerPhase.TRANSCRIBING])
+@pytest.mark.parametrize(
+    ("phase", "failure_stage"),
+    [
+        (WorkerPhase.LOADING, STTFailureStage.MODEL_LOAD),
+        (WorkerPhase.TRANSCRIBING, STTFailureStage.INFERENCE),
+    ],
+)
 async def test_accepted_stt_failure_logs_context_once_without_private_data(
-    tmp_path, phase
+    tmp_path, phase, failure_stage
 ):
     host = _FailureHost()
     job = LibraryIngestJob(
@@ -95,7 +106,12 @@ async def test_accepted_stt_failure_logs_context_once_without_private_data(
                 job.job_id, ExecutorEvent(7, "attempt-123", phase)
             )
             failure = ExecutorFailure(
-                7, "attempt-123", TranscriptionFailureCode.INFERENCE_FAILED
+                7,
+                "attempt-123",
+                TranscriptionFailureCode.INFERENCE_FAILED,
+                diagnostic=STTFailureDiagnostic(
+                    failure_stage, STTExceptionCategory.RUNTIME_ERROR
+                ),
             )
             host._on_ingest_local_stt_failure(job.job_id, failure)
             host._on_ingest_local_stt_failure(job.job_id, failure)
@@ -103,6 +119,9 @@ async def test_accepted_stt_failure_logs_context_once_without_private_data(
                 host.library_ingest_jobs.get_job(job.job_id).state
                 is IngestJobState.FAILED
             )
+            detail = host.library_ingest_jobs.get_job(job.job_id).error_detail
+            assert detail["failure_stage"] == failure_stage.value
+            assert detail["exception_category"] == "RuntimeError"
     finally:
         logger.remove(sink)
 
@@ -114,6 +133,8 @@ async def test_accepted_stt_failure_logs_context_once_without_private_data(
         "generation=7",
         f"phase={phase.value}",
         "code=inference_failed",
+        f"failure_stage={failure_stage.value}",
+        "exception_category=RuntimeError",
     ):
         assert expected in log
     for private in (job.source_path, "source-secret", "model-secret", "private title"):

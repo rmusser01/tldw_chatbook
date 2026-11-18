@@ -1,0 +1,82 @@
+{
+  "kind": "later artifact-availability check, not reconstructed raw child files",
+  "rows": [
+    {
+      "path": ".superpowers/sdd/2026-10-22-keyword-dev-integration/native-temp-rebase/pytest-of-GDesktop-1/pytest-9/test_actual_settings_card_enab0/private-profile-process/pytest.log",
+      "currently_exists": false,
+      "captured_sha256": "dd27c042107cd153b682eb4ebc83c38ced87481c1c3fcb6fb0781c7f811511bc",
+      "captured_bytes": 2688,
+      "captured_result_lines": [
+        "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\pydantic\\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/",
+        "1 passed, 2 warnings in 77.86s (0:01:17)"
+      ]
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-22-keyword-dev-integration/native-temp-rebase/pytest-of-GDesktop-1/pytest-9/test_actual_settings_card_enab0/private-profile-process/pytest.xml",
+      "currently_exists": false,
+      "captured_sha256": "e7438bb22587e4eb8999e54e461fe25419e2735ee221b7740425a25476e18a9d",
+      "captured_bytes": 407,
+      "captured_result_lines": [
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?><testsuites><testsuite name=\"pytest\" errors=\"0\" failures=\"0\" skipped=\"0\" tests=\"1\" time=\"77.860\" timestamp=\"2026-10-22T00:05:13.877170-07:00\" hostname=\"DESKTOP-BISU2HE\"><testcase classname=\"Tests.UI.test_workspace_project_index_settings\" name=\"test_actual_settings_card_enable_build_clear_preserves_library[textual-dark-size0]\" time=\"77.125\" /></testsuite></testsuites>"
+      ]
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-22-keyword-dev-integration/native-temp-rebase/pytest-of-GDesktop-1/pytest-9/test_actual_settings_card_enab1/private-profile-process/pytest.log",
+      "currently_exists": false,
+      "captured_sha256": "35c323381de3d0537dafb7350b8c88a3fcef6654e3c5b53ad28152b8912e8aa1",
+      "captured_bytes": 2692,
+      "captured_result_lines": [
+        "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\pydantic\\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/",
+        "1 passed, 2 warnings in 78.61s (0:01:18)"
+      ]
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-22-keyword-dev-integration/native-temp-rebase/pytest-of-GDesktop-1/pytest-9/test_actual_settings_card_enab1/private-profile-process/pytest.xml",
+      "currently_exists": false,
+      "captured_sha256": "de00b95bfcd66a2e1841e0aa6b0d48213e0d13deb877483661287400bb5a75d9",
+      "captured_bytes": 408,
+      "captured_result_lines": [
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?><testsuites><testsuite name=\"pytest\" errors=\"0\" failures=\"0\" skipped=\"0\" tests=\"1\" time=\"78.614\" timestamp=\"2026-10-22T00:06:36.003147-07:00\" hostname=\"DESKTOP-BISU2HE\"><testcase classname=\"Tests.UI.test_workspace_project_index_settings\" name=\"test_actual_settings_card_enable_build_clear_preserves_library[textual-light-size1]\" time=\"77.887\" /></testsuite></testsuites>"
+      ]
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-22-keyword-dev-integration/native-temp-rebase/pytest-of-GDesktop-1/pytest-9/test_saved_policy_and_stale_ac0/private-profile-process/pytest.log",
+      "currently_exists": false,
+      "captured_sha256": "697a323c9aba55c53b20019602ca6c4bf31c0b5355d3f2948c0417f9776cf7fc",
+      "captured_bytes": 2031,
+      "captured_result_lines": [
+        "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\pydantic\\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/",
+        "1 passed, 1 warning in 12.13s"
+      ]
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-22-keyword-dev-integration/native-temp-rebase/pytest-of-GDesktop-1/pytest-9/test_saved_policy_and_stale_ac0/private-profile-process/pytest.xml",
+      "currently_exists": false,
+      "captured_sha256": "d83de097a1486bb791dd24dc603c8c609a37508dbd8611a9fa3f78c9606fa8e2",
+      "captured_bytes": 360,
+      "captured_result_lines": [
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?><testsuites><testsuite name=\"pytest\" errors=\"0\" failures=\"0\" skipped=\"0\" tests=\"1\" time=\"12.130\" timestamp=\"2026-10-22T00:07:59.059073-07:00\" hostname=\"DESKTOP-BISU2HE\"><testcase classname=\"Tests.UI.test_workspace_project_index_settings\" name=\"test_saved_policy_and_stale_actions\" time=\"11.416\" /></testsuite></testsuites>"
+      ]
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-22-keyword-dev-integration/native-temp-rebase/pytest-of-GDesktop-1/pytest-9/test_settings_overview_ownersh0/private-profile-process/pytest.log",
+      "currently_exists": false,
+      "captured_sha256": "25d37dddd9f1d76c15f353a9dd8db4b323966496d998f83a0febe2f753ffa0c1",
+      "captured_bytes": 2219,
+      "captured_result_lines": [
+        "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Lib\\site-packages\\pydantic\\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/",
+        "1 passed, 2 warnings in 13.38s"
+      ]
+    },
+    {
+      "path": ".superpowers/sdd/2026-10-22-keyword-dev-integration/native-temp-rebase/pytest-of-GDesktop-1/pytest-9/test_settings_overview_ownersh0/private-profile-process/pytest.xml",
+      "currently_exists": false,
+      "captured_sha256": "949d602f2f63d7630b66ce53cf02ef3325646ea1d67ea1d566024a71f9fded8e",
+      "captured_bytes": 379,
+      "captured_result_lines": [
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?><testsuites><testsuite name=\"pytest\" errors=\"0\" failures=\"0\" skipped=\"0\" tests=\"1\" time=\"13.380\" timestamp=\"2026-10-22T00:08:21.348912-07:00\" hostname=\"DESKTOP-BISU2HE\"><testcase classname=\"Tests.UI.test_settings_configuration_hub\" name=\"test_settings_overview_ownership_rows_are_sourced_from_record\" time=\"8.775\" /></testsuite></testsuites>"
+      ]
+    }
+  ],
+  "reason": "Original temporary child receipt paths no longer exist after subsequent targeted pytest runs; normal pytest retention is the plausible explanation, not independently traced deletion. Parent outer5pass output and earlier captured8entry manifest with full4XML lines remain."
+}

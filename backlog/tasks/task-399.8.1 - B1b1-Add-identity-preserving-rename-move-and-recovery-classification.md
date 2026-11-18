@@ -1,9 +1,10 @@
 ---
 id: TASK-399.8.1
 title: B1b1 Add identity-preserving rename move and recovery classification
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-23 15:36'
+updated_date: '2026-10-04'
 labels:
   - notes
   - filesystem
@@ -33,3 +34,14 @@ Add journaled same-root rename and move with identity preservation and extend th
 - [ ] #5 Watcher echoes, Git rename storms, duplicate identity candidates, offline transitions, and crashes at every relocation boundary converge to one unambiguous canonical path or durable Attention without losing a draft or disk side.
 - [ ] #6 Folder creation, folder rename or move, cross-root movement, recursive mutation, delete, and public writable controls remain unavailable.
 <!-- AC:END -->
+
+## Closeout 2026-10-04
+
+Done. Identity-preserving rename/move landed as
+`FileNotesService.move_file` (`tldw_chatbook/Notes/file_notes_service.py`)
+over `FileNotesReplica.move_file`
+(`tldw_chatbook/Notes/file_notes_replica.py`), with no-clobber destination
+handling and reconcile-driven echo convergence under ADR-029 semantics
+(TASK-969 hardening arc; PR #992 onward). The durable journal /
+startup-classifier relocation protocol in the AC text was the superseded
+ADR-021 mechanism; the identity-preserving relocation goal itself landed.

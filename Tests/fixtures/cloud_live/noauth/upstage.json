@@ -1,0 +1,39 @@
+{
+  "server": "upstage",
+  "base_url": "https://api.upstage.ai/v1",
+  "probe_model": "solar-pro4",
+  "listing": {
+    "status": 401,
+    "body": {
+      "error": {
+        "message": "Your API key is invalid. Please verify your API key or generate a new one from our API keys management page (https://console.upstage.ai/api-keys). Remember to keep your API keys secure and never share them publicly",
+        "type": "invalid_request_error",
+        "param": "",
+        "code": "invalid_api_key"
+      }
+    }
+  },
+  "chat_no_key": {
+    "status": 401,
+    "body": {
+      "error": {
+        "message": "Your API key is invalid. Please verify your API key or generate a new one from our API keys management page (https://console.upstage.ai/api-keys). Remember to keep your API keys secure and never share them publicly",
+        "type": "invalid_request_error",
+        "param": "",
+        "code": "invalid_api_key"
+      }
+    }
+  },
+  "chat_bad_key": {
+    "status": 401,
+    "body": {
+      "error": {
+        "message": "Your API key is invalid. Please verify your API key or generate a new one from our API keys management page (https://console.upstage.ai/api-keys). Remember to keep your API keys secure and never share them publicly",
+        "type": "invalid_request_error",
+        "param": "",
+        "code": "invalid_api_key"
+      }
+    }
+  },
+  "probed_at": "2026-09-30T04:19:57+00:00"
+}

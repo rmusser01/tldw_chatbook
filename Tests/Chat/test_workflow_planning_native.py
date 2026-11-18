@@ -1,0 +1,164 @@
+"""Read-only planning must use the real native primary and required settlement."""
+
+from pathlib import Path
+
+import pytest
+
+from Tests.Backup_Recovery.test_home_citation_retirement import _run
+
+pytestmark = pytest.mark.bootstrap_profile
+
+# A hang bound for every child, not a speed bound: these children take 35-62 s
+# at load 70-90 (lessons-testing-evidence: "A fixed child budget kills a child
+# that is only slow").
+_HANG_BUDGET_SECONDS = 180
+
+
+def test_accepted_planning_uses_original_native_primary(tmp_path):
+    _run(
+        tmp_path,
+        "primary",
+        "success",
+        script=Path(__file__).with_name("workflow_planning_probe.py").read_text(),
+        timeout=_HANG_BUDGET_SECONDS,
+    )
+
+
+@pytest.mark.parametrize("mode", ["new-saved", "new-unsaved"])
+def test_original_initial_planning_persistence_and_acceptance(tmp_path, mode):
+    _run(
+        tmp_path,
+        mode,
+        "success",
+        script=Path(__file__).with_name("workflow_planning_probe.py").read_text(),
+        timeout=_HANG_BUDGET_SECONDS,
+    )
+
+
+def test_planning_never_constructs_optional_tool_services(tmp_path):
+    _run(
+        tmp_path,
+        "factory",
+        "success",
+        script=Path(__file__).with_name("workflow_planning_probe.py").read_text(),
+        timeout=_HANG_BUDGET_SECONDS,
+    )
+
+
+@pytest.mark.parametrize(
+    "mode", ["invalid-json", "budget-zero", "cancel-cleanup", "tools"]
+)
+def test_native_planning_receiving_boundaries(tmp_path, mode):
+    _run(
+        tmp_path,
+        mode,
+        "success",
+        script=Path(__file__).with_name("workflow_planning_probe.py").read_text(),
+        timeout=_HANG_BUDGET_SECONDS,
+    )
+
+
+@pytest.mark.parametrize("mode", ["wrapper", "wrapper-changed", "wrapper-unavailable"])
+def test_native_planning_future_verifier_metadata(tmp_path, mode):
+    _run(
+        tmp_path,
+        mode,
+        "success",
+        script=Path(__file__).with_name("workflow_planning_probe.py").read_text(),
+        timeout=_HANG_BUDGET_SECONDS,
+    )
+
+
+@pytest.mark.parametrize(
+    "mode", ["instructions", "unused", "repair", "direct-guard", "cleanup-source"]
+)
+def test_native_planning_original_input_and_receivers(tmp_path, mode):
+    _run(
+        tmp_path,
+        mode,
+        "success",
+        script=Path(__file__).with_name("workflow_planning_probe.py").read_text(),
+        timeout=_HANG_BUDGET_SECONDS,
+    )
+
+
+@pytest.mark.parametrize("mode", ["worker-failure", "response-close-failure"])
+def test_native_planning_required_failure_retains_original_custody(tmp_path, mode):
+    # A failed native scope retains its real owner (ADR-356 decision 6).
+    # This is an uncertainty-retention control, never a successful drain receipt.
+    with pytest.raises(AssertionError, match="F_REQUIRED_CUSTODY_RETAINED_" + mode):
+        _run(
+            tmp_path,
+            mode,
+            "retained",
+            script=Path(__file__).with_name("workflow_planning_probe.py").read_text(),
+            timeout=_HANG_BUDGET_SECONDS,
+        )
+
+
+@pytest.mark.parametrize(
+    "mode", ["required-write", "required-return", "late-source-return"]
+)
+def test_native_planning_returned_required_failure_hands_custody_to_recovery(
+    tmp_path, mode
+):
+    # After positive physical return, ADR-356 decision 6 records the failure in a
+    # recovery receipt and retires the owner once; never a settled drain.
+    _run(
+        tmp_path,
+        mode,
+        "success",
+        script=Path(__file__).with_name("workflow_planning_probe.py").read_text(),
+        timeout=_HANG_BUDGET_SECONDS,
+    )
+    output = (tmp_path / "restart-output.log").read_text(encoding="utf-8")
+    assert "F_RETURNED_REQUIRED_FAILURE_RECOVERED_" + mode in output
+
+
+def test_planning_retains_root_until_original_provider_worker_returns(tmp_path):
+    _run(
+        tmp_path,
+        "worker-tail",
+        "success",
+        script=Path(__file__).with_name("workflow_planning_probe.py").read_text(),
+        timeout=_HANG_BUDGET_SECONDS,
+    )
+
+
+def test_shutdown_waits_for_same_native_planning_worker_return(tmp_path):
+    _run(
+        tmp_path,
+        "shutdown-worker-tail",
+        "success",
+        script=Path(__file__).with_name("workflow_planning_probe.py").read_text(),
+        timeout=_HANG_BUDGET_SECONDS,
+    )
+    output = (tmp_path / "restart-output.log").read_text(encoding="utf-8")
+    assert "F_SHUTDOWN_WAITED_FOR_PLANNING_WORKER" in output
+    # Exactly one outcome: today's recovery path, or a settled no-plan drain.
+    recovered = "F_RETURNED_REQUIRED_FAILURE_RECOVERED_shutdown-worker-tail" in output
+    settled = "F_NATIVE_PRIMARY_REQUIRED_PLAN_RETURN" in output
+    assert recovered != settled
+
+
+@pytest.mark.parametrize(
+    "mode", ["system-context", "system-oversize", "repair-instruction"]
+)
+def test_native_planning_retains_required_selected_and_repair_inputs(tmp_path, mode):
+    _run(
+        tmp_path,
+        mode,
+        "success",
+        script=Path(__file__).with_name("workflow_planning_probe.py").read_text(),
+        timeout=_HANG_BUDGET_SECONDS,
+    )
+
+
+def test_native_runtime_waits_for_original_maintenance_operation_return(tmp_path):
+    _run(
+        tmp_path,
+        "maintenance-tail",
+        "success",
+        script=Path(__file__).with_name("workflow_planning_probe.py").read_text(),
+        timeout=_HANG_BUDGET_SECONDS,
+    )

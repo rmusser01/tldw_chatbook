@@ -1,24 +1,15 @@
-"""Kobold and TabbyAPI summarizer configuration resolution (task-17383).
+"""Kobold and TabbyAPI summarizer configuration at the analyze seam.
 
-NOTE ON SHAPE: these two summarizers used to be GENERATOR functions -- a
-top-level `yield` in their streaming branches made the whole function one, so a
-non-streaming call returned a generator the caller surfaced as
-"Error: Unexpected result type" (task-17387). Fixed in task-32805.3: the
-streaming yields now live in a nested generator the function RETURNS, so the
-non-streaming path returns the summary string. The `drain()` helper below still
-accepts either shape (the streaming path returns a generator); the return-type
-is pinned explicitly in test_non_streaming_summarizer_returns_a_string.
-
-Both indexed sections the loader has never built -- `api_keys`,
-`local_api_ip`, `models` -- so like llama.cpp before task-17382 they raised
-before contacting a server and returned an error STRING that callers could
-store as evidence. Both providers DO have complete modern `api_settings`
-entries and complete legacy sections; these tests pin that they read those.
+task-17383: both summarizers indexed loader sections that were never built
+(``api_keys``, ``local_api_ip``, ``models``) -- like llama.cpp before
+task-17382 they raised before contacting a server and returned an error
+STRING that callers could store as evidence. TASK-34895 cut the local
+summarizers over to the unified chat dispatch (``analyze`` ->
+``_summarize_via_chat_api`` -> ``chat_api_call``); the per-provider
+functions are gone. What stays pinned here is the seam the deep-search
+pipeline actually calls: the modern-table endpoint resolution and the
+plain-string (task-17387 / task-32805.3) non-streaming return.
 """
-
-import pytest
-
-from tldw_chatbook.LLM_Calls import Local_Summarization_Lib as lib
 
 
 class FakeResponse:
@@ -34,45 +25,29 @@ class FakeResponse:
 
     def __init__(self, payload=None):
         self.text = ""
-        self._payload = payload if payload is not None else {
-            # Kobold native generate
-            "results": [{"text": " SUMMARY "}],
-            # OpenAI-compatible envelope -- TabbyAPI validates every one of
-            # these keys before reading the content, so a fake carrying only
-            # "choices" passes nothing.
-            "id": "cmpl-test",
-            "created": 0,
-            "model": "test-model",
-            "object": "chat.completion",
-            "usage": {"completion_tokens": 3},
-            "choices": [{"message": {"role": "assistant", "content": " SUMMARY "}}],
-        }
+        self._payload = (
+            payload
+            if payload is not None
+            else {
+                # Kobold native generate
+                "results": [{"text": " SUMMARY "}],
+                # OpenAI-compatible envelope -- TabbyAPI validates every one of
+                # these keys before reading the content, so a fake carrying only
+                # "choices" passes nothing.
+                "id": "cmpl-test",
+                "created": 0,
+                "model": "test-model",
+                "object": "chat.completion",
+                "usage": {"completion_tokens": 3},
+                "choices": [{"message": {"role": "assistant", "content": " SUMMARY "}}],
+            }
+        )
 
     def json(self):
         return self._payload
 
     def raise_for_status(self):
         return None
-
-
-@pytest.fixture
-def captured_post(monkeypatch):
-    captured = {}
-
-    class FakeSession:
-        def mount(self, *_args, **_kwargs):
-            pass
-
-        def post(self, url, headers=None, json=None, stream=False, **_kw):
-            captured["url"] = url
-            captured["headers"] = headers or {}
-            captured["json"] = json
-            return FakeResponse()
-
-    monkeypatch.setattr(lib, "create_default_session", lambda: FakeSession())
-    from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
-    monkeypatch.setattr(_general, "create_default_session", lambda: FakeSession())
-    return captured
 
 
 def drain(result):
@@ -94,6 +69,12 @@ def settings(**overrides):
         "api_settings": {
             "koboldcpp": {"api_url": "http://kobold.invalid/v1/chat/completions"},
             "tabbyapi": {"api_url": "http://tabby.invalid/v1/chat/completions"},
+            # chat_with_tabbyapi reads the "tabby_api" spelling from the
+            # api_settings table (LLM_API_Calls_Local.py) -- both live.
+            "tabby_api": {
+                "api_url": "http://tabby.invalid/v1/chat/completions",
+                "model": "tabby-model",
+            },
         },
         "kobold_api": {
             "api_ip": "http://legacy-kobold.invalid/api/v1/generate",
@@ -120,156 +101,14 @@ def settings(**overrides):
     return base
 
 
-@pytest.mark.parametrize(
-    "summarize,expected_url",
-    [
-        (
-            lambda: lambda: lib.summarize_with_kobold("some text", None, "Summarize."),
-            "http://kobold.invalid/v1/chat/completions",
-        ),
-        (
-            lambda: lambda: lib.summarize_with_tabbyapi("some text", "Summarize."),
-            "http://tabby.invalid/v1/chat/completions",
-        ),
-    ],
-    ids=["kobold", "tabby"],
-)
-def test_summarizer_reaches_its_server_via_the_modern_entry(
-    monkeypatch, captured_post, summarize, expected_url
-):
-    """The whole defect: no KeyError, a real request, a real summary."""
-    monkeypatch.setattr(lib, "load_settings", lambda: settings())
-
-    result = drain(summarize()())
-
-    # Kobold strips its summary and TabbyAPI does not; that difference is not
-    # what this test is about.
-    assert result.strip() == "SUMMARY", result
-    assert captured_post["url"] == expected_url
-
-
-@pytest.mark.parametrize(
-    "summarize,expected_url",
-    [
-        (
-            lambda: lambda: lib.summarize_with_kobold("some text", None, "Summarize."),
-            "http://legacy-kobold.invalid/api/v1/generate",
-        ),
-        (
-            lambda: lambda: lib.summarize_with_tabbyapi("some text", "Summarize."),
-            "http://legacy-tabby.invalid/v1/chat/completions",
-        ),
-    ],
-    ids=["kobold", "tabby"],
-)
-def test_summarizer_falls_back_to_its_legacy_section(
-    monkeypatch, captured_post, summarize, expected_url
-):
-    conf = settings()
-    conf["api_settings"] = {"koboldcpp": {}, "tabbyapi": {}}
-    monkeypatch.setattr(lib, "load_settings", lambda: conf)
-
-    drain(summarize()())
-
-    assert captured_post["url"] == expected_url
-
-
-def test_tabby_reads_the_credential_env_var_the_config_names(
-    monkeypatch, captured_post
-):
-    """`api_key_env_var` is this repo's existing convention (the media and
-    settings windows both honour it), and it is tabbyapi's only credential
-    field in the modern table."""
-    conf = settings(tabbyapi={"api_key_env_var": "TABBY_TEST_KEY"})
-    conf["tabby_api"]["api_key"] = ""
-    monkeypatch.setattr(lib, "load_settings", lambda: conf)
-    monkeypatch.setenv("TABBY_TEST_KEY", "env-tabby-key")
-
-    drain(lib.summarize_with_tabbyapi("some text", "Summarize."))
-
-    assert "env-tabby-key" in str(captured_post["headers"])
-
-
-def test_missing_sections_do_not_raise(monkeypatch, captured_post):
-    """A config with neither modern nor legacy entries must fail legibly, not
-    with a KeyError that becomes an error string stored as evidence."""
-    monkeypatch.setattr(lib, "load_settings", lambda: {"api_settings": {}})
-
-    result = drain(lib.summarize_with_kobold("some text", None, "Summarize."))
-
-    from tldw_chatbook.Web_Scraping.WebSearch_APIs import _is_summary_failure
-
-    assert isinstance(result, str)
-    assert _is_summary_failure(result), result
-    assert "KeyError" not in result
-
-
-def test_kobold_streaming_uses_the_openai_compatible_endpoint(monkeypatch):
-    """Qodo (PR 1788): the streaming branch parses OpenAI SSE, but both the
-    modern api_url and the legacy api_ip point at Kobold's NATIVE generate
-    endpoint -- only `api_streaming_ip` is OpenAI-compatible. Preferring the
-    modern url sent streaming to the native endpoint and yielded nothing."""
-    conf = settings()
-    conf["api_settings"]["koboldcpp"]["api_url"] = "http://kobold.invalid/api/v1/generate"
-    conf["kobold_api"]["api_ip"] = "http://kobold.invalid/api/v1/generate"
-    conf["kobold_api"]["api_streaming_ip"] = "http://kobold.invalid/v1/chat/completions"
-    monkeypatch.setattr(lib, "load_settings", lambda: conf)
-
-    seen = {}
-
-    class StreamResponse:
-        status_code = 200
-        text = ""
-
-        def iter_lines(self):
-            yield b'data: {"choices":[{"delta":{"content":"chunk"}}]}'
-            yield b"data: [DONE]"
-
-        def json(self):
-            return {}
-
-        def raise_for_status(self):
-            return None
-
-    class StreamSession:
-        def mount(self, *_a, **_k):
-            pass
-
-        def post(self, url, **_kw):
-            seen["url"] = url
-            return StreamResponse()
-
-    monkeypatch.setattr(lib, "create_default_session", lambda: StreamSession())
-    from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
-    monkeypatch.setattr(_general, "create_default_session", lambda: StreamSession())
-
-    drain(lib.summarize_with_kobold("text", None, "Summarize.", streaming=True))
-
-    assert seen["url"] == "http://kobold.invalid/v1/chat/completions", seen
-
-
-def test_kobold_non_streaming_uses_the_native_endpoint(monkeypatch, captured_post):
-    """The complement: the non-streaming branch parses `results[].text`, so it
-    must go to the NATIVE generate endpoint. Shaped like the real config, where
-    both the modern api_url and the legacy api_ip are native."""
-    conf = settings()
-    conf["api_settings"]["koboldcpp"]["api_url"] = "http://kobold.invalid/api/v1/generate"
-    conf["kobold_api"]["api_ip"] = "http://kobold.invalid/api/v1/generate"
-    conf["kobold_api"]["api_streaming_ip"] = "http://kobold.invalid/v1/chat/completions"
-    monkeypatch.setattr(lib, "load_settings", lambda: conf)
-
-    drain(lib.summarize_with_kobold("text", None, "Summarize."))
-
-    assert captured_post["url"] == "http://kobold.invalid/api/v1/generate"
-
-
 def test_configuration_reaches_the_public_analyze_boundary(monkeypatch):
-    """Qodo (PR 1788): the other tests call the summarizers directly. This one
-    goes through `analyze`, the seam the deep-search pipeline actually uses, so
-    the resolution is verified where a caller meets it."""
+    """Qodo (PR 1788): go through `analyze`, the seam the deep-search
+    pipeline actually uses, so the resolution is verified where a caller
+    meets it."""
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local as _local
+    from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
     from tldw_chatbook.LLM_Calls.Summarization_General_Lib import analyze
 
-    monkeypatch.setattr(lib, "load_settings", lambda: settings())
     seen = {}
 
     class Session:
@@ -280,9 +119,28 @@ def test_configuration_reaches_the_public_analyze_boundary(monkeypatch):
             seen["url"] = url
             return FakeResponse()
 
-    monkeypatch.setattr(lib, "create_default_session", lambda: Session())
-    from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
-    monkeypatch.setattr(_general, "create_default_session", lambda: Session())
+    # TASK-34895: tabbyapi routes through the chat handler; the transport
+    # and config seams now live on LLM_API_Calls_Local.
+    monkeypatch.setattr(
+        _local, "create_pooled_default_session", lambda **_kw: Session()
+    )
+
+    class _Snapshot:
+        values = settings()
+
+    monkeypatch.setattr(_local, "get_runtime_config_snapshot", lambda: _Snapshot)
+
+    # The chat-dispatch core resolves model/key from the legacy top-level
+    # sections through sgl.get_cli_setting.
+    _fake_settings = settings()
+
+    def _fake_get_cli_setting(section, key, *args, **kwargs):
+        default = args[0] if args else kwargs.get("default")
+        return _fake_settings.get(section, {}).get(key, default)
+
+    monkeypatch.setattr(_general, "get_cli_setting", _fake_get_cli_setting)
+    # TASK-33001.14: the [api_settings] key rung reads the loaded settings.
+    monkeypatch.setattr(_general, "load_settings", lambda: _fake_settings)
 
     result = drain(
         analyze(
@@ -304,47 +162,3 @@ def test_configuration_reaches_the_public_analyze_boundary(monkeypatch):
     # directly (not a generator surfaced as "Unexpected result type").
     assert isinstance(result, str), result
     assert "SUMMARY" in result, result
-
-@pytest.mark.parametrize(
-    "summarize",
-    [
-        lambda: lib.summarize_with_kobold("some text", None, "Summarize."),
-        lambda: lib.summarize_with_tabbyapi("some text", "Summarize."),
-    ],
-    ids=["kobold", "tabby"],
-)
-def test_non_streaming_summarizer_returns_a_string(
-    monkeypatch, captured_post, summarize
-):
-    """task-32805.3 / task-17387: the exact regression. A non-streaming call
-    must return the summary STRING, not a generator (which a caller surfaced as
-    "Error: Unexpected result type"). `drain()` masks this, so assert the type."""
-    monkeypatch.setattr(lib, "load_settings", lambda: settings())
-
-    result = summarize()
-
-    assert isinstance(result, str), f"expected a str, got {type(result)!r}"
-    assert result.strip() == "SUMMARY", result
-
-
-@pytest.mark.parametrize(
-    "summarize",
-    [
-        lambda: lib.summarize_with_kobold(
-            "some text", None, "Summarize.", streaming=True
-        ),
-        lambda: lib.summarize_with_tabbyapi("some text", "Summarize.", streaming=True),
-    ],
-    ids=["kobold", "tabby"],
-)
-def test_streaming_summarizer_returns_an_iterator(
-    monkeypatch, captured_post, summarize
-):
-    """The other half: a streaming call must still return a non-string iterator
-    whose chunks join into the summary."""
-    monkeypatch.setattr(lib, "load_settings", lambda: settings())
-
-    result = summarize()
-
-    assert not isinstance(result, str), "streaming must return a generator/iterator"
-    assert iter(result) is not None

@@ -1,0 +1,4 @@
+$ find /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/.p1b-t5-live -name '*notes_sync_state*'
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/.p1b-t5-live/data/p1b_t5/tldw_chatbook_notes_sync_state.db
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/.p1b-t5-live/data/p1b_t5/tldw_chatbook_notes_sync_state.db-shm
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/.p1b-t5-live/data/p1b_t5/tldw_chatbook_notes_sync_state.db-wal

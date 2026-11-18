@@ -2,7 +2,7 @@
 
 Preserve the existing Textual Settings workbench, ADR-150 tokens and ADR-161
 component patterns. Its detail pane owns scrolling; nested editors grow with
-their forms. The three categories have distinct commit models under ADR-033.
+their forms. The three categories have distinct commit models under ADR-303.
 
 Appearance stages launch defaults. Preview changes runtime presentation, Save
 persists the draft, and Revert restores its saved baseline. Theme browsing and

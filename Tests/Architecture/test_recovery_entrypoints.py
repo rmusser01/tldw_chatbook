@@ -12,25 +12,32 @@ from tldw_chatbook.Backup_Recovery.control_records import register_pending
 ROOT = Path(__file__).resolve().parents[2]
 
 
-@pytest.mark.parametrize(
-    "route",
-    [
-        "from tldw_chatbook.cli import main_cli_runner; main_cli_runner()",
-        'import runpy; runpy.run_module("tldw_chatbook", run_name="__main__")',
-        'import runpy; runpy.run_module("tldw_chatbook.app", run_name="__main__")',
-        'import runpy; runpy.run_module("tldw_chatbook.app", run_name="__mp_main__")',
-        "from tldw_chatbook.Web_Server.serve import main; main()",
-        'import runpy; runpy.run_module("tldw_chatbook.MCP", run_name="__main__")',
-        "import tldw_chatbook.config",
-        'import runpy; runpy.run_module("tldw_chatbook.MCP.server", run_name="__main__")',
-        'import runpy; runpy.run_module("tldw_chatbook.RAG_Search.backfill", run_name="__main__")',
-        'import runpy; runpy.run_module("tldw_chatbook.TTS.backends.higgs_voice_manager", run_name="__main__")',
-        'import runpy; runpy.run_module("tldw_chatbook.Config_Files.create_custom_template", run_name="__main__")',
-        f"import runpy; runpy.run_path({str(ROOT / 'tldw_chatbook/TTS/backends/chatterbox_process.py')!r}, run_name='__main__')",
-    ],
-)
-@pytest.mark.parametrize("config_present", [True, False])
-def test_real_route_refuses_before_side_effect_imports(tmp_path, route, config_present):
+# TASK-38991: the two main routes do not refuse on stderr. They open the
+# recovery-only host (cli.main_cli_runner -> launcher.startup_unlock ->
+# minimal_recovery, b5251e9a6e / 87aa6d1d03), which never imports the app.
+MAIN_ROUTES = [
+    "from tldw_chatbook.cli import main_cli_runner; main_cli_runner()",
+    'import runpy; runpy.run_module("tldw_chatbook", run_name="__main__")',
+]
+
+# The real minimal_recovery runs the Textual host; this stub records the call
+# and returns the real host's exit status, so the child exits.
+RECOVERY_HOST_STUB = """
+class ForbidApp:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "tldw_chatbook.app":
+            print("app_import_before_fence", file=sys.stderr, flush=True)
+            raise AssertionError("app_import_before_fence")
+sys.meta_path.insert(0, ForbidApp())
+from tldw_chatbook.Backup_Recovery import launcher
+def recovery_only_host(reason, **_):
+    print("recovery_only_host:" + reason, file=sys.stderr, flush=True)
+    return 0
+launcher.minimal_recovery = recovery_only_host
+"""
+
+
+def _run_pending_route(tmp_path, route, config_present, prelude=""):
     home = tmp_path / "home"
     config = tmp_path / "custom.toml"
     config.write_text("broken [")
@@ -51,6 +58,7 @@ class Forbidden:
             raise AssertionError("side_effect_import_before_fence:" + fullname)
 sys.meta_path.insert(0, Forbidden())
 """
+        + prelude
         + route
     )
     result = subprocess.run(
@@ -61,12 +69,46 @@ sys.meta_path.insert(0, Forbidden())
         capture_output=True,
         timeout=20,
     )
-    assert result.returncode != 0
-    assert "Recovery required: recovery_pending" in result.stderr, result.stderr
     assert "side_effect_import_before_fence" not in result.stderr
     assert config.exists() is config_present
     assert not (home / ".local").exists()
     assert not (home / ".config" / "tldw_cli" / "config.toml").exists()
+    return result
+
+
+@pytest.mark.parametrize(
+    "route",
+    [
+        'import runpy; runpy.run_module("tldw_chatbook.app", run_name="__main__")',
+        'import runpy; runpy.run_module("tldw_chatbook.app", run_name="__mp_main__")',
+        "from tldw_chatbook.Web_Server.serve import main; main()",
+        'import runpy; runpy.run_module("tldw_chatbook.MCP", run_name="__main__")',
+        "import tldw_chatbook.config",
+        'import runpy; runpy.run_module("tldw_chatbook.MCP.server", run_name="__main__")',
+        'import runpy; runpy.run_module("tldw_chatbook.RAG_Search.backfill", run_name="__main__")',
+        'import runpy; runpy.run_module("tldw_chatbook.TTS.backends.higgs_voice_manager", run_name="__main__")',
+        'import runpy; runpy.run_module("tldw_chatbook.Config_Files.create_custom_template", run_name="__main__")',
+        f"import runpy; runpy.run_path({str(ROOT / 'tldw_chatbook/TTS/backends/chatterbox_process.py')!r}, run_name='__main__')",
+    ],
+)
+@pytest.mark.parametrize("config_present", [True, False])
+def test_real_route_refuses_before_side_effect_imports(tmp_path, route, config_present):
+    result = _run_pending_route(tmp_path, route, config_present)
+    assert result.returncode != 0
+    assert "Recovery required: recovery_pending" in result.stderr, result.stderr
+
+
+@pytest.mark.parametrize("route", MAIN_ROUTES)
+@pytest.mark.parametrize("config_present", [True, False])
+def test_main_route_opens_recovery_only_host_without_app_import(
+    tmp_path, route, config_present
+):
+    result = _run_pending_route(
+        tmp_path, route, config_present, prelude=RECOVERY_HOST_STUB
+    )
+    assert "app_import_before_fence" not in result.stderr, result.stderr
+    assert "recovery_only_host:recovery_pending" in result.stderr, result.stderr
+    assert result.returncode == 0, result.stderr
 
 
 def test_actual_multiprocessing_spawn_rechecks_pending_before_app_import(tmp_path):
@@ -129,11 +171,17 @@ def test_bootstrap_dependency_leaf_and_script_route_inventory():
     ]
     assert set(imports) <= {
         "__future__",
+        "collections.abc",
         "contextlib",
         "pathlib",
         "Utils.private_paths",
         "profile_paths",
         "typing",
+        # TASK-38991: os/fcntl shim; imports only os, fcntl or windows_files.
+        "tldw_chatbook.Utils.platform_files",
+        # TASK-38991: lazy, reached only when an enrolled root is absent; no
+        # config, DB or app import.
+        "effective_roots",
     }
 
 
@@ -148,7 +196,7 @@ def test_console_enrolls_before_loading_app_and_releases_on_process_exit(tmp_pat
     home = tmp_path / "home"
     root = home / ".config" / "tldw_cli" / "recovery-bootstrap"
     config = tmp_path / "config.toml"
-    config.write_text("preferences")
+    config.write_text("[preferences]\n")
     data = tmp_path / "data"
     data.mkdir(mode=0o700)
     authority = admission_authority(root)
@@ -208,8 +256,6 @@ ROUTE_CLASSIFICATIONS = {
     "Web_Server/serve.py": "enrolled_web",
     "RAG_Search/backfill.py": "enrolled_headless",
     "Config_Files/create_custom_template.py": "enrolled_config",
-    "Utils/paths.py": "enrolled_config",
-    "TTS/backends/higgs_voice_manager.py": "enrolled_tts_direct",
     "TTS/backends/chatterbox_process.py": "enrolled_direct_worker",
     "Tools/_grep_worker.py": "external_read_only_worker",
     "css/check_bundle_sync.py": "development_tool",
@@ -217,11 +263,34 @@ ROUTE_CLASSIFICATIONS = {
     "css/Themes/theme_tester.py": "development_example",
     "Prompt_Management/Prompts_Interop.py": "temporary_example",
     "Web_Scraping/Article_Scraper/main.py": "external_demo",
-    "Chunking/templates/example_usage.py": "development_example",
     "Third_Party/aider/waiting.py": "vendored_example",
     "Third_Party/textual_fspicker/example_enhanced.py": "vendored_example",
     "Third_Party/textual_fspicker/__main__.py": "vendored_example",
     "Widgets/Tamagotchi/examples/simple_tamagotchi.py": "development_example",
+    # TASK-38991 review. recovery_host: the startup-independent recovery CLI
+    # (`tldw-cli recovery`'s recovery_main). app_spawned_pipe_worker: a child
+    # an admitted app or recovery process spawns; its inputs are argv, pipes
+    # or paths the parent staged, and it neither loads config nor enrolls.
+    # config_fenced_worker: an app-spawned child whose imports load
+    # tldw_chatbook.config (lab_runner: Chunking/__init__ -> Chunk_Lib ->
+    # config, which writes config.toml under a fresh HOME), so it reaches
+    # config's import-time recovery fence (review r10a-rev1).
+    # remote_host_worker: the generated bundle runs on the SSH host, not here.
+    "Backup_Recovery/__main__.py": "recovery_host",
+    "Audio/diarizer_worker.py": "app_spawned_pipe_worker",
+    "Audio/voice_process_entry.py": "app_spawned_pipe_worker",
+    "Backup_Recovery/age_worker.py": "app_spawned_pipe_worker",
+    "Backup_Recovery/detached_worker.py": "app_spawned_pipe_worker",
+    "Backup_Recovery/rag_projection_validation.py": "app_spawned_pipe_worker",
+    "Chat/console_trace_regex_worker.py": "app_spawned_pipe_worker",
+    "Chunking/lab_runner.py": "config_fenced_worker",
+    "DB/private_sqlite_helper_entry.py": "app_spawned_pipe_worker",
+    "Terminal/posix_launcher.py": "app_spawned_pipe_worker",
+    "Tools/workspace_tool_worker.py": "app_spawned_pipe_worker",
+    "Web_Server/artifact_share_server.py": "app_spawned_pipe_worker",
+    "Tools/project_index_scan_worker.py": "external_read_only_worker",
+    "Tools/build_remote_worker_bundle.py": "development_tool",
+    "Tools/remote_worker_bundle.py": "remote_host_worker",
 }
 
 

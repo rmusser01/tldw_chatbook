@@ -326,9 +326,7 @@ async def test_existing_kept_scripts_render_under_the_detail(tmp_path):
             assert await _wait_until(pilot, lambda: bool(modal.query(".kbm-script")))
 
             script_widgets = modal.query(".kbm-script")
-            plain, _ansi = _render_to_console(
-                script_widgets[0].renderable, width=120
-            )
+            plain, _ansi = _render_to_console(script_widgets[0].renderable, width=120)
         assert "Duo" in plain
         assert "Welcome back." in plain
     finally:
@@ -402,7 +400,9 @@ async def test_delete_cancelled_leaves_the_kept_briefing_in_place(tmp_path):
                 pilot, lambda: isinstance(app.screen, ConfirmationDialog)
             )
             await pilot.click("#cancel-button")
-            assert await _wait_until(pilot, lambda: modal.is_mounted and modal.is_current)
+            assert await _wait_until(
+                pilot, lambda: modal.is_mounted and modal.is_current
+            )
 
         assert chacha_db.get_kept_briefing(kept_id) is not None
     finally:
@@ -633,7 +633,9 @@ async def test_cast_with_app_default_uses_the_single_narrator_roster(
 
 
 @pytest.mark.asyncio
-async def test_generation_in_flight_error_gets_its_specific_toast(monkeypatch, tmp_path):
+async def test_generation_in_flight_error_gets_its_specific_toast(
+    monkeypatch, tmp_path
+):
     """The phase-4 lesson: `GenerationInFlightError` is caught and shown
     with its OWN specific message, never folded into the generic
     "could not cast a script" fallback.
@@ -840,8 +842,7 @@ async def test_delete_is_refused_while_a_cast_is_in_flight(monkeypatch, tmp_path
             await pilot.click("#kbm-delete-button")
             await pilot.pause()
             assert not isinstance(app.screen, ConfirmationDialog), (
-                "a delete must not even open its confirmation while a cast "
-                "is in flight"
+                "a delete must not even open its confirmation while a cast is in flight"
             )
             app.notify.assert_called_once()
             _args, kwargs = app.notify.call_args
@@ -866,9 +867,7 @@ async def test_kept_list_stays_quiet_exactly_at_its_display_cap(monkeypatch, tmp
     try:
         monkeypatch.setattr(kbm_module, "_KEPT_LIST_DISPLAY_CAP", 2)
         for i in range(2):
-            _kept_briefing(
-                chacha_db, source_briefing_id=i, watchlist_name=f"Watch {i}"
-            )
+            _kept_briefing(chacha_db, source_briefing_id=i, watchlist_name=f"Watch {i}")
         modal = KeptBriefingsModal(chacha_db)
 
         app = _ModalHost()
@@ -899,9 +898,7 @@ async def test_kept_list_shows_an_overflow_line_past_its_display_cap(
     try:
         monkeypatch.setattr(kbm_module, "_KEPT_LIST_DISPLAY_CAP", 2)
         for i in range(3):
-            _kept_briefing(
-                chacha_db, source_briefing_id=i, watchlist_name=f"Watch {i}"
-            )
+            _kept_briefing(chacha_db, source_briefing_id=i, watchlist_name=f"Watch {i}")
         modal = KeptBriefingsModal(chacha_db)
 
         app = _ModalHost()
@@ -1054,8 +1051,7 @@ async def test_preset_select_carries_a_visible_preset_label(tmp_path):
                 if str(widget.renderable) == "Preset"
             ]
             assert len(labels) == 1, (
-                "expected exactly one visible 'Preset' label in the cast "
-                "toolbar"
+                "expected exactly one visible 'Preset' label in the cast toolbar"
             )
             label = labels[0]
             assert label.region.width > 0

@@ -3,10 +3,10 @@
 from datetime import datetime, timezone
 
 import pytest
+
 from textual.app import App
 from textual.widgets import Input, Select
 
-from tldw_chatbook.Scheduling.events import ReminderFormSubmitted
 from tldw_chatbook.Scheduling.models import ReminderTask, ScheduleKind
 from tldw_chatbook.UI.Screens.scheduling.forms.reminder_form import (
     ReminderForm,
@@ -18,6 +18,11 @@ from tldw_chatbook.UI.Screens.scheduling.forms.reminder_form import (
 
 
 # --- task-23102: forgiving datetime parsing (pure unit tests) --------------
+
+
+# TASK-37032: the UI fixture imports app against collection-bound config.
+# Retain the existing private bootstrap source and its per-test reset.
+pytestmark = pytest.mark.bootstrap_profile
 
 
 class TestParseForgivingDatetime:
@@ -177,14 +182,24 @@ async def test_editing_one_time_task_to_custom_cron_saves_the_typed_cron():
 
 
 class FormTestApp(App):
-    """Minimal app used to host the modal form under test."""
+    """Minimal app used to host the modal form under test.
+
+    Records the form's dismiss result the same way the workbench consumes
+    it (a ``push_screen`` callback), since the form reports its payload
+    through ``dismiss(form_data)``.
+    """
 
     def __init__(self) -> None:
         super().__init__()
         self.submitted: dict | None = None
 
-    def on_reminder_form_submitted(self, event: ReminderFormSubmitted) -> None:
-        self.submitted = event.form_data
+    def push_screen(self, screen, callback=None, wait_for_dismiss=False, **kwargs):
+        if callback is None:
+            callback = self._record_submitted
+        return super().push_screen(screen, callback, wait_for_dismiss, **kwargs)
+
+    def _record_submitted(self, result: dict | None) -> None:
+        self.submitted = result
 
 
 @pytest.mark.asyncio
@@ -216,7 +231,9 @@ async def test_reminder_form_submits_when_valid_one_time():
         assert app.submitted is not None
         assert app.submitted["title"] == "Water plants"
         assert app.submitted["schedule_kind"] == "one_time"
-        assert app.submitted["run_at"] == datetime(2030, 7, 20, 14, 0, tzinfo=timezone.utc)
+        assert app.submitted["run_at"] == datetime(
+            2030, 7, 20, 14, 0, tzinfo=timezone.utc
+        )
         assert app.submitted["cron"] is None
         # task-31711 AC#2: a one-time reminder captures the machine's
         # detected zone (matching the recurring form's own Select
@@ -287,10 +304,7 @@ async def test_reminder_form_rejects_invalid_run_at():
         await pilot.pause()
 
         error_widget = pilot.app.screen.query_one("#reminder-errors")
-        assert (
-            "run at must be a date and time"
-            in error_widget.visual.plain.lower()
-        )
+        assert "run at must be a date and time" in error_widget.visual.plain.lower()
 
 
 @pytest.mark.asyncio
@@ -308,9 +322,7 @@ async def test_reminder_form_accepts_forgiving_local_datetime():
         # The live preview confirms the local interpretation before save.
         from textual.widgets import Static
 
-        preview = str(
-            form.query_one("#reminder-run-at-preview", Static).render()
-        )
+        preview = str(form.query_one("#reminder-run-at-preview", Static).render())
         assert "Runs:" in preview
         assert "local" in preview.lower()
 
@@ -432,9 +444,7 @@ async def test_timezone_is_a_select_defaulting_to_system_zone():
     defaults to the system zone with known task zones included."""
     app = FormTestApp()
     async with app.run_test() as pilot:
-        await app.push_screen(
-            ReminderForm(known_timezones=["Pacific/Auckland"])
-        )
+        await app.push_screen(ReminderForm(known_timezones=["Pacific/Auckland"]))
         await pilot.pause()
         form = pilot.app.screen
         tz_select = form.query_one("#reminder-timezone", Select)
@@ -501,8 +511,7 @@ async def test_unrecognized_stored_zone_round_trips_on_unrelated_edit():
         assert tz_select.value == "Mars/Phobos"
         labels = {str(prompt) for prompt, _value in tz_select._options}
         assert any(
-            "Mars/Phobos" in label and "not recognized" in label
-            for label in labels
+            "Mars/Phobos" in label and "not recognized" in label for label in labels
         ), labels
 
         # An unrelated edit (title) round-trips the zone untouched.
@@ -651,9 +660,9 @@ async def test_all_recurring_fields_painted_at_235x52():
             "#reminder-cancel",
         ):
             widget = form.query_one(selector)
-            assert _painted_at_own_center(app, widget), (
-                f"{selector} is not painted at 235x52"
-            )
+            assert _painted_at_own_center(
+                app, widget
+            ), f"{selector} is not painted at 235x52"
         frame = app.export_screenshot()
         assert "Runs:" in frame
 
@@ -698,9 +707,9 @@ async def test_footer_survives_wrapped_error_lines_at_45x24():
         assert errors.display and errors.region.height >= 2
 
         save = form.query_one("#reminder-save")
-        assert _painted_at_own_center(app, save), (
-            "wrapped validation lines pushed Save out of the modal"
-        )
+        assert _painted_at_own_center(
+            app, save
+        ), "wrapped validation lines pushed Save out of the modal"
 
         # And a focused field is still painted above the docked footer.
         run_at = form.query_one("#reminder-run-at", Input)

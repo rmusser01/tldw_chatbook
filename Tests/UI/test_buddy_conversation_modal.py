@@ -2,6 +2,7 @@
 
 import asyncio
 import threading
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -14,10 +15,13 @@ from Tests.Chat.test_console_runtime_lifetime import (
     _pending_call,
     _StalledGateway,
 )
+from Tests.private_profile import private_profile_test
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.Persona_Buddy.interaction import BuddyBinding
+
+pytestmark = pytest.mark.bootstrap_profile
 
 
 def pending_image():
@@ -35,8 +39,17 @@ def pending_image():
     )
 
 
-async def until(predicate):
-    deadline = asyncio.get_running_loop().time() + 5
+#: Deadlines for the two real-Console journeys (TASK-41138, review r15ti-rev1),
+#: from the slowest wait measured through run.sh: the real send's waits took
+#: up to 2.2 s serially and 3.3 s at -n 3 (load ~58); the cold-home first send
+#: took 9.7-13.9 s from press to provider (load 55-75: the first send's
+#: personal-context bootstrap and storage evidence reads, off the UI loop).
+REAL_CONSOLE_WAIT_SECONDS = 15.0
+COLD_HOME_SEND_SECONDS = 30.0
+
+
+async def until(predicate, seconds: float = 5):
+    deadline = asyncio.get_running_loop().time() + seconds
     while not predicate():
         assert asyncio.get_running_loop().time() < deadline
         await asyncio.sleep(0.01)
@@ -572,7 +585,7 @@ async def test_explicit_buddy_retains_headless_decisions_after_close(kind):
             # No-view questions still require the exact retained Buddy target.
             assert request(app.other.id) == {"answered": False, "reason": "cancelled"}
         else:
-            # ADR-094's domain routers retain hidden skills, never authorize
+            # ADR-336's domain routers retain hidden skills, never authorize
             # execution or consume a finite allowance just by being installed.
             sibling = asyncio.create_task(asyncio.to_thread(request, app.other.id))
             try:
@@ -936,7 +949,9 @@ async def test_late_voice_completion_after_close_cannot_change_the_draft(late_ph
         await until(started.is_set)
         modal.query_one("#buddy-close", Button).press()
         await until(lambda: app.screen is not modal)
-        assert voice.discards
+        # The discard runs in the modal's on_unmount, after the pop (review
+        # r15ti-rev1: asserting right after the pop was flaky).
+        await until(lambda: voice.discards)
         gate.set()
         await pilot.pause(0.1)
         assert modal.coordinator.drafts[binding] == "Keep typed words"
@@ -945,9 +960,11 @@ async def test_late_voice_completion_after_close_cannot_change_the_draft(late_ph
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("saved", (False, True))
+@private_profile_test
 async def test_real_console_buddy_send_preserves_both_durable_console_drafts(
-    monkeypatch, tmp_path, saved
+    request: pytest.FixtureRequest, monkeypatch, tmp_path, saved
 ):
+    wait = partial(until, seconds=REAL_CONSOLE_WAIT_SECONDS)
     from Tests.UI.test_console_native_chat_flow import (
         _configure_native_ready_console,
         _ReadyResolutionGateway,
@@ -956,13 +973,22 @@ async def test_real_console_buddy_send_preserves_both_durable_console_drafts(
     from Tests.UI.test_console_screen_reuse import (
         _boot_settled,
         _press_until_screen,
-        _scratch_env,
     )
     from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.config import save_settings_to_cli_config
     from tldw_chatbook.UI.Navigation.buddy_conversation import open_buddy_conversation
     from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
-    _scratch_env(monkeypatch, tmp_path)
+    # The stalled stream_chat gateway observes draft ownership on the native
+    # streaming path; the default agent bridge has a separate execution seam.
+    assert save_settings_to_cli_config(
+        {
+            "first_run": {"setup_completed": True},
+            "splash_screen": {"enabled": False},
+            "model_catalog": {"auto_refresh_enabled": False},
+            "console": {"agent_runtime": False},
+        }
+    )
 
     class Gateway(_ReadyResolutionGateway):
         started = threading.Event()
@@ -985,7 +1011,7 @@ async def test_real_console_buddy_send_preserves_both_durable_console_drafts(
         await _boot_settled(app, pilot)
         await _press_until_screen(pilot, "ctrl+2", "ChatScreen")
         console = app.screen
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         controller = console._ensure_console_chat_controller()
         target = controller.store.ensure_session()
         binding = BuddyBinding.for_session(target)
@@ -995,6 +1021,9 @@ async def test_real_console_buddy_send_preserves_both_durable_console_drafts(
         target.draft = reply
         other = controller.new_session()
         await console._sync_native_console_chat_ui()
+        # The composer must belong to `other` before it is typed into; else
+        # leaving Console banks this text into `target` (review r15ti-rev1).
+        await wait(lambda: console._console_visible_draft_session_id == other.id)
         composer.load_draft("Unrelated visible composer")
         other.draft = "Unrelated visible composer"
         await _press_until_screen(pilot, "ctrl+1", "HomeScreen")
@@ -1029,7 +1058,7 @@ async def test_real_console_buddy_send_preserves_both_durable_console_drafts(
         await pilot.pause()
         try:
             if saved:
-                await until(lambda: modal.coordinator.resolve(binding) is not None)
+                await wait(lambda: modal.coordinator.resolve(binding) is not None)
                 target = modal.coordinator.resolve(binding)
                 target.draft = reply
                 assert target.persisted_conversation_id == conversation_id
@@ -1041,9 +1070,12 @@ async def test_real_console_buddy_send_preserves_both_durable_console_drafts(
                     controller.store.workspace_context.active_workspace_id
                     == prior_workspace
                 )
+            # Restore completion publishes the owner before the next visible
+            # projection enables Send. Wait for the action a user can perform.
+            await wait(lambda: not modal.query_one("#buddy-send", Button).disabled)
             modal.query_one("#buddy-reply", TextArea).load_text(reply)
             modal.query_one("#buddy-send", Button).press()
-            await until(gateway.started.is_set)
+            await wait(gateway.started.is_set)
             assert target.persisted_conversation_id
             assert modal.coordinator.resolve(binding) is target
             assert target.draft == reply
@@ -1051,10 +1083,10 @@ async def test_real_console_buddy_send_preserves_both_durable_console_drafts(
             assert composer.draft_text() == "Unrelated visible composer"
             assert controller.store.active_session_id == other.id
             modal.query_one("#buddy-close", Button).press()
-            await until(lambda: type(app.screen).__name__ == "HomeScreen")
+            await wait(lambda: type(app.screen).__name__ == "HomeScreen")
             assert controller.in_flight_run_count() == 1
             gateway.release.set()
-            await until(lambda: controller.in_flight_run_count() == 0)
+            await wait(lambda: controller.in_flight_run_count() == 0)
             assert target.draft == reply
             assert not controller.store.messages_for_session(other.id)
             reopened = open_buddy_conversation(
@@ -1062,8 +1094,8 @@ async def test_real_console_buddy_send_preserves_both_durable_console_drafts(
             )
             await pilot.pause()
             reopened.query_one("#buddy-open-console", Button).press()
-            await until(lambda: app.screen.__class__.__name__ == "ChatScreen")
-            await until(
+            await wait(lambda: app.screen.__class__.__name__ == "ChatScreen")
+            await wait(
                 lambda: (
                     controller.store.active_session_id == target.id
                     and composer.draft_text() == reply
@@ -1075,14 +1107,16 @@ async def test_real_console_buddy_send_preserves_both_durable_console_drafts(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_cold_home_saved_buddy_bootstraps_only_after_explicit_open(
-    monkeypatch, tmp_path
+    request: pytest.FixtureRequest, monkeypatch, tmp_path
 ):
+    wait = partial(until, seconds=COLD_HOME_SEND_SECONDS)
     from Tests.UI.test_console_native_chat_flow import (
         _configure_native_ready_console,
         _ReadyResolutionGateway,
     )
-    from Tests.UI.test_console_screen_reuse import _boot_settled, _scratch_env
+    from Tests.UI.test_console_screen_reuse import _boot_settled
     from tldw_chatbook.app import TldwCli
     from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
     from tldw_chatbook.Chat.console_library_policy import (
@@ -1090,12 +1124,16 @@ async def test_cold_home_saved_buddy_bootstraps_only_after_explicit_open(
         ConsoleAutoRetrieve,
         ConsoleLibraryPolicyCandidate,
     )
+    from tldw_chatbook.config import save_settings_to_cli_config
     from tldw_chatbook.UI.Navigation.buddy_conversation import open_buddy_conversation
 
-    _scratch_env(monkeypatch, tmp_path)
-    config_path = tmp_path / "config" / "tldw_cli" / "config.toml"
-    config_path.write_text(
-        config_path.read_text() + '\n[general]\ndefault_tab = "home"\n'
+    assert save_settings_to_cli_config(
+        {
+            "first_run": {"setup_completed": True},
+            "splash_screen": {"enabled": False},
+            "model_catalog": {"auto_refresh_enabled": False},
+            "general": {"default_tab": "home"},
+        }
     )
 
     class Gateway(_ReadyResolutionGateway):
@@ -1141,8 +1179,8 @@ async def test_cold_home_saved_buddy_bootstraps_only_after_explicit_open(
         )
         modal = open_buddy_conversation(app, binding, allow_voice=False)
         try:
-            await until(lambda: modal.coordinator.resolve(binding) is not None)
-            await until(lambda: not modal.query_one("#buddy-send", Button).disabled)
+            await wait(lambda: modal.coordinator.resolve(binding) is not None)
+            await wait(lambda: not modal.query_one("#buddy-send", Button).disabled)
             store = runtime.chat_store
             target = modal.coordinator.resolve(binding)
             assert store.active_session_id is None
@@ -1152,12 +1190,12 @@ async def test_cold_home_saved_buddy_bootstraps_only_after_explicit_open(
             )
             modal.query_one("#buddy-reply", TextArea).load_text("Follow up from Home")
             modal.query_one("#buddy-send", Button).press()
-            await until(gateway.started.is_set)
+            await wait(gateway.started.is_set)
             modal.query_one("#buddy-close", Button).press()
-            await until(lambda: app.screen.__class__.__name__ == "HomeScreen")
+            await wait(lambda: app.screen.__class__.__name__ == "HomeScreen")
             assert store.active_session_id is None
             assert runtime.view is None
-            await until(lambda: runtime.chat_controller.in_flight_run_count() == 0)
+            await wait(lambda: runtime.chat_controller.in_flight_run_count() == 0)
             from Tests.Chat.test_console_ask_user_round import _questions
 
             for kind in ("question", "approval"):
@@ -1181,7 +1219,7 @@ async def test_cold_home_saved_buddy_bootstraps_only_after_explicit_open(
                         )
                     )
                 try:
-                    await until(
+                    await wait(
                         lambda controller=controller, pending=pending: (
                             controller._interrupt_host.pending_total() == 1
                             or pending.done()
@@ -1199,7 +1237,7 @@ async def test_cold_home_saved_buddy_bootstraps_only_after_explicit_open(
                     )
                     await asyncio.wait_for(pending, 3)
                     reopened.query_one("#buddy-close", Button).press()
-                    await until(lambda: app.screen.__class__.__name__ == "HomeScreen")
+                    await wait(lambda: app.screen.__class__.__name__ == "HomeScreen")
                     assert store.active_session_id is None
                 finally:
                     if not pending.done():
@@ -1358,3 +1396,34 @@ async def test_saved_buddy_bulk_reads_allow_loop_progress_and_recheck_owner(
     finally:
         release.set()
         db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_deferred_transcript_scroll_after_close_keeps_draft(monkeypatch):
+    from tldw_chatbook.UI.Navigation.buddy_conversation import open_buddy_conversation
+
+    app = Harness()
+    async with app.run_test(size=(100, 36)) as pilot:
+        binding = BuddyBinding.for_session(app.target)
+        modal = open_buddy_conversation(app, binding, allow_voice=False)
+        await pilot.pause()
+        modal.query_one("#buddy-reply", TextArea).load_text("Retain after close")
+        await pilot.pause()
+        callbacks = []
+        original_after_refresh = modal.call_after_refresh
+        monkeypatch.setattr(modal, "call_after_refresh", callbacks.append)
+        modal._last_transcript = None
+        modal.refresh_projection()
+        assert callbacks == [modal._scroll_latest]
+        monkeypatch.setattr(modal, "call_after_refresh", original_after_refresh)
+        modal.query_one("#buddy-close", Button).press()
+        await until(lambda: app.screen is not modal)
+        await pilot.pause()
+        assert not modal._visible
+        assert not list(modal.query("#buddy-conversation-body"))
+        callbacks[0]()
+        await pilot.pause()
+        assert modal.coordinator.drafts[binding] == "Retain after close"
+        assert app.store.active_session_id == app.other.id
+        assert app.other.draft == "Unrelated Console draft"
+        assert not app.gateway.started.is_set()

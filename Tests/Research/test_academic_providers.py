@@ -225,12 +225,27 @@ def test_papers_to_evidence_maps_to_search_result_shape():
 def test_merge_dedups_papers_by_doi_and_keeps_web_results():
     web = [{"title": "Web", "url": "https://web.example/", "content": "w"}]
     papers = [
-        {"title": "P1", "abstract": "a", "doi": "10.1/x", "url": "https://doi.org/10.1/x",
-         "source": "arxiv"},
-        {"title": "P1 duplicate", "abstract": "a", "doi": "10.1/x",
-         "url": "https://other.example/10.1/x", "source": "semantic_scholar"},
-        {"title": "No DOI", "abstract": "b", "doi": None, "url": "https://nodoi.example/",
-         "source": "arxiv"},
+        {
+            "title": "P1",
+            "abstract": "a",
+            "doi": "10.1/x",
+            "url": "https://doi.org/10.1/x",
+            "source": "arxiv",
+        },
+        {
+            "title": "P1 duplicate",
+            "abstract": "a",
+            "doi": "10.1/x",
+            "url": "https://other.example/10.1/x",
+            "source": "semantic_scholar",
+        },
+        {
+            "title": "No DOI",
+            "abstract": "b",
+            "doi": None,
+            "url": "https://nodoi.example/",
+            "source": "arxiv",
+        },
     ]
 
     merged = merge_evidence_pools(web, papers)
@@ -257,7 +272,9 @@ def test_search_papers_queries_both_providers_and_dedups_by_doi(monkeypatch):
 
     def fake_arxiv(**kwargs):
         calls.append("arxiv")
-        return search_arxiv(query="agents", client=_client_returning([_response(text=_ATOM)]))
+        return search_arxiv(
+            query="agents", client=_client_returning([_response(text=_ATOM)])
+        )
 
     def fake_s2(**kwargs):
         calls.append("s2")
@@ -269,7 +286,8 @@ def test_search_papers_queries_both_providers_and_dedups_by_doi(monkeypatch):
         "tldw_chatbook.Research_Interop.academic_providers.search_arxiv", fake_arxiv
     )
     monkeypatch.setattr(
-        "tldw_chatbook.Research_Interop.academic_providers.search_semantic_scholar", fake_s2
+        "tldw_chatbook.Research_Interop.academic_providers.search_semantic_scholar",
+        fake_s2,
     )
 
     papers = asyncio.run(search_papers("agents"))
@@ -299,7 +317,8 @@ def test_search_papers_degrades_when_one_provider_fails(monkeypatch):
         "tldw_chatbook.Research_Interop.academic_providers.search_arxiv", boom_arxiv
     )
     monkeypatch.setattr(
-        "tldw_chatbook.Research_Interop.academic_providers.search_semantic_scholar", ok_s2
+        "tldw_chatbook.Research_Interop.academic_providers.search_semantic_scholar",
+        ok_s2,
     )
 
     papers = asyncio.run(search_papers("agents"))
@@ -316,7 +335,8 @@ def test_search_papers_raises_only_when_all_providers_fail(monkeypatch):
         "tldw_chatbook.Research_Interop.academic_providers.search_arxiv", boom
     )
     monkeypatch.setattr(
-        "tldw_chatbook.Research_Interop.academic_providers.search_semantic_scholar", boom
+        "tldw_chatbook.Research_Interop.academic_providers.search_semantic_scholar",
+        boom,
     )
 
     with pytest.raises(AcademicProviderError):
@@ -326,9 +346,17 @@ def test_search_papers_raises_only_when_all_providers_fail(monkeypatch):
 def test_paper_query_normalizes_questions_to_topics():
     from tldw_chatbook.Research_Interop.academic_providers import _paper_query
 
-    assert _paper_query("What is retrieval augmented generation?") == "retrieval augmented generation"
-    assert _paper_query("What are the main differences between HTTP/2 and HTTP/3?") == "differences between HTTP/2 and HTTP/3"
-    assert _paper_query("How does SQLite FTS5 ranking work?") == "SQLite FTS5 ranking work"
+    assert (
+        _paper_query("What is retrieval augmented generation?")
+        == "retrieval augmented generation"
+    )
+    assert (
+        _paper_query("What are the main differences between HTTP/2 and HTTP/3?")
+        == "differences between HTTP/2 and HTTP/3"
+    )
+    assert (
+        _paper_query("How does SQLite FTS5 ranking work?") == "SQLite FTS5 ranking work"
+    )
     assert _paper_query("already a topic query") == "already a topic query"
 
 
@@ -376,8 +404,13 @@ def test_search_papers_runs_providers_concurrently(monkeypatch):
     monkeypatch.setattr(ap, "search_arxiv", blocking_arxiv)
     monkeypatch.setattr(ap, "search_semantic_scholar", releasing_s2)
 
-    papers = ap.search_papers_sync_for_test() if hasattr(ap, "search_papers_sync_for_test") else None
+    papers = (
+        ap.search_papers_sync_for_test()
+        if hasattr(ap, "search_papers_sync_for_test")
+        else None
+    )
     import asyncio
+
     papers = asyncio.run(ap.search_papers("query"))
     assert papers == []
 
@@ -387,13 +420,25 @@ def test_search_papers_runs_providers_concurrently(monkeypatch):
 _BIORXIV_PAGE = {
     "messages": [{"count": 2, "total": 2}],
     "collection": [
-        {"doi": "10.1101/2026.01.01.000001", "title": "Protein folding advances",
-         "authors": "A. Author; B. Author", "category": "bioinformatics",
-         "date": "2026-01-02", "abstract": "We study folding dynamics.",
-         "server": "biorxiv", "version": 1},
-        {"doi": "10.1101/2026.01.01.000002", "title": "Unrelated climate paper",
-         "authors": "C. Author", "date": "2026-01-03", "abstract": "Ice cores.",
-         "server": "biorxiv", "version": 1},
+        {
+            "doi": "10.1101/2026.01.01.000001",
+            "title": "Protein folding advances",
+            "authors": "A. Author; B. Author",
+            "category": "bioinformatics",
+            "date": "2026-01-02",
+            "abstract": "We study folding dynamics.",
+            "server": "biorxiv",
+            "version": 1,
+        },
+        {
+            "doi": "10.1101/2026.01.01.000002",
+            "title": "Unrelated climate paper",
+            "authors": "C. Author",
+            "date": "2026-01-03",
+            "abstract": "Ice cores.",
+            "server": "biorxiv",
+            "version": 1,
+        },
     ],
 }
 
@@ -494,14 +539,31 @@ def test_search_papers_provider_set_filtering(monkeypatch):
 
     def fake_arxiv(**kw):
         calls.append("arxiv")
-        return {"items": [{"title": "A", "abstract": "a", "doi": "10.1/a",
-                           "url": "https://doi.org/10.1/a", "source": "arxiv"}]}
+        return {
+            "items": [
+                {
+                    "title": "A",
+                    "abstract": "a",
+                    "doi": "10.1/a",
+                    "url": "https://doi.org/10.1/a",
+                    "source": "arxiv",
+                }
+            ]
+        }
 
     def fake_pubmed(**kw):
         calls.append("pubmed")
-        return {"items": [{"title": "P", "abstract": "p", "doi": "10.2/p",
-                           "url": "https://pubmed.ncbi.nlm.nih.gov/1/",
-                           "source": "pubmed"}]}
+        return {
+            "items": [
+                {
+                    "title": "P",
+                    "abstract": "p",
+                    "doi": "10.2/p",
+                    "url": "https://pubmed.ncbi.nlm.nih.gov/1/",
+                    "source": "pubmed",
+                }
+            ]
+        }
 
     def unused_s2(**kw):
         calls.append("semantic_scholar")
@@ -521,7 +583,8 @@ def test_default_academic_providers_from_config(monkeypatch):
     from tldw_chatbook.Research_Interop import academic_providers as ap
 
     monkeypatch.setattr(
-        ap, "get_cli_setting",
+        ap,
+        "get_cli_setting",
         lambda section, key, default=None: "arxiv, pubmed, biorxiv",
     )
     assert ap._default_academic_providers() == ["arxiv", "pubmed", "biorxiv"]
@@ -545,7 +608,8 @@ def test_search_papers_dedupes_and_rejects_unknown_defaults(monkeypatch):
     # Duplicates collapse; unknown tokens now RAISE (a config typo must not
     # silently narrow the provider set).
     monkeypatch.setattr(
-        ap, "_default_academic_providers",
+        ap,
+        "_default_academic_providers",
         lambda: ["arxiv", "arxiv"],
     )
     papers = asyncio.run(ap.search_papers("q"))
@@ -553,7 +617,8 @@ def test_search_papers_dedupes_and_rejects_unknown_defaults(monkeypatch):
     assert papers == []
 
     monkeypatch.setattr(
-        ap, "_default_academic_providers",
+        ap,
+        "_default_academic_providers",
         lambda: ["arxiv", "not_a_provider"],
     )
     with pytest.raises(ValueError, match="unknown research source or category"):
@@ -565,10 +630,13 @@ def test_search_papers_dedupes_and_rejects_unknown_defaults(monkeypatch):
 _OPENALEX_PAGE = {
     "results": [
         {
-            "id": "W1", "doi": "https://doi.org/10.1234/oa.1",
+            "id": "W1",
+            "doi": "https://doi.org/10.1234/oa.1",
             "title": "Graph of scholarship",
             "abstract_inverted_index": {
-                "Scholarship": [0], "is": [1], "vast": [2],
+                "Scholarship": [0],
+                "is": [1],
+                "vast": [2],
             },
             "authorships": [{"author": {"display_name": "E. Scholar"}}],
             "publication_year": 2026,
@@ -745,8 +813,15 @@ def test_search_papers_accepts_categories(monkeypatch):
         return {"items": []}
 
     monkeypatch.setattr(ap, "search_biorxiv", unused)  # serves biorxiv + medrxiv lanes
-    for name in ("arxiv", "semantic_scholar",
-                 "openalex", "crossref", "zenodo", "figshare", "osf"):
+    for name in (
+        "arxiv",
+        "semantic_scholar",
+        "openalex",
+        "crossref",
+        "zenodo",
+        "figshare",
+        "osf",
+    ):
         monkeypatch.setattr(ap, f"search_{name}", unused)
     monkeypatch.setattr(ap, "search_pubmed", fake_pubmed)
 
@@ -757,6 +832,7 @@ def test_search_papers_accepts_categories(monkeypatch):
 
 
 # --- malformed-payload degradation + OSF Accept header (task-17385) ----------------
+
 
 def test_search_osf_sends_accept_json_header(monkeypatch):
     monkeypatch.setattr(
@@ -775,8 +851,17 @@ def test_malformed_payload_degrades_only_the_bad_provider(monkeypatch):
     from tldw_chatbook.Research_Interop import academic_providers as ap
 
     def good_arxiv(**kw):
-        return {"items": [{"title": "Good", "abstract": "a", "doi": "10.1/g",
-                           "url": "https://doi.org/10.1/g", "source": "arxiv"}]}
+        return {
+            "items": [
+                {
+                    "title": "Good",
+                    "abstract": "a",
+                    "doi": "10.1/g",
+                    "url": "https://doi.org/10.1/g",
+                    "source": "arxiv",
+                }
+            ]
+        }
 
     def exploding_osf(**kw):
         raise ap.AcademicProviderError("invalid JSON payload from osf")

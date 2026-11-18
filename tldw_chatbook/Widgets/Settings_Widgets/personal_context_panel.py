@@ -7,6 +7,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
+from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -14,7 +15,7 @@ from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import QueryError
 from textual.reactive import reactive
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Select, Static
+from textual.widgets import Button, Collapsible, Input, Select, Static
 from tldw_profile_core import (
     AgentVisibility,
     ConstraintPayload,
@@ -34,6 +35,15 @@ from tldw_profile_core import (
 )
 
 from ...Personal_Context.export_service import ExportRequest, RecoveryExportRequest
+from ...Personal_Context.recovery import (
+    RESTORED_LINK_STATE,
+    REVIEW_AVAILABLE,
+    REVIEW_UNAVAILABLE,
+    SYNC_IDENTITY_PENDING,
+    approve_restore_review,
+    restore_review,
+)
+from ...Personal_Context.repository_keys import AMBIGUOUS_SCOPES, REBUILT_SCOPE_RECORDS
 from ...Personal_Context.runtime_policy import AgentAuthority
 from ...Personal_Context.service import (
     PersonalContextService,
@@ -43,12 +53,16 @@ from ...Personal_Context.service import (
     ProfileOperationalState,
     RecordMutation,
 )
+from ...Personal_Context.settings_provenance import SettingsProvenanceSubject
 from ..confirmation_dialog import ConfirmationDialog
+from .personal_context_provenance import (
+    PersonalContextProvenanceDetails,
+    literal_metadata,
+)
 from .personal_context_review_modal import (
     PersonalContextProposalReviewModal,
     ProposalReviewResult,
 )
-
 
 _STATE_LABELS = {
     ProfileOperationalState.ABSENT: "Empty",
@@ -62,6 +76,32 @@ _DISABLED_REASON_COPY = {
     "personal_context_disabled": "Agent use is disabled. Your profile remains available for manual editing.",
     "runtime_policy_invalid": "Agent use is disabled because the local runtime policy is invalid.",
     "agent_authority_denied": "Agent use is disabled because runtime authority could not be verified.",
+}
+
+# TASK-40136 (spec Q2): why a profile is locked, naming only what a locked
+# profile allows: restore or roll back through Backup & Restore, then Try again.
+_LOCKED_REASON_COPY = {
+    "personal_context_key_not_in_backup": (
+        "Personal Context is locked: this backup did not include its key, and "
+        "this device does not have it. Your profile data is kept. To read it, "
+        "restore again with Replace from an encrypted backup that includes "
+        "credentials."
+    ),
+    "personal_context_keyring_unavailable": (
+        "Personal Context can't open in a separately restored copy, because that "
+        "copy has no access to the system keyring. Its data and key are kept. "
+        "Restore with Replace to use it."
+    ),
+    "personal_context_key_install_unavailable": (
+        "Personal Context was restored but stays locked: this device has no "
+        "secure keyring to hold its key. The key is kept in the encrypted "
+        "restore copy. Set up a secure keyring, then restore again."
+    ),
+    "personal_context_key_mismatch": (
+        "Personal Context is locked: the key on this device belongs to a "
+        "different copy of the profile. Your data is kept. Use Backup & Restore "
+        "to roll back or restore the matching copy, then choose Try again."
+    ),
 }
 
 _KIND_OPTIONS = (
@@ -81,6 +121,106 @@ _COLLISION_COPY = (
     "A record with the same kind and subject is already active in this scope. "
     "Change the kind or subject, or archive the other record."
 )
+
+
+_SYNC_IDENTITY_STEP = (
+    "Backup & Restore > Restored profiles > Sync identity review"
+)
+_RESTORE_REVIEW_COPY = {
+    REVIEW_AVAILABLE: (
+        "This profile was restored from a backup. Choose Review restored profile "
+        "to confirm Personal Context on this device; it re-encrypts the profile "
+        "under a new key. Sync with your home server stays off until you also "
+        f"review the restored sync identity in {_SYNC_IDENTITY_STEP}."
+    ),
+    # TASK-40139 AC#8: the old link never resumes; the next one is a fresh link.
+    RESTORED_LINK_STATE: (
+        "Personal Context sync is off because this profile was restored. Choose "
+        "Review restored profile, review the restored sync identity in "
+        f"{_SYNC_IDENTITY_STEP}, then Link to home server again. If the old "
+        "device is lost, remove it on your server."
+    ),
+    # Review r14pccB: sync stays off after this review until that one.
+    SYNC_IDENTITY_PENDING: (
+        "Personal Context sync is still off: review the restored sync identity in "
+        f"{_SYNC_IDENTITY_STEP}, then Link to home server again."
+    ),
+    REVIEW_UNAVAILABLE: (
+        "Personal Context sync is off: the restore review for this profile could "
+        "not be read. Reopen this page later to check again; the profile stays usable here."
+    ),
+}
+# TASK-40140/41121: what the review removes, counted by kind, in this order.
+_DAMAGED_NOUNS = {
+    "record": ("record", "records"),
+    "proposal": ("proposal", "proposals"),
+    "manifest_history": ("older profile version", "older profile versions"),
+    "scope_history": ("older scope version", "older scope versions"),
+    "outbox": ("queued sync change", "queued sync changes"),
+    "undo": ("undo entry", "undo entries"),
+    "record_link": ("record link", "record links"),
+    "scope_binding": ("workspace mapping", "workspace mappings"),
+    "scope_binding_history": (
+        "older workspace mapping version",
+        "older workspace mapping versions",
+    ),
+    "runtime_policy": ("agent access setting", "agent access settings"),
+    "runtime_switch": (
+        "Personal Context on/off setting",
+        "Personal Context on/off settings",
+    ),
+    "runtime_switch_history": (
+        "older Personal Context on/off setting version",
+        "older Personal Context on/off setting versions",
+    ),
+    "runtime_policy_history": (
+        "older agent access setting version",
+        "older agent access setting versions",
+    ),
+}
+
+
+# Fix round 3: damaged scopes no evidence tells apart refuse, never guessed.
+_AMBIGUOUS_SCOPES_COPY = (
+    "Some damaged scopes can't be told apart, so this restored profile can't be "
+    "confirmed. Restore Personal Context again from another backup, or roll the "
+    "restore back in Backup & Restore > Recovery copies"
+)
+
+
+def _damaged_copy(counts: dict[str, int]) -> str:
+    """The review's damage line; owner decisions 2026-11-14 to 2026-11-16."""
+    if counts.get(AMBIGUOUS_SCOPES):
+        return _AMBIGUOUS_SCOPES_COPY
+    sentences = []
+    if scopes := counts.get("scope"):
+        kept = counts.get(REBUILT_SCOPE_RECORDS, 0)
+        one = scopes == 1
+        sentences.append(
+            f"{scopes} damaged scope{'' if one else 's'} will be rebuilt; "
+            + (
+                f"{'it has' if one else 'they have'} no records"
+                if not kept
+                else f"{'its' if one else 'their'} {kept} "
+                f"record{' is' if kept == 1 else 's are'} kept"
+            )
+        )
+    parts = [
+        f"{counts[kind]} damaged {nouns[counts[kind] != 1]}"
+        for kind, nouns in _DAMAGED_NOUNS.items()
+        if counts.get(kind)
+    ]
+    if parts:
+        listed = parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+        sentences.append(listed + " can't be read and will be removed")
+    if policies := counts.get("runtime_policy"):
+        sentences.append(
+            f"Agent access for {'that scope' if policies == 1 else 'those scopes'} "
+            "is Off until you set it again"
+        )
+    if counts.get("runtime_switch"):
+        sentences.append("Agent use of Personal Context stays off until you turn it on")
+    return ". ".join(sentences)
 
 
 def _bounded_label(value: object, *, limit: int = 80) -> str:
@@ -161,6 +301,7 @@ class PersonalContextSettingsPanel(Vertical):
     load_failed = reactive(False, recompose=True)
     editor_mode = reactive("", recompose=True)
     selected_record_id = reactive("", recompose=True)
+    selected_deleted_record_id = reactive("", recompose=True)
     selected_scope_id = reactive(_ALL_SCOPES, recompose=True)
     interview_mode = reactive("fixed", recompose=True)
 
@@ -169,6 +310,9 @@ class PersonalContextSettingsPanel(Vertical):
         service: PersonalContextService | Callable[..., PersonalContextService],
         interview_launcher: Callable[[str, str, str], Any] | None = None,
         link_launcher: Callable[[], Any] | None = None,
+        *,
+        current_service_getter: Callable[[], PersonalContextService | None]
+        | None = None,
         **kwargs: Any,
     ) -> None:
         kwargs.setdefault("id", "personal-context-settings-panel")
@@ -181,29 +325,83 @@ class PersonalContextSettingsPanel(Vertical):
         else:
             self._service = service
             self._service_factory = None
+        # Fixed injected services own their identity. Factory hosts must provide
+        # a cheap current cache reader; absence leaves provenance fail-closed.
+        self._current_service_getter = current_service_getter or (
+            (lambda: self._service) if self._service_factory is None else (lambda: None)
+        )
         self._interview_launcher = interview_launcher
         self._link_launcher = link_launcher
         self._load_generation = 0
+        self._proposal_review: PersonalContextProposalReviewModal | None = None
+        self._restore_review: str | None = None
+        self._damaged: dict[str, int] = {}
 
     def on_mount(self) -> None:
         self.load_records(retry_locked=True)
+
+    def on_unmount(self) -> None:
+        self._load_generation += 1
+        self._invalidate_provenance()
+
+    def _invalidate_provenance(self) -> None:
+        for detail in self.query(PersonalContextProvenanceDetails):
+            detail.invalidate()
+        review = getattr(self, "_proposal_review", None)
+        if review is not None:
+            review.invalidate_provenance()
+
+    def watch_selected_record_id(self) -> None:
+        self._invalidate_provenance()
+
+    def watch_selected_deleted_record_id(self) -> None:
+        self._invalidate_provenance()
+
+    def watch_selected_scope_id(self) -> None:
+        self._invalidate_provenance()
+
+    def _fresh_service(self, *, retry_locked: bool = False) -> PersonalContextService:
+        """Resolve the current owner off-thread, without changing the UI cache."""
+        if self._service_factory is not None:
+            return self._service_factory(retry_locked=retry_locked)
+        if self._service is None:
+            raise RuntimeError("Personal Context service is unavailable")
+        return self._service
 
     def load_records(self, *, retry_locked: bool = False) -> None:
         """Fetch one content snapshot without blocking Textual's event loop."""
 
         self._load_generation += 1
+        self._invalidate_provenance()
         self._load_records_in_worker(self._load_generation, retry_locked)
 
     @work(thread=True, exclusive=True, group="personal-context-settings-load")
     def _load_records_in_worker(self, generation: int, retry_locked: bool) -> None:
         try:
-            snapshot = self._require_service(
-                retry_locked=retry_locked
-            ).settings_snapshot()
+            service = self._fresh_service(retry_locked=retry_locked)
+            snapshot = service.settings_snapshot()
         except Exception:
             self.app.call_from_thread(self._apply_load_error, generation)
             return
-        self.app.call_from_thread(self._apply_snapshot, generation, snapshot)
+        path = self._repository_path(service)
+        review = None if path is None else restore_review(path)
+        damaged: dict[str, int] = {}
+        if review in {REVIEW_AVAILABLE, RESTORED_LINK_STATE}:
+            # TASK-40140/41121, owner decisions 2026-11-14 and 2026-11-15:
+            # counted by kind before confirming.
+            count = getattr(service, "damaged_object_counts", None)
+            try:
+                damaged = dict(count()) if callable(count) else {}
+            except Exception:
+                damaged = {}
+        self.app.call_from_thread(
+            self._apply_snapshot, generation, snapshot, service, review, damaged
+        )
+
+    @staticmethod
+    def _repository_path(service) -> Path | None:
+        """The open repository's file; a locked or absent service shows no review."""
+        return getattr(getattr(service, "_repository", None), "db_path", None)
 
     def _require_service(self, *, retry_locked: bool = False) -> PersonalContextService:
         if self._service is None:
@@ -224,18 +422,37 @@ class PersonalContextSettingsPanel(Vertical):
         self._refresh_settings_shortcuts()
 
     def _apply_snapshot(
-        self, generation: int, snapshot: PersonalContextSettingsSnapshot
+        self,
+        generation: int,
+        snapshot: PersonalContextSettingsSnapshot,
+        service: PersonalContextService | None = None,
+        review: str | None = None,
+        damaged: dict[str, int] | None = None,
     ) -> None:
         if generation != self._load_generation:
             return
+        if service is not None:
+            self._service = service
+        damaged = damaged or {}
+        review_changed = (review, damaged) != (self._restore_review, self._damaged)
+        self._restore_review = review
+        self._damaged = damaged
         self.load_failed = False
         self.snapshot = snapshot
+        if review_changed:
+            self.refresh(recompose=True)
         scope_ids = {scope.scope.scope_id for scope in snapshot.scopes}
         if self.selected_scope_id not in scope_ids | {_ALL_SCOPES}:
             self.selected_scope_id = _ALL_SCOPES
         visible_records = self._visible_records(snapshot)
         record_ids = {record.record_id for record in visible_records}
-        if self.selected_record_id not in record_ids:
+        if self.selected_deleted_record_id not in {
+            row.subject.object_id for row in self._visible_deleted_records()
+        }:
+            self.selected_deleted_record_id = ""
+        if self.selected_deleted_record_id:
+            self.selected_record_id = ""
+        elif self.selected_record_id not in record_ids:
             self.selected_record_id = (
                 visible_records[0].record_id if visible_records else ""
             )
@@ -250,6 +467,16 @@ class PersonalContextSettingsPanel(Vertical):
             refresh()
 
     def compose(self) -> ComposeResult:
+        """Bind interactive controls to the snapshot and local view they render."""
+        snapshot = self.snapshot
+        view_state = self._control_view_state()
+        for control in self._compose_contents():
+            if isinstance(control, (Button, Select)):
+                control._personal_context_snapshot = snapshot
+                control._personal_context_view_state = view_state
+            yield control
+
+    def _compose_contents(self) -> ComposeResult:
         yield Static("My Profile", classes="destination-section settings-column-title")
         if self.load_failed:
             yield Static(
@@ -277,7 +504,11 @@ class PersonalContextSettingsPanel(Vertical):
 
         if status.state is ProfileOperationalState.LOCKED:
             yield Static(
-                "Your encrypted profile is locked. Unlock secure key storage and try again.",
+                _LOCKED_REASON_COPY.get(
+                    status.reason_code,
+                    "Your encrypted profile is locked. Unlock secure key storage and try again.",
+                ),
+                id="personal-context-locked-reason",
                 classes="settings-inline-guidance",
             )
             yield Button("Try again", id="personal-context-reload")
@@ -374,6 +605,7 @@ class PersonalContextSettingsPanel(Vertical):
                 yield Static(scope.label, classes="settings-input-label")
                 yield Select(
                     (
+                        ("Off", AgentAuthority.OFF.value),
                         ("Read only", AgentAuthority.READ_ONLY.value),
                         ("Propose changes", AgentAuthority.PROPOSE.value),
                         ("Direct write", AgentAuthority.DIRECT_WRITE.value),
@@ -421,6 +653,32 @@ class PersonalContextSettingsPanel(Vertical):
                         classes=classes,
                     )
 
+        deleted_records = self._visible_deleted_records()
+        if deleted_records:
+            with Collapsible(
+                title="Deleted record metadata",
+                id="personal-context-deleted-metadata",
+                collapsed=not bool(self.selected_deleted_record_id),
+            ):
+                for index, row in enumerate(deleted_records):
+                    yield Button(
+                        Text(
+                            f"Deleted · {literal_metadata(row.subject.object_id)} · Updated {row.updated_at.isoformat()}"
+                        ),
+                        id=f"personal-context-deleted-{index}",
+                        classes="personal-context-record-row",
+                    )
+        subject = self._provenance_subject(
+            "record", self.selected_record_id or self.selected_deleted_record_id
+        )
+        if subject is not None:
+            yield PersonalContextProvenanceDetails(
+                subject,
+                self._fresh_service,
+                current_service_getter=self._current_service_getter,
+                reload_details=self.load_records,
+            )
+
         if self.editor_mode:
             yield from self._compose_editor()
 
@@ -454,6 +712,24 @@ class PersonalContextSettingsPanel(Vertical):
             "Review profile, collision, and workspace outcomes before linking to your home server.",
             classes="settings-inline-guidance",
         )
+        if self._restore_review is not None:
+            # TASK-40134: a restored profile never resumes its old link here.
+            yield Static(
+                _RESTORE_REVIEW_COPY[self._restore_review],
+                id="personal-context-restore-review-copy",
+                classes="settings-inline-guidance",
+            )
+            if self._restore_review in {REVIEW_AVAILABLE, RESTORED_LINK_STATE}:
+                if any(self._damaged.values()):
+                    yield Static(
+                        _damaged_copy(self._damaged),
+                        id="personal-context-restore-review-damaged",
+                        classes="settings-inline-guidance",
+                        markup=False,
+                    )
+                yield Button(
+                    "Review restored profile", id="personal-context-restore-review"
+                )
         yield Button(
             "Link to home server",
             id="personal-context-link-server",
@@ -474,7 +750,7 @@ class PersonalContextSettingsPanel(Vertical):
         )
         with Horizontal(classes="personal-context-toolbar"):
             yield Button(
-                f"Export plaintext: {export_scope_label}",
+                Text.assemble("Export plaintext: ", export_scope_label),
                 id="personal-context-export-plaintext",
             )
             yield Button("Export recovery copy", id="personal-context-export-recovery")
@@ -528,6 +804,30 @@ class PersonalContextSettingsPanel(Vertical):
                 row
                 for row in (self.snapshot.scopes if self.snapshot else ())
                 if row.scope.scope_id == scope_id
+            ),
+            None,
+        )
+
+    def _visible_deleted_records(self):
+        if self.snapshot is None:
+            return ()
+        return tuple(
+            row
+            for row in self.snapshot.deleted_records
+            if self.selected_scope_id == _ALL_SCOPES
+            or row.scope_id == self.selected_scope_id
+        )
+
+    def _provenance_subject(
+        self, object_type: str, object_id: str
+    ) -> SettingsProvenanceSubject | None:
+        return next(
+            (
+                subject
+                for subject in (
+                    self.snapshot.provenance_subjects if self.snapshot else ()
+                )
+                if subject.object_type == object_type and subject.object_id == object_id
             ),
             None,
         )
@@ -699,12 +999,37 @@ class PersonalContextSettingsPanel(Vertical):
                 yield Button("Save", id="personal-context-save", variant="primary")
                 yield Button("Cancel", id="personal-context-cancel")
 
+    def _control_view_state(self) -> tuple[str, str, str, str, str, bool]:
+        """Return the local state used to compose indexed rows and actions."""
+        return (
+            self.editor_mode,
+            self.selected_record_id,
+            self.selected_deleted_record_id,
+            self.selected_scope_id,
+            self.interview_mode,
+            self.load_failed,
+        )
+
+    def _rendered_control_is_current(self, control: Button | Select) -> bool:
+        try:
+            current = self.query_one(f"#{control.id}")
+        except QueryError:
+            return False
+        return (
+            control is current
+            and getattr(control, "_personal_context_snapshot", None) is self.snapshot
+            and getattr(control, "_personal_context_view_state", None)
+            == self._control_view_state()
+        )
+
     @on(Button.Pressed)
     def handle_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""
         if not button_id.startswith("personal-context-"):
             return
         event.stop()
+        if not self._rendered_control_is_current(event.button):
+            return
         if button_id == "personal-context-reload":
             self.load_records(retry_locked=True)
         elif button_id == "personal-context-runtime":
@@ -742,10 +1067,40 @@ class PersonalContextSettingsPanel(Vertical):
             self.action_run_interview()
         elif button_id == "personal-context-link-server":
             self.action_link_server()
+        elif button_id == "personal-context-restore-review":
+            path = self._repository_path(self._service)
+            service = self._service
+            damaged = self._damaged
+
+            def review() -> None:
+                # TASK-40140, owner decision 2026-11-13: re-encrypt first, so a
+                # failure leaves the profile readable and the review offered.
+                # Owner decisions 2026-11-14/15: the damaged objects shown go too.
+                try:
+                    service.reencrypt_after_restore(expected_damaged=damaged)
+                except BaseException:
+                    # A refusal (say, the count changed) reloads the review, so
+                    # the current count shows before the next confirm.
+                    self.app.call_from_thread(self.load_records)
+                    raise
+                approve_restore_review(path)
+
+            self.notify("Re-encrypting the restored profile under a new key…")
+            self._run_mutation(
+                review, "Restored profile reviewed and re-encrypted under a new key."
+            )
         elif button_id.startswith("personal-context-proposal-"):
             self._review_proposal_index(button_id)
         elif button_id.startswith("personal-context-record-"):
             self._select_record_index(button_id)
+        elif button_id.startswith("personal-context-deleted-"):
+            try:
+                row = self._visible_deleted_records()[int(button_id.rsplit("-", 1)[1])]
+            except (IndexError, ValueError):
+                return
+            self.editor_mode = ""
+            self.selected_record_id = ""
+            self.selected_deleted_record_id = row.subject.object_id
 
     def _proposal_label(self, proposal) -> str:
         payload = (
@@ -814,17 +1169,24 @@ class PersonalContextSettingsPanel(Vertical):
                 severity="warning",
             )
             return
-        self.app.push_screen(
-            PersonalContextProposalReviewModal(
-                proposal_service,
-                proposal=proposal,
-                scope_label=scope_label,
-                target_record=self._proposal_target(proposal),
+        self._proposal_review = PersonalContextProposalReviewModal(
+            proposal_service,
+            proposal=proposal,
+            scope_label=scope_label,
+            target_record=self._proposal_target(proposal),
+            provenance_subject=self._provenance_subject(
+                "proposal", proposal.proposal_id
             ),
+            provenance_service_loader=self._fresh_service,
+            provenance_current_service_getter=self._current_service_getter,
+        )
+        self.app.push_screen(
+            self._proposal_review,
             callback=self._proposal_review_finished,
         )
 
     def _proposal_review_finished(self, result: ProposalReviewResult | None) -> None:
+        self._proposal_review = None
         self.load_records()
         if result is None:
             return
@@ -838,6 +1200,7 @@ class PersonalContextSettingsPanel(Vertical):
             return
         try:
             index = int(button_id.rsplit("-", 1)[1])
+            self.selected_deleted_record_id = ""
             self.selected_record_id = self._visible_records()[index].record_id
         except (IndexError, ValueError):
             return
@@ -845,16 +1208,12 @@ class PersonalContextSettingsPanel(Vertical):
     @on(Select.Changed)
     def handle_select_changed(self, event: Select.Changed) -> None:
         select_id = event.select.id or ""
+        if not select_id.startswith("personal-context-"):
+            return
+        if not self._rendered_control_is_current(event.select):
+            return
         if select_id == "personal-context-scope-filter":
             if event.value is Select.BLANK:
-                return
-            try:
-                current_filter = self.query_one(
-                    "#personal-context-scope-filter", Select
-                )
-            except QueryError:
-                return
-            if event.select is not current_filter:
                 return
             self.selected_scope_id = str(event.value)
             visible_records = self._visible_records()
@@ -1196,6 +1555,7 @@ class PersonalContextSettingsPanel(Vertical):
         close_editor: bool = False,
         reload_removed_on_failure: bool = False,
     ) -> None:
+        self._invalidate_provenance()
         self.run_worker(
             lambda: self._perform_mutation(
                 operation,
@@ -1222,7 +1582,12 @@ class PersonalContextSettingsPanel(Vertical):
             self.app.call_from_thread(self._mutation_key_collision)
         except ProfileConflictError:
             self.app.call_from_thread(self._mutation_conflict)
-        except Exception:
+        except Exception as error:
+            if getattr(error, "reason_code", None) == AMBIGUOUS_SCOPES:
+                self.app.call_from_thread(
+                    self.notify, _AMBIGUOUS_SCOPES_COPY + ".", severity="error"
+                )
+                return
             if reload_removed_on_failure:
                 try:
                     snapshot = self._require_service().settings_snapshot()

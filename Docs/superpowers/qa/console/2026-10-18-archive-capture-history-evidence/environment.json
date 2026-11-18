@@ -1,0 +1,9 @@
+{
+  "executable": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+  "python": "3.12.11 (main, Aug 14 2025, 16:05:17) [Clang 20.1.4 ]",
+  "platform": "macOS-26.5.2-arm64-arm-64bit",
+  "sqlite": "3.49.1",
+  "pytest": "8.4.2",
+  "ruff": "0.16.6",
+  "textual": "8.2.8"
+}

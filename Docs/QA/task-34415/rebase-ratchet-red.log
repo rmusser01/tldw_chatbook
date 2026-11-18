@@ -1,0 +1,22 @@
+F.                                                                       [100%]
+=================================== FAILURES ===================================
+_ test_screen_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/chat_screen.py] _
+Tests/Architecture/test_screen_size_ratchet.py:987: in test_screen_does_not_grow_past_its_budget
+    assert lines <= max_lines, (
+E   AssertionError: tldw_chatbook/UI/Screens/chat_screen.py grew to 25231 lines (budget 25204, +27).
+E
+E     tldw_chatbook/UI/Screens/chat_screen.py is under a one-way size ratchet (Tests/Architecture/test_screen_size_ratchet.py).
+E     New Console code belongs in tldw_chatbook/UI/Console_Modules/ — see DESIGN.md section 7 for the region-vs-controller rule and the dependency-binding contract.
+E     Do NOT raise the budget to make this pass. Lower it when a decomposition wave lands.
+E   assert 25231 <= 25204
+---------------------------- Captured stderr setup -----------------------------
+2026-10-06 19:07:23.192 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-10-06 19:07:23.231 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-10-06 19:07:23.281 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-10-06 19:07:23.287 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+============================= slowest 25 durations =============================
+
+(6 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Architecture/test_screen_size_ratchet.py::test_screen_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/chat_screen.py]
+1 failed, 1 passed in 0.46s

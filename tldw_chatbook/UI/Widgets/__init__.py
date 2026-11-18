@@ -38,7 +38,18 @@ _LAZY_EXPORTS = {
     "UIElementSearchEngine": ".config_search_widget",
 }
 
-__all__ = list(_LAZY_EXPORTS)
+# Static (ruff/IDE-visible) form of the same export list -- ruff cannot read
+# ``__all__ = list(_LAZY_EXPORTS)`` and would flag the TYPE_CHECKING
+# re-exports above as unused imports (F401).
+__all__ = [
+    "SmartContentTree",
+    "ContentNodeData",
+    "ContentSelectionChanged",
+    "ConfigSearchResult",
+    "UIElementSearchEngine",
+]
+
+assert set(__all__) == set(_LAZY_EXPORTS), "UI.Widgets __all__ drifted from _LAZY_EXPORTS"
 
 
 def __getattr__(name: str):

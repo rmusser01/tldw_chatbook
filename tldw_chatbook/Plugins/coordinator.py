@@ -17,7 +17,6 @@ from uuid import uuid4
 
 from .authority import PluginMarker, snapshot_digest
 from .authority_store import PluginAuthorityStore
-from .inspection import inspect_package
 from .models import PackageInspection
 from .package_files import canonical_json, capture_package, materialize_package
 from .registry import PluginRegistry
@@ -50,6 +49,7 @@ class PluginCoordinator:
         *,
         fences=None,
         mcp_mapping_owner=None,
+        model_mapping_owner=None,
     ) -> None:
         if threading.current_thread() is threading.main_thread():
             raise RuntimeError("plugin coordinator requires a dedicated worker")
@@ -58,6 +58,7 @@ class PluginCoordinator:
         _ = registry.schema_version
         self.registry, self.authority, self.owner = registry, authority, owner
         self.mcp_mapping_owner = mcp_mapping_owner
+        self.model_mapping_owner = model_mapping_owner
         self._thread = threading.get_ident()
         self._loop = asyncio.get_event_loop()
         from .admission import LivePluginFences
@@ -103,20 +104,82 @@ class PluginCoordinator:
             raise RuntimeError("plugin coordinator requires its persistent worker loop")
         self.owner.require_owner(self.registry.path.parent)
 
-    def bootstrap(self, passphrase: str) -> None:
-        """Explicit owner-gated setup; never bootstrap over registry authority."""
+    def bootstrap(self, passphrase: str) -> Path | None:
+        """Explicit owner-gated setup; never bootstrap over registry authority.
+
+        The one exception is the reviewed post-restore reset (TASK-40308): while
+        a restored generation awaits plugin review and authority was reset,
+        setup sets the restored registry, download records, downloads and
+        package bytes aside and keeps every saved-data folder for reviewed
+        reattachment. Returns that set-aside folder, if any. An unreadable
+        restore witness refuses. With nothing retained, setup sets downloads
+        and records signed by an earlier authority aside (TASK-41108).
+        """
         self._require_worker()
         prior = self.registry.authority_projection(operation_result=None)
-        if prior["installations"] or prior["data_roots"]:
-            raise ValueError(
-                "existing installation or root custody requires reviewed recovery"
-            )
         data_anchor = self.owner.root / "data"
-        if os.path.lexists(data_anchor):
-            raise ValueError("retained data anchor requires reviewed recovery")
+        retained = bool(prior["installations"] or prior["data_roots"])
+        aside = None
+        if retained or os.path.lexists(data_anchor):
+            from .backup import restore_pending
+
+            try:
+                pending = restore_pending(self.owner.root)
+            except (OSError, ValueError, RuntimeError):
+                pending = False  # An unreadable witness is no restore: refuse.
+            if pending:
+                aside = self._set_restored_plugins_aside()
+            elif retained:
+                raise ValueError(
+                    "existing installation or root custody requires reviewed recovery"
+                )
+            else:
+                raise ValueError("retained data anchor requires reviewed recovery")
+        elif self.authority.posture() == "needs_setup":
+            # TASK-41108: records signed by a reset authority would fail every
+            # download listing under the new one; set them aside with their
+            # downloads. Not a restore, so nothing is approved (None).
+            self._set_aside(("staging", "acquisition-custody"))
         self.authority.bootstrap(passphrase)
         self._published = self.authority.verify_current()
         self.root_usage.initialize(self._published, fresh=True)
+        return aside
+
+    def _set_restored_plugins_aside(self) -> Path:
+        """Move restored plugin state into ``reset-<id>/``; delete nothing.
+
+        Backups exclude ``reset-<id>/`` whole, never walked (so the downloads'
+        host configuration copies stay out of archives), and replace restores
+        keep it (``Plugins/backup.kept_whole``). Saved-data folders under
+        ``data/`` stay where they are. The restored package bytes
+        (``packages/``, ``packages-revisions/``) move too, so plugin storage
+        capacity stops counting them (TASK-41107); no registry names them.
+        """
+        if self.authority.posture() != "needs_setup":
+            raise ValueError("plugin authority reset required before setup")
+        aside = self._set_aside(
+            ("staging", "acquisition-custody", "packages", "packages-revisions"),
+            registry=True,
+        )
+        self._published = None
+        self._reviews.clear()
+        # The set-aside registry's roots are no longer registered here.
+        self.root_usage.recovery.clear()
+        return aside
+
+    def _set_aside(self, names, *, registry=False) -> Path | None:
+        """Move ``names`` (and the registry) into a new ``reset-<id>/``, if any."""
+        root = self.owner.root
+        present = [name for name in names if os.path.lexists(root / name)]
+        if not (present or registry):
+            return None
+        aside = root / f"reset-{secrets.token_hex(8)}"
+        aside.mkdir(mode=0o700)
+        for name in present:
+            os.rename(root / name, aside / name)
+        if registry:
+            self.registry.set_aside(aside)
+        return aside
 
     def reset(self, *, operation_id: str) -> Path | None:
         """Perform an explicitly reviewed plugin-only reset with a retained ID."""
@@ -124,7 +187,10 @@ class PluginCoordinator:
         if self.registry._connection.execute(
             "SELECT 1 FROM data_roots LIMIT 1"
         ).fetchone():
-            self.root_usage.require_dirty()
+            # A missing marker (a restore elsewhere, a reset keyring) has no
+            # checkpoint to mark dirty; reset still keeps every root (TASK-40308).
+            if self.authority.load_marker() is not None:
+                self.root_usage.require_dirty()
             self.root_usage.recovery.update(
                 {
                     row[0]: "root_reset_retained_custody"
@@ -208,10 +274,16 @@ class PluginCoordinator:
         *,
         selection: tuple[str, ...],
         workspace_id: str | None,
+        enable_in_workspace: bool = False,
     ) -> PluginReview:
         """Capture a new local install identity and all current authority inputs."""
         self._require_worker()
         baseline = self.published_snapshot()
+        if type(enable_in_workspace) is not bool or (
+            enable_in_workspace
+            and workspace_id in {None, "global", "workspace-default"}
+        ):
+            raise ValueError("install_enable_requires_named_workspace")
         if inspection.rejected or inspection.effective_digest is None:
             raise ValueError("package cannot be installed")
         if (
@@ -251,8 +323,38 @@ class PluginCoordinator:
             authority_json=canonical_json(baseline),
             token=uuid4().hex,
             expires_at=time.monotonic() + REVIEW_SECONDS,
+            intent="enabled" if enable_in_workspace else None,
         )
         review = self._issue_review(review)
+        self._reviews[review.token] = review
+        return review
+
+    def review_selection(self, installation_id: str, *, selection: tuple[str, ...]):
+        """Review current component selection without conferring revision trust."""
+        from dataclasses import replace
+
+        prior = self._review_existing(installation_id, kind="select")
+        if (
+            type(selection) is not tuple
+            or len(selection) != len(set(selection))
+            or not set(selection) <= prior.inspection.inventory.keys()
+        ):
+            self._reviews.pop(prior.token, None)
+            raise ValueError("invalid reviewed selection")
+        token = self.revision_drain.reserve(
+            installation_id,
+            prior.inspection.effective_digest,
+            review_token=prior.token,
+            expires_at=prior.expires_at,
+        )
+        review = self._issue_review(
+            replace(
+                prior,
+                selection=tuple(sorted(selection)),
+                drain_token=token,
+                previous_revision=prior.inspection.effective_digest,
+            )
+        )
         self._reviews[review.token] = review
         return review
 
@@ -307,9 +409,9 @@ class PluginCoordinator:
         """Rollback reviews retained bytes against today's authority, never old grants."""
         from .recovery import retained_inspections
 
-        inspection = retained_inspections(self.published_snapshot()).get(
-            (installation_id, revision_digest)
-        )
+        inspection = retained_inspections(
+            self.published_snapshot(), coordinator=self
+        ).get((installation_id, revision_digest))
         if inspection is None:
             raise ValueError("rollback revision unavailable")
         return self.review_revision(installation_id, inspection, rollback=True)
@@ -319,7 +421,10 @@ class PluginCoordinator:
     ) -> OperationReceipt:
         """Activate the reviewed fence and retain application after a waiter leaves."""
         self._require_worker()
-        if review.kind != "update" or self._reviews.get(review.token) != review:
+        if (
+            review.kind not in {"update", "select"}
+            or self._reviews.get(review.token) != review
+        ):
             raise ValueError("invalid revision review")
         ticket = self.revision_drain.activate(
             review.drain_token, review=review, operation_id=operation_id
@@ -352,6 +457,8 @@ class PluginCoordinator:
                         raise
                     with self.fences.live_lock:
                         ticket.phase = "complete"
+                    if review.kind == "select":
+                        return receipt
                     from dataclasses import replace
 
                     try:
@@ -379,6 +486,14 @@ class PluginCoordinator:
     def review_trust(self, installation_id: str) -> PluginReview:
         """Review the exact currently installed bytes for explicit trust."""
         return self._review_existing(installation_id, kind="trust")
+
+    def review_removal(self, installation_id: str, *, uninstall: bool) -> PluginReview:
+        """Issue exact management consequences before immediate revocation starts."""
+        if type(uninstall) is not bool:
+            raise ValueError("invalid_removal_kind")
+        return self._review_existing(
+            installation_id, kind="uninstall" if uninstall else "revoke"
+        )
 
     def review_activation(
         self, installation_id: str, *, workspace_id: str | None, intent: str
@@ -429,7 +544,7 @@ class PluginCoordinator:
         )
         if installed is None:
             raise ValueError("installation unavailable")
-        inspection = retained_inspections(baseline)[
+        inspection = retained_inspections(baseline, coordinator=self)[
             (installation_id, installed["revision_digest"])
         ]
         review = PluginReview(
@@ -458,6 +573,42 @@ class PluginCoordinator:
         self._reviews[review.token] = review
         return review
 
+    def create_variable_reference(self, installation_id: str, name: str, value):
+        """Create protected value identity from the current retained declaration."""
+        from .recovery import retained_inspections
+        from .variables import arguments, credentials
+
+        self._require_worker()
+        state = self.published_snapshot()
+        installed = next(
+            row
+            for row in state["installations"]
+            if row["installation_id"] == installation_id
+        )
+        inspection = retained_inspections(state, coordinator=self)[
+            (installation_id, installed["revision_digest"])
+        ]
+        declaration = json.loads(inspection.variables_json).get(name)
+        if declaration is None:
+            raise ValueError("plugin_variable_undeclared")
+        return credentials(self).create_variable(
+            **arguments(installation_id, name, declaration), value=value
+        )
+
+    def revoke_variable_reference(self, installation_id: str, reference_id: str):
+        """Revoke an owned reference, including a value not yet configured."""
+        from .variables import credentials
+
+        self._require_worker()
+        if not any(
+            row["installation_id"] == installation_id
+            for row in self.published_snapshot()["installations"]
+        ):
+            raise ValueError("installation_unavailable")
+        return credentials(self).revoke_variable(
+            reference_id, installation_id=installation_id
+        )
+
     def review_configuration(
         self,
         installation_id: str,
@@ -466,6 +617,8 @@ class PluginCoordinator:
         tools: dict[str, tuple[str, ...]] | None = None,
         tool_references: dict[str, dict[str, str]] | None = None,
         models: dict[str, str] | None = None,
+        component_tools: dict[str, dict[str, str]] | None = None,
+        variables: dict[str, str] | None = None,
     ) -> PluginReview:
         """Review complete current owner references; never accept caller-made grants."""
         from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
@@ -474,6 +627,11 @@ class PluginCoordinator:
 
         self._require_worker()
         owner = self.mcp_mapping_owner
+        if variables is not None and (
+            type(variables) is not dict
+            or any(type(name) is not str for name in variables)
+        ):
+            raise ValueError("plugin_variable_mapping_invalid")
         if connections and not isinstance(owner, LocalMCPControlService):
             raise PermissionError("plugin_mapping_owner_unavailable")
         connections = connections or {}
@@ -483,7 +641,7 @@ class PluginCoordinator:
             for row in snapshot["installations"]
             if row["installation_id"] == installation_id
         )
-        inspection = retained_inspections(snapshot)[
+        inspection = retained_inspections(snapshot, coordinator=self)[
             (installation_id, installed["revision_digest"])
         ]
         selection = {
@@ -494,8 +652,15 @@ class PluginCoordinator:
             and row["selected"]
         }
         if (
-            not (connections or tool_references or models)
-            or len(connections) + len(tool_references or {}) + len(models or {}) > 512
+            not (
+                connections or tool_references or models or component_tools or variables
+            )
+            or len(connections)
+            + len(tool_references or {})
+            + len(models or {})
+            + len(component_tools or {})
+            + len(variables or {})
+            > 512
             or set(tools or {}) - connections.keys()
         ):
             raise ValueError("plugin_mapping_invalid")
@@ -513,12 +678,25 @@ class PluginCoordinator:
             mappings.append(mapping)
             for name in sorted(set((tools or {}).get(component_id, ()))):
                 mappings.append(owner.capture_tool_mapping(mapping, inspection, name))
-        from .host_references import capture_reference
+        from .host_references import (
+            capture_model_mapping,
+            capture_reference,
+            capture_tool_constraint,
+        )
 
-        for component_id, references in sorted((tool_references or {}).items()):
+        declarations = {}
+        for source in (tool_references or {}, component_tools or {}):
+            for component_id, references in source.items():
+                for label, target in references.items():
+                    key = (component_id, label)
+                    if key in declarations:
+                        raise ValueError("plugin_tool_mapping_ambiguous")
+                    declarations[key] = target
+        for (component_id, label), target in sorted(declarations.items()):
             if component_id not in selection:
                 raise PermissionError("plugin_component_not_selected")
-            for label, target in sorted(references.items()):
+            if target.startswith("builtin:"):
+                # R12: current fresh builtin aliases retain their actual schema owner.
                 mappings.append(
                     capture_reference(
                         installation_id,
@@ -530,29 +708,121 @@ class PluginCoordinator:
                         mappings=mappings,
                     )
                 )
+                continue
+            target_component, separator, raw_name = target.partition("::")
+            targets = [
+                row
+                for row in mappings
+                if row["kind"] == "tool"
+                and row["component_id"] in selection
+                and (
+                    row["target_reference"] == target
+                    or row["component_id"] == target_component
+                    and row["target_reference"].partition("::")[2] == raw_name
+                )
+            ]
+            if not separator or len(targets) != 1:
+                raise ValueError("plugin_tool_mapping_invalid")
+            mappings.append(
+                capture_tool_constraint(
+                    self, installation_id, inspection, component_id, label, targets[0]
+                )
+            )
         for component_id, target in sorted((models or {}).items()):
             if component_id not in selection:
                 raise PermissionError("plugin_component_not_selected")
+            # Review input compatibility is resolved by the canonical catalog owner;
+            # protected historical rows are never converted.
+            if "::" in target:
+                provider, model = target.split("::", 1)
+                target = provider + "/" + model
             mappings.append(
-                capture_reference(
+                capture_model_mapping(
+                    self.model_mapping_owner,
                     installation_id,
                     inspection,
                     component_id,
-                    "model",
                     target,
-                    mappings=mappings,
                 )
             )
+        from .variables import capture_mapping, consumed
+
+        for name, target in sorted((variables or {}).items()):
+            consumers = [
+                key for key in selection if name in consumed(inspection.inventory[key])
+            ]
+            if not consumers:
+                raise ValueError("plugin_variable_unused")
+            for key in sorted(consumers):
+                mappings.append(
+                    capture_mapping(
+                        self, installation_id, inspection, key, name, target
+                    )
+                )
         return self._review_existing(
             installation_id, kind="configure", mappings_json=canonical_json(mappings)
         )
 
     def validate_mapping(self, mapping, inspection, mappings) -> None:
-        """Route each reviewed reference to its existing authority source."""
-        if mapping["mapping_id"].startswith("native-"):
-            from .host_references import validate_reference
+        """Revalidate closed protected forms through their actual current owner."""
+        if mapping["mapping_id"].startswith("variable:"):
+            from .variables import validate_mapping
 
-            validate_reference(mapping, inspection, mappings)
+            validate_mapping(self, mapping, inspection)
+            return
+        from .host_references import (
+            _reference_form,
+            declared_tools,
+            mapping_id,
+            tool_constraint_id,
+            validate_canonical_reference,
+            validate_reference,
+        )
+
+        owned = [
+            row
+            for row in mappings
+            if row["installation_id"] == mapping["installation_id"]
+            and row["revision_digest"] == mapping["revision_digest"]
+        ]
+        form = _reference_form(mapping, inspection)
+        component = inspection.inventory[mapping["component_id"]]
+        if form != "mcp":
+            if form.endswith("model"):
+                peers = [
+                    row
+                    for row in owned
+                    if row["component_id"] == component.component_id
+                    and row["kind"] == "model"
+                ]
+            else:
+                labels = [
+                    label
+                    for label in declared_tools(component) or ()
+                    if mapping["mapping_id"]
+                    in {
+                        mapping_id(component.component_id, label),
+                        tool_constraint_id(component.component_id, label),
+                    }
+                ]
+                if len(labels) != 1:
+                    raise PermissionError("plugin_tool_mapping_invalid")
+                ids = {
+                    mapping_id(component.component_id, labels[0]),
+                    tool_constraint_id(component.component_id, labels[0]),
+                }
+                peers = [
+                    row
+                    for row in owned
+                    if row["component_id"] == component.component_id
+                    and row["mapping_id"] in ids
+                ]
+            if len(peers) != 1:
+                raise PermissionError("plugin_reference_ambiguous")
+        if form.startswith("dev_"):
+            validate_reference(mapping, inspection, owned)
+        elif form.startswith("canonical_"):
+            validate_canonical_reference(self, mapping, inspection, owned)
         else:
             from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
 
@@ -595,7 +865,7 @@ class PluginCoordinator:
         candidates = eligible_revisions(self, installation_id)[:1000]
         if not candidates:
             return prior_result or OperationReceipt(None, "nothing_eligible", False)
-        inspections = retained_inspections(baseline)
+        inspections = retained_inspections(baseline, coordinator=self)
         rows = []
         root_info = self.owner.root.lstat()
         for digest in candidates:
@@ -679,6 +949,31 @@ class PluginCoordinator:
                 retained,
                 review.selection,
                 alias=review.alias,
+            )
+            if review.intent == "enabled":
+                cursor.execute(
+                    "INSERT INTO activation VALUES (?, ?, 'enabled')",
+                    (review.installation_id, review.workspace_id),
+                )
+                cursor.execute(
+                    "INSERT INTO authority_generations VALUES (?, 'workspace', ?, 1, 0)",
+                    (review.installation_id, review.workspace_id),
+                )
+            return
+        if review.kind == "select":
+            for key in retained.inventory:
+                cursor.execute(
+                    "UPDATE selections SET selected=? WHERE installation_id=? AND revision_digest=? AND component_id=?",
+                    (
+                        key in review.selection,
+                        review.installation_id,
+                        retained.effective_digest,
+                        key,
+                    ),
+                )
+            cursor.execute(
+                "UPDATE authority_generations SET generation=generation+1 WHERE installation_id=? AND scope_kind='installation'",
+                (review.installation_id,),
             )
             return
         if review.kind == "update":
@@ -793,25 +1088,76 @@ class PluginCoordinator:
             (review.installation_id, scope, workspace),
         )
 
-    @staticmethod
-    def _verify_reviewed_package(inspection: PackageInspection) -> None:
+    def _verify_reviewed_package(self, inspection: PackageInspection) -> None:
+        if (
+            inspection.catalog_binding is not None
+            or inspection.acquisition_reference is not None
+        ):
+            from .source_service import validate_inspection_source
+
+            validate_inspection_source(self, inspection)
         if inspection.materialized_identity:
             reinspect(inspection, Path(inspection.materialized_identity))
         else:
-            current = inspect_package(
-                Path(inspection.source_identity), dialect=inspection.dialect
+            from .retained_inspection import _reinspect_expected
+
+            current = _reinspect_expected(
+                capture_package(Path(inspection.source_identity)), inspection
             )
             if inspection_identity(current) != inspection_identity(inspection):
                 raise ValueError("stale review package inputs")
 
     def published_snapshot(self) -> dict:
         """Return authenticated projection only while all publication gates agree."""
+        return self._authenticated_projection()
+
+    def recorded_inspections(
+        self, identities: tuple[tuple[str, str], ...]
+    ) -> tuple[dict, dict[tuple[str, str], PackageInspection]]:
+        """Authenticate recorded metadata without verifying retained package bytes.
+
+        Observational fields excluded from protected authority are not returned.
+        This is a passive display seam, never a substitute for runtime reinspection.
+        """
+        recorded = dict.fromkeys(identities)
+        authority = self._authenticated_projection(recorded)
+        current = {
+            (row["installation_id"], row["revision_digest"])
+            for row in authority["installations"]
+        }
+        if not set(recorded) <= current or any(
+            value is None for value in recorded.values()
+        ):
+            raise ValueError("plugin_recorded_revision_unavailable")
+        result = {}
+        for identity, inspection in recorded.items():
+            inventory = {
+                key: component.model_copy(
+                    update={"evidence": (), "availability": "disabled"}
+                )
+                for key, component in inspection.inventory.items()
+            }
+            result[identity] = inspection.model_copy(
+                update={
+                    "inventory": inventory,
+                    "dependency_edges": {
+                        key: value.dependencies for key, value in inventory.items()
+                    },
+                    "candidates": (),
+                    "diagnostics": (),
+                }
+            )
+        return authority, result
+
+    def _authenticated_projection(self, recorded_inspections=None) -> dict:
+        """Match one registry read to protected current/published authority."""
         self._require_worker()
         if self._published is None:
             raise PermissionError("plugin publication fenced; recovery required")
         current = self.authority.verify_current()
         projection = self.registry.authority_projection(
-            operation_result=current["operation_result"]
+            operation_result=current["operation_result"],
+            _recorded_inspections=recorded_inspections,
         )
         if current != self._published or projection != current:
             self._published = None
@@ -885,7 +1231,12 @@ class PluginCoordinator:
             update={"materialized_identity": str(destination)}
         )
         if not os.path.lexists(destination):
-            copied = materialize_package(source, destination, dialect=review.inspection.dialect)
+            copied = materialize_package(
+                source,
+                destination,
+                dialect=review.inspection.dialect,
+                expected=review.inspection,
+            )
             if copied.content_digest != retained.content_digest:
                 raise ValueError("stale package during materialization")
         reinspect(retained, destination)
@@ -916,7 +1267,7 @@ class PluginCoordinator:
 
         if operation_id != review.operation_id or not operation_id:
             raise ValueError("operation ID belongs to a different review")
-        if review.kind == "update":
+        if review.kind in {"update", "select"}:
             ticket = self.revision_drain.ticket(review.drain_token)
             if (
                 ticket.phase != "committing"
@@ -1129,6 +1480,16 @@ class PluginCoordinator:
             result["root_result"] = review.result
         if review.kind == "retain":
             result["retired_revisions"] = json.loads(review.retirement_json)
+        if review.kind == "root_data" and review.action == "reconcile":
+            refs, proof = self.root_usage.proofs[review.token]
+            # The serialized owner does not yield between this proof and apply.
+            # Proof may open its own registry read transaction.
+            if proof(refs) is not True:
+                raise PermissionError("root_quiescence_unproven")
+        named = self.registry._connection.execute(
+            "SELECT alias FROM installations WHERE installation_id=?",
+            (review.installation_id,),
+        ).fetchone()
         with self.registry.transaction() as cursor:
             self._apply_review(cursor, review, retained)
             snapshot = self.registry.authority_projection(operation_result=result)
@@ -1155,6 +1516,25 @@ class PluginCoordinator:
         self._milestone("marker_advanced")
         with self.registry.transaction() as cursor:
             self.registry.write_operation(cursor, result, phase="complete")
+        try:
+            from .backup import record_change
+
+            record_change(
+                self.owner.root,
+                {
+                    "namespace_id": self.authority.namespace_id(),
+                    "generation": new.generation,
+                    "operation_id": operation_id,
+                    "parent": review.authority_marker.operation_id,
+                    "kind": review.kind,
+                    "installation_id": review.installation_id,
+                    "alias": getattr(review, "alias", None) or (named and named[0]),
+                    "detail": getattr(review, "intent", None)
+                    or getattr(review, "action", None),
+                },
+            )
+        except (OSError, ValueError):
+            pass  # Advisory (TASK-41105): the restore review falls back to a count.
         self._published = snapshot
         if review.kind == "activate" and target is None:
             self.fences.reconcile_enable(review.installation_id, review.workspace_id)
@@ -1183,6 +1563,35 @@ class PluginCoordinator:
         self._require_worker()
         return review_deletion(self, roots)
 
+    def review_data_rebind(self, root: DataRootRef) -> RootReview:
+        from .data_cleanup import review_rebind
+
+        self._require_worker()
+        return review_rebind(self, root)
+
+    def kept_data_folders(self) -> tuple[tuple[str, str | None, str | None], ...]:
+        """Kept folders with their unproven former installation and alias."""
+        from .data_cleanup import kept_folder_hints, kept_folders
+
+        self._require_worker()
+        names = kept_folders(self)
+        hints = kept_folder_hints(self, set(names))
+        return tuple((name, *hints.get(name, (None, None))) for name in names)
+
+    def review_kept_attachment(
+        self, installation_id: str, workspace_id: str | None, root_id: str
+    ) -> RootReview:
+        from .data_cleanup import review_kept_attachment
+
+        self._require_worker()
+        return review_kept_attachment(self, installation_id, workspace_id, root_id)
+
+    async def attach_kept_data(self, review: RootReview, operation_id: str):
+        from .data_cleanup import attach_kept_data
+
+        self._require_worker()
+        return await attach_kept_data(self, review, operation_id)
+
     def review_data_attachment(
         self, roots: tuple[DataRootRef, ...], installation_id: str | None
     ) -> RootReview:
@@ -1204,6 +1613,12 @@ class PluginCoordinator:
 
         self._require_worker()
         return review_reconciliation(self, roots, confirm_quiescence)
+
+    def review_data_boot_reconciliation(self, roots):
+        from .data_cleanup import review_boot_reconciliation
+
+        self._require_worker()
+        return review_boot_reconciliation(self, roots)
 
     async def reconcile_data(
         self, review: RootReview, operation_id: str
@@ -1277,18 +1692,38 @@ class PluginCoordinator:
         return await self.finish_revocation(self.begin_uninstall(installation_id))
 
     async def lookup_operation(self, identity: str) -> OperationReceipt:
+        return (await self.lookup_operations((identity,)))[identity]
+
+    async def lookup_operations(self, identities) -> dict[str, OperationReceipt]:
+        """Look up many identities over one recovery pass (TASK-41109).
+
+        Each lookup used to run the whole recovery and verify every retained
+        transition, so reading N statuses cost N passes.
+        """
         self._require_worker()
         import re
+        from dataclasses import replace
 
-        nonce = None
-        if re.fullmatch(r"lr1\.[0-9a-f]{32}\.[0-9a-f]{32}", identity):
-            nonce = "".join(identity.split(".")[1:])
+        nonces = {
+            identity: (
+                "".join(identity.split(".")[1:])
+                if re.fullmatch(r"lr1\.[0-9a-f]{32}\.[0-9a-f]{32}", identity)
+                else None
+            )
+            for identity in identities
+        }
         receipts = await self.recover()
         if any(item.phase == "recovery_required" for item in receipts):
-            return OperationReceipt(
-                None, "recovery_required", False, request_id=identity if nonce else None
-            )
-        matches = []
+            return {
+                identity: OperationReceipt(
+                    None,
+                    "recovery_required",
+                    False,
+                    request_id=identity if nonce else None,
+                )
+                for identity, nonce in nonces.items()
+            }
+        retained = []
         marker = self.authority.load_marker()
         for receipt in receipts:
             result = (
@@ -1299,8 +1734,6 @@ class PluginCoordinator:
                 ]
             )
             if result["kind"] == "root_data":
-                from dataclasses import replace
-
                 group = result["root_result"]["group_id"]
                 pending_roots = [
                     row
@@ -1317,8 +1750,6 @@ class PluginCoordinator:
                     cleanup_pending=bool(pending_roots),
                 )
             if result["kind"] == "retain":
-                from dataclasses import replace
-
                 from .retention import cleanup_retained_operation
 
                 receipt = replace(
@@ -1331,27 +1762,41 @@ class PluginCoordinator:
                         )
                     ),
                 )
-            if receipt.operation_id == identity or (
-                nonce
-                and result["operation_id"].startswith("pi1.")
-                and self.authority.verify_operation_id(
+            retained.append((receipt, result))
+        issued_nonces = {}
+
+        def issued_nonce(index, result):
+            if index not in issued_nonces:
+                issued_nonces[index] = self.authority.verify_operation_id(
                     result["operation_id"], result
                 ).nonce
-                == nonce
-            ):
-                matches.append(receipt)
-        if len(matches) > 1:
-            raise ValueError("ambiguous retained request identity")
-        if matches:
-            from dataclasses import replace
+            return issued_nonces[index]
 
-            return replace(matches[0], request_id=identity if nonce else None)
-        return OperationReceipt(
-            None,
-            "unavailable_or_expired",
-            False,
-            request_id=identity if nonce else None,
-        )
+        found = {}
+        for identity, nonce in nonces.items():
+            matches = [
+                receipt
+                for index, (receipt, result) in enumerate(retained)
+                if receipt.operation_id == identity
+                or (
+                    nonce
+                    and result["operation_id"].startswith("pi1.")
+                    and issued_nonce(index, result) == nonce
+                )
+            ]
+            if len(matches) > 1:
+                raise ValueError("ambiguous retained request identity")
+            found[identity] = (
+                replace(matches[0], request_id=identity if nonce else None)
+                if matches
+                else OperationReceipt(
+                    None,
+                    "unavailable_or_expired",
+                    False,
+                    request_id=identity if nonce else None,
+                )
+            )
+        return found
 
     async def _revoke(self, target, operation_id, kind, *, review=None):
         from dataclasses import replace

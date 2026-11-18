@@ -1,0 +1,250 @@
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/current1/pytest-tail.txt:32: trailing whitespace.
++E     
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/current1/tests.xml:29: trailing whitespace.
++E     
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_red/pytest-tail.txt:22: trailing whitespace.
++E     
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_red/pytest-tail.txt:49: trailing whitespace.
++E     
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_red/tests.xml:19: trailing whitespace.
++E     
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_red/tests.xml:39: trailing whitespace.
++E     
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_red2/pytest-tail.txt:21: trailing whitespace.
++E     
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_red2/tests.xml:18: trailing whitespace.
++E     
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey1/pytest-tail.txt:22: trailing whitespace.
++E     
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey1/tests.xml:19: trailing whitespace.
++E     
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey2/pytest-tail.txt:21: trailing whitespace.
++E     
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey2/tests.xml:18: trailing whitespace.
++E     
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey3/pytest-tail.txt:21: trailing whitespace.
++E     
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey3/tests.xml:18: trailing whitespace.
++E     
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey4/pytest-tail.txt:21: trailing whitespace.
++E     
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey4/tests.xml:18: trailing whitespace.
++E     
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/inspect1/process-tail.txt:18: trailing whitespace.
++2026-11-04 20:41:54.379 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/inspect2/process-tail.txt:9: trailing whitespace.
++2026-11-04 20:43:02.015 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/inspect3/process-tail.txt:19: trailing whitespace.
++2026-11-04 20:49:11.720 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan10/process-tail.txt:2: trailing whitespace.
++2026-11-04 20:35:10.864 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan10/process-tail.txt:7: trailing whitespace.
++2026-11-04 20:35:10.864 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan10/process-tail.txt:15: trailing whitespace.
++2026-11-04 20:35:10.864 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan10/process-tail.txt:21: trailing whitespace.
++2026-11-04 20:35:10.864 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan10/process-tail.txt:29: trailing whitespace.
++2026-11-04 20:35:10.864 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan10/process-tail.txt:34: trailing whitespace.
++2026-11-04 20:35:10.864 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan10/process-tail.txt:39: trailing whitespace.
++2026-11-04 20:35:10.864 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan10/process-tail.txt:44: trailing whitespace.
++2026-11-04 20:35:10.865 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan10/process-tail.txt:49: trailing whitespace.
++2026-11-04 20:35:10.865 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan10/process-tail.txt:54: trailing whitespace.
++2026-11-04 20:35:10.865 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan3/process-tail.txt:1: trailing whitespace.
++(script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan3/process-tail.txt:6: trailing whitespace.
++2026-11-04 19:26:17.760 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan3/process-tail.txt:11: trailing whitespace.
++2026-11-04 19:26:17.760 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan3/process-tail.txt:16: trailing whitespace.
++2026-11-04 19:26:17.761 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan3/process-tail.txt:21: trailing whitespace.
++2026-11-04 19:26:17.761 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan3/process-tail.txt:26: trailing whitespace.
++2026-11-04 19:26:17.761 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan4/process-tail.txt:1: trailing whitespace.
++_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan4/process-tail.txt:6: trailing whitespace.
++2026-11-04 19:32:16.620 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan5/process-tail.txt:2: trailing whitespace.
++2026-11-04 19:33:47.339 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan5/process-tail.txt:7: trailing whitespace.
++2026-11-04 19:33:47.339 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan5/process-tail.txt:15: trailing whitespace.
++2026-11-04 19:33:47.339 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan5/process-tail.txt:21: trailing whitespace.
++2026-11-04 19:33:47.339 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan5/process-tail.txt:29: trailing whitespace.
++2026-11-04 19:33:47.339 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan5/process-tail.txt:34: trailing whitespace.
++2026-11-04 19:33:47.339 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan5/process-tail.txt:39: trailing whitespace.
++2026-11-04 19:33:47.339 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan5/process-tail.txt:44: trailing whitespace.
++2026-11-04 19:33:47.339 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan5/process-tail.txt:49: trailing whitespace.
++2026-11-04 19:33:47.340 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan5/process-tail.txt:54: trailing whitespace.
++2026-11-04 19:33:47.340 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan6/process-tail.txt:2: trailing whitespace.
++2026-11-04 19:47:04.666 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan6/process-tail.txt:7: trailing whitespace.
++2026-11-04 19:47:04.666 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan6/process-tail.txt:15: trailing whitespace.
++2026-11-04 19:47:04.666 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan6/process-tail.txt:21: trailing whitespace.
++2026-11-04 19:47:04.666 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan6/process-tail.txt:29: trailing whitespace.
++2026-11-04 19:47:04.666 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan6/process-tail.txt:34: trailing whitespace.
++2026-11-04 19:47:04.666 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan6/process-tail.txt:39: trailing whitespace.
++2026-11-04 19:47:04.667 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan6/process-tail.txt:44: trailing whitespace.
++2026-11-04 19:47:04.667 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan6/process-tail.txt:49: trailing whitespace.
++2026-11-04 19:47:04.667 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan6/process-tail.txt:54: trailing whitespace.
++2026-11-04 19:47:04.667 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan7/process-tail.txt:2: trailing whitespace.
++2026-11-04 19:52:09.264 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan7/process-tail.txt:7: trailing whitespace.
++2026-11-04 19:52:09.264 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan7/process-tail.txt:15: trailing whitespace.
++2026-11-04 19:52:09.264 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan7/process-tail.txt:21: trailing whitespace.
++2026-11-04 19:52:09.265 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan7/process-tail.txt:29: trailing whitespace.
++2026-11-04 19:52:09.265 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan7/process-tail.txt:34: trailing whitespace.
++2026-11-04 19:52:09.265 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan7/process-tail.txt:39: trailing whitespace.
++2026-11-04 19:52:09.265 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan7/process-tail.txt:44: trailing whitespace.
++2026-11-04 19:52:09.265 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan7/process-tail.txt:49: trailing whitespace.
++2026-11-04 19:52:09.266 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan7/process-tail.txt:54: trailing whitespace.
++2026-11-04 19:52:09.266 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan8/process-tail.txt:2: trailing whitespace.
++2026-11-04 19:56:45.881 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan8/process-tail.txt:7: trailing whitespace.
++2026-11-04 19:56:45.882 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan8/process-tail.txt:15: trailing whitespace.
++2026-11-04 19:56:45.882 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan8/process-tail.txt:21: trailing whitespace.
++2026-11-04 19:56:45.882 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan8/process-tail.txt:29: trailing whitespace.
++2026-11-04 19:56:45.882 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan8/process-tail.txt:34: trailing whitespace.
++2026-11-04 19:56:45.882 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan8/process-tail.txt:39: trailing whitespace.
++2026-11-04 19:56:45.882 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan8/process-tail.txt:44: trailing whitespace.
++2026-11-04 19:56:45.883 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan8/process-tail.txt:49: trailing whitespace.
++2026-11-04 19:56:45.883 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan8/process-tail.txt:54: trailing whitespace.
++2026-11-04 19:56:45.883 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan9/process-tail.txt:2: trailing whitespace.
++2026-11-04 20:01:18.000 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan9/process-tail.txt:7: trailing whitespace.
++2026-11-04 20:01:18.000 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan9/process-tail.txt:15: trailing whitespace.
++2026-11-04 20:01:18.000 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan9/process-tail.txt:21: trailing whitespace.
++2026-11-04 20:01:18.001 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan9/process-tail.txt:29: trailing whitespace.
++2026-11-04 20:01:18.001 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan9/process-tail.txt:34: trailing whitespace.
++2026-11-04 20:01:18.001 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan9/process-tail.txt:39: trailing whitespace.
++2026-11-04 20:01:18.001 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan9/process-tail.txt:44: trailing whitespace.
++2026-11-04 20:01:18.001 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan9/process-tail.txt:49: trailing whitespace.
++2026-11-04 20:01:18.002 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan9/process-tail.txt:54: trailing whitespace.
++2026-11-04 20:01:18.002 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read1/process-tail.txt:3: trailing whitespace.
++2026-11-04 20:10:19.192 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read1/process-tail.txt:8: trailing whitespace.
++2026-11-04 20:10:19.192 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read1/process-tail.txt:13: trailing whitespace.
++2026-11-04 20:10:19.192 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read1/process-tail.txt:18: trailing whitespace.
++2026-11-04 20:10:19.192 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read1/process-tail.txt:23: trailing whitespace.
++2026-11-04 20:10:19.193 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read1/process-tail.txt:28: trailing whitespace.
++2026-11-04 20:10:19.193 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read4/process-tail.txt:2: trailing whitespace.
++2026-11-04 20:18:56.904 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read4/process-tail.txt:7: trailing whitespace.
++2026-11-04 20:18:56.904 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read4/process-tail.txt:15: trailing whitespace.
++2026-11-04 20:18:56.904 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read4/process-tail.txt:21: trailing whitespace.
++2026-11-04 20:18:56.904 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read4/process-tail.txt:29: trailing whitespace.
++2026-11-04 20:18:56.905 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read4/process-tail.txt:34: trailing whitespace.
++2026-11-04 20:18:56.905 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read4/process-tail.txt:39: trailing whitespace.
++2026-11-04 20:18:56.905 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read4/process-tail.txt:44: trailing whitespace.
++2026-11-04 20:18:56.905 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read4/process-tail.txt:49: trailing whitespace.
++2026-11-04 20:18:56.905 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read4/process-tail.txt:54: trailing whitespace.
++2026-11-04 20:18:56.905 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read6/process-tail.txt:2: trailing whitespace.
++2026-11-04 20:33:20.251 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read6/process-tail.txt:7: trailing whitespace.
++2026-11-04 20:33:20.251 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read6/process-tail.txt:15: trailing whitespace.
++2026-11-04 20:33:20.252 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read6/process-tail.txt:21: trailing whitespace.
++2026-11-04 20:33:20.252 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read6/process-tail.txt:29: trailing whitespace.
++2026-11-04 20:33:20.252 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read6/process-tail.txt:34: trailing whitespace.
++2026-11-04 20:33:20.252 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read6/process-tail.txt:39: trailing whitespace.
++2026-11-04 20:33:20.252 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read6/process-tail.txt:44: trailing whitespace.
++2026-11-04 20:33:20.252 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read6/process-tail.txt:49: trailing whitespace.
++2026-11-04 20:33:20.252 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read6/process-tail.txt:54: trailing whitespace.
++2026-11-04 20:33:20.253 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart1/process-tail.txt:11: trailing whitespace.
++2026-11-04 19:36:52.922 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart8/process-tail.txt:6: trailing whitespace.
++2026-11-04 20:36:26.271 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/reason_red/pytest-tail.txt:7: trailing whitespace.
++E     
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/reason_red/tests.xml:4: trailing whitespace.
++E     
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/restart1/pytest-tail.txt:60: trailing whitespace.
++E     
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/restart1/pytest-tail.txt:132: trailing whitespace.
++E     
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/restart1/tests.xml:69: trailing whitespace.
++E     
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/restart1/tests.xml:139: trailing whitespace.
++E     
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/restart1/tests.xml:209: trailing whitespace.
++E     
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/restart1/tests.xml:279: trailing whitespace.
++E     
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/restart1/tests.xml:349: trailing whitespace.
++E     
+Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/retention_red/tests.xml:5: trailing whitespace.
++E     

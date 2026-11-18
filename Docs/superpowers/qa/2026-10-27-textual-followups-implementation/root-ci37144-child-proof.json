@@ -1,0 +1,88 @@
+{
+  "actual_children": [
+    {
+      "label": "ci-repair37144-red01",
+      "name": "test_typing_census_excludes_elapsed_draft_pause_work",
+      "time": "92.420",
+      "failures": 1,
+      "errors": 0,
+      "skips": 0,
+      "xml_sha256": "9d7c1cb5a540ce555a55ce56f3171e7fc1ee741e3930809e87594e2c4975741a",
+      "properties": {
+        "controlled_pause_census": "{\"cleanup_candidate_queries_completed\": 0, \"context_estimate_max_rows\": 1, \"context_rows\": 0, \"cost_projection_estimate_rows\": 0, \"cost_rows\": 0, \"cost_snapshot_rows\": 0, \"messages_for_session\": 0, \"settings_readiness_builds\": 97, \"snapshot_rows\": 0, \"snapshots\": 0, \"spend_history_rows\": 0, \"template_default_builds\": 0}",
+        "native_timer_count": "24",
+        "delivered_pause_count": "24",
+        "runtime_sources": "{\"tldw_chatbook.UI.Console_Modules.console_spend_projection\": \"C:\\\\Users\\\\GDesktop-1\\\\.codex\\\\worktrees\\\\textual-settings-patterns\\\\tldw_tui\\\\tldw_chatbook\\\\UI\\\\Console_Modules\\\\console_spend_projection.py\", \"tldw_chatbook.UI.Screens.chat_screen\": \"C:\\\\Users\\\\GDesktop-1\\\\.codex\\\\worktrees\\\\textual-settings-patterns\\\\tldw_tui\\\\tldw_chatbook\\\\UI\\\\Screens\\\\chat_screen.py\", \"tldw_chatbook.app\": \"C:\\\\Users\\\\GDesktop-1\\\\.codex\\\\worktrees\\\\textual-settings-patterns\\\\tldw_tui\\\\tldw_chatbook\\\\app.py\"}"
+      }
+    },
+    {
+      "label": "ci-repair37144-green01",
+      "name": "test_keystroke_work_does_not_scale_with_transcript_length",
+      "time": "139.033",
+      "failures": 0,
+      "errors": 0,
+      "skips": 0,
+      "xml_sha256": "99a0155e99c781918bea433a3f84b0628f17b29ee1db1c03fb1cb00d486294c2",
+      "properties": {
+        "empty_census": "{\"cleanup_candidate_queries_completed\": 0, \"context_estimate_max_rows\": 0, \"context_rows\": 0, \"cost_projection_estimate_rows\": 0, \"cost_rows\": 0, \"cost_snapshot_rows\": 0, \"messages_for_session\": 0, \"settings_readiness_builds\": 25, \"snapshot_rows\": 0, \"snapshots\": 0, \"spend_history_rows\": 0, \"template_default_builds\": 0}",
+        "400_message_census": "{\"cleanup_candidate_queries_completed\": 0, \"context_estimate_max_rows\": 0, \"context_rows\": 0, \"cost_projection_estimate_rows\": 0, \"cost_rows\": 0, \"cost_snapshot_rows\": 0, \"messages_for_session\": 0, \"settings_readiness_builds\": 25, \"snapshot_rows\": 0, \"snapshots\": 0, \"spend_history_rows\": 0, \"template_default_builds\": 0}"
+      }
+    },
+    {
+      "label": "ci-repair37144-green01",
+      "name": "test_typing_census_excludes_elapsed_draft_pause_work",
+      "time": "90.088",
+      "failures": 0,
+      "errors": 0,
+      "skips": 0,
+      "xml_sha256": "4296ef1fe07e990dc6128cce754eb25b9e76525c5f15fc9b866675e4cc6e4826",
+      "properties": {
+        "controlled_pause_census": "{\"cleanup_candidate_queries_completed\": 0, \"context_estimate_max_rows\": 0, \"context_rows\": 0, \"cost_projection_estimate_rows\": 0, \"cost_rows\": 0, \"cost_snapshot_rows\": 0, \"messages_for_session\": 0, \"settings_readiness_builds\": 25, \"snapshot_rows\": 0, \"snapshots\": 0, \"spend_history_rows\": 0, \"template_default_builds\": 0}",
+        "native_timer_count": "24",
+        "delivered_pause_count": "0",
+        "runtime_sources": "{\"tldw_chatbook.UI.Console_Modules.console_spend_projection\": \"C:\\\\Users\\\\GDesktop-1\\\\.codex\\\\worktrees\\\\textual-settings-patterns\\\\tldw_tui\\\\tldw_chatbook\\\\UI\\\\Console_Modules\\\\console_spend_projection.py\", \"tldw_chatbook.UI.Screens.chat_screen\": \"C:\\\\Users\\\\GDesktop-1\\\\.codex\\\\worktrees\\\\textual-settings-patterns\\\\tldw_tui\\\\tldw_chatbook\\\\UI\\\\Screens\\\\chat_screen.py\", \"tldw_chatbook.app\": \"C:\\\\Users\\\\GDesktop-1\\\\.codex\\\\worktrees\\\\textual-settings-patterns\\\\tldw_tui\\\\tldw_chatbook\\\\app.py\"}"
+      }
+    },
+    {
+      "label": "ci-repair37144-green01",
+      "name": "test_typing_never_snapshots_the_transcript",
+      "time": "86.241",
+      "failures": 0,
+      "errors": 0,
+      "skips": 0,
+      "xml_sha256": "0d1e3736714ccf84d28ab49bbcfe2f1c9062192c549c39ef46d5699095a9e365",
+      "properties": {}
+    },
+    {
+      "label": "ci-repair37144-red02",
+      "name": "test_typing_census_excludes_elapsed_draft_pause_work",
+      "time": "89.851",
+      "failures": 1,
+      "errors": 0,
+      "skips": 0,
+      "xml_sha256": "630b3beeaa7a11507faa36a1b9400f4d2cc6e9caf81798e4fb77706b4be998ad",
+      "properties": {
+        "controlled_pause_census": "{\"cleanup_candidate_queries_completed\": 0, \"context_estimate_max_rows\": 1, \"context_rows\": 0, \"cost_projection_estimate_rows\": 0, \"cost_rows\": 0, \"cost_snapshot_rows\": 0, \"messages_for_session\": 0, \"pause:cleanup_candidate_queries_completed\": 0, \"pause:context_estimate_max_rows\": 0, \"pause:context_rows\": 0, \"pause:cost_projection_estimate_rows\": 0, \"pause:cost_rows\": 0, \"pause:cost_snapshot_rows\": 0, \"pause:messages_for_session\": 0, \"pause:settings_readiness_builds\": 3, \"pause:snapshot_rows\": 0, \"pause:snapshots\": 0, \"pause:spend_history_rows\": 0, \"pause:template_default_builds\": 0, \"settings_readiness_builds\": 97, \"snapshot_rows\": 0, \"snapshots\": 0, \"spend_history_rows\": 0, \"template_default_builds\": 0}",
+        "native_timer_count": "24",
+        "delivered_pause_count": "24",
+        "runtime_sources": "{\"tldw_chatbook.UI.Console_Modules.console_spend_projection\": \"C:\\\\Users\\\\GDesktop-1\\\\.codex\\\\worktrees\\\\textual-settings-patterns\\\\tldw_tui\\\\tldw_chatbook\\\\UI\\\\Console_Modules\\\\console_spend_projection.py\", \"tldw_chatbook.UI.Screens.chat_screen\": \"C:\\\\Users\\\\GDesktop-1\\\\.codex\\\\worktrees\\\\textual-settings-patterns\\\\tldw_tui\\\\tldw_chatbook\\\\UI\\\\Screens\\\\chat_screen.py\", \"tldw_chatbook.app\": \"C:\\\\Users\\\\GDesktop-1\\\\.codex\\\\worktrees\\\\textual-settings-patterns\\\\tldw_tui\\\\tldw_chatbook\\\\app.py\"}"
+      }
+    },
+    {
+      "label": "ci-repair37144-green02",
+      "name": "test_typing_census_excludes_elapsed_draft_pause_work",
+      "time": "93.563",
+      "failures": 0,
+      "errors": 0,
+      "skips": 0,
+      "xml_sha256": "1fb92c7219308e42ec6ca76a4f3a396c910fa80f0e3c80aa7d8a714f7c988c31",
+      "properties": {
+        "controlled_pause_census": "{\"cleanup_candidate_queries_completed\": 0, \"context_estimate_max_rows\": 0, \"context_rows\": 0, \"cost_projection_estimate_rows\": 0, \"cost_rows\": 0, \"cost_snapshot_rows\": 0, \"messages_for_session\": 0, \"pause:cleanup_candidate_queries_completed\": 0, \"pause:context_estimate_max_rows\": 1, \"pause:context_rows\": 0, \"pause:cost_projection_estimate_rows\": 0, \"pause:cost_rows\": 0, \"pause:cost_snapshot_rows\": 0, \"pause:messages_for_session\": 0, \"pause:settings_readiness_builds\": 3, \"pause:snapshot_rows\": 0, \"pause:snapshots\": 0, \"pause:spend_history_rows\": 0, \"pause:template_default_builds\": 0, \"settings_readiness_builds\": 25, \"snapshot_rows\": 0, \"snapshots\": 0, \"spend_history_rows\": 0, \"template_default_builds\": 0}",
+        "native_timer_count": "24",
+        "delivered_pause_count": "0",
+        "runtime_sources": "{\"tldw_chatbook.UI.Console_Modules.console_spend_projection\": \"C:\\\\Users\\\\GDesktop-1\\\\.codex\\\\worktrees\\\\textual-settings-patterns\\\\tldw_tui\\\\tldw_chatbook\\\\UI\\\\Console_Modules\\\\console_spend_projection.py\", \"tldw_chatbook.UI.Screens.chat_screen\": \"C:\\\\Users\\\\GDesktop-1\\\\.codex\\\\worktrees\\\\textual-settings-patterns\\\\tldw_tui\\\\tldw_chatbook\\\\UI\\\\Screens\\\\chat_screen.py\", \"tldw_chatbook.app\": \"C:\\\\Users\\\\GDesktop-1\\\\.codex\\\\worktrees\\\\textual-settings-patterns\\\\tldw_tui\\\\tldw_chatbook\\\\app.py\"}"
+      }
+    }
+  ],
+  "note": "Root independently parsed original child XML; two intentional RED failures and four GREEN children, not six final scenarios."
+}

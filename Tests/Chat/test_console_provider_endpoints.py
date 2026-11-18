@@ -1,4 +1,7 @@
+import pytest
+
 from tldw_chatbook.Chat.console_provider_endpoints import (
+    adapter_api_base_url,
     effective_provider_endpoint,
     first_configured_endpoint,
     generic_endpoint_differs,
@@ -126,3 +129,40 @@ def test_local_discovery_endpoint_display_never_echoes_malformed_input() -> None
 
     assert endpoint_display(entered) == "invalid endpoint"
     assert "unit-test-token" not in endpoint_display(entered)
+
+
+@pytest.mark.parametrize(
+    ("execution_key", "base_url", "expected"),
+    [
+        ("custom-hosted", None, None),
+        ("custom-hosted", "", None),
+        (
+            "custom-hosted",
+            "https://custom.invalid/v1/chat/completions/",
+            "https://custom.invalid/v1",
+        ),
+        ("custom-hosted", "https://custom.invalid/v1/", "https://custom.invalid/v1"),
+        (
+            "custom-hosted",
+            "https://custom.invalid/v1/chat/completions/other",
+            "https://custom.invalid/v1/chat/completions/other",
+        ),
+        (
+            "custom",
+            "https://custom.invalid/v1/chat/completions/",
+            "https://custom.invalid/v1/chat/completions/",
+        ),
+        (
+            "custom_2",
+            "https://custom.invalid/v1/chat/completions",
+            "https://custom.invalid/v1/chat/completions",
+        ),
+        ("openai", None, None),
+        ("vllm", "", None),
+        ("openai", "https://api.openai.com/v1/", "https://api.openai.com/v1/"),
+    ],
+)
+def test_adapter_api_base_url_preserves_endpoint_identity_except_engine_route(
+    execution_key, base_url, expected
+):
+    assert adapter_api_base_url(execution_key, base_url) == expected

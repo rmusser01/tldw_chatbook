@@ -1,0 +1,36 @@
+{
+  "status": "authenticated",
+  "manifest_sha256": "06a1a9ab2533bc8d4e3b81d5ad5f1427292b57893e70c941a5ef5f3b836d8bfd",
+  "current_files_matched": 11,
+  "archive_entries_matched": 87,
+  "rate_reduction_percent": 67.64561072385105,
+  "independent_selections_never_summed": [
+    {
+      "root": "/private/tmp/final-followups-task33560-final-safety-fehdfi0f",
+      "suite": {
+        "name": "pytest",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "tests": "52",
+        "time": "12.642",
+        "timestamp": "2026-10-06T18:52:36.087560-07:00",
+        "hostname": "Roberts-MacBook-Pro-2.local"
+      }
+    },
+    {
+      "root": "/private/tmp/final-followups-task33560-rmw-original-verdict-fixed-jvl_qlx5",
+      "suite": {
+        "name": "pytest",
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+        "tests": "2",
+        "time": "1.390",
+        "timestamp": "2026-10-06T18:55:59.125931-07:00",
+        "hostname": "Roberts-MacBook-Pro-2.local"
+      }
+    }
+  ],
+  "baseline_non_green_and_setup_failures_preserved": true
+}

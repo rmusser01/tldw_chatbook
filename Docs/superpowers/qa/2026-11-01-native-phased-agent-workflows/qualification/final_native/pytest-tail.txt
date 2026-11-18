@@ -1,0 +1,9 @@
+...........                                                              [100%]
+- generated xml file: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-final_native/tests.xml -
+============================= slowest 25 durations =============================
+88.22s call     Tests/Chat/test_workflow_native_journeys.py::test_native_correction_keeps_failed_check_and_fresh_passing_handoff
+83.71s call     Tests/Chat/test_workflow_phase_wave_native.py::test_native_wave_complete_archive_restore_and_rebackup
+3.19s call     Tests/DB/test_workflow_restart_process.py::test_fresh_process_recovery_never_replays_native_work[thread_start]
+
+(22 durations < 1s hidden.)
+11 passed in 178.02s (0:02:58)

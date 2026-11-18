@@ -1,0 +1,61 @@
+{
+  "tldw_chatbook/Agents/plain_chat_tool_surface.py": {
+    "before": 1,
+    "after": 0,
+    "removed": {
+      "getattr(app, 'unified_mcp_service', None)": 1
+    },
+    "added": {}
+  },
+  "tldw_chatbook/Chat/archive_recovery/operations.py": {
+    "before": 1,
+    "after": 0,
+    "removed": {
+      "getattr(app, 'workspace_registry_service', None)": 1
+    },
+    "added": {}
+  },
+  "tldw_chatbook/Chat/console_chat_controller.py": {
+    "before": 28,
+    "after": 23,
+    "removed": {
+      "getattr(self.app, 'console_selected_tool_counts', {})": 2,
+      "getattr(self.app, 'prompt_scope_service', None)": 1,
+      "getattr(self.app, 'console_settings_durability_owner', None)": 1,
+      "getattr(controller.app, 'unified_mcp_service', None)": 1
+    },
+    "added": {}
+  },
+  "tldw_chatbook/Chat/console_received_dispatch.py": {
+    "before": 6,
+    "after": 4,
+    "removed": {
+      "getattr(runtime._app, 'prompt_scope_service', None)": 1,
+      "getattr(source.app, 'prompt_scope_service', None)": 1
+    },
+    "added": {}
+  },
+  "tldw_chatbook/Event_Handlers/Chat_Events/chat_rag_events.py": {
+    "before": 13,
+    "after": 12,
+    "removed": {
+      "getattr(app, 'citation_trace_repository', None)": 1
+    },
+    "added": {}
+  },
+  "tldw_chatbook/Widgets/plugin_review_modal.py": {
+    "before": 2,
+    "after": 0,
+    "removed": {
+      "getattr(self.app, 'local_mcp_control_service', None)": 1,
+      "getattr(self.app, 'console_runtime', None)": 1
+    },
+    "added": {}
+  },
+  "Tests/Chat/test_console_optional_app_services.py": {
+    "before": 0,
+    "after": 0,
+    "removed": {},
+    "added": {}
+  }
+}

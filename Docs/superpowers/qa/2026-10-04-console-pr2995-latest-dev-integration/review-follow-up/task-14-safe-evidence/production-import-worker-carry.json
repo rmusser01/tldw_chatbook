@@ -1,0 +1,77 @@
+{
+  "tldw_chatbook/LLM_Provider_Catalog/openai_compatible_model_discovery.py": {
+    "all_import_nodes_ast_exact": true,
+    "worker_timer_route_calls_ast_exact": true,
+    "changed_top_level_declarations": [
+      "_scrub_model_metadata_value",
+      "discover_openai_compatible_models"
+    ],
+    "old_declarations": {
+      "build_discovery_auth_headers": "53e486f403f9f5b15903c2af9d5b288b798b9e8449f5e5decec932e1de543ffc",
+      "_normalized_provider_identity": "695189e74ed9c4e68a7014f4b1c230dbb67b6e12357298421049f7493f3609b6",
+      "_parse_endpoint": "e9050eeffa45779ac5cfb60fe979f265ca1650b4da7548fef8d88cb2eedc603e",
+      "_is_structurally_safe_generic_endpoint": "b02b171721208b835417e3fa082d667d991a7e9b37e1ad9e570cc5f4981e6aaf",
+      "_is_safe_generic_authority": "968c3164ac51c808fd661c0e6c23a4275a32667d2c88776c8219f0032bfc226d",
+      "_is_safe_generic_path": "c1eb5bce2480047074e45e52d6f4f602f63c05fcb037353132d3ba5b379524e7",
+      "_has_unsafe_generic_endpoint_tail_structure": "29dac8a0a325c65b98ab30fd2ae67cef567c8f4bfe42dd33523e4bb15f4f38c3",
+      "_normalized_path": "c8b3f87b3f40faa9c8b43317d11ee76a7501d95f41eafd55cf5c274736648380",
+      "_safe_netloc": "d8f9fc01ad6f6ecb243b140caa4bd688c886d2387be5e2ef7c42441f9ae6431e",
+      "_parse_endpoint_for_fingerprint": "e12673dcd415ca6b55d9a6174ffd201c400ab9590c640bf0f09498cbac236ddd",
+      "_models_path_for_endpoint_path": "1eac43918131e9b7afc5bba9319100b14d1d81acdaafb6d728c06656f40ba939",
+      "_models_path_preserving_encoding": "352979c400bca1465031bb860c0afc6493d9b3bb8f71e633be7f48a0fce649d3",
+      "_is_base_url_path": "708d0527e84ede827eaf86390d9b8bf19e777b79b3d32e294476320a7eeecfe9",
+      "_is_explicit_openai_compatible_path": "f269e30167e28c2fb3e79fe40cc561ff581ab1d52dacaae106f5710a3729ac9d",
+      "supports_openai_compatible_model_discovery": "5bcb07c918ec28203b064289bfa2c59dcb6dbdeeddd319b3629a48b12d8e41d0",
+      "build_models_url": "bdb1177633f42d2f30db9ffcf01b1afcb5fef2ab4deb1a487cc1724fd3c171d3",
+      "fingerprint_endpoint": "1db8900fd76813dde74980af100a35b8c28b269eca1c41f1ef5990f06819ebfd",
+      "_is_sensitive_metadata_key": "2cbc85427f58a834f3845492b753d8457446e594681ee1939ef600db468e339d",
+      "_scrub_model_metadata_value": "b687071049cc02d3fe0ae2f8dbdd4a5f87b97e48306edca89f74aeda845e4b53",
+      "_safe_model_metadata": "c1e9a2fcb9cec1ee04dce65705ad1f3c9addbfec1fa89de5ac4e6e86ccfbd53a",
+      "normalize_models_response": "b0beb8389a2771717905234f0b27624e17a4e5f68a627f482816dcb1cda45e54",
+      "_discovery_error": "ab585fcb4db9e28ec58430b2214ab2867ab49894533b95201e2c5561c1a79ef1",
+      "_transport_category": "8939113ba7417d1b1c8779c8df272cb63157b0a327f20ecd99890fdaf468277d",
+      "discover_openai_compatible_models": "bd9189876e334f461a4f30ada82c8ed90bb824564d4d79b6dc71ce3b7f23e9df"
+    },
+    "actual_declarations": {
+      "build_discovery_auth_headers": "53e486f403f9f5b15903c2af9d5b288b798b9e8449f5e5decec932e1de543ffc",
+      "_normalized_provider_identity": "695189e74ed9c4e68a7014f4b1c230dbb67b6e12357298421049f7493f3609b6",
+      "_parse_endpoint": "e9050eeffa45779ac5cfb60fe979f265ca1650b4da7548fef8d88cb2eedc603e",
+      "_is_structurally_safe_generic_endpoint": "b02b171721208b835417e3fa082d667d991a7e9b37e1ad9e570cc5f4981e6aaf",
+      "_is_safe_generic_authority": "968c3164ac51c808fd661c0e6c23a4275a32667d2c88776c8219f0032bfc226d",
+      "_is_safe_generic_path": "c1eb5bce2480047074e45e52d6f4f602f63c05fcb037353132d3ba5b379524e7",
+      "_has_unsafe_generic_endpoint_tail_structure": "29dac8a0a325c65b98ab30fd2ae67cef567c8f4bfe42dd33523e4bb15f4f38c3",
+      "_normalized_path": "c8b3f87b3f40faa9c8b43317d11ee76a7501d95f41eafd55cf5c274736648380",
+      "_safe_netloc": "d8f9fc01ad6f6ecb243b140caa4bd688c886d2387be5e2ef7c42441f9ae6431e",
+      "_parse_endpoint_for_fingerprint": "e12673dcd415ca6b55d9a6174ffd201c400ab9590c640bf0f09498cbac236ddd",
+      "_models_path_for_endpoint_path": "1eac43918131e9b7afc5bba9319100b14d1d81acdaafb6d728c06656f40ba939",
+      "_models_path_preserving_encoding": "352979c400bca1465031bb860c0afc6493d9b3bb8f71e633be7f48a0fce649d3",
+      "_is_base_url_path": "708d0527e84ede827eaf86390d9b8bf19e777b79b3d32e294476320a7eeecfe9",
+      "_is_explicit_openai_compatible_path": "f269e30167e28c2fb3e79fe40cc561ff581ab1d52dacaae106f5710a3729ac9d",
+      "supports_openai_compatible_model_discovery": "5bcb07c918ec28203b064289bfa2c59dcb6dbdeeddd319b3629a48b12d8e41d0",
+      "build_models_url": "bdb1177633f42d2f30db9ffcf01b1afcb5fef2ab4deb1a487cc1724fd3c171d3",
+      "fingerprint_endpoint": "1db8900fd76813dde74980af100a35b8c28b269eca1c41f1ef5990f06819ebfd",
+      "_is_sensitive_metadata_key": "2cbc85427f58a834f3845492b753d8457446e594681ee1939ef600db468e339d",
+      "_scrub_model_metadata_value": "548616bf7c080cfcbd8c67663fef2996677f1f82353455b851d38aec416318e4",
+      "_safe_model_metadata": "c1e9a2fcb9cec1ee04dce65705ad1f3c9addbfec1fa89de5ac4e6e86ccfbd53a",
+      "normalize_models_response": "b0beb8389a2771717905234f0b27624e17a4e5f68a627f482816dcb1cda45e54",
+      "_discovery_error": "ab585fcb4db9e28ec58430b2214ab2867ab49894533b95201e2c5561c1a79ef1",
+      "_transport_category": "8939113ba7417d1b1c8779c8df272cb63157b0a327f20ecd99890fdaf468277d",
+      "discover_openai_compatible_models": "9b13fdc1dcec67a51840192044902aafd7f7d3f575856a1f1c5b0efd4a0a88c4"
+    },
+    "actual_exact_upstream_bytes": true
+  },
+  "tldw_chatbook/provider_registry.py": {
+    "all_import_nodes_ast_exact": true,
+    "worker_timer_route_calls_ast_exact": true,
+    "changed_top_level_declarations": [],
+    "old_declarations": {
+      "ProviderRecord": "d218dcc1159125192292edcc6eea77ec3c3680308fedb80d28f46fe98fc77b38",
+      "thinking_toggle_key": "dcf5e30ce1a663a6f7a70bfab0336653a96df9a22c9925db84a8aca3cfa603d8"
+    },
+    "actual_declarations": {
+      "ProviderRecord": "d218dcc1159125192292edcc6eea77ec3c3680308fedb80d28f46fe98fc77b38",
+      "thinking_toggle_key": "dcf5e30ce1a663a6f7a70bfab0336653a96df9a22c9925db84a8aca3cfa603d8"
+    },
+    "actual_exact_upstream_bytes": true
+  }
+}

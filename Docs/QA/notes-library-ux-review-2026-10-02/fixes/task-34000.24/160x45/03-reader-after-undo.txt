@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N  ┌──────────────────────────────────────────────────────┐  I  roadmap-interview                                        │
+│ │ Navigation                     │  a  │ Media (1)      Sets                                  │  t  file:///Users/macbook-dev/Documents/GitHub/tldw_chatbook │
+│ │     Import…                    │  v  │ Media · 1 of 1 · all types · sort: Newest            │  e  /.worktrees/.nlrev-harness/runs/clr-t5-1/cwd/roadmap-int │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │     │  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ Clear filter   │  m  erview.txt                                               │
+│ │ ▊ Search Library…        ▎▊x▎  │     │  ▊  Title/keyword…                  ▎                │  s    Find  Note  Read later  Use in Console  More           │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │     │  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                │       Read (selected)  Analysis  Highlights  Info            │
+│ │                                │     │    type: All types    sort: Newest                   │     ┌──────────────────────────────────────────────────────┐ │
+│ │ ─────────────────────────────  │     │                                                      │     │ Quarterly roadmap interview                          │ │
+│ │ Browse                    ▾    │     │    Export…     Trash     Select                      │     │                                                      │ │
+│ │  ▸ Media (1) — your files      │     │    Review these                                      │     │ The interview covers the quarterly roadmap, the      │ │
+│ │    Conversations (0)           │     │ █▸ roadmap-interview                                 │     │ hiring plan and the two launches scheduled for       │ │
+│ │    Notes (0)                   │     │ █    plaintext · updated 9h · loaded                 │     │ spring. Jordan asked about the research budget;      │ │
+│ │    Prompts (0) — reuse         │     │                                                      │     │ Morgan confirmed the thesis workstream keeps its     │ │
+│ │    Skills (1) — AI add-ons     │<--- │                                                      │     │ allocation.                                          │ │
+│ │    Collections (0)             │     │                                                      │     │                                                      │ │
+│ │    Search / RAG — find all     │     │                                                      │     │                                                      │ │
+│ │ ─────────────────────────────  │     │                                                      │     │                                                      │ │
+│ │ Artifacts                 ▾    │     │                                                      │     │                                                      │ │
+│ │    All artifacts               │     │                                                      │<--- │                                                      │ │
+│ │    Chatbooks                   │     │                                                      │     │                                                      │ │
+│ │    Reports                     │     │                                                      │     │                                                      │ │
+│ │    Dreams                      │     │                                                      │     │                                                      │ │
+│ │ ─────────────────────────────  │     │                                                      │     │                                                      │ │
+│ │ Create                    ▾    │     │                                                      │     │                                                      │ │
+│ │    New note                    │<--- │                                                      │     │                                                      │ │
+│ │    New prompt                  │     │                                                      │     │                                                      │ │
+│ │    New skill                   │     │                                                      │     │                                                      │ │
+│ │ ─────────────────────────────  │     │                                                      │     │                                                      │ │
+│ │ Study                     ▾    │     │                                                      │     │                                                      │ │
+│ │    Study decks (0)             │     │                                                      │     │                                                      │ │
+│ │    Flashcards due: 0           │     │                                                      │     │                                                      │ │
+│ │    Quizzes (0)                 │     │                                                      │     │                                                      │ │
+│ │ ─────────────────────────────  │     │                                                      │     │                                                      │ │
+│ │ Import / Export           ▾    │     │                                                      │     │                                                      │ │
+│ │    Import…                     │     │                                                      │     │                                                      │ │
+│ │    Export                      │     │                                                      │     │                                                      │ │
+│ │ ─────────────────────────────▇ │     │                       1-1 of 1                       │     └──────────────────────────────────────────────────────┘ │
+│ └────────────────────────────────┘     └──────────────────────────────────────────────────────┘                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | F6 next pane | ctrl+f find | n note | l read later | c use in Console | t trash | s select | esc focus Library | F1 · Ctrl+P · Ctrl+Q

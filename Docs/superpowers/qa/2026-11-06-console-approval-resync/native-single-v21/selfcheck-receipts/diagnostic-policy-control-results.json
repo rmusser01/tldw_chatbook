@@ -1,0 +1,74 @@
+{
+  "status": "GREEN",
+  "qualified": false,
+  "product_samples": 0,
+  "results": {
+    "default_off": {
+      "actual": {
+        "calls_once_unchanged": true,
+        "return_preserved": true,
+        "error_preserved": false,
+        "arm_count": 0,
+        "one20s_repeatFalse": false,
+        "all_timer_calls": 0
+      },
+      "pass": true
+    },
+    "opt_in": {
+      "actual": {
+        "calls_once_unchanged": true,
+        "return_preserved": true,
+        "error_preserved": false,
+        "arm_count": 1,
+        "one20s_repeatFalse": true,
+        "all_timer_calls": 2
+      },
+      "pass": true
+    },
+    "off_original_error": {
+      "actual": {
+        "calls_once_unchanged": true,
+        "return_preserved": false,
+        "error_preserved": true,
+        "arm_count": 0,
+        "one20s_repeatFalse": false,
+        "all_timer_calls": 0
+      },
+      "pass": true
+    },
+    "qualification_debug_refused": {
+      "actual_limit": null,
+      "pass": true
+    },
+    "qualification_off_allowed": {
+      "actual_limit": 41,
+      "pass": true
+    },
+    "validation_badflag_refused": {
+      "actual_limit": null,
+      "pass": true
+    },
+    "explicit_selected_child_flag_binding": {
+      "pass": true
+    },
+    "seeder_default_off": {
+      "actual_flag": false,
+      "pass": true
+    },
+    "seeder_opt_in": {
+      "actual_flag": true,
+      "pass": true
+    },
+    "no_C_calls_outside_optional_class": {
+      "pass": true
+    },
+    "actual_parent_passes_both_explicit_flag_values": {
+      "pass": true
+    },
+    "actual_selection_records_explicit_flag": {
+      "pass": true
+    }
+  },
+  "failures": [],
+  "scope": "Actual private command/class/parser AST plus pure mode policy with controlled timers/tasks/files only; no real C timer, App, native API, product import, external/model traffic or crash causality."
+}

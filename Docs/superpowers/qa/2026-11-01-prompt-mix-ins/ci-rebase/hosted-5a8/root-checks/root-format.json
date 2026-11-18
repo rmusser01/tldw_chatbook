@@ -1,0 +1,58 @@
+[
+  {
+    "path": "Tests/Architecture/test_module_size_ratchet.py",
+    "phase": "baseline",
+    "exit": 1,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "path": "Tests/Architecture/test_module_size_ratchet.py",
+    "phase": "current",
+    "exit": 1,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "path": "Tests/Architecture/test_library_modules_size_ratchet.py",
+    "phase": "baseline",
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "path": "Tests/Architecture/test_library_modules_size_ratchet.py",
+    "phase": "current",
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "path": "Tests/CI/test_ci_queue_pressure_contract.py",
+    "phase": "baseline",
+    "exit": 1,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "path": "Tests/CI/test_ci_queue_pressure_contract.py",
+    "phase": "current",
+    "exit": 1,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "path": "scripts/check_ui_pr_gate_census.py",
+    "phase": "baseline",
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "path": "scripts/check_ui_pr_gate_census.py",
+    "phase": "current",
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  }
+]

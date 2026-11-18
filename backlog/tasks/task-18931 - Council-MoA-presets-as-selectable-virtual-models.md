@@ -42,3 +42,15 @@ Reason: new virtual-provider/model-system boundary and a cross-module interface 
 4. Accounting integration + fleet-panel/display polish
 5. Tests + docs (console.md model selection, agent-runs fleet sections)
 <!-- SECTION:PLAN:END -->
+
+## Deferral note (2026-10-11, dev `9f8533686c`)
+
+DEFERRED from the t2-hermes porting slice — untouched, deliberately. This is
+the largest task in the slice: it requires drafting ADR-073 (storage,
+pseudo-provider identity, member-failure semantics, accounting) BEFORE any
+code, then a virtual-model registration seam in the picker plus fan-out
+runtime through the existing fleet spawn path, labelled member transcript
+blocks, and accounting integration. None of that was started; nothing here
+was implemented or scoped beyond reading the task file. The
+Alt+M/model-config programme (PR #3057, open) also touches the picker seam
+this task would extend.

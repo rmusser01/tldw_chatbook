@@ -1,0 +1,55 @@
+{
+  "mode": "held_selection",
+  "calls": [
+    {
+      "id": "run-a",
+      "mode": "local",
+      "real_result_id": "run-a"
+    }
+  ],
+  "selected_a": {
+    "source": "local",
+    "select_value": "local",
+    "selected": "run-a",
+    "highlighted": "research-run-run-a",
+    "detail": "LOCAL A ALPHA\nStatus: running\nPhase: planning\nControl: running\nLatest checkpoint: none\nProgress: n/a",
+    "status": "Loaded 2 local research run(s).",
+    "mounted": true
+  },
+  "held_native_timer": {
+    "source": "local",
+    "select_value": "local",
+    "selected": "run-a",
+    "highlighted": "research-run-run-a",
+    "detail": "LOCAL A ALPHA\nStatus: running\nPhase: planning\nControl: running\nLatest checkpoint: none\nProgress: n/a",
+    "status": "Loaded 2 local research run(s).",
+    "mounted": true
+  },
+  "after_b_key_before_release": {
+    "source": "local",
+    "select_value": "local",
+    "selected": "run-b",
+    "highlighted": "research-run-run-b",
+    "detail": "LOCAL B BRAVO\nStatus: draft\nPhase: planning\nControl: paused\nLatest checkpoint: none\nProgress: n/a",
+    "status": "Loaded 2 local research run(s).",
+    "mounted": true
+  },
+  "settled_b": {
+    "source": "local",
+    "select_value": "local",
+    "selected": "run-a",
+    "highlighted": "research-run-run-b",
+    "detail": "LOCAL A ALPHA\nStatus: running\nPhase: planning\nControl: running\nLatest checkpoint: none\nProgress: n/a",
+    "status": "Loaded 2 local research run(s).",
+    "mounted": true
+  },
+  "final": {
+    "source": "local",
+    "select_value": "local",
+    "selected": "run-a",
+    "highlighted": "research-run-run-b",
+    "detail": "LOCAL A ALPHA\nStatus: running\nPhase: planning\nControl: running\nLatest checkpoint: none\nProgress: n/a",
+    "status": "Loaded 2 local research run(s).",
+    "mounted": true
+  }
+}

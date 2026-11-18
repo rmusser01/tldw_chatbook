@@ -6,7 +6,7 @@ import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
-from typing import Literal
+from typing import Literal, Optional
 from unicodedata import category as unicode_category
 
 # "Valid provider API key" has exactly ONE definition in this codebase --
@@ -29,6 +29,7 @@ from unicodedata import category as unicode_category
 # imports (`DB.*`, `Utils.*`) never reach into `Chat`.
 from ..config import (
     ProviderSettingsError,
+    is_encrypted_config_value,
     is_valid_provider_api_key,
     normalize_provider_config_key,
     provider_settings_for_key,
@@ -36,8 +37,18 @@ from ..config import (
 from ..config import (
     resolve_provider_api_key as _valid_api_key,
 )
-from ..provider_registry import RECORDS_BY_KEY
-from .Chat_Deps import ChatConfigurationError
+from ..provider_registry import (  # noqa: F401 - names re-exported for readiness callers
+    KEYLESS_PROVIDER_KEYS,
+    PROVIDERS_REQUIRING_API_KEY_KEYS,
+    PROVIDERS_REQUIRING_BASE_URL_KEYS,
+    default_api_key_env_var,
+)
+from ..Utils.input_validation import (
+    sanitize_string,
+    validate_navigation_context_text,
+    validate_text_input,
+)
+from ..Provider_Contract import ChatConfigurationError
 from .provider_test_evidence import (
     ConfigurationFacet,
     ConfigurationIssueCode,
@@ -45,6 +56,7 @@ from .provider_test_evidence import (
     ProviderReadinessSnapshot,
     ProviderReadinessVerdict,
     ProviderTestEvidence,
+    model_facet,
     provider_readiness_verdict,
 )
 
@@ -53,55 +65,7 @@ from .provider_test_evidence import (
 # it); the source string is the AC#5 "which credential is in use" signal.
 SUBSCRIPTION_SOURCE = "subscription:claude_code"
 
-PROVIDERS_REQUIRING_API_KEY_KEYS = frozenset(
-    {
-        "anthropic",
-        "arcee",
-        "azure",
-        "baseten",
-        "byteplus",
-        "cerebras",
-        "cloudflare",
-        "cohere",
-        "commandcode",
-        "databricks",
-        "deepinfra",
-        "deepseek",
-        "fireworks",
-        "gmi",
-        "google",
-        "groq",
-        "huggingface",
-        "kilo",
-        "meta",
-        "mimo",
-        "minimax",
-        "mistral",
-        "mistralai",
-        "moonshot",
-        "nebius",
-        "nous",
-        "novita",
-        "nvidia",
-        "ollama_cloud",
-        "openai",
-        "opencode_zen",
-        "openrouter",
-        "qianfan",
-        "qwencloud",
-        "sambanova",
-        "siliconflow",
-        "stepfun",
-        "together",
-        "tokenhub",
-        "upstage",
-        "venice",
-        "vercel",
-        "wandb",
-        "zai",
-        "zenmux",
-    }
-)
+# Derived from the registry records (TASK-36946.1); see provider_registry.
 #: Providers that dispatch without a credential. Membership is what makes a
 #: provider dispatchable at all through the readiness gate (`KNOWN_PROVIDER_
 #: KEYS` below), so it must be kept in terms of what `Chat/Chat_Functions.
@@ -119,42 +83,26 @@ PROVIDERS_REQUIRING_API_KEY_KEYS = frozenset(
 #: out, all three fell to the "Unknown provider" branch below and a
 #: previously-working Run button went permanently disabled with copy that
 #: named no remedy.
-KEYLESS_PROVIDER_KEYS = frozenset(
-    {
-        "aphrodite",
-        "custom",
-        "custom_2",
-        "custom_openai_api",
-        "custom_openai_api_2",
-        "koboldcpp",
-        "mlx_lm",
-        "llama_cpp",
-        "local_llm",
-        "local_llamacpp",
-        "local_llamafile",
-        "local_mlx_lm",
-        "local_ollama",
-        "local_onnx",
-        "local_transformers",
-        "local_vllm",
-        "ollama",
-        "oobabooga",
-        "tabbyapi",
-        "vllm",
-    }
-)
 KNOWN_PROVIDER_KEYS = PROVIDERS_REQUIRING_API_KEY_KEYS | KEYLESS_PROVIDER_KEYS
 
-_DEFAULT_API_KEY_ENV_VAR_ALIASES = {
-    # Registry parity (ADR-179): Databricks's conventional token env var is
-    # DATABRICKS_TOKEN, not the DATABRICKS_API_KEY convention the generic
-    # naming rule would derive -- this alias keeps readiness, the first-run
-    # wizard's "found in your environment" detection, and the engine's
-    # env candidates (provider_registry.DATABRICKS) looking for one name.
-    "databricks": "DATABRICKS_TOKEN",
-    "mistralai": "MISTRAL_API_KEY",
-    "qwencloud": "DASHSCOPE_API_KEY",
-}
+
+def is_self_hosted_provider(provider: str | None) -> bool:
+    """Whether ``provider`` names a self-hosted endpoint (TASK-34100.5).
+
+    A keyless provider, or any custom endpoint (``custom``, ``custom_2``,
+    the ``custom-openai-api`` handler keys, the ``custom-hosted`` engine key
+    and a registry ``custom-ep:<slug>`` selection). The app cannot know such
+    a server's context window or how long its first token takes.
+
+    Args:
+        provider: A provider, execution or selection key.
+
+    Returns:
+        True for a self-hosted endpoint.
+    """
+    key = provider_config_key(provider)
+    return key in KEYLESS_PROVIDER_KEYS or key.startswith("custom")
+
 _STRICT_HOSTED_PROVIDER_KEYS = frozenset({"moonshot", "zai"})
 #: ADR-179: engine-driven providers whose workspace host is per-account, so
 #: no default base URL can ship (``provider_registry`` records carry
@@ -162,7 +110,8 @@ _STRICT_HOSTED_PROVIDER_KEYS = frozenset({"moonshot", "zai"})
 #: mark them ready -- the send path (``LLM_Calls/hosted_provider_engine``)
 #: raises on a missing base URL -- so readiness blocks with copy naming the
 #: workspace URL until one of ``_BASE_URL_SETTING_KEYS`` is configured.
-PROVIDERS_REQUIRING_BASE_URL_KEYS = frozenset({"databricks", "azure", "cloudflare"})
+#: ``PROVIDERS_REQUIRING_BASE_URL_KEYS`` (imported above) derives from the
+#: records' ``base_url_required`` field.
 #: Blocking copy per :data:`PROVIDERS_REQUIRING_BASE_URL_KEYS` entry:
 #: (reason, what to set, example value, how the path is handled).
 _BASE_URL_RECOVERY = {
@@ -204,9 +153,10 @@ _MAX_SOURCE_CHARS = 256
 _MAX_ENV_VAR_CHARS = 128
 _MAX_REASON_CHARS = 128
 _MAX_RECOVERY_CHARS = 1024
-#: ADR-146: the readiness reason for a ``custom-ep:<slug>`` id whose registry
+#: ADR-343: the readiness reason for a ``custom-ep:<slug>`` id whose registry
 #: entry is gone (TASK-33002.12).
 ENDPOINT_NOT_FOUND_REASON = "Endpoint not found"
+STILL_ENCRYPTED_REASON = "Saved API key is still encrypted"
 _CONFIGURATION_STATE_BY_REASON: dict[
     str, tuple[ConfigurationFacet, ConfigurationIssueCode | None]
 ] = {
@@ -219,6 +169,11 @@ _CONFIGURATION_STATE_BY_REASON: dict[
     "Checking Claude subscription credential": ("incomplete", "credential_missing"),
     "Select a provider": ("incomplete", "provider_missing"),
     "Missing API key": ("incomplete", "credential_missing"),
+    # TASK-34100.4 review round 2 (F-R2-2): the saved key is still `enc:`
+    # ciphertext (a locked session, or a key left under an earlier master
+    # password). Never sent, never Ready -- even for a provider that needs
+    # no key, whose server evidently asks for one.
+    STILL_ENCRYPTED_REASON: ("incomplete", "credential_missing"),
     # ADR-179: keyed provider whose per-account workspace host is
     # unconfigured. The credential is present; the endpoint is the missing
     # half, so the structured issue is endpoint_missing, and the blocked
@@ -233,6 +188,10 @@ _CONFIGURATION_STATE_BY_REASON: dict[
     ENDPOINT_NOT_FOUND_REASON: ("incomplete", "endpoint_missing"),
 }
 _PERSISTED_CREDENTIAL_SOURCES = frozenset({"none", "stored", "environment"})
+_STILL_ENCRYPTED_RECOVERY = (
+    "Re-enter or clear it in Settings > Providers & Models; it was encrypted "
+    "with a master password this session does not have."
+)
 
 
 def _validate_safe_text(value: object, *, label: str, max_chars: int) -> None:
@@ -252,7 +211,7 @@ def _validate_safe_text(value: object, *, label: str, max_chars: int) -> None:
 def safe_provider_label(text: str, fallback: str) -> str:
     """Return ``text`` when ``ProviderReadiness.provider`` can carry it.
 
-    An ADR-146 entry's ``display_name`` is user text the registry accepts
+    An ADR-343 entry's ``display_name`` is user text the registry accepts
     but the record rejects (a no-break space, a ZWJ emoji, a tab), and a
     rejected record is an unhandled ValueError that kills Settings on open
     (TASK-33002.12), so such a name reads as ``fallback`` instead.
@@ -419,7 +378,6 @@ class ProviderReadiness:
         current_identity: ProviderDraftIdentity | None = None,
     ) -> ProviderReadinessSnapshot:
         """Combine legacy configuration readiness with current test evidence."""
-        model_id = selected_model.strip() if isinstance(selected_model, str) else ""
         evidence_is_current = bool(
             evidence is not None
             and current_identity is not None
@@ -430,20 +388,14 @@ class ProviderReadiness:
             endpoint = "changed_since_test"
         else:
             endpoint = evidence.endpoint if evidence is not None else "not_tested"
-        if not model_id:
-            model = "missing"
-        elif (
-            evidence_is_current
-            and evidence.endpoint == "reachable"
-            and model_id in evidence.model_ids
-        ):
-            model = "confirmed"
-        else:
-            model = "unconfirmed"
         return ProviderReadinessSnapshot(
             configuration=self.configuration_facet,
             endpoint=endpoint,
-            model=model,
+            model=model_facet(
+                selected_model,
+                endpoint if evidence_is_current else "not_tested",
+                evidence.model_ids if evidence_is_current else (),
+            ),
             category=evidence.category if evidence_is_current else None,
             configuration_issue=self.configuration_issue,
         )
@@ -483,40 +435,22 @@ def provider_config_key(provider: str | None) -> str:
     return normalize_provider_config_key(provider)
 
 
+def required_base_url_target(provider: str | None) -> str | None:
+    """Name what a provider that ships no base URL needs set (ADR-179).
+
+    Args:
+        provider: A provider id or alias.
+
+    Returns:
+        E.g. "resource host" for Azure, or None when a default URL ships.
+    """
+    recovery = _BASE_URL_RECOVERY.get(provider_config_key(provider))
+    return recovery[1] if recovery else None
+
+
 def _requires_api_key(provider_key: str) -> bool:
     """Return True unless the provider is known to work without credentials."""
     return provider_key not in KEYLESS_PROVIDER_KEYS
-
-
-def default_api_key_env_var(provider_key: str) -> str | None:
-    """Return the conventional environment variable for known keyed providers.
-
-    Single source of truth for the ``<PROVIDER>_API_KEY`` naming convention
-    (plus known aliases such as ``mistralai`` -> ``MISTRAL_API_KEY``); also
-    consumed by ``first_run_setup_state.read_provider_secret_presence`` so the
-    wizard's "found in your environment" detection agrees with Chat's own
-    readiness resolution even before ``api_key_env_var`` is explicitly
-    persisted to config.
-
-    Args:
-        provider_key: The normalized provider key (e.g. via
-            ``provider_config_key``), such as "openai" or "mistralai".
-
-    Returns:
-        The conventional environment variable name (e.g. "OPENAI_API_KEY"),
-        or None when the provider is not one of the known keyed providers.
-    """
-    if provider_key not in PROVIDERS_REQUIRING_API_KEY_KEYS:
-        return None
-    # An engine preset documents its own variable (Vercel AI_GATEWAY_API_KEY,
-    # BytePlus ARK_API_KEY, ...), which is what the engine reads; derive it
-    # from the registry so readiness never looks elsewhere (TASK-33511).
-    record = RECORDS_BY_KEY.get(provider_key)
-    if record is not None and record.engine_driven and record.api_key_env_var:
-        return record.api_key_env_var
-    return _DEFAULT_API_KEY_ENV_VAR_ALIASES.get(
-        provider_key, f"{provider_key.upper()}_API_KEY"
-    )
 
 
 def _resolved_hosted_api_key(
@@ -650,13 +584,88 @@ def resolve_provider_credential(
     return env_key, f"env:{env_var}", env_var
 
 
+def provider_credential_source(
+    provider: str | None,
+    app_config: Mapping[str, object],
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> str | None:
+    """Say where a provider's key comes from, whether or not it can send yet.
+
+    Readiness drops the source while a send is impossible -- Azure,
+    Cloudflare and Databricks before their base URL is set -- yet the key is
+    saved all the same, so Settings says so, offers Clear and lists the
+    provider as Configured (TASK-33007.2 AC#2, AC#4).
+
+    Args:
+        provider: A provider id or alias; a custom endpoint id has no table.
+        app_config: The configuration holding ``api_settings``.
+        environ: Environment mapping, injectable for tests.
+
+    Returns:
+        ``"config:api_settings.<key>.api_key"``, ``"env:<VAR>"``, or ``None``.
+    """
+    provider_key = provider_config_key((provider or "").strip())
+    try:
+        _validate_provider_key(provider_key)
+        settings = provider_settings_for_key(
+            app_config.get("api_settings", {}), provider_key
+        )
+    except (ValueError, ProviderSettingsError):
+        return None
+    env = os.environ if environ is None else environ
+    return resolve_provider_credential(provider_key, settings, environ=env)[1]
+
+
+def custom_endpoint_family_readiness(
+    family_key: str,
+    app_config: Mapping[str, object],
+    *,
+    environ: Mapping[str, str] | None = None,
+    background_credentials: bool = False,
+) -> ProviderReadiness:
+    """The family readiness an ADR-343 custom endpoint entry rides.
+
+    The family slot's own saved key (``[api_settings.<family>] api_key``) is
+    never the entry's credential, so a keyless family blocked only because
+    that key is still ``enc:`` ciphertext reads as ready here; the caller
+    then applies the entry's own credential rule
+    (``custom_endpoint_missing_key_readiness``). TASK-34100.4 review (F3):
+    every path that read the family readiness directly -- Settings, the
+    Console header, the send gateway, sub-agent routing -- blocked an entry
+    with a working key of its own, with recovery naming the wrong page.
+
+    Args:
+        family_key: The entry family's readiness key (``llama_cpp`` ...).
+        app_config: Loaded app configuration.
+        environ: Environment mapping, injectable for deterministic tests.
+        background_credentials: Forwarded to ``get_provider_readiness``.
+
+    Returns:
+        The family readiness, with only that stranded-credential block lifted.
+    """
+    family = get_provider_readiness(
+        family_key,
+        app_config,
+        environ=environ,
+        background_credentials=background_credentials,
+    )
+    if (
+        not family.ready
+        and family.reason == STILL_ENCRYPTED_REASON
+        and not family.requires_api_key
+    ):
+        return replace(family, ready=True, reason="Ready", recovery=None)
+    return family
+
+
 def _custom_endpoint_readiness(
     provider_name: str,
     app_config: Mapping[str, object],
     environ: Mapping[str, str],
     background_credentials: bool,
 ) -> ProviderReadiness | None:
-    """Resolve an ADR-146 ``custom-ep:<slug>`` id through its registry entry.
+    """Resolve an ADR-343 ``custom-ep:<slug>`` id through its registry entry.
 
     A registry id is not an ``api_settings`` key: canonicalized, it becomes
     ``custom_ep:<slug>``, which no readiness record can carry (TASK-33002.12:
@@ -677,7 +686,7 @@ def _custom_endpoint_readiness(
         slug, or None when ``provider_name`` is not a registry id.
     """
     # Lazy: the registry imports console_session_settings, which imports this module.
-    from .console_session_settings import _custom_endpoint_missing_key_readiness
+    from .console_session_settings import custom_endpoint_missing_key_readiness
     from .custom_endpoint_registry import (
         CUSTOM_ENDPOINT_ID_PREFIX,
         SLUG_PATTERN,
@@ -710,14 +719,14 @@ def _custom_endpoint_readiness(
             ),
         )
     family_key = family_execution_key(entry.family)
-    family = get_provider_readiness(
+    family = custom_endpoint_family_readiness(
         family_key,
         app_config,
         environ=environ,
         background_credentials=background_credentials,
     )
     if family.ready:
-        missing_key = _custom_endpoint_missing_key_readiness(entry, family_key, environ)
+        missing_key = custom_endpoint_missing_key_readiness(entry, family_key, environ)
         if missing_key is not None:
             return missing_key
         # The slot's env var is not the entry's either (the Test row printed it).
@@ -854,6 +863,13 @@ def get_provider_readiness(
         provider_settings,
         environ=env,
     )
+    if env_var is not None:
+        try:
+            _validate_env_var(env_var)
+        except ValueError:
+            # A hand-edited api_key_env_var no record can carry raised from
+            # every return below and killed Settings while it composed.
+            return _invalid_settings_readiness(provider_name, provider_key)
     if configured_key and provider_key in _STRICT_HOSTED_PROVIDER_KEYS:
         try:
             configured_key = _resolved_hosted_api_key(provider_key, app_config, env)
@@ -896,6 +912,26 @@ def get_provider_readiness(
             env_var=env_var,
             reason="Ready",
             recovery=None,
+        )
+
+    # Only a source that reads the saved key can be blocked by it: "none"
+    # sends nothing, and "environment" never reads it -- that source falls
+    # through to "Missing API key", which names the unset variable (Qodo
+    # round, PR #3000).
+    if configured_provider_credential_source(provider_settings) in (
+        None,
+        "stored",
+    ) and is_encrypted_config_value(provider_settings.get("api_key")):
+        return ProviderReadiness(
+            provider=provider_name,
+            provider_key=provider_key,
+            requires_api_key=requires_api_key,
+            ready=False,
+            api_key=None,
+            api_key_source=None,
+            env_var=env_var,
+            reason=STILL_ENCRYPTED_REASON,
+            recovery=_STILL_ENCRYPTED_RECOVERY,
         )
 
     if provider_key not in KNOWN_PROVIDER_KEYS and not provider_settings:
@@ -1029,3 +1065,93 @@ def chat_api_key_value_to_persist(
     if candidate == field_state.value:
         return None
     return candidate
+
+
+def configured_provider_is_ready(provider: str) -> bool:
+    """Readiness for a fallback candidate, reusing the Chat check."""
+    from tldw_chatbook.config import load_cli_config_and_ensure_existence
+
+    return bool(
+        get_provider_readiness(
+            provider, load_cli_config_and_ensure_existence()
+        ).ready
+    )
+
+
+PROVIDER_API_KEY_MAX_LENGTH = 4096
+
+
+def validate_navigation_provider_key(value: object) -> str:
+    """Normalize and validate one provider key from navigation context.
+
+    Args:
+        value: External provider label or key.
+
+    Returns:
+        The normalized provider configuration key.
+
+    Raises:
+        ValueError: If the provider cannot be represented by the key contract.
+    """
+
+    raw_provider = validate_navigation_context_text(
+        value,
+        name="provider",
+        max_length=128,
+    )
+    provider = provider_config_key(raw_provider)
+    allowed = "abcdefghijklmnopqrstuvwxyz0123456789_"
+    if (
+        not provider
+        or not provider[0].isalnum()
+        or any(character not in allowed for character in provider)
+    ):
+        raise ValueError("provider is invalid")
+    return provider
+
+
+def provider_api_key_validation_error(
+    api_key: object,
+    max_length: int = PROVIDER_API_KEY_MAX_LENGTH,
+) -> Optional[str]:
+    """Return a validation error for a provider API key, or None when valid.
+
+    Args:
+        api_key: User-entered provider API key. Empty values are allowed so
+            optional local-key fields can represent "not configured."
+        max_length: Maximum allowed key length.
+
+    Returns:
+        A user-facing validation error, or None when the value is acceptable.
+    """
+    key = str(api_key or "")
+    if not key:
+        return None
+
+    sanitized = sanitize_string(key, max_length=max_length)
+    if (
+        sanitized != key
+        or any(char in key for char in "\r\n\t")
+        or not validate_text_input(key, max_length=max_length, allow_html=False)
+    ):
+        return f"API key must be a single-line value under {max_length} characters."
+
+    if not is_valid_provider_api_key(key):
+        return "API key looks like a placeholder; paste a real key."
+    return None
+
+
+def validate_provider_api_key(
+    api_key: object,
+    max_length: int = PROVIDER_API_KEY_MAX_LENGTH,
+) -> bool:
+    """Validate provider API-key input without leaking the value.
+
+    Args:
+        api_key: User-entered provider API key.
+        max_length: Maximum allowed key length.
+
+    Returns:
+        True when the value is empty or a usable single-line provider key.
+    """
+    return provider_api_key_validation_error(api_key, max_length=max_length) is None

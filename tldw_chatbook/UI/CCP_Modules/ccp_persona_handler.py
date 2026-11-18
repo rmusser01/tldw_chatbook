@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from loguru import logger
 
-from .ccp_messages import PersonaMessage, ViewChangeMessage
+from .ccp_messages import PersonaMessage
 from ...tldw_api.character_persona_schemas import (
     LocalPersonaProfileCreate,
     LocalPersonaProfileUpdate,
@@ -18,6 +18,12 @@ if TYPE_CHECKING:
     from ..Screens.personas_screen import PersonasScreen
 
 logger = logger.bind(module="CCPPersonaHandler")
+
+#: Personas are listed this many at a time until a page comes back short
+#: (frame slice B2a, spec 1.5.6; the scope service's own default limit).
+PERSONA_PAGE_SIZE = 100
+#: A hard stop for a backend that ignores ``offset``: 100 pages, 10,000 personas.
+PERSONA_PAGE_LIMIT = 100
 
 
 class CCPPersonaHandler:
@@ -48,10 +54,13 @@ class CCPPersonaHandler:
         return self._current_mode()
 
     def _notify(self, message: str, severity: str = "warning") -> None:
-        """Surface a CCP notification when a user action cannot complete."""
+        """Surface a CCP notification when a user action cannot complete.
+
+        Literal text (TASK-34400): messages quote server and exception text.
+        """
         notifier = getattr(self.window, "notify", None)
         if callable(notifier):
-            notifier(message, severity=severity)
+            notifier(message, severity=severity, markup=False)
 
     def _current_chat_id(self, chat_id: str | None = None) -> str:
         """Resolve the active chat identifier for chat-scoped execution helpers."""
@@ -111,6 +120,14 @@ class CCPPersonaHandler:
     ) -> List[Dict[str, Any]]:
         """Refresh the available persona profile list from the shared scope service.
 
+        Pages ``list_persona_profiles`` until a page comes back short (frame
+        slice B2a, spec 1.5.6; precedent ``buddy_management._persona_choices``).
+        The default call returned only the newest 100, so older personas
+        (Default Narrator in a large library) never listed (RP-093, on dev
+        before B2a). A backend that ignores ``offset`` would return the same
+        page forever, so paging also stops on a page with no new id, and after
+        ``PERSONA_PAGE_LIMIT`` pages.
+
         Args:
             raise_on_unavailable: When ``True``, raise instead of collapsing
                 missing persona-profile support or mode unavailability into an
@@ -137,7 +154,7 @@ class CCPPersonaHandler:
             return self.persona_list
 
         try:
-            personas = await service.list_persona_profiles(mode=self._current_mode())
+            records = await self._page_persona_profiles(service)
         except ValueError:
             logger.opt(exception=True).debug("Persona list unavailable in current mode")
             if raise_on_unavailable:
@@ -145,7 +162,7 @@ class CCPPersonaHandler:
             self.persona_list = []
             return self.persona_list
 
-        self.persona_list = self._normalize_persona_list(personas)
+        self.persona_list = records
 
         sidebar = getattr(self.window, "query_one", None)
         if callable(sidebar):
@@ -157,6 +174,52 @@ class CCPPersonaHandler:
                 logger.opt(exception=True).debug("Sidebar persona list update skipped")
 
         return self.persona_list
+
+    async def list_all_persona_profiles(self) -> List[Dict[str, Any]]:
+        """Every persona profile in the current mode, paged as ``refresh_persona_list`` pages.
+
+        For a reader that must not replace this handler's list or push the
+        sidebar (frame slice B2b's ``Also in:`` counts).
+
+        Returns:
+            The normalized records.
+
+        Raises:
+            RuntimeError: When the scope service cannot list personas.
+            ValueError: When the current mode cannot list them.
+        """
+        app_owner = self.app_instance
+        try:
+            service = app_owner.character_persona_scope_service
+        except AttributeError:
+            service = None
+        if service is None or not hasattr(service, "list_persona_profiles"):
+            raise RuntimeError("Persona service is unavailable.")
+        return await self._page_persona_profiles(service)
+
+    async def _page_persona_profiles(self, service: Any) -> List[Dict[str, Any]]:
+        """Page ``list_persona_profiles`` until a short page or a page of no new id."""
+        mode = self._current_mode()
+        records: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+        offset = 0
+        for _page in range(PERSONA_PAGE_LIMIT):
+            payload = await service.list_persona_profiles(
+                mode=mode, limit=PERSONA_PAGE_SIZE, offset=offset
+            )
+            raw = payload.get("items", []) if isinstance(payload, dict) else payload
+            raw_count = len(list(raw or []))
+            fresh = [
+                record
+                for record in self._normalize_persona_list(payload)
+                if str(record.get("id")) not in seen
+            ]
+            seen.update(str(record.get("id")) for record in fresh)
+            records.extend(fresh)
+            if raw_count < PERSONA_PAGE_SIZE or not fresh:
+                break
+            offset += raw_count
+        return records
 
     async def load_persona(self, persona_id: str) -> None:
         """Load a persona profile by identifier via the mode-aware scope service."""
@@ -196,12 +259,6 @@ class CCPPersonaHandler:
         self.window.post_message(
             PersonaMessage.Loaded(self.current_persona_id, normalized),
         )
-        self.window.post_message(
-            ViewChangeMessage.Requested(
-                "persona_profiles",
-                {"persona_id": self.current_persona_id},
-            ),
-        )
 
     async def handle_create_persona(self) -> None:
         """Start a new persona profile flow with a clean editor state."""
@@ -213,7 +270,6 @@ class CCPPersonaHandler:
             "is_active": True,
         }
         self._load_editor(self.current_persona_data)
-        self.window.post_message(ViewChangeMessage.Requested("persona_editor"))
 
     async def handle_edit_persona(self, persona_id: str | None = None) -> None:
         """Switch to the editor for the currently selected persona."""
@@ -223,12 +279,6 @@ class CCPPersonaHandler:
             self._notify("Load a Persona before editing it.")
             return
         self._load_editor(self.current_persona_data)
-        self.window.post_message(
-            ViewChangeMessage.Requested(
-                "persona_editor",
-                {"persona_id": self.current_persona_id},
-            )
-        )
 
     async def save_persona(self, persona_data: Dict[str, Any]) -> None:
         """Create or update a persona profile through the shared scope service."""
@@ -325,12 +375,6 @@ class CCPPersonaHandler:
         self._load_editor(normalized)
         self.window.post_message(
             PersonaMessage.Loaded(self.current_persona_id or "", normalized),
-        )
-        self.window.post_message(
-            ViewChangeMessage.Requested(
-                "persona_profiles",
-                {"persona_id": self.current_persona_id},
-            )
         )
 
     async def list_chat_greetings(self, chat_id: str | None = None) -> Dict[str, Any]:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import threading
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from tldw_chatbook.Character_Chat.local_character_persona_service import (
@@ -100,6 +100,56 @@ class PersonaActorPackCoordinator:
         self.ensure_recovered()
         if self._blocked_intent_ids:
             raise PersonaActorPackCoordinatorError("actor_pack_creation_blocked")
+        # TASK-41114: hold the persona store's and ChaChaNotes' admission from
+        # the plan through the commit or its compensation, so a capture's pause
+        # that begins in between waits for the whole change. Before, the pause
+        # refused the commit and then the compensation, leaving a persona with
+        # no identity. A failure is relayed after the scope closes: both stores
+        # are reconciled by then, so the scope must not read it as an
+        # interrupted publication.
+        failure: BaseException | None = None
+        with self.local_service._actor_pack_mutation_scope():
+            try:
+                intent, identity = self._create_persona_admitted(
+                    profile,
+                    portable_uuid=portable_uuid,
+                    operation=operation,
+                    source_portable_uuid=source_portable_uuid,
+                    cancel_requested=cancel_requested,
+                    authority_guard=authority_guard,
+                    phase_hook=phase_hook,
+                    sqlite_effect=sqlite_effect,
+                )
+            except BaseException as exc:
+                failure = exc
+        if failure is not None:
+            raise failure
+
+        try:
+            self.repository.cleanup_persona_intent(
+                intent.intent_id, expected_state="committed"
+            )
+        except Exception:
+            # Committed: any failure here (a storage pause included) only
+            # leaves the intent for startup recover(), which finishes it if
+            # the persona store is unchanged and else quarantines it.
+            return PersonaActorPackCreationResult(identity, cleanup_pending=True)
+        return PersonaActorPackCreationResult(identity, cleanup_pending=False)
+
+    def _create_persona_admitted(
+        self,
+        profile: Mapping[str, Any],
+        *,
+        portable_uuid: str,
+        operation: str,
+        source_portable_uuid: str | None,
+        cancel_requested: Callable[[], bool],
+        authority_guard: Callable[[], bool],
+        phase_hook: Callable[[str], None] | None,
+        sqlite_effect: Callable[[], None] | None,
+    ) -> tuple[PersonaActorPackIntent, PortableActorIdentity]:
+        """Prepare, apply and commit, compensating any failure before commit."""
+
         try:
             plan = self.local_service._actor_pack_plan_persona_profile(
                 profile, operation=operation
@@ -180,13 +230,7 @@ class PersonaActorPackCoordinator:
                     "actor_pack_creation_failed"
                 ) from None
 
-        try:
-            self.repository.cleanup_persona_intent(
-                intent.intent_id, expected_state="committed"
-            )
-        except (ActorPackRepositoryError, ValueError):
-            return PersonaActorPackCreationResult(identity, cleanup_pending=True)
-        return PersonaActorPackCreationResult(identity, cleanup_pending=False)
+        return intent, identity
 
     def ensure_recovered(self) -> PersonaActorPackRecoveryResult | None:
         """Run `recover` at most once per coordinator lifetime, from any thread.
@@ -218,6 +262,50 @@ class PersonaActorPackCoordinator:
                 self._recovery_error = "actor_pack_recovery_failed"
                 raise
             return self._recovery_result
+
+    def clear_blocked_intents(self) -> int:
+        """Delete only the quarantined intents that block creation.
+
+        TASK-41114, owner decision 2026-11-16: "Clear the interrupted import
+        (Recommended)". Persona records stay exactly as they are. Each row is
+        deleted in its own ChaChaNotes transaction, which a storage pause
+        refuses (``actor_pack_storage_unavailable``); any row it left stays
+        blocked.
+
+        Returns:
+            How many intents were cleared.
+        """
+
+        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+        cleared = 0
+        with self._recovery_lock:
+            try:
+                for intent_id in self._blocked_intent_ids:
+                    self.repository.cleanup_persona_intent(
+                        intent_id, expected_state="quarantined"
+                    )
+                    self._blocked_intent_ids = tuple(
+                        key for key in self._blocked_intent_ids if key != intent_id
+                    )
+                    cleared += 1
+            except RecoveryRequired:
+                raise PersonaActorPackCoordinatorError(
+                    "actor_pack_storage_unavailable"
+                ) from None
+            except ActorPackRepositoryError:
+                raise PersonaActorPackCoordinatorError(
+                    "actor_pack_recovery_clear_failed"
+                ) from None
+            finally:
+                # The app's next recovery read returns this cached summary, so
+                # it must not keep naming a cleared intent (review r15ac-rev2).
+                if self._recovery_result is not None:
+                    self._recovery_result = replace(
+                        self._recovery_result,
+                        blocked_intent_ids=self._blocked_intent_ids,
+                    )
+        return cleared
 
     def recover(self) -> PersonaActorPackRecoveryResult:
         """Reconcile all intents before affected application surfaces mount."""

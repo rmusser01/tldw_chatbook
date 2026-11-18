@@ -124,7 +124,7 @@ def test_media_content_precedes_metadata_and_retains_existing_bound(length, trun
         "content": "x" * length,
         "type": "document",
     }
-    payload = screen._selected_media_handoff_payload()
+    payload = screen._media_controller._selected_media_handoff_payload()
     assert payload is not None
     assert payload.body.startswith(
         "Content excerpt:\n"

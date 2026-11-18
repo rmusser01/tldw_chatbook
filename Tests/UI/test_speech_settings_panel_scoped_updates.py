@@ -60,9 +60,9 @@ async def test_default_provider_change_rebuilds_only_defaults_and_inspector():
         # The defaults card itself is NOT replaced -- only its children are --
         # so the outcome, not the card's identity, is what proves it repainted.
         assert id(panel.query_one(_DEFAULTS)) == defaults_before
-        assert isinstance(
-            panel.query_one("#settings-speech-model-value"), Select
-        ), "audio.cpp exposes Model value as a Select over its observed models."
+        assert isinstance(panel.query_one("#settings-speech-model-value"), Select), (
+            "audio.cpp exposes Model value as a Select over its observed models."
+        )
         assert panel.query_one("#settings-speech-speed", Input).disabled is True
         constraints = panel.query_one("#settings-speech-default-constraints")
         assert "audio.cpp requires WAV" in str(constraints.renderable)

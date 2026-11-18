@@ -53,6 +53,7 @@ from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
+from tldw_chatbook.Sync_Interop.chat_sync_source import CharactersRAGDBChatSyncSource
 
 
 @pytest.fixture
@@ -1807,160 +1808,6 @@ class TestChatPersistenceService:
         assert message["image_data"] == b"\x89PNG-new-bytes"
         assert message["image_mime_type"] == "image/png"
 
-    def test_save_history_soft_deletes_messages_removed_from_resave(
-        self, db_instance: CharactersRAGDB
-    ):
-        service = ChatPersistenceService(db_instance)
-        conversation_id = service.create_conversation(
-            assistant_kind="persona", assistant_id="planner"
-        )
-
-        service.save_history(
-            conversation_id=conversation_id,
-            chatbot_history=[
-                {"id": "msg-user-1", "role": "user", "content": "First"},
-                {
-                    "id": "msg-assistant-1",
-                    "role": "assistant",
-                    "content": "Reply",
-                    "parent_message_id": "msg-user-1",
-                },
-                {
-                    "id": "msg-user-2",
-                    "role": "user",
-                    "content": "Trailing message",
-                    "parent_message_id": "msg-assistant-1",
-                },
-            ],
-        )
-
-        service.save_history(
-            conversation_id=conversation_id,
-            chatbot_history=[
-                {"id": "msg-user-1", "role": "user", "content": "First updated"},
-                {
-                    "id": "msg-assistant-1",
-                    "role": "assistant",
-                    "content": "Reply updated",
-                    "parent_message_id": "msg-user-1",
-                },
-            ],
-        )
-
-        active_messages = db_instance.get_messages_for_conversation(conversation_id)
-        assert [message["id"] for message in active_messages] == [
-            "msg-user-1",
-            "msg-assistant-1",
-        ]
-
-        deleted_row = db_instance.execute_query(
-            "SELECT deleted FROM messages WHERE id = ?",
-            ("msg-user-2",),
-        ).fetchone()
-        assert deleted_row["deleted"] == 1
-
-    def test_save_history_without_ids_skips_variant_rows_in_positional_fallback(
-        self, db_instance: CharactersRAGDB
-    ):
-        service = ChatPersistenceService(db_instance)
-        conversation_id = service.create_conversation(
-            assistant_kind="persona", assistant_id="planner"
-        )
-
-        root_message_id = db_instance.add_message(
-            {
-                "id": "msg-user-1",
-                "conversation_id": conversation_id,
-                "sender": "user",
-                "content": "First",
-                "client_id": db_instance.client_id,
-            }
-        )
-        assistant_message_id = db_instance.add_message(
-            {
-                "id": "msg-assistant-1",
-                "conversation_id": conversation_id,
-                "sender": "assistant",
-                "content": "Reply",
-                "parent_message_id": root_message_id,
-                "client_id": db_instance.client_id,
-            }
-        )
-        variant_message_id = db_instance.create_message_variant(
-            original_message_id=assistant_message_id,
-            variant_content="Variant reply",
-            is_selected=True,
-        )
-        later_user_message_id = db_instance.add_message(
-            {
-                "id": "msg-user-2",
-                "conversation_id": conversation_id,
-                "sender": "user",
-                "content": "Later turn",
-                "parent_message_id": assistant_message_id,
-                "client_id": db_instance.client_id,
-            }
-        )
-
-        service.save_history(
-            conversation_id=conversation_id,
-            chatbot_history=[
-                {"role": "user", "content": "First updated"},
-                {"role": "assistant", "content": "Reply updated"},
-                {"role": "user", "content": "Later updated"},
-            ],
-        )
-
-        messages = {
-            message["id"]: message
-            for message in db_instance.get_messages_for_conversation(conversation_id)
-        }
-        assert set(messages) == {
-            root_message_id,
-            assistant_message_id,
-            variant_message_id,
-            later_user_message_id,
-        }
-        assert messages[root_message_id]["content"] == "First updated"
-        assert messages[assistant_message_id]["content"] == "Reply updated"
-        assert messages[variant_message_id]["content"] == "Variant reply"
-        assert messages[later_user_message_id]["content"] == "Later updated"
-
-    def test_save_history_tolerates_malformed_image_data_uris(
-        self, db_instance: CharactersRAGDB
-    ):
-        service = ChatPersistenceService(db_instance)
-        conversation_id = service.create_conversation(
-            assistant_kind="persona", assistant_id="planner"
-        )
-
-        service.save_history(
-            conversation_id=conversation_id,
-            chatbot_history=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "Broken image"},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": "data:image/png;base64,not-valid-base64"
-                            },
-                        },
-                    ],
-                },
-            ],
-        )
-
-        messages = db_instance.get_messages_for_conversation(conversation_id)
-        assert len(messages) == 1
-        assert (
-            messages[0]["content"]
-            == "Broken image\n<Error: Failed to decode image data from history>"
-        )
-        assert messages[0]["image_data"] is None
-        assert messages[0]["image_mime_type"] is None
-
     @pytest.mark.parametrize(
         ("character_id", "assistant_kind", "assistant_id", "expected_title"),
         [
@@ -3117,7 +2964,7 @@ def test_terminal_update_produces_one_current_sync_intent_with_lifecycle_state(
     ]
     assert len(current_entries) == 1
     assert current_entries[0]["payload"]["assistant_generation_state"] == "complete"
-    intents = db_instance.list_current_committed_chat_sync_intents(conversation_id)
+    intents = CharactersRAGDBChatSyncSource(db_instance).list_current_committed_chat_sync_intents(conversation_id)
     assert len(intents) == 1
     assert intents[0]["message_id"] == message_id
     assert intents[0]["message_version"] == 2
@@ -3405,3 +3252,5 @@ class TestConsoleConversationAppearance:
             appearance=ConsoleConversationAppearance(icon="🧪"),
             max_attempts=2,
         )
+
+

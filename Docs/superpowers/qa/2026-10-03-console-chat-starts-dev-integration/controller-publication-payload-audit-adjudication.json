@@ -1,0 +1,17 @@
+{
+  "head": "49ea0fe952f113dd90ab4513efe74443b7cf69d0",
+  "verified_remote": "https://github.com/rmusser01/tldw_chatbook.git",
+  "repo_visibility": "public",
+  "scanned_changed_files": 1588,
+  "decompressed_archives": 742,
+  "scanned_bytes": 78634379,
+  "known_local_credential_values_compared": 3,
+  "limits": "Local exact known-credential comparison and recognizable token/private-key patterns; not a general security scan. Raw private app databases, profiles and caches are outside the manifests and publication set.",
+  "findings": [],
+  "recognized_token_or_private_key_findings": 0,
+  "actual_known_credential_matches": 0,
+  "classification": "The sole exact-match finding is the public <API_KEY_HERE> placeholder, verified at the recorded byte offset/hash and existing provider comment LLM_API_Calls.py:3412. All initial 1588 changed blobs and742 decompressed archives were scanned completely; this adjudication does not claim a second full scan.",
+  "initial_complete_scan_receipt": "controller-publication-payload-audit.json",
+  "masked_investigation": "controller-publication-audit-match-investigation.json",
+  "secondary_batch_attempt": "Interrupted after an uncompleted Git batch read; no success claim for that attempt."
+}

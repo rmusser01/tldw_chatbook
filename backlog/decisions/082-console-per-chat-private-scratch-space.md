@@ -30,7 +30,7 @@ folder bindings remain additional roots for the built-in multi-root file tools.
 The single-root local `fs_*` and Git provider uses private scratch unless the
 session has explicitly selected a project-instruction folder binding; when it
 has, the selected binding remains that provider's root and keeps the existing
-locator-fingerprint, read-only/read-write, and path-target guards from ADR-069.
+locator-fingerprint, read-only/read-write, and path-target guards from ADR-317.
 No implicit "first folder" or common-ancestor root is invented for a
 multi-binding Workspace.
 
@@ -142,6 +142,6 @@ must not be treated as this decision's implementation.
 - [TASK-21161](../tasks/task-21161%20-%20Console-per-chat-private-scratch-space-and-workspace-file-authority.md)
 - [ADR-027: Default-workspace conversations live in Chats](027-default-workspace-chats-in-chats-section.md)
 - [ADR-028: Settings workspaces and folder roots](028-settings-workspaces-category-and-folder-roots.md)
-- [ADR-032: Local agent tool permission boundary](032-local-agent-tool-permission-boundary.md)
-- [ADR-069: Console project-instruction local state and preflight](069-console-project-instruction-local-state-and-preflight.md)
+- [ADR-300: Local agent tool permission boundary](300-local-agent-tool-permission-boundary.md)
+- [ADR-317: Console project-instruction local state and preflight](317-console-project-instruction-local-state-and-preflight.md)
 - [Conflicting open PR #1657](https://github.com/rmusser01/tldw_chatbook/pull/1657)

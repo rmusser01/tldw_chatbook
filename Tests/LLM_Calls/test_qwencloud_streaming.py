@@ -1978,8 +1978,8 @@ def test_stream_retries_only_before_first_consumed_byte(
     session = _ByteStreamSession([retryable, malformed_after_body, replay_canary])
     monkeypatch.setattr(
         qwencloud,
-        "create_default_session",
-        lambda: session,
+        "create_pooled_default_session",
+        lambda **kwargs: session,
     )
     monkeypatch.setattr(
         qwencloud,
@@ -2013,7 +2013,9 @@ def test_stream_retries_only_before_first_consumed_byte(
     assert len(session.posts) == 2
     assert replay_canary.iter_content_calls == 0
     assert malformed_after_body.close_calls == 1
-    assert session.close_calls == 1
+    # ADR-222 (TASK-34418): the stream closes its response; the registry
+    # owns the session and it is never closed by a call.
+    assert session.close_calls == 0
 
 
 @pytest.mark.parametrize(
@@ -2045,8 +2047,8 @@ def test_stream_body_read_failures_are_typed_closed_and_never_retried(
     session = _ByteStreamSession([response])
     monkeypatch.setattr(
         qwencloud,
-        "create_default_session",
-        lambda: session,
+        "create_pooled_default_session",
+        lambda **kwargs: session,
     )
     monkeypatch.setattr(
         qwencloud,
@@ -2086,7 +2088,9 @@ def test_stream_body_read_failures_are_typed_closed_and_never_retried(
     assert len(session.posts) == 1
     assert response.iter_content_calls == 1
     assert response.close_calls == 1
-    assert session.close_calls == 1
+    # ADR-222 (TASK-34418): read failure closes the response; the
+    # registry-owned session is never closed by a call.
+    assert session.close_calls == 0
 
 
 def test_stream_close_is_idempotent_and_closes_response_and_session() -> None:

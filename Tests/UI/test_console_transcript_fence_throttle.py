@@ -22,7 +22,10 @@ from textual.widgets import Markdown
 from textual.widgets._markdown import MarkdownFence
 
 import tldw_chatbook.Widgets.Console.console_transcript as console_transcript_module
-from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+)
 from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleMarkdownMessage,
     ConsoleTranscript,

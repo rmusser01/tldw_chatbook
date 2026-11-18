@@ -1,13 +1,13 @@
 """Trajectory import: open a shared trace file as a read-only snapshot.
 
-The consumer side of the ADR-067 export format (task-16320): read a
+The consumer side of the ADR-313 export format (task-16320): read a
 ``tldw-trajectory`` JSON document, validate it through the EXPORT
 validator (``Chat/trajectory_export.validate_trajectory_export`` -- the
 shared seam, so import and export can never drift apart), and map the
 file's sections onto ``Chat/trajectory.derive_trajectory`` inputs to
 produce the same ``TrajectorySnapshot`` the live view renders.
 
-Read-only contract (ADR-067 §5)
+Read-only contract (ADR-313 §5)
     Imported traces are ephemeral view data. This module NEVER opens,
     writes, or references the application database -- it holds no DB
     imports at all -- and the snapshot it returns is consumed purely for
@@ -43,7 +43,7 @@ from tldw_chatbook.Chat.trajectory_export import (
     TRACE_EXPORT_VERSION,
     TraceExportProfile,
     TrajectoryExportError,
-    _has_credential_material,
+    _mask_credential_material,
     _trace_digest,
     validate_trajectory_export,
 )
@@ -139,7 +139,7 @@ def _read_document(source: Path | str | Mapping) -> dict:
 
 
 def _v1_snapshot(document: Mapping, path: Path | None) -> TrajectorySnapshot:
-    """Validate and map the retained ADR-067 version-1 document."""
+    """Validate and map the retained ADR-313 version-1 document."""
     try:
         payload = validate_trajectory_export(document)
     except TrajectoryExportError as exc:
@@ -936,12 +936,14 @@ def _validate_v2(document: Mapping) -> tuple[dict[str, Any], list[Mapping[str, A
             "Trace v2 integrity digest mismatch: the file is corrupted or was tampered with; "
             "SHA-256 does not establish authenticity"
         )
-    if _has_credential_material(document):
-        raise TrajectoryImportError(
-            "Trace v2 import blocked: credentials are forbidden in collaboration "
-            "bundles; request a privacy-safe export"
-        )
-    return dict(manifest), events
+    # An older bundle can hold a value the current rules mask: it is imported
+    # with those values masked by the export's own rules, never refused for
+    # it (TASK-41133, owner decision 2026-11-17, "Re-mask on import"). The
+    # digest above was checked on the bundle as written.
+    masked, _changed = _mask_credential_material(
+        {"manifest": manifest, "events": events}
+    )
+    return dict(masked["manifest"]), masked["events"]
 
 
 _USAGE_FIELDS = (
@@ -1114,9 +1116,7 @@ def load_imported_trace(source: Path | str | Mapping) -> ImportedTrace:
             "authenticity": False,
             "verified": True,
             "verdict": "valid",
-            "notice": (
-                "SHA-256 digest valid; source authenticity not established."
-            ),
+            "notice": ("SHA-256 digest valid; source authenticity not established."),
         }
         privacy = dict(manifest["privacy_inventory"])
     else:

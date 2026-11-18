@@ -108,9 +108,7 @@ class TestPromptChatbookSchemas:
             "artifact_type": "prompt",
             "prompt_format": "legacy",
         }
-        assert serialize_prompt_request(request, for_update=True) == {
-            "name": "Prompt"
-        }
+        assert serialize_prompt_request(request, for_update=True) == {"name": "Prompt"}
 
     def test_chatbook_export_request_preserves_content_selections(self):
         request = ChatbookExportRequest(
@@ -133,3 +131,26 @@ class TestPromptChatbookSchemas:
         assert request.async_mode is False
         assert request.import_media is False
         assert request.import_embeddings is False
+
+
+def test_all_server_prompt_schemas_preserve_mixin_identity():
+    definition = {
+        "kind": "text_mixin",
+        "schema_version": 3,
+        "body": "\n{style}\n",
+        "placement": "after",
+    }
+    fields = {
+        "name": "Literal",
+        "artifact_type": "mixin",
+        "prompt_format": "structured",
+        "prompt_schema_version": 3,
+        "prompt_definition": definition,
+    }
+    for schema in (PromptCreateRequest, PromptPreviewRequest, PromptResponse):
+        assert schema(**fields).prompt_definition == definition
+    assert (
+        PromptBriefResponse(name="Literal", artifact_type="mixin").artifact_type
+        == "mixin"
+    )
+    assert PromptVersionResponse(version=1, **fields).prompt_definition == definition

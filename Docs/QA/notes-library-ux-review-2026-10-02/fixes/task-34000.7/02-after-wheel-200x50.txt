@@ -1,0 +1,50 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌─────────────────────────────────────┐  N  ┌─────────────────────────────────────────────────────────────────────────────────────────────────┐  N  Select a note to edit it here.                   │
+│ │ Navigation                          │  a  │ Library notes · Ready · Next: Create a note or add from files.                                  │  o                                                   │
+│ │     Import…                         │  v  │ Notes (122)                                                                                     │  t                                                   │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎ │     │ These notes live in the Library's own database — for notes that live in a folder on disk,       │  e                                                   │
+│ │ ▊ Search Library…              ▎▊x▎ │     │ switch to Folder files. To copy or keep a folder synced, choose Add from files.                 │  s                                                   │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎ │     │                                                                                                 │                                                      │
+│ │                                     │     │ Filter                                                                                          │                                                      │
+│ │ ─────────────────────────────────── │     │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │                                                      │
+│ │ Browse                          ▾   │     │ ▊ Filter notes… (Enter)                                                                       ▎ │                                                      │
+│ │    Media (23) — your files          │     │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │                                                      │
+│ │    Conversations (0)                │     │                                                                                                 │                                                      │
+│ │  ▸ Notes (122)                      │     │    New     Sort: Newest     Select                                                              │                                                      │
+│ │    Prompts (0) — reuse              │     │    Add from files…     Export                                                                   │                                                      │
+│ │    Skills (1) — AI add-ons          │     │ Folders & placement                                                                             │                                                      │
+│ │    Collections (0)                  │<--- │    New folder     ○ Add to folder     ○ Move note     ○ Remove placement                        │                                                      │
+│ │    Search / RAG — find all          │     │ Note actions unavailable — select a note in the list                                            │                                                      │
+│ │ ─────────────────────────────────── │     │                                                                                                 │                                                      │
+│ │ Artifacts                       ▾   │     │                                                                                                 │                                                      │
+│ │    All artifacts                    │     │  ▸ Agent_Lessons                                                                                │                                                      │
+│ │    Chatbooks                        │     │  ▸ Journal                                                                                      │                                                      │
+│ │    Reports                          │     │  ▸ Meetings                                                                                     │<---                                                  │
+│ │ ─────────────────────────────────── │     │  ▸ Projects                                                                                     │                                                      │
+│ │ Create                          ▾   │     │  ▸ Recipes                                                                                      │                                                      │
+│ │    New note                         │     │  ▸ Research                                                                                     │                                                      │
+│ │    New prompt                       │     │  ▸ Study                                                                                        │                                                      │
+│ │    New skill                        │     │  ▾ Unfiled                                                                                      │                                                      │
+│ │ ─────────────────────────────────── │     │ █  Quotes · 1m                                                                                  │                                                      │
+│ │ Study                           ▾   │<--- │    Scratch · 1m                                                                                 │                                                      │
+│ │    Study decks (0)                  │     │    Untitled · 1m                                                                                │                                                      │
+│ │    Flashcards due: 0                │     │    A very long note title that keeps going so we can test how the tree, the editor header and…  │                                                      │
+│ │    Quizzes (0)                      │     │    📚 Reading queue 2026 ✨ · 1m                                                                │                                                      │
+│ │ ─────────────────────────────────── │     │    Gardening log · 1m                                                                           │                                                      │
+│ │ Import / Export                 ▾   │     │    Meeting Notes 2026-09-30 · 1m                                                                │                                                      │
+│ │    Import…                          │     │    Index — start here · 1m                                                                      │                                                      │
+│ │    Export                           │     │    Reading list · 1m                                                                            │                                                      │
+│ │ ─────────────────────────────────── │     │    Ideas inbox · 1m                                                                             │                                                      │
+│ │ Details                         ▸   │     │                                                                                                 │                                                      │
+│ │                                     │     │                                                                                                 │                                                      │
+│ │                                     │     │                                                                                                 │                                                      │
+│ │                                     │     │                                                                                                 │                                                      │
+│ │                                     │     │                                                                                                 │                                                      │
+│ └─────────────────────────────────────┘     └─────────────────────────────────────────────────────────────────────────────────────────────────┘                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | F6 next pane | esc focus rail | F1 help · Ctrl+P palette · Ctrl+Q quit

@@ -12,10 +12,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, TYPE_CHECKING
 
+from tldw_chatbook.DB import declare_store
 from tldw_chatbook.Backup_Recovery.participants import (
-    _core_access,
-    _core_getter,
-    _register_core_connection,
+    core_access,
+    core_getter,
+    register_core_connection,
 )
 from tldw_chatbook.DB.base_db import BaseDB
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
@@ -98,6 +99,7 @@ class RemotePullCursorRecord:
     source_scope_key: str
 
 
+@declare_store("runtime.sync_state", policy="db.base")
 class SyncStateRepository(BaseDB):
     """SQLite-backed sync/mirror repository and local-first outbox."""
 
@@ -130,7 +132,7 @@ class SyncStateRepository(BaseDB):
             self._initialize_schema()
             self._schema_ready = True
 
-    @_core_getter
+    @core_getter
     def _get_connection(self) -> sqlite3.Connection:
         self._ensure_schema()
         return self._open_connection()
@@ -172,18 +174,18 @@ class SyncStateRepository(BaseDB):
                 # branch below (task-15465).
                 self._memory_conn.execute("PRAGMA synchronous = NORMAL")
             return self._memory_conn
-        _core_access(self)
+        core_access(self)
         conn = super()._get_connection()
-        _register_core_connection(self, conn)
+        register_core_connection(self, conn)
         try:
-            _core_access(self)
+            core_access(self)
             conn.execute("PRAGMA foreign_keys = ON")
             conn.execute("PRAGMA journal_mode = WAL")
             # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
             # lose the last commit, acceptable for this local dry-run sync/mirror
             # store) and avoids an fsync per commit (task-15465).
             conn.execute("PRAGMA synchronous = NORMAL")
-            _core_access(self)
+            core_access(self)
             return conn
         except BaseException:
             conn.close()
@@ -202,12 +204,12 @@ class SyncStateRepository(BaseDB):
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
         """Commit/rollback and retire file handles on their creating thread."""
-        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+        from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
         operation = (
             nullcontext()
             if self.is_memory_db
-            else _repository_participant(self).operation()
+            else repository_participant(self).operation()
         )
         with operation:
             conn = self._get_connection()
@@ -1019,6 +1021,80 @@ class SyncStateRepository(BaseDB):
                 ),
             )
             conn.commit()
+
+    # TASK-40139 (owner ruling on TASK-40137): after a restore, the reviewed
+    # sync-identity step clears the restored server identity for every server
+    # profile, so the next sync registers a new device instead of acting as
+    # the old one. Counted first, cleared in one transaction.
+    _RESTORED_IDENTITY_COUNTS = (
+        ("device_ids", "SELECT COUNT(*) FROM sync_profile_state WHERE device_id IS NOT NULL"),
+        ("datasets", "SELECT COUNT(*) FROM sync_profile_state "
+         "WHERE dataset_id IS NOT NULL OR dataset_cursors != '{}'"),
+        ("pull_cursors", "SELECT COUNT(*) FROM remote_pull_cursors"),
+        ("remote_heads", "SELECT COUNT(*) FROM sync_v2_remote_heads"),
+        ("personal_context_links", "SELECT COUNT(*) FROM personal_context_link_state"),
+        ("pending_outbox", "SELECT COUNT(*) FROM sync_v2_local_outbox "
+         "WHERE status IN ('pending', 'dispatched')"),
+        # Saved Prepare results, including the Notes organization client
+        # profile id the old device registered (review r14pccB).
+        ("prepare_results", "SELECT COUNT(*) FROM sync_profile_state "
+         "WHERE dry_run_metadata != '{}'"),
+    )
+
+    @classmethod
+    def _identity_counts_on(cls, conn: sqlite3.Connection) -> dict[str, int]:
+        return {
+            name: int(conn.execute(sql).fetchone()[0])
+            for name, sql in cls._RESTORED_IDENTITY_COUNTS
+        }
+
+    def restored_identity_counts(self) -> dict[str, int]:
+        """What ``clear_restored_identity`` removes, for the user to see first."""
+        with self.transaction() as conn:
+            return self._identity_counts_on(conn)
+
+    def clear_restored_identity(
+        self, *, expected: Mapping[str, int] | None = None
+    ) -> None:
+        """Clear device ids, dataset bindings and cursors, saved Prepare results,
+        pull cursors, remote heads, Personal Context link state and the unsent
+        outbox; Notes and Chat share these rows when no workspace is active.
+
+        With ``expected``, the counts the user saw are compared inside the same
+        write transaction, so nothing changes between the check and the clear.
+        """
+        with self.transaction() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if expected is not None and self._identity_counts_on(conn) != dict(expected):
+                raise ValueError("sync_identity_counts_changed")
+            conn.execute(
+                "UPDATE sync_profile_state SET device_id = NULL, dataset_id = NULL, "
+                "dataset_cursors = '{}', dry_run_metadata = '{}', updated_at = ?",
+                (_utc_now(),),
+            )
+            for table in (
+                "remote_pull_cursors",
+                "sync_v2_remote_heads",
+                "personal_context_link_state",
+            ):
+                conn.execute(f"DELETE FROM {table}")  # nosec B608 - fixed names
+            # Receipts of unsent envelopes go too, so those changes queue again.
+            conn.execute(
+                "DELETE FROM sync_v2_source_projection_receipts WHERE EXISTS ("
+                "SELECT 1 FROM sync_v2_local_outbox o "
+                "WHERE o.source_scope_key = sync_v2_source_projection_receipts.source_scope_key "
+                "AND o.dataset_id = sync_v2_source_projection_receipts.dataset_id "
+                "AND o.client_envelope_id = sync_v2_source_projection_receipts.client_envelope_id "
+                "AND o.status IN ('pending', 'dispatched'))"
+            )
+            conn.execute(
+                "DELETE FROM sync_v2_local_outbox WHERE status IN ('pending', 'dispatched')"
+            )
+
+    def clear_personal_context_link_state(self) -> int:
+        """Forget every restored Personal Context link (TASK-40139 AC#2)."""
+        with self.transaction() as conn:
+            return conn.execute("DELETE FROM personal_context_link_state").rowcount
 
     def enqueue_sync_v2_outbox_envelope(
         self,
@@ -2030,6 +2106,129 @@ class SyncStateRepository(BaseDB):
         if state is None:
             raise RuntimeError("failed to persist Sync v2 profile state")
         return state
+
+    def reserve_sync_v2_enrollment_device(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+        workspace_scope: str | None,
+        profile_mode: str,
+        proposed_device_id: str,
+    ) -> str | None:
+        """Keep one device ID across enrollment attempts without creating a dataset."""
+        if profile_mode not in _SYNC_V2_PROFILE_MODES:
+            raise ValueError("Invalid Sync v2 profile mode")
+        with self.transaction() as conn:
+            row = conn.execute(
+                """
+                INSERT INTO sync_profile_state (
+                    source_authority, server_profile_id, authenticated_principal_id,
+                    workspace_scope, profile_mode, device_id, updated_at
+                )
+                VALUES ('server', ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (
+                    source_authority, server_profile_id, authenticated_principal_id,
+                    workspace_scope
+                )
+                DO UPDATE SET device_id = COALESCE(sync_profile_state.device_id, excluded.device_id)
+                WHERE sync_profile_state.dataset_id IS NULL
+                RETURNING device_id
+                """,
+                (
+                    _scope_value(server_profile_id),
+                    _scope_value(authenticated_principal_id),
+                    _scope_value(workspace_scope),
+                    profile_mode,
+                    proposed_device_id,
+                    _utc_now(),
+                ),
+            ).fetchone()
+            conn.commit()
+        return row["device_id"] if row is not None else None
+
+    def finish_sync_v2_enrollment(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+        workspace_scope: str | None,
+        profile_mode: str,
+        device_id: str,
+        dataset_id: str,
+        capabilities: Mapping[str, Any],
+        dry_run_metadata: Mapping[str, Any],
+    ) -> bool:
+        """Record enrollment only while the reserved device has no dataset."""
+        with self.transaction() as conn:
+            updated = conn.execute(
+                """
+                UPDATE sync_profile_state
+                SET profile_mode = ?, dataset_id = ?, capabilities = ?,
+                    dry_run_metadata = json_patch(dry_run_metadata, ?), updated_at = ?
+                WHERE source_authority = 'server'
+                  AND server_profile_id = ?
+                  AND authenticated_principal_id = ?
+                  AND workspace_scope = ?
+                  AND device_id = ?
+                  AND dataset_id IS NULL
+                """,
+                (
+                    profile_mode,
+                    dataset_id,
+                    _json_dumps(dict(capabilities)),
+                    _json_dumps(dict(dry_run_metadata)),
+                    _utc_now(),
+                    _scope_value(server_profile_id),
+                    _scope_value(authenticated_principal_id),
+                    _scope_value(workspace_scope),
+                    device_id,
+                ),
+            ).rowcount
+            conn.commit()
+        return updated == 1
+
+    def refresh_sync_v2_profile_capabilities(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+        workspace_scope: str | None,
+        device_id: str,
+        dataset_id: str,
+        capabilities: Mapping[str, Any],
+        verified_encryption_policy: str | None = None,
+    ) -> bool:
+        """Refresh capabilities and fill missing verified trust on the same dataset."""
+        with self.transaction() as conn:
+            updated = conn.execute(
+                """
+                UPDATE sync_profile_state
+                SET capabilities = ?,
+                    dry_run_metadata = CASE
+                        WHEN ? IS NULL THEN dry_run_metadata
+                        ELSE json_insert(dry_run_metadata, '$.encryption_policy', ?)
+                    END
+                WHERE source_authority = 'server'
+                  AND server_profile_id = ?
+                  AND authenticated_principal_id = ?
+                  AND workspace_scope = ?
+                  AND device_id = ?
+                  AND dataset_id = ?
+                """,
+                (
+                    _json_dumps(dict(capabilities)),
+                    verified_encryption_policy,
+                    verified_encryption_policy,
+                    _scope_value(server_profile_id),
+                    _scope_value(authenticated_principal_id),
+                    _scope_value(workspace_scope),
+                    device_id,
+                    dataset_id,
+                ),
+            ).rowcount
+            conn.commit()
+        return updated == 1
 
     def get_sync_v2_profile_state(
         self,

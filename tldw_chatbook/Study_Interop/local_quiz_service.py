@@ -1,4 +1,4 @@
-"""Thin local study wrapper around ChaChaNotes_DB quiz helpers."""
+"""Thin local quiz wrapper around the learning repository (`db.learning`)."""
 
 from __future__ import annotations
 
@@ -28,10 +28,12 @@ class LocalQuizService:
         self.notification_dispatch_service = notification_dispatch_service
         self.notification_app = notification_app
 
-    def _require_db(self) -> Any:
+    def _require_learning(self) -> Any:
+        # Resolved on use, not in __init__: the services are built at boot and
+        # reading db.learning there loads learning_repository before _ui_ready.
         if self.db is None:
             raise ValueError("Local quiz backend is unavailable.")
-        return self.db
+        return self.db.learning
 
     def _dispatch_local_notification(
         self,
@@ -66,7 +68,7 @@ class LocalQuizService:
         self, *, q: Optional[str] = None, limit: int = 100, offset: int = 0
     ) -> Any:
         normalized_q = str(q or "").strip() or None
-        return self._require_db().list_quizzes(
+        return self._require_learning().list_quizzes(
             q=normalized_q, limit=limit, offset=offset
         )
 
@@ -76,10 +78,10 @@ class LocalQuizService:
         Returns:
             The exact number of non-deleted local quizzes.
         """
-        return int(self._require_db().count_quizzes())
+        return int(self._require_learning().count_quizzes())
 
     def get_quiz(self, quiz_id: str) -> Any:
-        return self._require_db().get_quiz(quiz_id)
+        return self._require_learning().get_quiz(quiz_id)
 
     def create_quiz(
         self,
@@ -90,14 +92,14 @@ class LocalQuizService:
         time_limit_seconds: Optional[int] = None,
         passing_score: Optional[int] = None,
     ) -> Any:
-        quiz_id = self._require_db().create_quiz(
+        quiz_id = self._require_learning().create_quiz(
             name=name,
             description=description,
             workspace_id=workspace_id,
             time_limit_seconds=time_limit_seconds,
             passing_score=passing_score,
         )
-        quiz = self._require_db().get_quiz(quiz_id)
+        quiz = self._require_learning().get_quiz(quiz_id)
         self._dispatch_local_notification(
             title="Local quiz created",
             message=f"Local quiz created: {quiz.get('name') or name}",
@@ -118,7 +120,7 @@ class LocalQuizService:
         hard_delete: bool = False,
     ) -> bool:
         return bool(
-            self._require_db().delete_quiz(
+            self._require_learning().delete_quiz(
                 quiz_id,
                 expected_version=expected_version,
                 hard_delete=hard_delete,
@@ -135,7 +137,7 @@ class LocalQuizService:
         offset: int = 0,
     ) -> Any:
         normalized_q = str(q or "").strip() or None
-        return self._require_db().list_questions(
+        return self._require_learning().list_questions(
             quiz_id,
             q=normalized_q,
             include_answers=include_answers,
@@ -144,8 +146,10 @@ class LocalQuizService:
         )
 
     def create_question(self, quiz_id: str, **payload: Any) -> Any:
-        question_id = self._require_db().create_question(quiz_id=quiz_id, **payload)
-        question = self._require_db().get_question(question_id)
+        question_id = self._require_learning().create_question(
+            quiz_id=quiz_id, **payload
+        )
+        question = self._require_learning().get_question(question_id)
         self._dispatch_local_notification(
             title="Local quiz question created",
             message=f"Local quiz question created for quiz {quiz_id}.",
@@ -168,7 +172,7 @@ class LocalQuizService:
         hard_delete: bool = False,
     ) -> bool:
         return bool(
-            self._require_db().delete_question(
+            self._require_learning().delete_question(
                 question_id,
                 expected_version=expected_version,
                 hard_delete=hard_delete,
@@ -176,10 +180,10 @@ class LocalQuizService:
         )
 
     def start_attempt(self, quiz_id: str) -> Any:
-        return self._require_db().start_attempt(quiz_id)
+        return self._require_learning().start_attempt(quiz_id)
 
     def submit_attempt(self, attempt_id: str, *, answers: list[dict[str, Any]]) -> Any:
-        attempt = self._require_db().submit_attempt(attempt_id, answers)
+        attempt = self._require_learning().submit_attempt(attempt_id, answers)
         self._dispatch_local_notification(
             title="Local quiz attempt completed",
             message=f"Completed local quiz attempt {attempt_id}.",
@@ -200,7 +204,7 @@ class LocalQuizService:
     def list_attempts(
         self, *, quiz_id: Optional[str] = None, limit: int = 100, offset: int = 0
     ) -> Any:
-        return self._require_db().list_attempts(
+        return self._require_learning().list_attempts(
             quiz_id=quiz_id, limit=limit, offset=offset
         )
 
@@ -211,7 +215,7 @@ class LocalQuizService:
         include_questions: bool = False,
         include_answers: bool = False,
     ) -> Any:
-        return self._require_db().get_attempt(
+        return self._require_learning().get_attempt(
             attempt_id,
             include_questions=include_questions,
             include_answers=include_answers,

@@ -1,0 +1,12 @@
+[
+  {
+    "function": "prepare_archive_followup",
+    "operations_equal": true,
+    "normalization": "self/controller live namespace; pure imports and local annotations excluded"
+  },
+  {
+    "function": "pending_recovery_reviews",
+    "operations_equal": true,
+    "normalization": "self/controller live namespace; pure imports and local annotations excluded"
+  }
+]

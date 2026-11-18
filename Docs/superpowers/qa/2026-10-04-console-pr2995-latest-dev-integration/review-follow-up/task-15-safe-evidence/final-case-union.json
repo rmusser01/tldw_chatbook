@@ -1,0 +1,251 @@
+{
+  "unique_authorized_cases": 61,
+  "new_cases": 30,
+  "existing_expanded_cases": 31,
+  "cases": {
+    "Tests.DB.test_automatic_chat_starts::test_missing_start_confirmation_requires_successful_owned_transaction[absent]": {
+      "receipt": "green.xml",
+      "passed": true
+    },
+    "Tests.DB.test_automatic_chat_starts::test_missing_start_confirmation_requires_successful_owned_transaction[present]": {
+      "receipt": "green.xml",
+      "passed": true
+    },
+    "Tests.DB.test_automatic_chat_starts::test_missing_start_confirmation_requires_successful_owned_transaction[foreign_attempt]": {
+      "receipt": "green.xml",
+      "passed": true
+    },
+    "Tests.DB.test_automatic_chat_starts::test_missing_start_confirmation_requires_successful_owned_transaction[stale_runtime]": {
+      "receipt": "green.xml",
+      "passed": true
+    },
+    "Tests.DB.test_automatic_chat_starts::test_missing_start_confirmation_requires_successful_owned_transaction[missing_runtime]": {
+      "receipt": "green.xml",
+      "passed": true
+    },
+    "Tests.DB.test_automatic_chat_starts::test_missing_start_confirmation_requires_successful_owned_transaction[exit_failure]": {
+      "receipt": "green.xml",
+      "passed": true
+    },
+    "Tests.Chat.test_console_chat_start::test_failed_preparation_with_no_attempt_clears_only_its_restriction[False-False]": {
+      "receipt": "green.xml",
+      "passed": true
+    },
+    "Tests.Chat.test_console_chat_start::test_failed_preparation_with_no_attempt_clears_only_its_restriction[False-True]": {
+      "receipt": "green.xml",
+      "passed": true
+    },
+    "Tests.Chat.test_console_chat_start::test_failed_preparation_with_no_attempt_clears_only_its_restriction[True-False]": {
+      "receipt": "green.xml",
+      "passed": true
+    },
+    "Tests.Chat.test_console_chat_start::test_failed_preparation_with_no_attempt_clears_only_its_restriction[True-True]": {
+      "receipt": "green.xml",
+      "passed": true
+    },
+    "Tests.Chat.test_console_chat_start::test_preparation_exception_reconciles_persisted_authority_conservatively[prepared]": {
+      "receipt": "green.xml",
+      "passed": true
+    },
+    "Tests.Chat.test_console_chat_start::test_preparation_exception_reconciles_persisted_authority_conservatively[accepted]": {
+      "receipt": "green.xml",
+      "passed": true
+    },
+    "Tests.Chat.test_console_chat_start::test_preparation_exception_reconciles_persisted_authority_conservatively[observation_failure]": {
+      "receipt": "green.xml",
+      "passed": true
+    },
+    "Tests.Chat.test_console_chat_start::test_preparation_exception_reconciles_persisted_authority_conservatively[missing_runtime]": {
+      "receipt": "green.xml",
+      "passed": true
+    },
+    "Tests.Chat.test_console_chat_start::test_preparation_exception_reconciles_persisted_authority_conservatively[stale_runtime]": {
+      "receipt": "green.xml",
+      "passed": true
+    },
+    "Tests.Chat.test_console_chat_start::test_restriction_registration_failure_still_drains_exact_native_owners[commit-first]": {
+      "receipt": "green.xml",
+      "passed": true
+    },
+    "Tests.Chat.test_console_chat_start::test_restriction_registration_failure_still_drains_exact_native_owners[commit-second]": {
+      "receipt": "green.xml",
+      "passed": true
+    },
+    "Tests.Chat.test_console_chat_start::test_restriction_registration_failure_still_drains_exact_native_owners[provider-first]": {
+      "receipt": "green.xml",
+      "passed": true
+    },
+    "Tests.Chat.test_console_chat_start::test_restriction_registration_failure_still_drains_exact_native_owners[provider-second]": {
+      "receipt": "green.xml",
+      "passed": true
+    },
+    "Tests.Chat.test_console_chat_start::test_contended_preparation_confirms_absence_after_writer_exits": {
+      "receipt": "green.xml",
+      "passed": true
+    },
+    "Tests.Chat.test_console_chat_start::test_post_drain_cleanup_keeps_outcome_and_exact_capacity_release[publication]": {
+      "receipt": "green.xml",
+      "passed": true
+    },
+    "Tests.Chat.test_console_chat_start::test_post_drain_cleanup_keeps_outcome_and_exact_capacity_release[abandonment]": {
+      "receipt": "green.xml",
+      "passed": true
+    },
+    "Tests.Chat.test_console_chat_start::test_post_drain_cleanup_keeps_outcome_and_exact_capacity_release[run_state]": {
+      "receipt": "green.xml",
+      "passed": true
+    },
+    "Tests.Chat.test_console_chat_start::test_post_drain_cleanup_keeps_outcome_and_exact_capacity_release[replacement]": {
+      "receipt": "replacement-final.xml",
+      "passed": true
+    },
+    "Tests.Chat.test_console_chat_start::test_restriction_registration_failure_still_drains_exact_native_owners[commit-first_uncertain]": {
+      "receipt": "green-boundaries.xml",
+      "passed": true
+    },
+    "Tests.Chat.test_console_chat_start::test_restriction_registration_failure_still_drains_exact_native_owners[provider-first_uncertain]": {
+      "receipt": "green-boundaries.xml",
+      "passed": true
+    },
+    "Tests.DB.test_automatic_chat_starts::test_missing_start_confirmation_requires_successful_owned_transaction[begin_failure]": {
+      "receipt": "green-boundaries.xml",
+      "passed": true
+    },
+    "Tests.DB.test_automatic_chat_starts::test_missing_start_confirmation_requires_successful_owned_transaction[read_failure]": {
+      "receipt": "green-boundaries.xml",
+      "passed": true
+    },
+    "Tests.DB.test_automatic_chat_starts::test_missing_start_confirmation_requires_successful_owned_transaction[commit_failure]": {
+      "receipt": "green-boundaries.xml",
+      "passed": true
+    },
+    "Tests.DB.test_automatic_chat_starts::test_missing_start_confirmation_requires_successful_owned_transaction[restore_failure]": {
+      "receipt": "green-boundaries.xml",
+      "passed": true
+    },
+    "Tests.Chat.test_console_chat_start::test_unconfirmed_preaccept_settlement_requires_review[raise]": {
+      "receipt": "existing.xml",
+      "passed": true
+    },
+    "Tests.Chat.test_console_chat_start::test_unconfirmed_preaccept_settlement_requires_review[false]": {
+      "receipt": "existing.xml",
+      "passed": true
+    },
+    "Tests.Chat.test_console_chat_start::test_initial_preparation_keeps_owner_until_uncertain_refund[source_stop-false]": {
+      "receipt": "existing.xml",
+      "passed": true
+    },
+    "Tests.Chat.test_console_chat_start::test_initial_preparation_keeps_owner_until_uncertain_refund[source_stop-raise]": {
+      "receipt": "existing.xml",
+      "passed": true
+    },
+    "Tests.Chat.test_console_chat_start::test_initial_preparation_keeps_owner_until_uncertain_refund[caller_cancel-false]": {
+      "receipt": "existing.xml",
+      "passed": true
+    },
+    "Tests.Chat.test_console_chat_start::test_initial_preparation_keeps_owner_until_uncertain_refund[caller_cancel-raise]": {
+      "receipt": "existing.xml",
+      "passed": true
+    },
+    "Tests.Chat.test_console_chat_start::test_initial_preparation_keeps_owner_until_uncertain_refund[shutdown-false]": {
+      "receipt": "existing.xml",
+      "passed": true
+    },
+    "Tests.Chat.test_console_chat_start::test_initial_preparation_keeps_owner_until_uncertain_refund[shutdown-raise]": {
+      "receipt": "existing.xml",
+      "passed": true
+    },
+    "Tests.Chat.test_console_chat_start::test_stop_keeps_native_claim_until_actual_bridge_worker_exits": {
+      "receipt": "existing.xml",
+      "passed": true
+    },
+    "Tests.Chat.test_console_chat_start::test_stop_keeps_native_claim_until_generic_provider_adapter_exits": {
+      "receipt": "existing.xml",
+      "passed": true
+    },
+    "Tests.Chat.test_console_chat_start::test_native_commit_keeps_exact_worker_and_capacity_until_repeated_cancel_drains": {
+      "receipt": "existing.xml",
+      "passed": true
+    },
+    "Tests.Chat.test_console_chat_start::test_unexpected_start_failure_is_type_only_and_accepted_cleanup_is_review[preaccept]": {
+      "receipt": "existing.xml",
+      "passed": true
+    },
+    "Tests.Chat.test_console_chat_start::test_unexpected_start_failure_is_type_only_and_accepted_cleanup_is_review[accepted_cleanup]": {
+      "receipt": "existing.xml",
+      "passed": true
+    },
+    "Tests.Chat.test_console_chat_start::test_failed_review_settlement_blocks_siblings_across_ledger_handles[raise-False]": {
+      "receipt": "existing.xml",
+      "passed": true
+    },
+    "Tests.Chat.test_console_chat_start::test_failed_review_settlement_blocks_siblings_across_ledger_handles[raise-True]": {
+      "receipt": "existing.xml",
+      "passed": true
+    },
+    "Tests.Chat.test_console_chat_start::test_failed_review_settlement_blocks_siblings_across_ledger_handles[false-False]": {
+      "receipt": "existing.xml",
+      "passed": true
+    },
+    "Tests.Chat.test_console_chat_start::test_failed_review_settlement_blocks_siblings_across_ledger_handles[false-True]": {
+      "receipt": "existing.xml",
+      "passed": true
+    },
+    "Tests.DB.test_automatic_chat_starts::test_preparation_identity_abort_and_completion_are_exact": {
+      "receipt": "existing.xml",
+      "passed": true
+    },
+    "Tests.DB.test_automatic_chat_starts::test_failed_native_write_rolls_back_member_and_reserved_generation": {
+      "receipt": "existing.xml",
+      "passed": true
+    },
+    "Tests.DB.test_automatic_chat_starts::test_acceptance_and_abort_race_has_one_winner": {
+      "receipt": "existing.xml",
+      "passed": true
+    },
+    "Tests.DB.test_automatic_chat_starts::test_native_abort_never_refunds_a_separately_committed_reservation": {
+      "receipt": "existing.xml",
+      "passed": true
+    },
+    "Tests.DB.test_automatic_chat_starts::test_same_owner_uncertain_start_pauses_root_without_refund_or_replay": {
+      "receipt": "existing.xml",
+      "passed": true
+    },
+    "Tests.DB.test_automatic_chat_starts::test_review_settlement_never_rewrites_nonaccepted_work[prepared]": {
+      "receipt": "existing.xml",
+      "passed": true
+    },
+    "Tests.DB.test_automatic_chat_starts::test_review_settlement_never_rewrites_nonaccepted_work[aborted]": {
+      "receipt": "existing.xml",
+      "passed": true
+    },
+    "Tests.DB.test_automatic_chat_starts::test_review_settlement_never_rewrites_nonaccepted_work[completed]": {
+      "receipt": "existing.xml",
+      "passed": true
+    },
+    "Tests.DB.test_automatic_chat_starts::test_stale_review_settlement_cannot_pause_healthy_replacement": {
+      "receipt": "existing.xml",
+      "passed": true
+    },
+    "Tests.DB.test_automatic_chat_starts::test_transient_uncertainty_is_store_scoped_and_stale_owner_cannot_poison_replacement[False]": {
+      "receipt": "existing.xml",
+      "passed": true
+    },
+    "Tests.DB.test_automatic_chat_starts::test_transient_uncertainty_is_store_scoped_and_stale_owner_cannot_poison_replacement[True]": {
+      "receipt": "existing.xml",
+      "passed": true
+    },
+    "Tests.DB.test_automatic_chat_starts::test_late_recovery_cleanup_preserves_new_owner_uncertainty[replacement-False]": {
+      "receipt": "existing.xml",
+      "passed": true
+    },
+    "Tests.DB.test_automatic_chat_starts::test_late_recovery_cleanup_preserves_new_owner_uncertainty[replacement-True]": {
+      "receipt": "existing.xml",
+      "passed": true
+    },
+    "Tests.DB.test_automatic_chat_starts::test_late_recovery_cleanup_preserves_new_owner_uncertainty[owner-False]": {
+      "receipt": "existing.xml",
+      "passed": true
+    }
+  }
+}

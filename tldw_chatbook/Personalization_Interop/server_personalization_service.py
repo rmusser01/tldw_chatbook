@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Mapping, Optional, Protocol
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
@@ -15,8 +15,35 @@ if TYPE_CHECKING:
         PersonalizationMemoryValidateRequest,
         PersonalizationOptInRequest,
         PersonalizationPreferencesUpdate,
-        TLDWAPIClient,
     )
+
+
+class ServerPersonalizationClient(Protocol):
+    """Client methods ServerPersonalizationService calls (TASK-36953.1)."""
+
+    async def create_personalization_memory(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def delete_personalization_memory(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def export_personalization_memories(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def get_personalization_memory(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_personalization_profile(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def import_personalization_memories(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def list_personalization_explanations(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def list_personalization_memories(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def purge_personalization_data(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def set_personalization_opt_in(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def update_personalization_memory(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def update_personalization_preferences(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def validate_personalization_memories(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
 
 
 class ServerPersonalizationService:
@@ -24,7 +51,7 @@ class ServerPersonalizationService:
 
     def __init__(
         self,
-        client: Optional[TLDWAPIClient],
+        client: Optional[ServerPersonalizationClient],
         *,
         client_provider: Any | None = None,
         policy_enforcer: Any | None = None,
@@ -59,7 +86,7 @@ class ServerPersonalizationService:
             policy_enforcer=policy_enforcer,
         )
 
-    def _require_client(self) -> TLDWAPIClient:
+    def _require_client(self) -> ServerPersonalizationClient:
         if self.client is not None:
             return self.client
         if self.client_provider is not None:

@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from pathlib import Path
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 from typing import Any
 
 import pytest
+
+from Tests.Chat.test_console_agent_bridge import (  # noqa: F401 - owned fixture
+    _retire_original_run_databases,
+)
 
 from tldw_chatbook.Chat.console_command_grammar import CommandParse, KIND_NOT_COMMAND
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
@@ -117,6 +122,7 @@ def _controller(
         return object()
 
     if restore_stash is None:
+
         def default_restore_stash(
             session_id: str | None, stash: ConsoleDraftStash
         ) -> bool:
@@ -125,11 +131,13 @@ def _controller(
 
         restore_stash = default_restore_stash
     if append_local_error is None:
+
         def default_append_local_error(session_id: str | None, text: str) -> None:
             errors.append((session_id, text))
 
         append_local_error = default_append_local_error
     if marshal_to_ui is None:
+
         def default_marshal_to_ui(callback: Any, *args: Any) -> None:
             callback(*args)
 
@@ -162,6 +170,7 @@ def _controller(
     return controller, restored, errors, workers, selected_reads, scratch_reads
 
 
+@pytest.mark.bootstrap_profile
 def test_raw_cli_controller_captures_one_submission_snapshot_and_named_worker(
     tmp_path: Path,
 ) -> None:
@@ -202,6 +211,7 @@ def test_raw_cli_controller_captures_one_submission_snapshot_and_named_worker(
     assert request.transcript_anchor_id == "persisted-leaf"
 
 
+@pytest.mark.bootstrap_profile
 def test_raw_cli_anchor_resolves_the_leaf_captured_before_branch_switch(
     tmp_path: Path,
 ) -> None:
@@ -246,6 +256,7 @@ def test_raw_cli_anchor_resolves_the_leaf_captured_before_branch_switch(
     assert runtime.requests[0].transcript_anchor_id == "persisted-leaf-a"
 
 
+@pytest.mark.bootstrap_profile
 def test_raw_cli_persisted_anchor_rejects_leaf_owned_by_another_session() -> None:
     store = ConsoleChatStore()
     first = store.create_session(session_id="session-a")
@@ -256,18 +267,16 @@ def test_raw_cli_persisted_anchor_rejects_leaf_owned_by_another_session() -> Non
         content="first-session leaf",
         persist=False,
     )
-    store._nodes_by_session[first.id][leaf.id].persisted_message_id = (
-        "persisted-leaf-a"
-    )
+    store._nodes_by_session[first.id][leaf.id].persisted_message_id = "persisted-leaf-a"
     screen = SimpleNamespace(_ensure_console_chat_store=lambda: store)
 
     assert _raw_cli_persisted_leaf_anchor(screen, second.id, leaf.id) is None
     assert (
-        _raw_cli_persisted_leaf_anchor(screen, first.id, leaf.id)
-        == "persisted-leaf-a"
+        _raw_cli_persisted_leaf_anchor(screen, first.id, leaf.id) == "persisted-leaf-a"
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_raw_cli_controller_falls_back_to_private_scratch_once(tmp_path: Path) -> None:
     runtime = _Runtime()
     controller, _restored, _errors, workers, selected_reads, scratch_reads = (
@@ -282,6 +291,7 @@ def test_raw_cli_controller_falls_back_to_private_scratch_once(tmp_path: Path) -
     assert runtime.requests[0].initial_directory == tmp_path.resolve()
 
 
+@pytest.mark.bootstrap_profile
 def test_runtime_admission_refusal_marshals_restore_to_ui(tmp_path: Path) -> None:
     class RefusingRuntime(_Runtime):
         def execute(
@@ -333,6 +343,7 @@ def test_runtime_admission_refusal_marshals_restore_to_ui(tmp_path: Path) -> Non
     assert "authority changed" in errors[0][1].lower()
 
 
+@pytest.mark.bootstrap_profile
 def test_prelaunch_containment_unavailable_restores_draft_on_ui_thread(
     tmp_path: Path,
 ) -> None:
@@ -384,6 +395,7 @@ def test_prelaunch_containment_unavailable_restores_draft_on_ui_thread(
     assert "restored" in errors[0][1].lower()
 
 
+@pytest.mark.bootstrap_profile
 def test_postlaunch_terminal_failure_does_not_restore_the_sent_draft(
     tmp_path: Path,
 ) -> None:
@@ -426,6 +438,7 @@ def test_postlaunch_terminal_failure_does_not_restore_the_sent_draft(
     assert errors == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("text", "permitted", "armed", "copy"),
     [
@@ -473,22 +486,67 @@ class _Composer:
     def restore_stashed_draft(self, stash: ConsoleDraftStash | None) -> None:
         self.restored.append(stash)
 
+    def capture_draft_for_send(self):
+        return _stash(self.text, trusted=False)
+
     def stash_raw_cli_draft_for_send(self) -> ConsoleDraftStash | None:
         return None
 
+    def commit_captured_draft(self, stash: ConsoleDraftStash) -> None:
+        assert stash.text == self.text
+        self.text = ""
 
+
+@pytest.mark.bootstrap_profile
 def test_refusal_restore_requires_active_and_visible_origin_ownership() -> None:
     stash = _stash("! pwd")
     composer = _Composer("session b")
 
-    assert restore_refused_raw_cli_stash(
-        None,
-        stash,
-        composer=composer,
-        active_session_id="session-b",
-        visible_session_id="session-b",
-    ) is False
+    assert (
+        restore_refused_raw_cli_stash(
+            None,
+            stash,
+            composer=composer,
+            active_session_id="session-b",
+            visible_session_id="session-b",
+        )
+        is False
+    )
     assert composer.restored == []
+
+
+def _bind_visible_send_contract(screen, stash=None):
+    screen._console_runtime = lambda: SimpleNamespace(
+        _first_send_source_scope=nullcontext
+    )
+    screen._ui_responsiveness_monitor = lambda: None
+    screen._answer_pending_question_with_draft = lambda _draft: False
+    screen._send_console_message_from_visible_action_observed = MethodType(
+        ChatScreen._send_console_message_from_visible_action_observed, screen
+    )
+    screen._console_visible_send_session_id = lambda: "session-1"
+    screen._console_visible_draft_session_id = "session-1"
+    screen._session = SimpleNamespace(refuse_send_from_unbound_composer=lambda: False)
+    screen._ensure_console_chat_store = lambda: SimpleNamespace(
+        set_session_draft=lambda *_args: None
+    )
+    screen._start_console_transcript_sync_timer = lambda: None
+    screen._test_send_token = object() if stash is not None else None
+    screen._console_pending_send = (
+        SimpleNamespace(
+            token=screen._test_send_token,
+            session_id="session-1",
+            stash=stash,
+            received_inputs=None,
+        )
+        if stash is not None else None
+    )
+
+
+async def _send_visible_action(screen):
+    return await ChatScreen._send_console_message_from_visible_action(
+        screen, pending_send_token=screen._test_send_token
+    )
 
 
 def _route_screen(stash: ConsoleDraftStash):
@@ -497,7 +555,9 @@ def _route_screen(stash: ConsoleDraftStash):
     parsed: list[str] = []
     dispatched: list[tuple[str, ConsoleDraftStash | None]] = []
 
-    async def dispatch(draft: str, *, stash: ConsoleDraftStash | None = None) -> bool:
+    async def dispatch(
+        draft: str, *, stash: ConsoleDraftStash | None = None, session_id=None
+    ) -> bool:
         dispatched.append((draft, stash))
         return True
 
@@ -516,9 +576,11 @@ def _route_screen(stash: ConsoleDraftStash):
         ),
         _dispatch_console_draft_send=dispatch,
     )
+    _bind_visible_send_contract(screen, stash)
     return screen, composer, raw_calls, parsed, dispatched
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_trusted_raw_stash_is_intercepted_before_slash_attachment_and_queue() -> (
     None
@@ -532,17 +594,17 @@ async def test_trusted_raw_stash_is_intercepted_before_slash_attachment_and_queu
         raise AssertionError("raw command reached a model-send seam")
 
     screen.query_one = lambda *_args, **_kwargs: forbidden()
-    screen._console_composer_or_none = forbidden
     screen._console_pending_image_attachment = forbidden
     screen._console_command_registry.parse = lambda _text: forbidden()
     screen._dispatch_console_draft_send = lambda *_args, **_kwargs: forbidden()
 
-    assert await ChatScreen._send_console_message_from_visible_action(screen) is False
+    assert await _send_visible_action(screen) is False
     assert raw_calls == [stash]
-    assert screen._console_pending_send_stash is None
+    assert screen._console_pending_send is None
     assert screen._staged_attachments == [staged_attachment]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("stash", "expected", "expected_parse"),
@@ -562,7 +624,7 @@ async def test_escaped_and_untrusted_bang_prefixes_follow_ordinary_chat(
 ) -> None:
     screen, _composer, raw_calls, parsed, dispatched = _route_screen(stash)
 
-    assert await ChatScreen._send_console_message_from_visible_action(screen) is True
+    assert await _send_visible_action(screen) is True
 
     assert raw_calls == []
     assert parsed == ([expected] if expected_parse else [])
@@ -574,9 +636,12 @@ async def test_escaped_and_untrusted_bang_prefixes_follow_ordinary_chat(
     assert dispatched_stash.raw_cli_prefix_typed is False
     assert (dispatched_stash is not stash) is expected_parse
     if expected_parse:
-        assert "".join(segment.text for segment in dispatched_stash.segments) == expected
+        assert (
+            "".join(segment.text for segment in dispatched_stash.segments) == expected
+        )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_workbench_send_consumes_existing_physical_raw_provenance() -> None:
     composer = ConsoleComposerBar()
@@ -598,13 +663,15 @@ async def test_workbench_send_consumes_existing_physical_raw_provenance() -> Non
         _dispatch_console_draft_send=forbidden,
     )
 
-    assert await ChatScreen._send_console_message_from_visible_action(screen) is False
+    _bind_visible_send_contract(screen)
+    assert await _send_visible_action(screen) is False
     assert len(raw_calls) == 1
     assert raw_calls[0].text == "! pwd"
     assert raw_calls[0].raw_cli_prefix_typed is True
     assert composer.draft_text() == ""
 
 
+@pytest.mark.bootstrap_profile
 def test_hidden_session_refusal_banks_exact_stash_until_reconciled(
     tmp_path: Path,
 ) -> None:
@@ -657,15 +724,16 @@ def test_hidden_session_refusal_banks_exact_stash_until_reconciled(
 
     assert restored is not None
     assert restored.text == "! pwdnewer a"
-    assert restored.raw_cli_prefix_typed is True
+    assert restored.raw_cli_prefix_typed is False
     assert restored.has_paste is True
     assert restored.segments[: len(stash.segments)] == stash.segments
     classified = classify_console_raw_draft(restored)
-    assert classified.kind == "raw"
-    assert classified.text == "pwdnewer a"
+    assert classified.kind == "chat"
+    assert classified.text == "! pwdnewer a"
     assert errors[0][0] == "session-a"
 
 
+@pytest.mark.bootstrap_profile
 def test_hidden_session_refusal_bank_restores_multiple_stashes_in_order(
     tmp_path: Path,
 ) -> None:
@@ -689,6 +757,7 @@ def test_hidden_session_refusal_bank_restores_multiple_stashes_in_order(
     assert controller.restore_banked_stashes("session-a", reconciled) == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("completion", ["refused", "exception"])
 async def test_marshaled_raw_completion_after_runtime_dispose_is_fenced(
@@ -727,9 +796,7 @@ async def test_marshaled_raw_completion_after_runtime_dispose_is_fenced(
     marshalled: list[tuple[Any, tuple[Any, ...]]] = []
     restore_attempts: list[tuple[str | None, ConsoleDraftStash]] = []
 
-    def refuse_restore(
-        session_id: str | None, stash: ConsoleDraftStash
-    ) -> bool:
+    def refuse_restore(session_id: str | None, stash: ConsoleDraftStash) -> bool:
         restore_attempts.append((session_id, stash))
         return False
 
@@ -758,6 +825,7 @@ async def test_marshaled_raw_completion_after_runtime_dispose_is_fenced(
     assert errors == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_direct_refusal_and_banked_restore_after_dispose_are_fenced(
     tmp_path: Path,
@@ -765,9 +833,7 @@ async def test_direct_refusal_and_banked_restore_after_dispose_are_fenced(
     owner = ConsoleRuntime(type("App", (), {})())
     restore_attempts: list[tuple[str | None, ConsoleDraftStash]] = []
 
-    def refuse_restore(
-        session_id: str | None, stash: ConsoleDraftStash
-    ) -> bool:
+    def refuse_restore(session_id: str | None, stash: ConsoleDraftStash) -> bool:
         restore_attempts.append((session_id, stash))
         return False
 
@@ -794,3 +860,50 @@ async def test_direct_refusal_and_banked_restore_after_dispose_are_fenced(
     composer.load_draft("later draft")
     assert controller.restore_banked_stashes("session-1", composer) == 0
     assert composer.draft_text() == "later draft"
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+@pytest.mark.parametrize("captured", [False, True])
+async def test_raw_publication_refusal_keeps_original_live_draft(captured):
+    composer = ConsoleComposerBar()
+    assert composer.handle_console_key(Key("exclamation_mark", "!"))
+    assert composer.handle_console_key(Key("space", " "))
+    composer.insert_pasted_text("printf preserved")
+    original = composer.capture_draft_for_send()
+    screen, _, raw_calls, parsed, dispatched = _route_screen(original)
+    _bind_visible_send_contract(screen, original if captured else None)
+    screen._console_composer_or_none = lambda: composer
+    runtime = ConsoleRuntime(None)
+    runtime._first_send_publishing = True
+    screen._console_runtime = lambda: runtime
+    notices = []
+    screen.app_instance = SimpleNamespace(
+        notify=lambda *args, **kwargs: notices.append(args)
+    )
+    revision = composer.edit_serial
+
+    assert await _send_visible_action(screen) is False
+    assert composer.draft_text() == original.text
+    assert composer.edit_serial == revision
+    retained = composer.capture_draft_for_send()
+    assert retained.raw_cli_prefix_typed and retained.segments == original.segments
+    assert not raw_calls and not parsed and not dispatched
+    assert runtime._first_send_sources == 0
+    assert len(notices) == 1 and "being saved" in notices[0][0]
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+@pytest.mark.parametrize("draft", ["/help", "/unknown", r"\! escaped", "ordinary"])
+async def test_nonraw_routes_do_not_enter_raw_publication_gate(draft):
+    screen, _, raw_calls, parsed, dispatched = _route_screen(
+        _stash(draft, trusted=False)
+    )
+
+    def forbidden():
+        raise AssertionError("nonraw route entered raw publication gate")
+
+    screen._console_runtime = forbidden
+    assert await _send_visible_action(screen) is True
+    assert not raw_calls and parsed and dispatched

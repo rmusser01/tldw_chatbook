@@ -1,0 +1,89 @@
+{
+  "exitstatus": 0,
+  "records": [
+    {
+      "node": "Tests/Chat/test_console_prompt_mixin_forks.py::test_temporary_nested_fork_owns_retry_chain_after_close_and_promotion[False-False]",
+      "before": 14,
+      "after": 17,
+      "delta": 3
+    },
+    {
+      "node": "Tests/Chat/test_console_prompt_mixin_forks.py::test_temporary_nested_fork_owns_retry_chain_after_close_and_promotion[False-True]",
+      "before": 17,
+      "after": 17,
+      "delta": 0
+    },
+    {
+      "node": "Tests/Chat/test_console_prompt_mixin_forks.py::test_temporary_nested_fork_owns_retry_chain_after_close_and_promotion[True-False]",
+      "before": 17,
+      "after": 17,
+      "delta": 0
+    },
+    {
+      "node": "Tests/Chat/test_console_prompt_mixin_forks.py::test_temporary_nested_fork_owns_retry_chain_after_close_and_promotion[True-True]",
+      "before": 17,
+      "after": 17,
+      "delta": 0
+    },
+    {
+      "node": "Tests/Chat/test_console_prompt_mixin_forks.py::test_durable_fork_immediate_publication_and_original_retry[False]",
+      "before": 17,
+      "after": 17,
+      "delta": 0
+    },
+    {
+      "node": "Tests/Chat/test_console_prompt_mixin_forks.py::test_durable_fork_immediate_publication_and_original_retry[True]",
+      "before": 17,
+      "after": 17,
+      "delta": 0
+    },
+    {
+      "node": "Tests/Chat/test_console_prompt_mixin_forks.py::test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers[marker0]",
+      "before": 17,
+      "after": 17,
+      "delta": 0
+    },
+    {
+      "node": "Tests/Chat/test_console_prompt_mixin_forks.py::test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers[marker1]",
+      "before": 17,
+      "after": 17,
+      "delta": 0
+    },
+    {
+      "node": "Tests/Chat/test_console_prompt_mixin_forks.py::test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers[marker2]",
+      "before": 17,
+      "after": 17,
+      "delta": 0
+    },
+    {
+      "node": "Tests/Chat/test_console_prompt_mixin_forks.py::test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers[marker3]",
+      "before": 17,
+      "after": 17,
+      "delta": 0
+    },
+    {
+      "node": "Tests/Chat/test_console_prompt_mixin_forks.py::test_durable_to_temporary_fork_preserves_legacy_and_unavailable_markers[marker4]",
+      "before": 17,
+      "after": 17,
+      "delta": 0
+    },
+    {
+      "node": "Tests/Chat/test_console_prompt_mixin_forks.py::test_historical_import_rejects_foreign_anchor_and_rolls_back",
+      "before": 17,
+      "after": 17,
+      "delta": 0
+    },
+    {
+      "node": "Tests/Chat/test_console_prompt_mixin_forks.py::test_historical_state_rejects_mutable_markers_and_broken_lineage",
+      "before": 17,
+      "after": 17,
+      "delta": 0
+    },
+    {
+      "node": "Tests/Chat/test_console_prompt_mixin_forks.py::test_durable_fork_receipt_change_refuses_parent_commit",
+      "before": 17,
+      "after": 17,
+      "delta": 0
+    }
+  ]
+}

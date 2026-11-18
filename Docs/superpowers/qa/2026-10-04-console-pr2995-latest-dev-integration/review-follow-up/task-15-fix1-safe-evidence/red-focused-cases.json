@@ -1,0 +1,42 @@
+[
+  {
+    "id": "Tests.DB.test_automatic_chat_starts::test_restriction_identity_is_captured_for_aliases_and_memory_peers[False]",
+    "message": "OSError: private canonical identity failure"
+  },
+  {
+    "id": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[False-commit-canonical_resolution]",
+    "message": "Failed: DID NOT RAISE <class 'tldw_chatbook.Agents.automatic_work_budget.AutomaticWorkRefused'>"
+  },
+  {
+    "id": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[False-commit-persistent_registration]",
+    "message": "Failed: DID NOT RAISE <class 'tldw_chatbook.Agents.automatic_work_budget.AutomaticWorkRefused'>"
+  },
+  {
+    "id": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[False-provider-canonical_resolution]",
+    "message": "Failed: DID NOT RAISE <class 'tldw_chatbook.Agents.automatic_work_budget.AutomaticWorkRefused'>"
+  },
+  {
+    "id": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[False-provider-persistent_registration]",
+    "message": "Failed: DID NOT RAISE <class 'tldw_chatbook.Agents.automatic_work_budget.AutomaticWorkRefused'>"
+  },
+  {
+    "id": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[True-commit-canonical_resolution]",
+    "message": "Failed: DID NOT RAISE <class 'tldw_chatbook.Agents.automatic_work_budget.AutomaticWorkRefused'>"
+  },
+  {
+    "id": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[True-commit-persistent_registration]",
+    "message": "Failed: DID NOT RAISE <class 'tldw_chatbook.Agents.automatic_work_budget.AutomaticWorkRefused'>"
+  },
+  {
+    "id": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[True-provider-canonical_resolution]",
+    "message": "Failed: DID NOT RAISE <class 'tldw_chatbook.Agents.automatic_work_budget.AutomaticWorkRefused'>"
+  },
+  {
+    "id": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[True-provider-persistent_registration]",
+    "message": "Failed: DID NOT RAISE <class 'tldw_chatbook.Agents.automatic_work_budget.AutomaticWorkRefused'>"
+  },
+  {
+    "id": "Tests.Chat.test_console_chat_start::test_initial_identity_failure_precedes_native_start_authority",
+    "message": "Failed: DID NOT RAISE <class 'OSError'>"
+  }
+]

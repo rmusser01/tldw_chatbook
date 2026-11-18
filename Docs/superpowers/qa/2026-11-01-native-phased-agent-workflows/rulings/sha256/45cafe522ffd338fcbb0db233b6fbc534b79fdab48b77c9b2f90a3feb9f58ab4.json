@@ -1,0 +1,12 @@
+{
+  "head": "1bdfd5f3c6c6306bf89d4bd8a4403a56d2eb9f56",
+  "parent": "7dc71ac16c3daf736b70d035e1888f6dd00965a6",
+  "exact6_commit_index_worktree_equal": true,
+  "cached61_c5_equal": true,
+  "protected279_equal": true,
+  "retained_G_probe_Task38531_equal": true,
+  "report_full_bytes": 13521,
+  "report_sha256": "a5de42a0156e97e578618c6550ee9eb8ab7630df4311ee3933454e8cb3ddbda8",
+  "postcommit_evidence_sha256": "c0c4dd2f674da7a7f905b35277b2680a7b67cfdb940bda94f3ba842601821f7d",
+  "native_8317_and_10cases": "writer-attributed evidence; no root native rerun"
+}

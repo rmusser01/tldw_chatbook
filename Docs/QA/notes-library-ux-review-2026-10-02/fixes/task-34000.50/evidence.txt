@@ -1,0 +1,38 @@
+# 04 fixed build (live, w1c-t2-1): appended 'from the vault' to quotes.md on disk after healing the startup-held root through Review; no Check changes pressed
+row before: Up to date as of 14:04 ; row after: Up to date as of 14:05 ; DB caught up after 9s
+-- note in DB (sqlite3 $HARNESS/runs/w1c-t2-1/data/nl_review/tldw_chatbook_ChaChaNotes.db):
+2|> The best time to plant a tree was 20 years ago.
+
+> Writing is thinking.
+from the vault
+
+-- file on disk (md5 + bytes):
+c0425164f43538abfdf9667f93f2e202
+> The best time to plant a tree was 20 years ago.
+
+> Writing is thinking.
+from the vault
+-- roots (state|last_status_code):
+active|up_to_date
+-- operations (kind|state|reason):
+update_note|completed||1
+
+# 05 fixed build (live, w1c-t2-1): opened the note, Ctrl+End, typed ' typed' (no Enter), waited 12 s
+-- file on disk (md5 + bytes):
+baf789d177d8781f8c480408450d9996
+> The best time to plant a tree was 20 years ago.
+
+> Writing is thinking.
+from the vault
+ typed
+-- note in DB:
+3|> The best time to plant a tree was 20 years ago.
+
+> Writing is thinking.
+from the vault
+ typed
+-- roots (state|last_status_code):
+active|up_to_date
+-- operations (kind|state|reason|count):
+update_file|completed||1
+update_note|completed||1

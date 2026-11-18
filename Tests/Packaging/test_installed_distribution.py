@@ -99,14 +99,15 @@ APACHE_SUBTREE_LICENSE_PATHS = frozenset(
         "tldw_chatbook/tldw_api/LICENSE",
     }
 )
+# task-19565: CONSOLE_PROJECT_CONTEXT_MIGRATION_PATH and
+# RESEARCH_QUICK_NOTE_PROOF_MIGRATION_PATH were removed with their files --
+# those migrations execute embedded constants (their steps carry Python
+# recovery logic), and shipping never-opened .sql twins pinned as wheel
+# content falsely suggested they were authoritative. PERSONA_VISUAL below is
+# a runtime-read (file-backed) migration, covered by
+# RUNTIME_MIGRATION_PATHS like every other executed .sql.
 PERSONA_VISUAL_MIGRATION_PATH = (
     "tldw_chatbook/DB/migrations/chachanotes_v40_to_v41_persona_visual.sql"
-)
-CONSOLE_PROJECT_CONTEXT_MIGRATION_PATH = (
-    "tldw_chatbook/DB/migrations/chachanotes_v41_to_v42_console_project_context.sql"
-)
-RESEARCH_QUICK_NOTE_PROOF_MIGRATION_PATH = (
-    "tldw_chatbook/DB/migrations/chachanotes_v42_to_v43_research_quick_note_proofs.sql"
 )
 SAMIRA_RESOURCE_ROOT = "tldw_chatbook/assets/characters/samira"
 SAMIRA_REACTION_LABELS = (
@@ -170,6 +171,24 @@ TIKTOKEN_RESOURCE_PATHS = frozenset(
     )
 )
 TIKTOKEN_REQUIREMENT = "tiktoken==0.14.0"
+SERVED_STATIC_RESOURCE_PATHS = frozenset(
+    f"tldw_chatbook/Web_Server/static/{name}"
+    for name in (
+        "served_shell.html",
+        "served_shell.css",
+        "served_shell.js",
+        "devices.js",
+        "qrcodegen.js",
+        "passkeys.js",
+        "mobile/index.html",
+        "mobile/app.css",
+        "mobile/app.js",
+        "mobile/manifest.webmanifest",
+        "mobile/icon-192.png",
+        "mobile/icon-512.png",
+        "mobile/apple-touch-icon.png",
+    )
+)
 AUDIO_CPP_ARTIFACT_MANIFEST_PATH = "tldw_chatbook/TTS/audio_cpp_artifact_manifest.json"
 AUDIO_CPP_ARTIFACT_REPOSITORY = "audio-cpp/audio.cpp-gguf"
 AUDIO_CPP_ARTIFACT_COMMIT = "597048d9a920592808d7d4e2acd7b9c4596a143a"
@@ -1015,7 +1034,7 @@ import sqlite3
 expected_target = Path(os.environ["EXPECTED_TARGET"]).resolve(strict=True)
 
 import tldw_chatbook
-from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
+from tldw_chatbook.DB.ChaChaNotes_DB import ConsoleLibraryMigrationSeed
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Utils.path_validation import validate_path
 
@@ -1762,38 +1781,48 @@ def test_built_artifacts_match_distribution_contract(
     sdist_members = _sdist_members(built_distributions.sdist)
     wheel_members = _wheel_members(built_distributions.wheel)
 
-    required_sdist = {
-        "LICENSE",
-        "README.md",
-        "CLAUDE.md",
-        "CHANGELOG.md",
-        "MANIFEST.in",
-        "pyproject.toml",
-        "requirements.txt",
-        "tldw_chatbook/css/tldw_cli_modular.tcss",
-        "tldw_chatbook/css/components/stats_screen.css",
-        "tldw_chatbook/Config_Files/rag_pipelines.toml",
-        "tldw_chatbook/Evals/config/eval_config.yaml",
-        "tldw_chatbook/Third_Party/aider/LICENSE.txt",
-        "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
-        *APACHE_SUBTREE_LICENSE_PATHS,
-        AUDIO_CPP_ARTIFACT_MANIFEST_PATH,
-        "tldw_chatbook/Backup_Recovery/native_qualification.json",
-        SEMANTIC_TRACE_MIGRATION_PATH,
-        SEMANTIC_MUTATION_GUARD_MIGRATION_PATH,
-    } | RUNTIME_MIGRATION_PATHS | SAMIRA_RESOURCE_PATHS | TIKTOKEN_RESOURCE_PATHS
-    required_wheel = {
-        "tldw_chatbook/css/tldw_cli_modular.tcss",
-        "tldw_chatbook/Config_Files/rag_pipelines.toml",
-        "tldw_chatbook/Evals/config/eval_config.yaml",
-        "tldw_chatbook/Third_Party/aider/LICENSE.txt",
-        "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
-        *APACHE_SUBTREE_LICENSE_PATHS,
-        AUDIO_CPP_ARTIFACT_MANIFEST_PATH,
-        "tldw_chatbook/Backup_Recovery/native_qualification.json",
-        SEMANTIC_TRACE_MIGRATION_PATH,
-        SEMANTIC_MUTATION_GUARD_MIGRATION_PATH,
-    } | RUNTIME_MIGRATION_PATHS | SAMIRA_RESOURCE_PATHS | TIKTOKEN_RESOURCE_PATHS
+    required_sdist = (
+        {
+            "LICENSE",
+            "README.md",
+            "CLAUDE.md",
+            "CHANGELOG.md",
+            "MANIFEST.in",
+            "pyproject.toml",
+            "requirements.txt",
+            "tldw_chatbook/css/tldw_cli_modular.tcss",
+            "tldw_chatbook/css/components/stats_screen.css",
+            "tldw_chatbook/Config_Files/rag_pipelines.toml",
+            "tldw_chatbook/Evals/config/eval_config.yaml",
+            "tldw_chatbook/Third_Party/aider/LICENSE.txt",
+            "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
+            *APACHE_SUBTREE_LICENSE_PATHS,
+            AUDIO_CPP_ARTIFACT_MANIFEST_PATH,
+            "tldw_chatbook/Backup_Recovery/native_qualification.json",
+            SEMANTIC_TRACE_MIGRATION_PATH,
+            SEMANTIC_MUTATION_GUARD_MIGRATION_PATH,
+        }
+        | RUNTIME_MIGRATION_PATHS
+        | SAMIRA_RESOURCE_PATHS
+        | TIKTOKEN_RESOURCE_PATHS
+    )
+    required_wheel = (
+        {
+            "tldw_chatbook/css/tldw_cli_modular.tcss",
+            "tldw_chatbook/Config_Files/rag_pipelines.toml",
+            "tldw_chatbook/Evals/config/eval_config.yaml",
+            "tldw_chatbook/Third_Party/aider/LICENSE.txt",
+            "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
+            *APACHE_SUBTREE_LICENSE_PATHS,
+            AUDIO_CPP_ARTIFACT_MANIFEST_PATH,
+            "tldw_chatbook/Backup_Recovery/native_qualification.json",
+            SEMANTIC_TRACE_MIGRATION_PATH,
+            SEMANTIC_MUTATION_GUARD_MIGRATION_PATH,
+        }
+        | RUNTIME_MIGRATION_PATHS
+        | SAMIRA_RESOURCE_PATHS
+        | TIKTOKEN_RESOURCE_PATHS
+    )
     assert not required_sdist - sdist_members
     assert not required_wheel - wheel_members
     development_launcher = "scripts/run_speculative_voice_dev.py"
@@ -2707,9 +2736,7 @@ def test_release_checker_rejects_metadata_trailing_dot_or_space_alias(
             )
             target_stream = source.extractfile(target)
             assert target_stream is not None
-            payload = _weaken_tiktoken_requirement(
-                target_stream.read().decode("utf-8")
-            )
+            payload = _weaken_tiktoken_requirement(target_stream.read().decode("utf-8"))
             for member in members:
                 stream = source.extractfile(member) if member.isfile() else None
                 destination.addfile(member, stream)
@@ -2726,9 +2753,7 @@ def test_release_checker_rejects_metadata_trailing_dot_or_space_alias(
                 for name in archive.namelist()
                 if name.endswith(".dist-info/METADATA")
             )
-            payload = _weaken_tiktoken_requirement(
-                archive.read(target).decode("utf-8")
-            )
+            payload = _weaken_tiktoken_requirement(archive.read(target).decode("utf-8"))
             alias = f"{target}{suffix}"
             archive.writestr(alias, payload)
 
@@ -3007,6 +3032,97 @@ def test_release_checker_rejects_missing_database_migration(
     assert missing in result.stdout + result.stderr
 
 
+@pytest.mark.parametrize("archive_kind", ["wheel", "sdist"])
+def test_built_artifact_contains_served_static_assets(
+    built_distributions: BuiltDistributions,
+    archive_kind: str,
+) -> None:
+    members = (
+        _wheel_members(built_distributions.wheel)
+        if archive_kind == "wheel"
+        else _sdist_members(built_distributions.sdist)
+    )
+    assert not SERVED_STATIC_RESOURCE_PATHS - members
+
+
+@pytest.mark.parametrize("archive_kind", ["wheel", "sdist"])
+@pytest.mark.parametrize("missing", sorted(SERVED_STATIC_RESOURCE_PATHS))
+def test_release_checker_rejects_missing_served_static_asset(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+    archive_kind: str,
+    missing: str,
+) -> None:
+    dist_dir = _dist_dir_without(
+        built_distributions,
+        tmp_path,
+        drop_from_wheel=[missing] if archive_kind == "wheel" else (),
+        drop_from_sdist=[missing] if archive_kind == "sdist" else (),
+    )
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert missing in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("wheel_source", ["source", "sdist"])
+def test_installed_wheel_reads_served_static_assets_without_writes(
+    built_distributions: BuiltDistributions,
+    sdist_wheel: SdistWheel,
+    tmp_path: Path,
+    wheel_source: str,
+) -> None:
+    wheel, build_source_root = (
+        (built_distributions.wheel, built_distributions.source_root)
+        if wheel_source == "source"
+        else (sdist_wheel.wheel, sdist_wheel.source_root)
+    )
+    target = tmp_path / "target"
+    state_root = tmp_path / "state"
+    run_root = tmp_path / "run"
+    state_root.mkdir(mode=0o700)
+    run_root.mkdir()
+    _install_wheel_path(wheel, target)
+    env = _private_child_env(state_root, target, build_source_root)
+    prefix = "tldw_chatbook/Web_Server/static/"
+    env["EXPECTED_SERVED_ASSET_SHA256"] = json.dumps(
+        {
+            path.removeprefix(prefix): hashlib.sha256(
+                (REPO_ROOT / path).read_bytes()
+            ).hexdigest()
+            for path in SERVED_STATIC_RESOURCE_PATHS
+        }
+    )
+    probe = r"""
+import hashlib
+from importlib.resources import files
+import json
+import os
+from pathlib import Path
+from tldw_chatbook.Web_Server import serve
+
+assert Path(serve.__file__).resolve().is_relative_to(Path(os.environ["EXPECTED_TARGET"]))
+expected = json.loads(os.environ["EXPECTED_SERVED_ASSET_SHA256"])
+declared = {"served_shell.html"}
+declared.update(item[1] for item in serve._SERVED_SHELL_ASSETS.values())
+declared.update("mobile/" + item[1] for item in serve._MOBILE_STATIC_ASSETS.values())
+assert declared == set(expected)
+root = files("tldw_chatbook.Web_Server").joinpath("static")
+for name, digest in expected.items():
+    assert hashlib.sha256(root.joinpath(name).read_bytes()).hexdigest() == digest, name
+assert serve._SERVED_SHELL_HTML == root.joinpath("served_shell.html").read_text(encoding="utf-8")
+assert serve._MOBILE_PAGE_HTML == root.joinpath("mobile/index.html").read_text(encoding="utf-8")
+print("installed-served-static-assets-ok")
+"""
+    with _read_only_installed_tree(target):
+        result = _run_child([sys.executable, "-c", probe], run_root, env)
+        assert "installed-served-static-assets-ok" in result.stdout
+        script_path = os.pathsep.join(
+            str(path) for path in (target / "bin", target / "Scripts")
+        )
+        script = shutil.which("tldw-serve", path=script_path)
+        assert script is not None
+        _run_child([script, "--help"], run_root, env)
+
 def test_installed_wheel_loaders_entry_points_and_assets_are_immutable(
     built_distributions: BuiltDistributions,
     tmp_path: Path,
@@ -3037,7 +3153,9 @@ print("installed-app-only-voice-gate-ok")
 """
     with _read_only_installed_tree(target):
         results = [_run_child([sys.executable, "-c", INSTALLED_PROBE], run_root, env)]
-        results.append(_run_child([sys.executable, "-c", app_only_probe], run_root, env))
+        results.append(
+            _run_child([sys.executable, "-c", app_only_probe], run_root, env)
+        )
 
         script_path = os.pathsep.join(
             str(path) for path in (target / "bin", target / "Scripts")
@@ -3130,7 +3248,9 @@ def test_installed_tiktoken_bundle_missing_or_corrupt_falls_back_without_writes(
         / "tiktoken_cache"
         / "9b5ad71b2ce5302211f9c61530b329a4922fc6a4"
     )
-    assert asset.is_file(), "the installed wheel did not contain the reviewed cl100k table"
+    assert asset.is_file(), (
+        "the installed wheel did not contain the reviewed cl100k table"
+    )
     if mutation == "missing":
         asset.unlink()
     else:

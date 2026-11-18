@@ -16,7 +16,7 @@ from typing import Awaitable, Callable, Optional
 
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, VerticalScroll
 from textual.css.query import NoMatches, QueryError
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Static, TextArea
@@ -39,12 +39,21 @@ SAVE_LIBRARY_BUTTON_LABEL = "Save to Library"
 MISSING_NAME_COPY = "Enter a name to save this system prompt to Library."
 MISSING_TEXT_COPY = "Enter a system prompt to save."
 SAVE_TO_LIBRARY_ERROR_COPY = "Couldn't save this prompt. Try again."
+SAVING_COPY = "Saving…"
 
 # Async callable the caller binds to the scope service's create-prompt seam
 # (Task 4's save flow); receives the modal's current (name, text) and
 # returns outcome copy to display inline -- the modal never dismisses on
 # either success or failure, it only reports the outcome.
 SaveToLibrary = Callable[[str, str], Awaitable[str]]
+
+
+class _SaveStatus(Static):
+    """Save feedback that scrolls itself into view once its wrapped height is laid out."""
+
+    def on_resize(self) -> None:
+        if str(self.content):
+            self.scroll_visible(animate=False)
 
 
 class ConsoleSystemPromptModal(SafeModalDismissMixin, ModalScreen[Optional[str]]):
@@ -79,10 +88,11 @@ class ConsoleSystemPromptModal(SafeModalDismissMixin, ModalScreen[Optional[str]]
         super().__init__()
         self._initial_text = system_prompt or ""
         self._save_to_library = save_to_library
+        self._save_worker = None
 
     def compose(self) -> ComposeResult:
         """Build the editor's text area, name/save row, and action buttons."""
-        with Vertical(id=MODAL_ID):
+        with VerticalScroll(id=MODAL_ID):
             yield Static("Edit system prompt", classes="console-modal-header")
             yield Static(
                 SCOPE_COPY,
@@ -99,7 +109,7 @@ class ConsoleSystemPromptModal(SafeModalDismissMixin, ModalScreen[Optional[str]]
                     id=SAVE_LIBRARY_BUTTON_ID,
                     compact=True,
                 )
-            yield Static(
+            yield _SaveStatus(
                 "",
                 id=SAVE_STATUS_ID,
                 classes="console-system-prompt-row",
@@ -147,21 +157,34 @@ class ConsoleSystemPromptModal(SafeModalDismissMixin, ModalScreen[Optional[str]]
         if not text:
             self._set_save_status(MISSING_TEXT_COPY)
             return
-        self.run_worker(
-            self._run_save_to_library(name, text),
-            exclusive=True,
-            group="console-system-prompt-save-library",
-        )
+        # A save already running keeps going: its write runs in a thread, and
+        # an exclusive restart would cancel it after it lands (TASK-38686).
+        if self._save_worker is None or self._save_worker.is_finished:
+            self._save_worker = self.run_worker(
+                self._run_save_to_library(name, text),
+                exclusive=True,
+                group="console-system-prompt-save-library",
+            )
+        self._set_save_status(SAVING_COPY)
 
     async def _run_save_to_library(self, name: str, text: str) -> None:
         try:
             status = await self._save_to_library(name, text)
         except Exception:
             status = SAVE_TO_LIBRARY_ERROR_COPY
-        self._set_save_status(status)
+        try:
+            current = self.query_one(f"#{NAME_INPUT_ID}", Input).value.strip()
+        except (NoMatches, QueryError):
+            current = name
+        # The field was edited during the save: name the prompt this was for.
+        self._set_save_status(
+            status if current == name else f'Prompt "{name}": {status}'
+        )
 
     def _set_save_status(self, text: str) -> None:
         try:
-            self.query_one(f"#{SAVE_STATUS_ID}", Static).update(text)
+            status = self.query_one(f"#{SAVE_STATUS_ID}", Static)
+            status.update(text)
+            self.call_after_refresh(status.scroll_visible, animate=False)
         except (NoMatches, QueryError):
             pass

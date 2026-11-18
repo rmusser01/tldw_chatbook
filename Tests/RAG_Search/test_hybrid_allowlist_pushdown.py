@@ -45,6 +45,7 @@ Mutation-verified (both reds observed before commit):
 * the json_each filter dropped from ONE sub-leg (notes): the notes
   out-of-scope test reds while the media/conversation ones stay green.
 """
+
 import asyncio
 import json
 import sqlite3
@@ -317,7 +318,7 @@ def test_a_one_shot_scope_never_caches_unscoped_rows_under_its_key(corpus):
 
     assert _source_ids(from_generator) == [in_scope]
     assert _source_ids(from_cache) == [in_scope], (
-        "the scoped key held unscoped rows: " f"{_source_ids(from_cache)}"
+        f"the scoped key held unscoped rows: {_source_ids(from_cache)}"
     )
 
 
@@ -349,9 +350,7 @@ def test_an_empty_entry_in_a_union_is_rejected(corpus, malformed):
         )
 
 
-def test_a_source_type_with_no_sub_leg_is_named_in_a_warning(
-    corpus, warnings_captured
-):
+def test_a_source_type_with_no_sub_leg_is_named_in_a_warning(corpus, warnings_captured):
     """A silently empty keyword leg is the worst possible symptom.
 
     Two ways to land here, both real: the Library's PLURAL spelling

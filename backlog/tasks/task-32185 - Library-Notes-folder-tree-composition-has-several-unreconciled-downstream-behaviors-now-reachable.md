@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-09-09 18:16'
-updated_date: '2026-09-11 11:15'
+updated_date: '2026-11-12 19:38'
 labels:
   - library
   - notes
@@ -156,4 +156,5 @@ Files: `tldw_chatbook/UI/Library_Modules/canvas_sync.py`,
 `Tests/UI/test_library_shell.py`, `Tests/UI/test_destination_shells.py`,
 `Tests/UI/test_library_notes_reader.py`,
 `Docs/User_Guide/library/notes.md`.
+**2026-11-12 (round-13 closeout).** At the round-13 stack top 8b633d0101, AC#9's node `test_library_notes_list_focuses_first_row_and_arrow_keys_move_it` is red again ("entering the list must focus its first row"; focus stays on `#library-browse-library-grip`). TASK-40293 owns that regression (the entry-focus predicate since de4d38b59a), with the Media nodes that share it. AC#3's node is also TASK-32503's.
 <!-- SECTION:NOTES:END -->

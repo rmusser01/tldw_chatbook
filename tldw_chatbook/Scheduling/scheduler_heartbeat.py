@@ -40,6 +40,9 @@ class SchedulerHeartbeat:
     last_error: str | None = None
     poll_interval: float = 30.0
     tick_count: int = 0
+    #: TASK-33620.1: the tick found the global emergency stop active and held
+    #: its due dispatches. The Schedules line says so from this file alone.
+    held_by_emergency_stop: bool = False
 
 
 def classify_scheduler_liveness(
@@ -88,6 +91,7 @@ def read_heartbeat(path: Path) -> SchedulerHeartbeat | None:
         last_error=raw.get("last_error") if isinstance(raw.get("last_error"), str) else None,
         poll_interval=float(raw.get("poll_interval", 30.0) or 30.0),
         tick_count=int(raw.get("tick_count", 0) or 0),
+        held_by_emergency_stop=raw.get("held_by_emergency_stop") is True,
     )
 
 
@@ -108,6 +112,7 @@ def write_heartbeat(path: Path, heartbeat: SchedulerHeartbeat) -> None:
                 "last_error": heartbeat.last_error,
                 "poll_interval": heartbeat.poll_interval,
                 "tick_count": heartbeat.tick_count,
+                "held_by_emergency_stop": heartbeat.held_by_emergency_stop,
             }
         )
         # private=True keeps the owner-only mode this writer already had
@@ -143,10 +148,17 @@ def scheduler_liveness_line(
         return "Scheduler: not started"
     assert heartbeat is not None and heartbeat.last_tick_at is not None
     age = _humanize_age(max(0.0, (now - heartbeat.last_tick_at).total_seconds()))
+    # TASK-33620.1 AC#5: what the last tick did with due work, and the way out.
+    held = (
+        " · scheduled dispatches are held by the emergency stop "
+        "(/emergency-stop clear in Console)"
+        if heartbeat.held_by_emergency_stop
+        else ""
+    )
     if state == "live":
-        return f"Scheduler: live · last tick {age}"
+        return f"Scheduler: live · last tick {age}{held}"
     error = f" · last error: {heartbeat.last_error}" if heartbeat.last_error else ""
-    return f"Scheduler: STALLED — last tick {age}{error}"
+    return f"Scheduler: STALLED — last tick {age}{error}{held}"
 
 
 def default_heartbeat_path() -> Path:

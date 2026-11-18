@@ -1,0 +1,141 @@
+"""Untracked diagnostic: native Research Runs timer and source ownership."""
+
+import asyncio
+import json
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+from textual.widgets import ListView, Select, Static
+
+from Tests.private_profile import private_profile_test
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
+from tldw_chatbook.Research_Interop.local_research_service import LocalResearchService
+from tldw_chatbook.Research_Interop.research_scope_service import ResearchScopeService
+from tldw_chatbook.UI.Screens.research_screen import ResearchScreen
+
+
+ARTIFACTS = Path(__file__).parent
+
+
+async def until(predicate, *, timeout=8):
+    async with asyncio.timeout(timeout):
+        while not predicate():
+            await asyncio.sleep(0.01)
+
+
+def state(window):
+    selected = window.selected_run
+    view = window.query_one("#research-run-list", ListView)
+    return {
+        "source": window.current_source,
+        "select_value": window.query_one("#research-source-select", Select).value,
+        "selected": None if selected is None else window._record_get(selected, "id"),
+        "highlighted": None if view.highlighted_child is None else view.highlighted_child.id,
+        "detail": str(window.query_one("#research-run-detail", Static).render()),
+        "status": window.status_message,
+        "mounted": window.is_mounted,
+    }
+
+
+class Harness(ConsolidatedCSSApp):
+    CSS_PATH = BUNDLED_STYLESHEET
+
+    def __init__(self, scope, local):
+        super().__init__()
+        self.context = SimpleNamespace(research_scope_service=scope, local_research_service=local)
+
+    async def on_mount(self):
+        await self.push_screen(ResearchScreen(self.context))
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize("mode", ["ordinary", "held_selection", "held_source"])
+async def test_native_runs_observations(request, tmp_path, mode):
+    local = LocalResearchService(tmp_path / "research.sqlite3")
+    local.create_run(id="run-a", query="LOCAL A ALPHA", status="running", control_state="running")
+    local.create_run(id="run-b", query="LOCAL B BRAVO", status="draft")
+    scope = ResearchScopeService(local_service=local, server_service=None)
+    entered, release = asyncio.Event(), asyncio.Event()
+    completed = asyncio.Event()
+    calls = []
+    original = scope.get_run
+
+    async def held_get_run(run_id, *, mode=None):
+        result = await original(run_id, mode=mode)
+        calls.append({"id": run_id, "mode": str(mode), "real_result_id": result["id"]})
+        if run_id == "run-a":
+            entered.set()
+            await release.wait()
+            completed.set()
+        return result
+
+    if mode != "ordinary":
+        scope.get_run = held_get_run
+    app = Harness(scope, local)
+    observations = {"mode": mode, "calls": calls}
+    try:
+        async with app.run_test(size=(160, 50)) as pilot:
+            window = app.screen.query_one("#research-window")
+            await window.load_runs("local")
+            view = window.query_one("#research-run-list", ListView)
+            view.focus()
+            view.index = next(i for i, row in enumerate(view.children) if row.id == "research-run-run-a")
+            await pilot.press("enter")
+            await until(lambda: window._selected_run_id() == "run-a")
+            observations["selected_a"] = state(window)
+            try:
+                if mode != "ordinary":
+                    await asyncio.wait_for(entered.wait(), 6)
+                    observations["held_native_timer"] = state(window)
+                if mode in {"ordinary", "held_selection"}:
+                    view.index = next(i for i, row in enumerate(view.children) if row.id == "research-run-run-b")
+                    await pilot.press("enter")
+                    # A bounded independent loop turn records actual child UI input
+                    # before release, without Pilot.pause waiting for parent idle.
+                    await asyncio.sleep(0.05)
+                    observations["after_b_key_before_release"] = state(window)
+                    if mode == "ordinary":
+                        await until(lambda: window._selected_run_id() == "run-b")
+                    else:
+                        release.set()
+                        await asyncio.wait_for(completed.wait(), 3)
+                        await until(lambda: window._selected_run_id() == "run-a")
+                    observations["settled_b"] = state(window)
+                if mode in {"ordinary", "held_source"}:
+                    source = window.query_one("#research-source-select", Select)
+                    source.focus()
+                    await pilot.press("enter", "down", "enter")
+                    await until(lambda: source.value == "server")
+                    await asyncio.sleep(0.05)
+                    observations["server_child_before_release"] = state(window)
+                    release.set()
+                    if mode == "held_source":
+                        await asyncio.wait_for(completed.wait(), 3)
+                    await until(lambda: window.current_source == "server" and window.status_message != "")
+                    await asyncio.sleep(0.05)
+                    observations["settled_server"] = state(window)
+                observations["final"] = state(window)
+                app.save_screenshot(f"{mode}.svg", path=str(ARTIFACTS))
+            finally:
+                # Always release inside the actual App lifetime, including failures.
+                release.set()
+                if entered.is_set():
+                    await asyncio.wait_for(completed.wait(), 3)
+                await asyncio.sleep(0.05)
+    finally:
+        release.set()
+        local.close()
+        (ARTIFACTS / f"{mode}.json").write_text(json.dumps(observations, indent=2), encoding="utf-8")
+
+    assert observations["final"]["mounted"]
+    if mode == "held_selection":
+        assert observations["after_b_key_before_release"]["selected"] == "run-b"
+        assert observations["settled_b"]["selected"] == "run-a"
+        assert observations["settled_b"]["highlighted"] == "research-run-run-b"
+    else:
+        assert observations["settled_server"]["source"] == "server"
+        expected = None if mode == "ordinary" else "run-a"
+        assert observations["settled_server"]["selected"] == expected
+        assert "LOCAL " in observations["settled_server"]["detail"]

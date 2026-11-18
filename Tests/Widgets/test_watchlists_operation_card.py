@@ -55,7 +55,9 @@ async def test_card_renders_non_color_status_and_exact_supported_actions(
         assert "Runs" in labels and "Stop following" in labels
         assert ("Retry" in labels) is (status == "failed")
         assert ("Cancel" in labels) is (status in {"queued", "running"})
-        assert len(card.query_one(".watchlists-operation-error", Static).renderable) <= 164
+        assert (
+            len(card.query_one(".watchlists-operation-error", Static).renderable) <= 164
+        )
 
 
 def test_task_state_persists_only_valid_canonical_receipt_identity():

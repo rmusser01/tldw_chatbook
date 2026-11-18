@@ -27,6 +27,8 @@ from __future__ import annotations
 import pytest
 from textual.widgets import Static
 
+from Tests.private_profile import private_profile_test
+
 from Tests.UI.test_console_parallel_runs import (
     _assert_painted_at_own_region,
     _assert_widget_and_ancestors_displayed,
@@ -585,7 +587,8 @@ async def test_clicking_the_first_row_drills_into_that_child_directly():
 
 
 @pytest.mark.asyncio
-async def test_live_usage_is_attributed_per_child_without_replacing_task_or_order():
+@private_profile_test
+async def test_live_usage_is_attributed_per_child_without_replacing_task_or_order(request):
     """Looking up one shared snapshot would put the same token count on every child."""
     handles = (
         FleetHandle(
@@ -638,16 +641,17 @@ async def test_live_usage_is_attributed_per_child_without_replacing_task_or_orde
 
         assert [row.row_id for row in section.rows] == ["h1", "h2", "h3"]
         assert section.rows[0].secondary_text == (
-            "compare provider pricing across regions · 12 provider output tok"
+            "Target unavailable · compare provider pricing across regions · 12 provider output tok"
         )
         assert section.rows[1].secondary_text == (
-            "draft the decision memo with citations · ~7 local output tok"
+            "Target unavailable · draft the decision memo with citations · ~7 local output tok"
         )
-        assert section.rows[2].secondary_text == "check the recommendation"
+        assert section.rows[2].secondary_text == "Target unavailable · check the recommendation"
 
 
 @pytest.mark.asyncio
-async def test_terminal_budget_tokens_do_not_retain_live_usage():
+@private_profile_test
+async def test_terminal_budget_tokens_do_not_retain_live_usage(request):
     """A settled child must keep final budget accounting distinct from live usage."""
     handle = FleetHandle(
         handle_id="h1",
@@ -676,7 +680,7 @@ async def test_terminal_budget_tokens_do_not_retain_live_usage():
         section = console.query_one(
             "#console-agent-section-subagents", ConsoleInspectorSection
         )
-        assert section.rows[0].secondary_text == "drafted · 1.2k budget tok"
+        assert section.rows[0].secondary_text == "Target unavailable · drafted · 1.2k budget tok"
         assert "output tok" not in section.rows[0].secondary_text
 
 

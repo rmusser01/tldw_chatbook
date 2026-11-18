@@ -94,7 +94,19 @@ def test_non_http_urls_refused(egress_calls):
 
 
 def test_direct_media_url_with_ranges(egress_calls, monkeypatch):
-    _mount_client(monkeypatch, {TYPED: _FakeResponse(TYPED, headers={"content-type": "video/mp4", "accept-ranges": "bytes", "content-length": "1048576"})})
+    _mount_client(
+        monkeypatch,
+        {
+            TYPED: _FakeResponse(
+                TYPED,
+                headers={
+                    "content-type": "video/mp4",
+                    "accept-ranges": "bytes",
+                    "content-length": "1048576",
+                },
+            )
+        },
+    )
     resolution = sr.resolve_stream_url(TYPED)
     assert resolution.final_url == TYPED
     assert resolution.seekable is True
@@ -106,10 +118,13 @@ def test_direct_media_url_with_ranges(egress_calls, monkeypatch):
 
 def test_redirect_chain_revalidates_every_hop(egress_calls, monkeypatch):
     cdn = "https://cdn.example.net/f/abc.mp4"
-    _mount_client(monkeypatch, {
-        TYPED: _FakeResponse(TYPED, status=302, headers={"location": cdn}),
-        cdn: _FakeResponse(cdn, headers={"content-type": "video/mp4"}),
-    })
+    _mount_client(
+        monkeypatch,
+        {
+            TYPED: _FakeResponse(TYPED, status=302, headers={"location": cdn}),
+            cdn: _FakeResponse(cdn, headers={"content-type": "video/mp4"}),
+        },
+    )
     resolution = sr.resolve_stream_url(TYPED)
     assert resolution.final_url == cdn
     assert resolution.via_ytdlp is False
@@ -148,7 +163,14 @@ def test_egress_refusal_surfaces(egress_calls, monkeypatch):
 
 def test_hls_url_refused_with_followup_note(egress_calls, monkeypatch):
     hls = "https://videos.example.com/master.m3u8"
-    _mount_client(monkeypatch, {hls: _FakeResponse(hls, headers={"content-type": "application/vnd.apple.mpegurl"})})
+    _mount_client(
+        monkeypatch,
+        {
+            hls: _FakeResponse(
+                hls, headers={"content-type": "application/vnd.apple.mpegurl"}
+            )
+        },
+    )
     with pytest.raises(sr.StreamResolutionError, match="follow-up"):
         sr.resolve_stream_url(hls)
 
@@ -158,7 +180,10 @@ def test_hls_url_refused_with_followup_note(egress_calls, monkeypatch):
 
 def test_html_page_falls_to_ytdlp(egress_calls, monkeypatch):
     stream_url = "https://cdn.example.net/direct.mp4"
-    _mount_client(monkeypatch, {TYPED: _FakeResponse(TYPED, headers={"content-type": "text/html"})})
+    _mount_client(
+        monkeypatch,
+        {TYPED: _FakeResponse(TYPED, headers={"content-type": "text/html"})},
+    )
     monkeypatch.setattr(sr.shutil, "which", lambda tool: f"/usr/bin/{tool}")
 
     def fake_run(cmd, **kwargs):
@@ -176,14 +201,20 @@ def test_html_page_falls_to_ytdlp(egress_calls, monkeypatch):
 
 
 def test_ytdlp_missing_binary_named(egress_calls, monkeypatch):
-    _mount_client(monkeypatch, {TYPED: _FakeResponse(TYPED, headers={"content-type": "text/html"})})
+    _mount_client(
+        monkeypatch,
+        {TYPED: _FakeResponse(TYPED, headers={"content-type": "text/html"})},
+    )
     monkeypatch.setattr(sr.shutil, "which", lambda tool: None)
     with pytest.raises(sr.StreamResolutionError, match="yt-dlp"):
         sr.resolve_stream_url(TYPED)
 
 
 def test_ytdlp_m3u8_output_refused(egress_calls, monkeypatch):
-    _mount_client(monkeypatch, {TYPED: _FakeResponse(TYPED, headers={"content-type": "text/html"})})
+    _mount_client(
+        monkeypatch,
+        {TYPED: _FakeResponse(TYPED, headers={"content-type": "text/html"})},
+    )
     monkeypatch.setattr(sr.shutil, "which", lambda tool: "/usr/bin/yt-dlp")
     monkeypatch.setattr(
         sr.subprocess,
@@ -197,7 +228,10 @@ def test_ytdlp_m3u8_output_refused(egress_calls, monkeypatch):
 
 
 def test_ytdlp_failure_surfaces_stderr(egress_calls, monkeypatch):
-    _mount_client(monkeypatch, {TYPED: _FakeResponse(TYPED, headers={"content-type": "text/html"})})
+    _mount_client(
+        monkeypatch,
+        {TYPED: _FakeResponse(TYPED, headers={"content-type": "text/html"})},
+    )
     monkeypatch.setattr(sr.shutil, "which", lambda tool: "/usr/bin/yt-dlp")
     monkeypatch.setattr(
         sr.subprocess,

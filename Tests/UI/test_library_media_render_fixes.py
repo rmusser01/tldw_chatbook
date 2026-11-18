@@ -73,6 +73,12 @@ from Tests.UI.test_library_shell import (
     _wait_for_selector,
 )
 
+# TASK-41127: every test here builds the Library harness, which reads config
+# (app_factory's `load_settings()`); under the per-test TLDW_CONFIG_PATH
+# redirect that read is refused (RecoveryRequired raw_source_selection_changed).
+# Keep the collection-time profile, as test_library_shell.py does (TASK-39141).
+pytestmark = pytest.mark.bootstrap_profile
+
 
 #: task-31981: the full surfaced reason for the no-provider case, derived
 #: from the source's next-step constant so only the reason half is pinned
@@ -156,7 +162,10 @@ async def _open_first_reader_row(screen, pilot):
         ),
         message="Reader detail never settled.",
     )
-    await pilot.pause()
+    # TASK-41127 review r15lt-rev1: as in `_load_row_0`, the loaded detail
+    # re-mounts the Reader chrome after the session settles; return once it
+    # is back, since callers press Find/More/the mode tabs next.
+    await _wait_for_selector(screen, pilot, "#library-media-reader-find")
 
 
 @pytest.mark.asyncio
@@ -277,7 +286,7 @@ async def _switch_to_analysis(screen, pilot) -> None:
     screen._media_state.reader_session = set_mode(
         screen._media_state.reader_session, "analysis"
     )
-    screen._sync_library_media_viewer_or_recompose()
+    screen._media_controller._sync_library_media_viewer_or_recompose()
     await _wait_for_selector(screen, pilot, "#library-media-reader-mode-analysis")
     await pilot.pause()
 
@@ -649,7 +658,7 @@ async def test_a_scope_change_clears_the_armed_analyze_choice():
         _sync_library_canvas(screen, "media")
         await _wait_for_selector(screen, pilot, "#library-media-analyze-receipt")
 
-        screen._request_library_media_filter("beta")
+        screen._media_controller._request_library_media_filter("beta")
         await pilot.pause()
         assert screen._media_state.analyze_choice is None
         _sync_library_canvas(screen, "media")
@@ -1112,9 +1121,11 @@ async def test_space_in_select_mode_is_claimed_from_rows_and_grips_only():
 # ---------------------------------------------------------------------------
 
 #: The whole Reader Escape vocabulary. Critique #4 saw eight distinct
-#: ``esc …`` chips live; every state now lands on one of these four (or on
-#: no chip at all, where Escape genuinely does nothing).
-_ESCAPE_LABELS = {"close", "focus Items", "focus Library", "back"}
+#: ``esc …`` chips live; every state now lands on one of these (or on no chip
+#: at all, where Escape genuinely does nothing). TASK-41127: "cancel" joined
+#: the four when fb000f77b7 (TASK-34000.22 fix round 2, R2-5) made the chip
+#: over an armed delete name what the key does there.
+_ESCAPE_LABELS = {"close", "cancel", "focus Items", "focus Library", "back"}
 
 
 def _global_key_host() -> LibraryGlobalKeyProductionCSSHarness:
@@ -1270,8 +1281,8 @@ async def test_back_button_is_not_composed_in_the_side_by_side_layout():
 
 
 @pytest.mark.asyncio
-async def test_escape_labels_are_one_of_four():
-    """Every Reader state's ``esc`` chip comes from one four-word set."""
+async def test_escape_labels_are_one_of_five():
+    """Every Reader state's ``esc`` chip comes from ``_ESCAPE_LABELS``."""
     host = _host()
     async with host.run_test(size=(235, 52)) as pilot:
         screen = await _open_media_list(host, pilot)
@@ -1323,7 +1334,8 @@ async def test_escape_labels_are_one_of_four():
         assert seen["plain Reader"] == "focus Items", seen
         assert seen["find open"] == "close", seen
         assert seen["more open"] == "close", seen
-        assert seen["armed delete"] == "close", seen
+        # fb000f77b7 (R2-5): Escape cancels an armed delete first, and says so.
+        assert seen["armed delete"] == "cancel", seen
         assert seen["items focus"] == "focus Library", seen
         # The rail row is the ladder's terminus: Escape does nothing
         # there, so the footer advertises no chip rather than a "back"
@@ -1868,7 +1880,10 @@ async def test_media_filter_matches_a_keyword_absent_from_title_and_body():
         screen = await _open_media_list(host, pilot)
         await _apply_media_filter(screen, pilot, "day2")
 
-        titles = [row.title for row in screen._build_library_media_state().rows]
+        titles = [
+            row.title
+            for row in screen._media_controller._build_library_media_state().rows
+        ]
         assert titles == ["Opening remarks"], titles
         painted = _painted(host, screen.query_one("#library-media-list").region)
         assert "Opening remarks" in painted, painted
@@ -1914,6 +1929,22 @@ async def test_media_filter_placeholder_names_the_fields_it_searches():
 # ---------------------------------------------------------------------------
 
 
+def _without_analysis_provider(host: LibraryProductionCSSHarness) -> None:
+    """Give ``host``'s app a config snapshot that names no analysis provider.
+
+    TASK-41127: these tests used to get that from the test config for free.
+    Since 77052f5a85 (TASK-34000.5) ``load_settings()`` carries
+    ``[analysis_defaults]``, so the shipped template's ``provider = "OpenAI"``
+    reaches the resolver and, with no key, says "OpenAI is not ready (Missing
+    API key)" instead. The claim under test is the no-provider path, so say so
+    here. The snapshot is rebound, never mutated: under ``bootstrap_profile``
+    ``app.app_config`` is ``load_settings()``'s shared cache.
+    """
+    config = {**host.app_instance.app_config, "analysis_defaults": {}}
+    host.app_instance.app_config = config
+    host.app_config = config
+
+
 def _analysed_host() -> LibraryProductionCSSHarness:
     """Two local items, each already carrying a current analysis version.
 
@@ -1943,7 +1974,8 @@ async def test_generate_is_disabled_with_its_reason_when_no_provider_is_configur
     the resolver's own reason, in the ``○``-with-reason grammar PR A gave
     Find -- and the post-click guard still refuses with the same words.
     Both spellings of the action ("Generate" / "Regenerate") are gated."""
-    host = host_factory()  # the test config configures no analysis provider
+    host = host_factory()
+    _without_analysis_provider(host)
     async with host.run_test(size=(235, 52)) as pilot:
         screen = await _open_media_list(host, pilot)
         await _open_first_reader_row(screen, pilot)
@@ -1978,7 +2010,8 @@ async def test_reader_generate_reason_is_painted_inline_not_hover_only(size):
     Args:
         size: The terminal dimensions under test.
     """
-    host = _host()  # the test config configures no analysis provider
+    host = _host()
+    _without_analysis_provider(host)
     async with host.run_test(size=size) as pilot:
         screen = await _open_media_list(host, pilot)
         await _open_first_reader_row(screen, pilot)
@@ -2023,7 +2056,8 @@ async def test_select_mode_analyze_reason_is_painted_inline_not_hover_only(size)
     Args:
         size: The terminal dimensions under test.
     """
-    host = _host()  # the test config configures no analysis provider
+    host = _host()
+    _without_analysis_provider(host)
     async with host.run_test(size=size) as pilot:
         screen = await _open_media_list(host, pilot)
         screen._toggle_library_media_select_mode()
@@ -2228,7 +2262,7 @@ async def test_the_analysis_provider_is_resolved_only_on_the_tab_that_shows_it(
         await _open_first_reader_row(screen, pilot)
 
         calls.clear()
-        screen._sync_library_media_viewer_or_recompose()
+        screen._media_controller._sync_library_media_viewer_or_recompose()
         await pilot.pause()
         assert calls == [], (
             f"the Read tab resolved the analysis provider {len(calls)} time(s)"
@@ -2236,7 +2270,7 @@ async def test_the_analysis_provider_is_resolved_only_on_the_tab_that_shows_it(
 
         await _switch_to_analysis(screen, pilot)
         calls.clear()
-        screen._sync_library_media_viewer_or_recompose()
+        screen._media_controller._sync_library_media_viewer_or_recompose()
         await pilot.pause()
         assert len(calls) == 1, (
             f"the Analysis tab resolved the provider {len(calls)} times per sync"
@@ -2624,7 +2658,7 @@ async def _force_media_page_failure(host, screen, pilot, exc: BaseException):
 
     host.app_instance.media_reading_scope_service.search_media = _fails
     controller = screen._library_media_browse_controller
-    screen._request_library_media_page(1, focus_identity=None)
+    screen._media_controller._request_library_media_page(1, focus_identity=None)
     await _wait_for_condition(
         pilot,
         lambda: (
@@ -2732,7 +2766,7 @@ async def test_media_facet_failure_paints_the_same_callout():
             raise sqlite3.OperationalError("database is locked")
 
         host.app_instance.media_reading_scope_service.list_library_media_types = _fails
-        screen._request_library_media_facets()
+        screen._media_controller._request_library_media_facets()
         await _wait_for_condition(
             pilot,
             lambda: controller.facet_failure is not None and not controller.facet_loading,
@@ -2817,7 +2851,7 @@ async def test_changed_page_context_failure_is_not_a_repeated_retry():
 
         # A DIFFERENT page hits the same reason -- a changed context, never a
         # consecutive Retry of the one that just failed.
-        screen._request_library_media_page(2, focus_identity=None)
+        screen._media_controller._request_library_media_page(2, focus_identity=None)
         await _wait_for_condition(
             pilot,
             lambda: len(calls) >= 2,
@@ -2897,7 +2931,7 @@ async def test_facet_only_failure_leaves_the_row_supported_actions_live():
             raise sqlite3.OperationalError("database is locked")
 
         host.app_instance.media_reading_scope_service.list_library_media_types = _fails
-        screen._request_library_media_facets()
+        screen._media_controller._request_library_media_facets()
         await _wait_for_condition(
             pilot,
             lambda: (

@@ -43,7 +43,7 @@ VOCABULARY = (
     None,
     "banana",
     2.5,
-    object(),
+    pytest.param(object(), id="unknown-object"),
 )
 
 

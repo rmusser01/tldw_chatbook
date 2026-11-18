@@ -251,9 +251,10 @@ def _is_provenance_keyword(value: str) -> bool:
 
 
 def _is_legacy_receipt_proof_keyword(value: str) -> bool:
-    return re.fullmatch(
-        rf"{re.escape(_RECEIPT_PROOF_PREFIX)}[0-9a-f]{{64}}", value
-    ) is not None
+    return (
+        re.fullmatch(rf"{re.escape(_RECEIPT_PROOF_PREFIX)}[0-9a-f]{{64}}", value)
+        is not None
+    )
 
 
 def encode_note_keywords(request: ResearchNoteSaveRequest) -> list[str]:

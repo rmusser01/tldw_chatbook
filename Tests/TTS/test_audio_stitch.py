@@ -58,7 +58,9 @@ def test_two_segments_with_gap_sum_to_expected_duration() -> None:
 
     result = concat_wav_segments(segments, gap_ms=200)
 
-    assert wav_duration_seconds(result) == pytest.approx(1.2, abs=_DURATION_TOLERANCE_SECONDS)
+    assert wav_duration_seconds(result) == pytest.approx(
+        1.2, abs=_DURATION_TOLERANCE_SECONDS
+    )
 
 
 def test_concat_produces_a_header_whose_duration_matches_the_inputs() -> None:
@@ -104,7 +106,9 @@ def test_single_segment_is_returned_unchanged_with_no_trailing_gap() -> None:
 
     result = concat_wav_segments([segment], gap_ms=200)
 
-    assert wav_duration_seconds(result) == pytest.approx(0.5, abs=_DURATION_TOLERANCE_SECONDS)
+    assert wav_duration_seconds(result) == pytest.approx(
+        0.5, abs=_DURATION_TOLERANCE_SECONDS
+    )
 
 
 def test_empty_sequence_raises_audio_stitch_error() -> None:
@@ -221,7 +225,9 @@ def test_pydub_available_is_sourced_from_check_dependency_not_a_second_flag(
     """
     from tldw_chatbook.Utils import optional_deps
 
-    monkeypatch.setattr(optional_deps, "check_dependency", lambda *args, **kwargs: False)
+    monkeypatch.setattr(
+        optional_deps, "check_dependency", lambda *args, **kwargs: False
+    )
     monkeypatch.delitem(sys.modules, "tldw_chatbook.TTS.audio_stitch", raising=False)
 
     reloaded = importlib.import_module("tldw_chatbook.TTS.audio_stitch")

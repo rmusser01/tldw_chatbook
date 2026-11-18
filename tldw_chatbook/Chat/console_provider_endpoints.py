@@ -3,26 +3,45 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from ipaddress import ip_address
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse, urlunparse
 
-from tldw_chatbook.Chat.provider_endpoint_contract import (
+from tldw_chatbook.Provider_Contract import ChatConfigurationError
+from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
     URL_BASED_PROVIDER_KEYS,
-    canonical_connection_identity,
+    endpoint_refusal,
+    normalize_generic_endpoint_for_compare as normalize_generic_endpoint_for_compare,
+    read_schemeless_loopback,
     resolve_provider_endpoint,
+    safe_endpoint_display as safe_endpoint_display,
 )
 
+from tldw_chatbook.provider_registry import (
+    LEGACY_CUSTOM_2_API_IP_DEFAULT as LEGACY_CUSTOM_2_API_IP_DEFAULT,
+    LEGACY_CUSTOM_2_BRIDGE,
+    keep_legacy_custom_2_endpoint,
+)
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Agents.goal_models import GoalProviderRef
+    from .console_provider_gateway import ConsoleProviderResolution
+
+#: Chat settings' footer action that saves an unsaved endpoint.
+SAVE_ENDPOINT_ACTION_LABEL = "Save endpoint & use model"
 UNSAVED_ENDPOINT_COPY = (
-    "Provider blocked: this endpoint is not saved. Save it with Save model "
-    "defaults in Console Settings, or in F4 Settings, before sending."
+    "Provider blocked: this endpoint is not saved. Save it with "
+    f"{SAVE_ENDPOINT_ACTION_LABEL} in Chat settings, or in F4 Settings, before "
+    "sending."
 )
 #: Single source of the llama.cpp origin Chatbook defaults to (and teaches in
 #: its docs) when nothing is configured. The stock `llama-server` port 8080 is
 #: covered by local discovery candidates, not by this default.
 DEFAULT_LLAMACPP_BASE_URL = "http://127.0.0.1:9099"
-INVALID_LLAMACPP_BASE_URL_COPY = (
-    "Provider blocked: invalid llama.cpp base URL. "
-    "Use an http(s) URL such as http://127.0.0.1:9099."
+#: A ``custom-ep:`` id with no configured entry (removed, or skipped at load);
+#: the send and readiness both say it (TASK-40302).
+CUSTOM_ENDPOINT_NOT_CONFIGURED_COPY = (
+    "Provider blocked: this custom endpoint is no longer configured. "
+    "Restore its entry or choose another provider before sending."
 )
 _ENDPOINT_SETTING_KEYS = (
     "api_base_url",
@@ -42,7 +61,6 @@ _URL_PROVIDER_SETTING_KEYS = (
     "router_base_url",
     "huggingface_router_base_url",
 )
-_INVALID_ENDPOINT_DISPLAY = "invalid endpoint"
 _BUILTIN_PROVIDER_ENDPOINTS = {
     "anthropic": "https://api.anthropic.com/v1",
     "cohere": "https://api.cohere.com",
@@ -90,10 +108,43 @@ def first_configured_endpoint(provider_settings: Mapping[str, object]) -> str | 
     return None
 
 
+def with_provider_endpoint(
+    app_config: Mapping[str, object], provider_key: str, endpoint: str
+) -> dict[str, object]:
+    """Return a copy of ``app_config`` whose provider's one endpoint is ``endpoint``.
+
+    In memory only: readiness and probes then read an endpoint the session
+    uses (a detected server, a session-only endpoint) as the configured one.
+    Every endpoint alias is dropped first, so no higher-ranked alias outranks
+    it. The input is not changed.
+
+    Args:
+        app_config: The configuration snapshot.
+        provider_key: The ``api_settings`` section to configure.
+        endpoint: The endpoint the copy is configured with.
+
+    Returns:
+        The copied configuration with that section's ``api_url`` set.
+    """
+    api_settings = app_config.get("api_settings")
+    api_settings = dict(api_settings) if isinstance(api_settings, Mapping) else {}
+    section = api_settings.get(provider_key)
+    settings = {
+        key: value
+        for key, value in (section.items() if isinstance(section, Mapping) else ())
+        if key not in _ENDPOINT_SETTING_KEYS
+    }
+    settings["api_url"] = endpoint
+    api_settings[provider_key] = settings
+    return {**app_config, "api_settings": api_settings}
+
+
 def effective_provider_endpoint(
     provider_key: str,
     selected_endpoint: str | None,
     provider_settings: Mapping[str, object],
+    *,
+    custom_endpoint: bool = False,
 ) -> str | None:
     """Resolve the exact endpoint a provider call would use at this moment.
 
@@ -105,11 +156,17 @@ def effective_provider_endpoint(
         provider_key: Normalized provider readiness key.
         selected_endpoint: Optional Console-selected endpoint.
         provider_settings: Provider-specific configuration mapping.
+        custom_endpoint: True for a custom endpoint entry, which the contract
+            reads as its engine does (TASK-40300 review r14ep-rev2 M-a: a
+            relaxed base pasted with ``/models`` sent to
+            ``.../models/chat/completions``).
 
     Returns:
         Effective endpoint to pin into the provider resolution, or ``None``
         when the provider has neither a configured nor built-in endpoint.
     """
+    if custom_endpoint and provider_key == "custom":
+        provider_key = "custom_hosted"
     if isinstance(selected_endpoint, str) and selected_endpoint.strip():
         return _effective_contract_endpoint(provider_key, selected_endpoint)
     if provider_key == "huggingface" and _huggingface_router_mode(provider_settings):
@@ -164,6 +221,267 @@ def builtin_provider_endpoint(
     if provider_key == "huggingface" and _huggingface_router_mode(settings):
         return "https://router.huggingface.co/hf-inference"
     return _BUILTIN_PROVIDER_ENDPOINTS.get(provider_key)
+
+
+#: TASK-2117: first-party cloud providers whose adapters accept an
+#: ``api_base_url`` request pin but whose primary Console sends previously
+#: left the kwarg unset (the auxiliary path already pins it). Shared by the
+#: gateway kwargs builders and the trace verifier's independent
+#: reconstruction, so the two can never drift.
+CONDITIONAL_BASE_URL_EXECUTION_KEYS = frozenset(
+    {
+        "openai",
+        "cohere",
+        "deepseek",
+        "google",
+        "groq",
+        "huggingface",
+        "openrouter",
+    }
+)
+#: TASK-39042 review r11g-rev2: local adapters that otherwise read their own
+#: config raw, so a schemeless endpoint readiness reads as http:// went as
+#: typed. Every primary send pins the resolved base for them; shared by the
+#: gateway kwargs builders and the trace verifier's reconstruction (r11g-rev3).
+#: MLX-LM joins them (TASK-40300 review r14ep-rev3 follow-up and rev4 C-1):
+#: Console checks and pins the URL MLX-LM builds from its own ``host`` and
+#: ``port`` (``http://127.0.0.1:8080/v1`` when unset), never the ``api_url``
+#: in its table, which the adapter ignores.
+CONFIG_READING_LOCAL_EXECUTION_KEYS = frozenset(
+    {"aphrodite", "koboldcpp", "local_mlx_lm", "oobabooga", "tabbyapi"}
+)
+#: Where an adapter reads its endpoint when the request pins none, in its own
+#: order, when that is not its ``api_settings`` table under the dispatch name
+#: (TASK-40300 review r14ep-rev3 I-1/I-3: ``[api_settings.ooba_api] api_ip``
+#: was sent to unchecked).
+_ADAPTER_OWN_ENDPOINTS: dict[str, tuple[tuple[str, ...], ...]] = {
+    "openai": (("openai_api", "api_base_url"),),
+    "anthropic": (("anthropic_api", "api_base_url"),),
+    "huggingface": (("huggingface_api", "api_base_url"),),
+    "local-llm": (
+        ("api_settings", "local-llm", "api_url"),
+        ("api_settings", "local-llm", "api_ip"),
+    ),
+    "custom-openai-api": (("api_settings", "custom", "api_url"),),
+    "custom-openai-api-2": (
+        ("api_settings", "custom_2", "api_url"),
+        ("custom_openai_api_2", "api_ip"),
+    ),
+    "oobabooga": (("api_settings", "ooba_api", "api_ip"),),
+    "aphrodite": (("api_settings", "aphrodite_api", "api_url"),),
+    "tabbyapi": (("api_settings", "tabby_api", "api_url"),),
+    "koboldcpp": (("api_settings", "koboldcpp", "api_url"),),
+}
+
+
+def reapply_legacy_custom_2_bridge(view: dict) -> None:
+    """Re-run ``keep_legacy_custom_2_endpoint`` on an in-memory settings view.
+
+    Settings patches the saved values into the live view; an unedited Custom 2
+    save writes the slot's earlier value, so without this the view showed
+    (and Test and Discover staged) the placeholder while sends used the
+    legacy endpoint (review r15ep-rev3 I-1). One rule, the load-time one.
+
+    Args:
+        view: The live settings view (``load_settings`` shape); changed in place.
+    """
+    raw = view.get("COMPREHENSIVE_CONFIG_RAW")
+    bridge = view.get(LEGACY_CUSTOM_2_BRIDGE) or (
+        raw.get(LEGACY_CUSTOM_2_BRIDGE) if isinstance(raw, Mapping) else None
+    )
+    if isinstance(bridge, Mapping):
+        from tldw_chatbook.config import DEFAULT_CONFIG_FROM_TOML
+
+        keep_legacy_custom_2_endpoint(view, bridge.get("legacy"), DEFAULT_CONFIG_FROM_TOML)
+
+
+def endpoint_to_save_unedited(provider_key: str, shown: str) -> str:
+    """The endpoint a save writes when the Endpoint field was not edited.
+
+    The field shows Custom 2's bridged legacy endpoint (``keep_legacy_custom_2
+    _endpoint``); a save that did not touch it writes back what the slot held
+    before the bridge, so the legacy key keeps being read (TASK-41145 ruling,
+    review r15ep-rev2 I-1). Any other value is written as shown. The bridge is
+    read from the file as it is now, not from the live view: once first-run or
+    a save wrote a real ``api_url`` there is none (review r15ep-rev4).
+
+    Args:
+        provider_key: The provider the save is for.
+        shown: The Endpoint field's value.
+
+    Returns:
+        The endpoint to write.
+    """
+    if provider_key != "custom_2":
+        return shown
+    from tldw_chatbook.config import get_atomic_config_snapshot
+
+    try:
+        bridge = get_atomic_config_snapshot().values.get(LEGACY_CUSTOM_2_BRIDGE)
+    except ValueError:  # unreadable or undecryptable; the save's write refuses it too
+        return shown
+    if not isinstance(bridge, Mapping):
+        return shown
+    return str(bridge.get("before") or "") if shown == bridge.get("legacy") else shown
+
+
+#: Adapters that always build their endpoint themselves (MLX-LM's host and
+#: port) and ignore any URL in their ``api_settings`` table.
+ADAPTER_ONLY_ENDPOINT_KEYS = frozenset({"mlx_lm", "local_mlx_lm"})
+
+
+def mlx_endpoint(table: Mapping[str, object]) -> str:
+    """The URL ``chat_with_mlx_lm`` builds from its table's host and port.
+
+    Args:
+        table: MLX-LM's ``api_settings`` table.
+
+    Returns:
+        ``http://<host>:<port>/v1``, 127.0.0.1 and 8080 where unset.
+    """
+    return f"http://{table.get('host', '127.0.0.1')}:{table.get('port', 8080)}/v1"
+
+
+def configured_provider_endpoint(
+    provider: object, provider_settings: Mapping[str, object]
+) -> str | None:
+    """The endpoint a provider's table holds, as setup screens show it.
+
+    Args:
+        provider: The provider key.
+        provider_settings: The provider's ``api_settings`` table.
+
+    Returns:
+        MLX-LM's host and port as ``http://<host>:<port>/v1`` (TASK-41145),
+        else the table's first configured endpoint alias, or None.
+    """
+    if provider in ADAPTER_ONLY_ENDPOINT_KEYS:
+        return mlx_endpoint(provider_settings)
+    return first_configured_endpoint(provider_settings)
+
+
+def adapter_own_endpoint(
+    dispatch: str, app_config: Mapping[str, object]
+) -> str | None:
+    """The endpoint ``dispatch``'s adapter sends to when the request pins none.
+
+    Covers what Console's ``api_settings`` lookup misses: the adapter's own
+    table, MLX's host and port, and an engine preset's shipped default.
+
+    Args:
+        dispatch: The ``chat_api_call`` endpoint name.
+        app_config: The loaded configuration.
+
+    Returns:
+        That endpoint, read as Console reads a configured one, or None.
+    """
+    from tldw_chatbook.provider_registry import RECORDS_BY_KEY
+
+    legacy_hf = app_config.get("huggingface_api")
+    if dispatch == "huggingface" and isinstance(legacy_hf, Mapping):
+        if _huggingface_router_mode(legacy_hf):
+            # Router mode reads the router base, as chat_with_huggingface does.
+            return effective_provider_endpoint(dispatch, None, legacy_hf)
+    for path in _ADAPTER_OWN_ENDPOINTS.get(dispatch, ()):
+        value: object = app_config
+        for key in path:
+            value = value.get(key) if isinstance(value, Mapping) else None
+        if isinstance(value, str) and value.strip():
+            return _effective_contract_endpoint(dispatch, value.strip())
+    if dispatch in ADAPTER_ONLY_ENDPOINT_KEYS:
+        api_settings = app_config.get("api_settings")
+        table = api_settings.get(dispatch) if isinstance(api_settings, Mapping) else None
+        return mlx_endpoint(table if isinstance(table, Mapping) else {})
+    record = RECORDS_BY_KEY.get(dispatch)
+    return record.default_base_url if record and record.engine_driven else None
+
+
+#: Console execution keys besides ``CONFIG_READING_LOCAL_EXECUTION_KEYS``
+#: whose adapter reads a table Console's own lookup misses (review r14ep-rev3
+#: and its follow-up: Local LLM's ``api_ip``, Custom OpenAI API 2's top-level
+#: ``api_ip``; rev4 M-4: HuggingFace's ``huggingface_api``).
+_OWN_TABLE_CONSOLE_KEYS = frozenset({"local-llm", "custom-openai-api-2", "huggingface"})
+
+
+def console_own_table_endpoint(
+    execution_key: str,
+    app_config: Mapping[str, object],
+    resolved: str | None,
+    provider_settings: Mapping[str, object],
+    selected: str | None = None,
+) -> str | None:
+    """The endpoint a Console send uses, so its send and readiness check it.
+
+    Normally ``resolved``. An adapter that reads its own table when nothing is
+    pinned uses that table's endpoint instead when neither the chat nor the
+    provider's ``api_settings`` table sets one, so ``[api_settings.ooba_api]
+    api_ip`` is checked and pinned rather than sent to unchecked (TASK-40300
+    review r14ep-rev3 I-3; refusing would break a config that sets only that
+    table). MLX-LM always uses its own host and port (rev4 C-1).
+
+    Args:
+        execution_key: Console's resolved adapter key.
+        app_config: The loaded configuration.
+        resolved: The endpoint Console resolved for the provider.
+        provider_settings: The provider's ``api_settings`` table.
+        selected: The chat's own endpoint, if any.
+
+    Returns:
+        The endpoint the send uses, or None.
+    """
+    if execution_key in ADAPTER_ONLY_ENDPOINT_KEYS:
+        return adapter_own_endpoint(execution_key, app_config)
+    if execution_key in CONFIG_READING_LOCAL_EXECUTION_KEYS | _OWN_TABLE_CONSOLE_KEYS and not (
+        selected or first_configured_endpoint(provider_settings)
+    ):
+        return adapter_own_endpoint(execution_key, app_config) or resolved
+    return resolved
+
+
+def adapter_api_base_url(execution_key: str, base_url: str | None) -> str | None:
+    """Project the transport base; legacy custom slots accept the full endpoint.
+
+    Args:
+        execution_key: Resolved adapter key.
+        base_url: Resolved destination URL, without changing its durable identity.
+
+    Returns:
+        The API base for the custom engine, otherwise the original nonempty URL.
+    """
+    if execution_key == "custom-hosted" and base_url is not None:
+        base_url = base_url.rstrip("/").removesuffix("/chat/completions")
+    return base_url or None
+
+
+def meaningful_adapter_base_url(execution_key: str, base_url: str | None) -> str | None:
+    """Pin the resolved endpoint when it carries real information.
+
+    TASK-2117: a resolution's ``base_url`` always carries SOMETHING -- the
+    builtin cloud default when neither a configured
+    ``[api_settings.<provider>].api_base_url`` nor a session-selected endpoint
+    exists. Forwarding that builtin would pin the adapter to a value it
+    already falls back to on its own, so for these first-party cloud keys the
+    kwarg is forwarded only when the resolved endpoint differs from the
+    provider's shipped default -- i.e. when a configured or session-selected
+    URL must reach the request.
+
+    HuggingFace is the exception (TASK-40300 review r14ep-rev5): it is always
+    pinned, built-in or not. Its adapter otherwise reads ``huggingface_api``
+    (in router mode, its ``router_base_url``), and Console already checks
+    that legacy table itself when ``[api_settings.huggingface]`` has no
+    endpoint (``console_own_table_endpoint``), so the URL pinned is the one
+    Console checked.
+    """
+    if execution_key not in CONDITIONAL_BASE_URL_EXECUTION_KEYS:
+        return None
+    if not isinstance(base_url, str) or not base_url.strip():
+        return None
+    # TASK-40300 review r14ep-rev5: HuggingFace is always pinned. Unpinned, its
+    # adapter reads ``huggingface_api`` (and, in router mode, its
+    # ``router_base_url``) whatever Console checked.
+    if base_url == builtin_provider_endpoint(execution_key) and execution_key != "huggingface":
+        return None
+    return base_url
 
 
 def _huggingface_router_mode(provider_settings: Mapping[str, object]) -> bool:
@@ -238,149 +556,84 @@ def unsaved_endpoint_copy(
     return f"{UNSAVED_ENDPOINT_COPY} Selected endpoint: {selected}. Saved endpoint: {configured}."
 
 
-def safe_endpoint_display(url: str | None) -> str:
-    """Return a credential-free endpoint label safe for user-visible UI.
+def invalid_llamacpp_base_url_copy(reason: str) -> str:
+    """llama.cpp's refusal copy, naming the contract's reason (TASK-40300 M-b).
 
     Args:
-        url: Raw endpoint value from config or user input.
+        reason: ``endpoint_refusal``'s reason, which names no part of the value.
 
     Returns:
-        A host/path endpoint label with user info, query strings, and fragments
-        removed. Malformed endpoints return ``"invalid endpoint"`` instead of
-        echoing raw input.
+        The copy readiness and the send show.
     """
-    parsed_endpoint = _parse_http_endpoint(url)
-    if parsed_endpoint is None:
-        return "" if not str(url or "").strip() else _INVALID_ENDPOINT_DISPLAY
-    resolution = resolve_provider_endpoint("custom", url)
-    if resolution.persisted_endpoint is not None:
-        return resolution.normalized_input
-    legacy_display = _format_endpoint(parsed_endpoint, drop_default_port=False)
-    has_scheme = parsed_endpoint[0]
-    legacy_resolution = resolve_provider_endpoint("custom", legacy_display)
-    if legacy_resolution.persisted_endpoint is not None:
-        return legacy_resolution.normalized_input if has_scheme else legacy_display
+    return f"Provider blocked: invalid llama.cpp base URL: {reason}"
 
-    if not has_scheme:
-        explicit_legacy_resolution = resolve_provider_endpoint(
-            "custom",
-            f"http://{legacy_display}",
+
+def refuse_a_refused_endpoint(resolution: object) -> None:
+    """Refuse a dispatch whose endpoint the contract refuses (TASK-40300 I1).
+
+    ``resolve_for_send`` checks the endpoint it resolves, but an agent
+    sub-call or a run snapshot can overlay another ``base_url`` afterwards,
+    so the gateway's stream and auxiliary dispatch check the endpoint they
+    are about to use, before any request, trace shadow or adapter call.
+
+    Args:
+        resolution: The ``ConsoleProviderResolution`` about to be dispatched.
+
+    Raises:
+        ChatConfigurationError: Status-less (nothing reached the provider),
+            with the contract's reason, which names no part of the value.
+    """
+    from tldw_chatbook.Chat.custom_endpoint_registry import split_custom_endpoint_id
+
+    provider = str(getattr(resolution, "provider", "") or "")
+    base_url = getattr(resolution, "base_url", None)
+    if provider in {"llama_cpp", "local_llamacpp"}:
+        error = endpoint_refusal("llama_cpp", base_url or DEFAULT_LLAMACPP_BASE_URL)
+    elif isinstance(base_url, str) and base_url:
+        key = getattr(resolution, "readiness_key", "") or getattr(
+            resolution, "execution_key", ""
         )
-        if explicit_legacy_resolution.persisted_endpoint is not None:
-            return legacy_display
-    return _INVALID_ENDPOINT_DISPLAY
-
-
-def normalize_generic_endpoint_for_compare(url: str | None) -> str:
-    """Normalize a generic provider endpoint for stable comparison.
-
-    Args:
-        url: Raw endpoint value from config or user input.
-
-    Returns:
-        Normalized endpoint identity. Empty input returns an empty string, while
-        malformed input returns a non-secret invalid sentinel.
-    """
-    parsed_endpoint = _parse_http_endpoint(url)
-    if parsed_endpoint is None:
-        return "" if not str(url or "").strip() else _INVALID_ENDPOINT_DISPLAY
-    identity = canonical_connection_identity("custom", url)
-    if identity is not None:
-        return identity[1]
-    return _format_endpoint(parsed_endpoint, drop_default_port=True)
+        error = endpoint_refusal(
+            key or provider,
+            base_url,
+            custom_endpoint=bool(
+                split_custom_endpoint_id(getattr(resolution, "selected_provider", ""))
+            ),
+        )
+    else:
+        return
+    if error:
+        raise ChatConfigurationError(
+            f"Provider blocked: {error}", provider=provider or None, status_code=None
+        )
 
 
 def _effective_contract_endpoint(provider_key: str, endpoint: str) -> str:
-    """Resolve endpoint forms only for adapters governed by the new contract."""
-    if provider_key not in {"custom", "custom_2", "llama_cpp", "local_llamacpp"}:
+    """Resolve endpoint forms only for adapters governed by the new contract.
+
+    Every provider reads a loopback endpoint typed without a scheme as
+    ``http://`` (TASK-39042 review: readiness took ``localhost:8080`` and the
+    adapter got it schemeless).
+    """
+    endpoint = read_schemeless_loopback(endpoint)
+    if provider_key not in {
+        "custom", "custom_2", "custom_hosted", "llama_cpp", "local_llamacpp"
+    }:
         return endpoint
     resolution = resolve_provider_endpoint(provider_key, endpoint)
     return resolution.persisted_endpoint or endpoint
 
 
-def _parse_http_endpoint(
-    url: str | None,
-) -> tuple[bool, str, str, int | None, str] | None:
-    raw_value = str(url or "")
-    raw_url = raw_value.strip()
-    if not raw_url:
-        return None
-    has_unsafe_character = any(
-        character.isspace() or ord(character) < 32 or ord(character) == 127
-        for character in raw_value
+def goal_provider_ref(resolution: ConsoleProviderResolution) -> GoalProviderRef:
+    """Pin resolved execution and credential identity without retaining credentials."""
+    from tldw_chatbook.Agents.goal_models import GoalProviderRef
+
+    return GoalProviderRef(
+        provider=resolution.provider,
+        model=resolution.model,
+        config_ref="api_settings."
+        + (resolution.readiness_key or resolution.execution_key or resolution.provider),
+        authority_ref=resolution.api_key_source or "unauthenticated",
+        endpoint_ref=normalize_generic_endpoint_for_compare(resolution.base_url)
+        or "provider-default",
     )
-    if has_unsafe_character:
-        return None
-    has_scheme = "://" in raw_url
-    candidate = raw_url if has_scheme else f"http://{raw_url}"
-    try:
-        parsed = urlparse(candidate)
-        scheme = parsed.scheme.lower()
-        hostname = parsed.hostname
-        port = parsed.port
-    except ValueError:
-        return None
-    if scheme not in {"http", "https"} or not hostname:
-        return None
-    hostname = hostname.lower()
-    if not _is_allowed_endpoint_host(hostname, has_scheme=has_scheme, port=port):
-        return None
-    path = parsed.path.rstrip("/")
-    return (has_scheme, scheme, hostname, port, path)
-
-
-def _is_allowed_endpoint_host(
-    hostname: str, *, has_scheme: bool, port: int | None
-) -> bool:
-    if hostname == "localhost":
-        return True
-    try:
-        ip_address(hostname)
-        return True
-    except ValueError:
-        pass
-    if _is_dotted_dns_name(hostname):
-        return True
-    return not has_scheme and port is not None
-
-
-def _is_dotted_dns_name(hostname: str) -> bool:
-    hostname = hostname.rstrip(".")
-    if "." not in hostname or len(hostname) > 253:
-        return False
-    labels = hostname.split(".")
-    return all(_is_dns_label(label) for label in labels)
-
-
-def _is_dns_label(label: str) -> bool:
-    return (
-        1 <= len(label) <= 63
-        and label[0].isalnum()
-        and label[-1].isalnum()
-        and all(
-            character.isascii() and (character.isalnum() or character == "-")
-            for character in label
-        )
-    )
-
-
-def _format_endpoint(
-    endpoint: tuple[bool, str, str, int | None, str],
-    *,
-    drop_default_port: bool,
-) -> str:
-    has_scheme, scheme, hostname, port, path = endpoint
-    host = hostname
-    if ":" in host and not host.startswith("["):
-        host = f"[{host}]"
-    default_port = (scheme == "http" and port == 80) or (
-        scheme == "https" and port == 443
-    )
-    netloc = (
-        host
-        if port is None or (drop_default_port and default_port)
-        else f"{host}:{port}"
-    )
-    if has_scheme:
-        return urlunparse((scheme, netloc, path, "", "", "")).rstrip("/")
-    return f"{netloc}{path}".rstrip("/")

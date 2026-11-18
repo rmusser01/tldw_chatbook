@@ -13,6 +13,7 @@ def test_server_module_imports_without_error():
 
 def test_no_dead_chat_with_provider_import_in_server():
     import tldw_chatbook.MCP.server as srv
+
     src = Path(srv.__file__).read_text(encoding="utf-8")
     assert "import chat_with_provider" not in src
     assert "chat_api_call" in src

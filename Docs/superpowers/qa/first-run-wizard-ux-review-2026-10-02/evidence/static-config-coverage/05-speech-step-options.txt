@@ -1,0 +1,14 @@
+# Speech step (Full track only) language radio rows -- FirstRunSetupWizard.py:5590-5610
+total rows=25 selectable=25 disabled('not yet available for managed install')=0
+selectable: ['English', 'Bulgarian', 'Czech', 'Danish', 'German', 'Greek', 'Spanish', 'Estonian', 'Finnish', 'French', 'Croatian', 'Hungarian', 'Italian', 'Lithuanian', 'Latvian', 'Maltese', 'Dutch', 'Polish', 'Portuguese', 'Romanian', 'Russian', 'Slovak', 'Slovenian', 'Swedish', 'Ukrainian']
+recommended: SpeechSelection(provider_id='parakeet-onnx', model_id='nemo-parakeet-tdt-0.6b-v2', language='en', precision='int8')
+precision rows: [('INT8', True), ('F32', True)]
+
+# [transcription] defaults the wizard does NOT expose (template):
+  default_provider = 'parakeet-mlx'
+  default_model = 'distil-large-v3'
+  default_language = 'en'
+  device = 'cpu'
+  compute_type = 'int8'
+  use_vad_by_default = False
+  provider options per template comment: faster-whisper, parakeet-onnx, qwen2audio, parakeet, canary, parakeet-mlx, lightning-whisper-mlx, remote-whisper

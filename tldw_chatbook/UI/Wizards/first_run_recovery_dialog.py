@@ -87,7 +87,7 @@ class SetupRecoveryDialog(ModalScreen[SetupRecoveryResult]):
     def handle_action(self, event: Button.Pressed) -> None:
         if event.button.id == "setup-backup-restore":
             event.stop()
-            self.app.action_backup_restore()
+            self.app.action_backup_restore("inspect")  # TASK-34100.16
             return
         action = (event.button.id or "").removeprefix("setup-recovery-")
         if action in {"resume", "start_over", "later"}:

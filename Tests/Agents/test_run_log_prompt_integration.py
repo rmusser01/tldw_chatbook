@@ -1,6 +1,8 @@
 # Tests/Agents/test_run_log_prompt_integration.py
 """Truncation points at the log; the prompt mentions it only when real."""
 
+import pytest
+
 from tldw_chatbook.Agents import run_log as run_log_module
 from tldw_chatbook.Agents.agent_models import (
     AgentConfig,
@@ -15,6 +17,8 @@ from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRe
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 from Tests.Agents.test_agent_runtime import CALC, fence, make_deps
+
+pytestmark = pytest.mark.bootstrap_profile
 
 
 def test_trailer_points_at_the_record_when_one_exists():
@@ -149,7 +153,10 @@ def test_truncation_trailer_names_the_tool_result_record_not_the_tool_call_recor
         budget=RunBudget(max_tool_result_chars=100),
     )
     deps = make_deps(
-        [ModelTurn(text=fence("calculator", {"expression": "1"})), ModelTurn(text="done")],
+        [
+            ModelTurn(text=fence("calculator", {"expression": "1"})),
+            ModelTurn(text="done"),
+        ],
         invoke=lambda c: ToolResult(ok=True, content=huge),
     )
     deps.on_record = on_record

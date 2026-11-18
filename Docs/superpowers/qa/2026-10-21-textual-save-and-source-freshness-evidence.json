@@ -1,0 +1,28 @@
+{
+  "base_dev": "2a5afa03b31f60e00bdcd10a161e3e351fad023b",
+  "task_filing_baseline": "f793f3cea353dad71a5039b930f48b2a51cf55b9",
+  "source_sha256": {
+    "tldw_chatbook/UI/Screens/personas_screen.py": "58da36e9bc374db7ab31a043dcefaf04e5b4329b31145caff293b27a714fa94d",
+    "tldw_chatbook/UI/Persona_Modules/persona_save_completion.py": "5464e2751986aec87c51b73d1812e6ac87b206c18980e17db30ad4744d5f7022",
+    "tldw_chatbook/Widgets/Persona_Widgets/personas_pane_messages.py": "24a10d784dd09e6c878368b610fa9f500671a5c0a5ba10445363bee9257b3817",
+    "tldw_chatbook/Widgets/Persona_Widgets/personas_character_editor_widget.py": "0cc4a5d188bbf00a9bd7aec0ff48249bbf3240ca217ba1ab198f025b03801141",
+    "tldw_chatbook/Widgets/Persona_Widgets/persona_profile_editor_widget.py": "6146ceccd5afbb5a31d1c805ce33d84f5b2e59d7c3f1bea77df479ecb86b0d67",
+    "tldw_chatbook/UI/Screens/settings_screen.py": "a67d54da44fdfa98e9c25bff0a6cc04b2aea4c87380c8debf7e7928cc4ff8f34",
+    "tldw_chatbook/UI/Settings_Modules/media_gen_save.py": "0f6571680a2eb3bea340abb14a2b0300b791303b6dfee13339819444e4e650ce",
+    "tldw_chatbook/UI/Study_Modules/quizzes_handler.py": "931d90282497572b68c43a8193352a0d7577cbd05023d6c6ae7741617c0054d1",
+    "tldw_chatbook/UI/STTS_Window.py": "a83141125e71c5668d954f34ce67752f5db8931e0addc5b1e3546b7dc1aec843",
+    "Tests/UI/test_personas_pending_save_drafts.py": "da0f869013ffebc4763a5e0740e86d52574ffc244e1e57e825a792d120b8050a",
+    "Tests/UI/test_settings_media_pending_save_drafts.py": "615fd03a63df4b7885166ae96639f592b44e75c9354fecb2076d4568d7a992ba",
+    "Tests/UI/test_study_quiz_create_drafts.py": "adcaee882cdc5ec5e12fe76fc9e7c11961b47b9277a60dfacb8b7e8e35433894",
+    "Tests/UI/test_audiobook_chapter_source_freshness.py": "b7e9d7bf150734acd49ca61a0032b249377636898426ea15e7aea5c4869ff616"
+  },
+  "gate": {
+    "retained_prefix_entries": 549,
+    "added_regression_nodes": 35,
+    "total_entries": 584,
+    "shards": 13,
+    "timeouts_changed": false
+  },
+  "native_receipt_root": ".test-tmp/task-36097-36100/",
+  "limits": "Native targeted evidence is qualified in the companion report; hosted checks are reported on the PR, without modifying this tested source to record their result."
+}

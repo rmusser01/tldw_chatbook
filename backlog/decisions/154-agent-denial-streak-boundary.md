@@ -3,16 +3,16 @@
 Status: Accepted
 Date: 2026-09-12
 Related task: TASK-18929
-Related decisions: ADR-078 (structured agent tool outcome provenance), ADR-131 (durable budget accounting), ADR-134 and ADR-135 (fleet admission and automatic work)
+Related decisions: ADR-321 (structured agent tool outcome provenance), ADR-131 (durable budget accounting), ADR-134 and ADR-135 (fleet admission and automatic work)
 Supersedes: N/A
 
 ## Context
 
-Repeated denied tool requests can spend turns without progress. The existing ADR-078 `blocked` outcome intentionally includes approval and permission refusals alongside timeout, kill-switch, workspace-root and other policy blocks. That display contract cannot prove an explicit user Deny or configured permission Off. Existing review hooks flatten their decisions to strings, sometimes using the same refusal copy for answered and unresolved decisions. Inferring control from that text would misattribute denials and could let successful denial-looking payloads manipulate the loop.
+Repeated denied tool requests can spend turns without progress. The existing ADR-321 `blocked` outcome intentionally includes approval and permission refusals alongside timeout, kill-switch, workspace-root and other policy blocks. That display contract cannot prove an explicit user Deny or configured permission Off. Existing review hooks flatten their decisions to strings, sometimes using the same refusal copy for answered and unresolved decisions. Inferring control from that text would misattribute denials and could let successful denial-looking payloads manipulate the loop.
 
 The runtime also retains history only through its last coherent tool-batch boundary. Returning in the middle of a native multi-call batch drops that batch from retained history, while inventing skipped replies would obscure already-approved dispatch semantics. A denial guard therefore needs both precise authority and an explicit enforcement boundary.
 
-Accepted ADR-078 is unchanged. This decision adds compatible control facts beside its existing broad outcome contract.
+Accepted ADR-321 is unchanged. This decision adds compatible control facts beside its existing broad outcome contract.
 
 ## Decision
 
@@ -31,12 +31,12 @@ The denial streak remains ephemeral. New/manual/resumed runtime invocations star
 
 ## Alternatives considered
 
-- Count every blocked result: rejected because blocked intentionally includes non-denial policy states under ADR-078.
+- Count every blocked result: rejected because blocked intentionally includes non-denial policy states under ADR-321.
 - Parse canonical refusal strings: rejected because shared copy loses answer authority and successful content can collide with denial text.
 - Return immediately at the threshold mid-batch: rejected because it discards the in-flight batch from coherent retained history or requires fabricated skipped results and new revocation semantics.
 - Latch a threshold trip despite an approved batch tail: rejected because completed-batch trailing-streak semantics preserve reset-on-approval behavior and give an honest terminal count.
 - Persist a shared streak across children or resumes: rejected because one child's refusal must not stop siblings and a new user retry must start fresh.
-- Amend accepted ADR-078: rejected because accepted ADRs are immutable except nonsemantic corrections; this is a compatible extension decision.
+- Amend accepted ADR-321: rejected because accepted ADRs are immutable except nonsemantic corrections; this is a compatible extension decision.
 
 ## Verification requirements
 
@@ -46,7 +46,7 @@ Deterministic runtime tests do not alone establish Console or persistence behavi
 
 ## Links
 
-- [ADR-078 — Structured agent tool outcome provenance](078-structured-agent-tool-outcome-provenance.md)
+- [ADR-321 — Structured agent tool outcome provenance](321-structured-agent-tool-outcome-provenance.md)
 - [TASK-18929 — Agent loop consecutive-denial circuit breaker](../tasks/task-18929%20-%20Agent-loop-consecutive-denial-circuit-breaker.md)
 - [Design](../../Docs/superpowers/specs/2026-09-12-agent-denial-breaker-design.md)
 - [Plan](../../Docs/superpowers/plans/2026-09-12-agent-denial-breaker.md)

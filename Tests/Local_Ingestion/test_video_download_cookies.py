@@ -126,9 +126,7 @@ class TestUserCookiefileIsNotDestroyed:
     def test_user_supplied_cookiefile_in_the_temp_dir_survives(
         self, tmp_path: Path, fake_ytdlp, user_cookiefile_in_tmpdir: Path
     ):
-        _download(
-            tmp_path, use_cookies=True, cookies=str(user_cookiefile_in_tmpdir)
-        )
+        _download(tmp_path, use_cookies=True, cookies=str(user_cookiefile_in_tmpdir))
 
         assert user_cookiefile_in_tmpdir.exists(), (
             "download_video deleted a cookies file it did not create"
@@ -152,9 +150,7 @@ class TestUserCookiefileIsNotDestroyed:
         """The cleanup must not be dropped -- only narrowed to our own file."""
         _download(tmp_path, use_cookies=True, cookies={"session": "abc"})
 
-        written = [
-            opts["cookiefile"] for opts in fake_ytdlp if "cookiefile" in opts
-        ]
+        written = [opts["cookiefile"] for opts in fake_ytdlp if "cookiefile" in opts]
         assert written, "a cookiefile was never produced from the cookie dict"
         for path in set(written):
             assert not os.path.exists(path), (
@@ -168,9 +164,7 @@ class TestCookiesReachEveryYtDlpCall:
     ):
         """The probe runs BEFORE the download; an auth-gated URL fails there
         first, so cookies that only reach the download are useless."""
-        _download(
-            tmp_path, use_cookies=True, cookies=str(user_cookiefile_in_tmpdir)
-        )
+        _download(tmp_path, use_cookies=True, cookies=str(user_cookiefile_in_tmpdir))
 
         assert fake_ytdlp, "no YoutubeDL was constructed"
         assert all("cookiefile" in opts for opts in fake_ytdlp), (
@@ -212,9 +206,7 @@ class TestCookiesReachEveryYtDlpCall:
 
 
 class TestMissingCookiefileIsHonest:
-    def test_nonexistent_cookiefile_names_the_file(
-        self, tmp_path: Path, fake_ytdlp
-    ):
+    def test_nonexistent_cookiefile_names_the_file(self, tmp_path: Path, fake_ytdlp):
         """A path that does not exist used to be handed to ``json.loads``,
         logged as "Invalid cookie format" and then ignored -- the download
         proceeded un-authenticated and failed later for an unrelated-looking

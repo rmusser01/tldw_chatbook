@@ -478,7 +478,9 @@ async def test_deselecting_every_card_renders_the_construction_error(
 
 
 @pytest.mark.asyncio
-async def test_the_probe_listing_shows_whitespace_markers(character_app, saved_bench_id):
+async def test_the_probe_listing_shows_whitespace_markers(
+    character_app, saved_bench_id
+):
     """Probe turns are byte-exact prompts; leading spaces must be visible."""
     async with character_app.run_test(size=_REALISTIC_SIZE) as pilot:
         await select_bench(pilot, saved_bench_id)
@@ -617,6 +619,45 @@ async def test_an_unsteered_target_renders_with_no_steering_suffix(
         assert "·" not in rendered
 
 
+@pytest.mark.asyncio
+async def test_a_target_with_corrupt_steering_is_flagged_not_silently_bare(
+    character_app, evals_db
+):
+    """task-1913 AC5: a target row carrying BOTH `prefix` and
+    `system_prompt` (hand-edited JSON -- `model_steering` raises) is
+    flagged as corrupt in the targets listing, never silently degraded to
+    the unsuffixed label: such a row can never run (`resolve_target`
+    raises on it for every attempt), so a bare label would read as a
+    healthy target that inexplicably fails."""
+    target_id = evals_db.create_model(
+        name="corrupt-target",
+        provider="llama_cpp",
+        model_id="m",
+        config={
+            "prefix": " Sure",
+            "system_prompt": "Be extra dramatic at all times.",
+        },
+    )
+    bench_id = save_character_bench(
+        evals_db,
+        CharacterProbeConfig(
+            name="corrupt steering bench",
+            probe_set_id=_make_probe_set(evals_db),
+            character_ids=(3,),
+            target_ids=(target_id,),
+        ),
+    )
+    async with character_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await select_bench(pilot, bench_id)
+        await pilot.pause()
+        rendered = str(pilot.app.screen.query_one("#evals-cb-target-0").render())
+        assert "corrupt-target" in rendered
+        assert "corrupt steering" in rendered.lower()
+        assert "unusable" in rendered.lower()
+        # Not the bare unsuffixed label -- the row carries a `·` suffix.
+        assert "·" in rendered
+
+
 # ---------------------------------------------------------------------------
 # Revert
 # ---------------------------------------------------------------------------
@@ -659,7 +700,9 @@ async def test_revert_asks_the_screen_to_reselect_this_bench(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [_REALISTIC_SIZE, _WIDE_SIZE])
-async def test_save_stays_hit_testable_at_realistic_sizes(character_app, saved_bench_id, size):
+async def test_save_stays_hit_testable_at_realistic_sizes(
+    character_app, saved_bench_id, size
+):
     """This pane has pushed a control out of reach three times (task-1764,
     in the sibling word-bench editor) -- proven here, not merely assumed,
     for this new bench type's own editor."""

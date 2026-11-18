@@ -37,8 +37,14 @@ class ConversationItem(Container):
                 name="conversation-selection",
             )
             with Vertical(classes="conversation-details"):
+                # TASK-38585: the title is user-authored. `markup=False`
+                # keeps it on screen verbatim: through the markup parser a
+                # "[/]" in a conversation title raises MarkupError and
+                # bracketed text ("[draft]") is silently swallowed.
                 yield Label(
-                    self.title or "Untitled Conversation", classes="conversation-title"
+                    self.title or "Untitled Conversation",
+                    markup=False,
+                    classes="conversation-title",
                 )
                 yield Static(
                     f"Model: {self.model_name} | Messages: {self.message_count}",

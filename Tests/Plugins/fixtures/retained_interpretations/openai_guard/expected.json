@@ -1,0 +1,590 @@
+{
+  "files": {
+    ".codex-plugin/plugin.json": {
+      "mode": "0o644",
+      "sha256": "9fc441da04b1d03736e404d5cd3e46dab6684d3e75083e6c1c0503f588167a58"
+    },
+    "guard.py": {
+      "mode": "0o644",
+      "sha256": "a83828c2408008de235ae1b181a4692e3aa784c9806cc7e1e42a3e49fdea7370"
+    },
+    "hooks/hooks.json": {
+      "mode": "0o644",
+      "sha256": "14538492703a934fa912c72ef4de1c011d0aff00fc6e43c370445a39498ffc0b"
+    },
+    "skills/review/SKILL.md": {
+      "mode": "0o644",
+      "sha256": "479c23dc090c1d4e3ac7deb932bfbb21c5ec13ca27db899a91bf27452ef55b0c"
+    }
+  },
+  "fixture": "openai_guard",
+  "observations": {
+    "1fac8f83291f5b48c3daa7b9095253a23c05d44d": {
+      "definition_digests": {
+        "hook:vendor-4f57b8103f3b241ed2ce0488": "1c01f1521b69d046357d01d4286784f6181c5ec415bef34c14a8dd8f7a7c5fd9",
+        "skill:review": "941a4bc5a2ab5bd914de58c476c063adf2d90ecc1f7b8ed3220e9afc4c781607"
+      },
+      "inspection": {
+        "activation_blockers": [
+          "vendor_guard_scope_unknown"
+        ],
+        "adapter_version": "chatbook-openai/2026-10-01.1",
+        "candidates": [
+          {
+            "adapter_version": "chatbook-openai/2026-10-01.1",
+            "dialect": "openai",
+            "format_version": "docs/2026-10-01",
+            "overlays": [],
+            "qualified": false,
+            "root_manifest": ".codex-plugin/plugin.json",
+            "support": "supported"
+          }
+        ],
+        "content_digest": "7d576e79e1b63eb0a32af267d9fce8750cb5baf316e98a1ef3da87d5acdfa3e6",
+        "dependency_edges": {},
+        "diagnostics": [],
+        "dialect": "openai",
+        "effective_digest": "356b1762e65e0010af726ac9c68b8d63110c448490e8c6d5cf6ef659b63ccd33",
+        "format_version": "docs/2026-10-01",
+        "inventory": {
+          "hook:vendor-4f57b8103f3b241ed2ce0488": {
+            "activation_blockers": [
+              "vendor_guard_scope_unknown",
+              "vendor_hook_payload_cwd_output_unqualified"
+            ],
+            "availability": "disabled",
+            "component_id": "hook:vendor-4f57b8103f3b241ed2ce0488",
+            "definition_json": "{\"dialect_version\":\"codex-hooks/2026-10-01\",\"guard_scope_unknown\":true,\"proposed_argv\":[\"python3\",\"./guard.py\"],\"qualification\":{\"argv\":true,\"cwd\":false,\"input_output\":false,\"matcher\":true,\"payload\":false,\"timeout\":false,\"timing\":false},\"reason\":\"vendor_hook_payload_cwd_output_unqualified\",\"source\":{\"command\":\"python3 ./guard.py\",\"event\":\"PreToolUse\",\"type\":\"command\"},\"source_scope\":{\"group\":{},\"root\":{}},\"target_event\":\"PreToolUse\"}",
+            "dependencies": [],
+            "evidence": [
+              {
+                "adapter": "chatbook-openai/2026-10-01.1",
+                "configuration_identity": null,
+                "level": "parsed",
+                "observed_at": "2026-10-18T06:04:44.297Z",
+                "platform": "darwin",
+                "revision": "7d576e79e1b63eb0a32af267d9fce8750cb5baf316e98a1ef3da87d5acdfa3e6"
+              }
+            ],
+            "kind": "hook",
+            "local_id": "vendor-4f57b8103f3b241ed2ce0488",
+            "path": "hooks/hooks.json",
+            "selection": "selected",
+            "support": "unsupported"
+          },
+          "skill:review": {
+            "activation_blockers": [
+              "vendor_guard_scope_unknown"
+            ],
+            "availability": "disabled",
+            "component_id": "skill:review",
+            "definition_json": "{\"description\":\"Review a change against its requirements.\",\"metadata\":{},\"name\":\"review\"}",
+            "dependencies": [],
+            "evidence": [
+              {
+                "adapter": "chatbook-openai/2026-10-01.1",
+                "configuration_identity": null,
+                "level": "parsed",
+                "observed_at": "2026-10-18T06:04:44.297Z",
+                "platform": "darwin",
+                "revision": "7d576e79e1b63eb0a32af267d9fce8750cb5baf316e98a1ef3da87d5acdfa3e6"
+              }
+            ],
+            "kind": "skill",
+            "local_id": "review",
+            "path": "skills/review/SKILL.md",
+            "selection": "selected",
+            "support": "adapted"
+          }
+        },
+        "link_targets": {},
+        "materialized_identity": null,
+        "overlay_identities": [],
+        "rejected": false,
+        "root_manifest": ".codex-plugin/plugin.json",
+        "source_digest": "f3df309ffeb5af3cb5f5b5eb88a9b55603770188b0a102258192b62a137dd544",
+        "source_identity": "@PACKAGE_ROOT@",
+        "variables_json": "{}"
+      },
+      "selected_semantics": {
+        "activation_blockers": [
+          "vendor_guard_scope_unknown"
+        ],
+        "adapter_version": "chatbook-openai/2026-10-01.1",
+        "content_digest": "7d576e79e1b63eb0a32af267d9fce8750cb5baf316e98a1ef3da87d5acdfa3e6",
+        "dependency_edges": {},
+        "dialect": "openai",
+        "effective_digest": "356b1762e65e0010af726ac9c68b8d63110c448490e8c6d5cf6ef659b63ccd33",
+        "format_version": "docs/2026-10-01",
+        "inventory": {
+          "hook:vendor-4f57b8103f3b241ed2ce0488": {
+            "activation_blockers": [
+              "vendor_guard_scope_unknown",
+              "vendor_hook_payload_cwd_output_unqualified"
+            ],
+            "component_id": "hook:vendor-4f57b8103f3b241ed2ce0488",
+            "definition_json": "{\"dialect_version\":\"codex-hooks/2026-10-01\",\"guard_scope_unknown\":true,\"proposed_argv\":[\"python3\",\"./guard.py\"],\"qualification\":{\"argv\":true,\"cwd\":false,\"input_output\":false,\"matcher\":true,\"payload\":false,\"timeout\":false,\"timing\":false},\"reason\":\"vendor_hook_payload_cwd_output_unqualified\",\"source\":{\"command\":\"python3 ./guard.py\",\"event\":\"PreToolUse\",\"type\":\"command\"},\"source_scope\":{\"group\":{},\"root\":{}},\"target_event\":\"PreToolUse\"}",
+            "dependencies": [],
+            "kind": "hook",
+            "local_id": "vendor-4f57b8103f3b241ed2ce0488",
+            "path": "hooks/hooks.json",
+            "selection": "selected",
+            "support": "unsupported"
+          },
+          "skill:review": {
+            "activation_blockers": [
+              "vendor_guard_scope_unknown"
+            ],
+            "component_id": "skill:review",
+            "definition_json": "{\"description\":\"Review a change against its requirements.\",\"metadata\":{},\"name\":\"review\"}",
+            "dependencies": [],
+            "kind": "skill",
+            "local_id": "review",
+            "path": "skills/review/SKILL.md",
+            "selection": "selected",
+            "support": "adapted"
+          }
+        },
+        "overlay_identities": [],
+        "rejected": false,
+        "root_manifest": ".codex-plugin/plugin.json",
+        "variables_json": "{}"
+      },
+      "variables_digest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    "7b4d5c501ba8500267d8f9f84f524742c33ec882": {
+      "definition_digests": {
+        "hook:openai-0-0-0-PreToolUse": "8cebf1de2f04ff2255ebd77b6f7779b8cfa0442d89a9ae35148593b87ecebb57",
+        "skill:review": "6f90139187e073d3a147eb7eaa93771c89067a2ae232d9eeee48be637190e28c"
+      },
+      "inspection": {
+        "activation_blockers": [],
+        "adapter_version": "chatbook-codex/1",
+        "candidates": [
+          {
+            "adapter_version": "chatbook-codex/1",
+            "dialect": "openai",
+            "format_version": "documented-2026-09-16",
+            "overlays": [],
+            "qualified": true,
+            "root_manifest": ".codex-plugin/plugin.json",
+            "support": "supported"
+          }
+        ],
+        "content_digest": "7d576e79e1b63eb0a32af267d9fce8750cb5baf316e98a1ef3da87d5acdfa3e6",
+        "dependency_edges": {
+          "skill:review": [
+            "hook:openai-0-0-0-PreToolUse"
+          ]
+        },
+        "diagnostics": [],
+        "dialect": "openai",
+        "effective_digest": "bcf2b02e106bcb03b00a08229dd816a95fa949bee1ecb5993c9f66300e68813b",
+        "format_version": "documented-2026-09-16",
+        "inventory": {
+          "hook:openai-0-0-0-PreToolUse": {
+            "activation_blockers": [],
+            "availability": "disabled",
+            "component_id": "hook:openai-0-0-0-PreToolUse",
+            "definition_json": "{\"argv\":[\"python3\",\"./guard.py\"],\"effects\":[\"context\",\"deny\",\"updated_input\"],\"env\":{},\"event\":\"PreToolUse\",\"id\":\"openai-0-0-0-PreToolUse\",\"require_context\":false,\"required\":false,\"timeout_seconds\":10.0,\"type\":\"command\",\"vendor_protocol\":\"codex/1:PreToolUse\"}",
+            "dependencies": [],
+            "evidence": [
+              {
+                "adapter": "chatbook-codex/1",
+                "configuration_identity": null,
+                "level": "parsed",
+                "observed_at": "2026-10-18T06:05:11.147063+00:00",
+                "platform": "darwin",
+                "revision": "7d576e79e1b63eb0a32af267d9fce8750cb5baf316e98a1ef3da87d5acdfa3e6"
+              }
+            ],
+            "kind": "hook",
+            "local_id": "openai-0-0-0-PreToolUse",
+            "path": "hooks/hooks.json",
+            "selection": "selected",
+            "support": "adapted"
+          },
+          "skill:review": {
+            "activation_blockers": [
+              "dependency_guard_unqualified:hook:openai-0-0-0-PreToolUse"
+            ],
+            "availability": "disabled",
+            "component_id": "skill:review",
+            "definition_json": "{\"description\":\"Review a change against its requirements.\",\"name\":\"review\"}",
+            "dependencies": [
+              "hook:openai-0-0-0-PreToolUse"
+            ],
+            "evidence": [
+              {
+                "adapter": "chatbook-codex/1",
+                "configuration_identity": null,
+                "level": "parsed",
+                "observed_at": "2026-10-18T06:05:11.147063+00:00",
+                "platform": "darwin",
+                "revision": "7d576e79e1b63eb0a32af267d9fce8750cb5baf316e98a1ef3da87d5acdfa3e6"
+              }
+            ],
+            "kind": "skill",
+            "local_id": "review",
+            "path": "skills/review/SKILL.md",
+            "selection": "selected",
+            "support": "adapted"
+          }
+        },
+        "link_targets": {},
+        "materialized_identity": null,
+        "overlay_identities": [],
+        "rejected": false,
+        "root_manifest": ".codex-plugin/plugin.json",
+        "source_digest": "f3df309ffeb5af3cb5f5b5eb88a9b55603770188b0a102258192b62a137dd544",
+        "source_identity": "@PACKAGE_ROOT@",
+        "variables_json": "{}"
+      },
+      "selected_semantics": {
+        "activation_blockers": [],
+        "adapter_version": "chatbook-codex/1",
+        "content_digest": "7d576e79e1b63eb0a32af267d9fce8750cb5baf316e98a1ef3da87d5acdfa3e6",
+        "dependency_edges": {
+          "skill:review": [
+            "hook:openai-0-0-0-PreToolUse"
+          ]
+        },
+        "dialect": "openai",
+        "effective_digest": "bcf2b02e106bcb03b00a08229dd816a95fa949bee1ecb5993c9f66300e68813b",
+        "format_version": "documented-2026-09-16",
+        "inventory": {
+          "hook:openai-0-0-0-PreToolUse": {
+            "activation_blockers": [],
+            "component_id": "hook:openai-0-0-0-PreToolUse",
+            "definition_json": "{\"argv\":[\"python3\",\"./guard.py\"],\"effects\":[\"context\",\"deny\",\"updated_input\"],\"env\":{},\"event\":\"PreToolUse\",\"id\":\"openai-0-0-0-PreToolUse\",\"require_context\":false,\"required\":false,\"timeout_seconds\":10.0,\"type\":\"command\",\"vendor_protocol\":\"codex/1:PreToolUse\"}",
+            "dependencies": [],
+            "kind": "hook",
+            "local_id": "openai-0-0-0-PreToolUse",
+            "path": "hooks/hooks.json",
+            "selection": "selected",
+            "support": "adapted"
+          },
+          "skill:review": {
+            "activation_blockers": [
+              "dependency_guard_unqualified:hook:openai-0-0-0-PreToolUse"
+            ],
+            "component_id": "skill:review",
+            "definition_json": "{\"description\":\"Review a change against its requirements.\",\"name\":\"review\"}",
+            "dependencies": [
+              "hook:openai-0-0-0-PreToolUse"
+            ],
+            "kind": "skill",
+            "local_id": "review",
+            "path": "skills/review/SKILL.md",
+            "selection": "selected",
+            "support": "adapted"
+          }
+        },
+        "overlay_identities": [],
+        "rejected": false,
+        "root_manifest": ".codex-plugin/plugin.json",
+        "variables_json": "{}"
+      },
+      "variables_digest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    }
+  },
+  "provenance": {
+    "1fac8f83291f5b48c3daa7b9095253a23c05d44d": {
+      "actual_pre_dns_guard": true,
+      "actual_profile_guard": true,
+      "all_inputs_unchanged": true,
+      "all_loaded_product_modules_checked_against_pinned_blobs_and_modes": true,
+      "argv": [
+        "<private-literal-venv>/bin/python",
+        "-I",
+        "-B",
+        "-u",
+        "<capture>/child.py"
+      ],
+      "child_sha256": "80f9bfe9cdf11244eb246d04b04ffd4d47b8eff7a995bb40e3873a807682e31b",
+      "defining_product_modules": {
+        "tldw_chatbook.Plugins.adapters": {
+          "bytes": 56,
+          "frozen_mode": "0o444",
+          "git_mode": "100644",
+          "oid": "e708f403f93f923db0e4506b023ccedfda56a91b",
+          "path": "tldw_chatbook/Plugins/adapters/__init__.py",
+          "sha256": "15a1dc2d926e5517dd2f8cf15e28dcfbfa580bd9617a02f05033579374b4fd97"
+        },
+        "tldw_chatbook.Plugins.adapters.codex": {
+          "bytes": 685,
+          "frozen_mode": "0o444",
+          "git_mode": "100644",
+          "oid": "bc0337550819494798ef90bf1d38817b2c8313d0",
+          "path": "tldw_chatbook/Plugins/adapters/codex.py",
+          "sha256": "b100776f1988657918b1e0898f66fe0c9566a761dc4f03975499403936bc6de9"
+        },
+        "tldw_chatbook.Plugins.adapters.portable": {
+          "bytes": 13707,
+          "frozen_mode": "0o444",
+          "git_mode": "100644",
+          "oid": "839eaa2a44135d32dfb62c57736c4de486c48e33",
+          "path": "tldw_chatbook/Plugins/adapters/portable.py",
+          "sha256": "ba13815951630f8a9b00c4d68a921577dc60e5bc891645829a7fba16ccab8f3b"
+        },
+        "tldw_chatbook.Plugins.adapters.vendor": {
+          "bytes": 18960,
+          "frozen_mode": "0o444",
+          "git_mode": "100644",
+          "oid": "576a5e8d0c1f2d031ec075edb416371e6e914e7d",
+          "path": "tldw_chatbook/Plugins/adapters/vendor.py",
+          "sha256": "9979d6f1bddf03571eb05132b02a30cc34285ad3dfec58ab746865ffa5278466"
+        },
+        "tldw_chatbook.Plugins.adapters.vendor_hooks": {
+          "bytes": 6813,
+          "frozen_mode": "0o444",
+          "git_mode": "100644",
+          "oid": "471e7b2905c9f1a1eb078d9b048a666e8b217636",
+          "path": "tldw_chatbook/Plugins/adapters/vendor_hooks.py",
+          "sha256": "d01bb752dad3f6a27831438bc042a4754b568701e76b6eee84f014075ba30e1a"
+        },
+        "tldw_chatbook.Plugins.inspection": {
+          "bytes": 12038,
+          "frozen_mode": "0o444",
+          "git_mode": "100644",
+          "oid": "256ca8b2189906e276a518b16bbcaa061a0bd5ab",
+          "path": "tldw_chatbook/Plugins/inspection.py",
+          "sha256": "5d4874309bf8a9301ba83ee2fc4dc07b26e99b34ac347d88419c4ae8fb95626f"
+        },
+        "tldw_chatbook.Plugins.models": {
+          "bytes": 2821,
+          "frozen_mode": "0o444",
+          "git_mode": "100644",
+          "oid": "8a735f9821103b351943ee472e254e9e02f84d22",
+          "path": "tldw_chatbook/Plugins/models.py",
+          "sha256": "da777228d216ad5f14fc716857eedc8e57925f8d7e84a43af96a2a168f2e3ec5"
+        },
+        "tldw_chatbook.Plugins.package_files": {
+          "bytes": 19594,
+          "frozen_mode": "0o444",
+          "git_mode": "100644",
+          "oid": "85d9b434552954bbf485330a8be90c95bf291dba",
+          "path": "tldw_chatbook/Plugins/package_files.py",
+          "sha256": "2cd5992e6bc53c3ea4fc7147fa4655613965370e02232632a57adeaf9241e322"
+        },
+        "tldw_chatbook.Plugins.schemas": {
+          "bytes": 16675,
+          "frozen_mode": "0o444",
+          "git_mode": "100644",
+          "oid": "b4db138ab21b15811489f1de0120f027dfba59ac",
+          "path": "tldw_chatbook/Plugins/schemas.py",
+          "sha256": "e7bc2f40d484e80ff5fe980f2315c538345173b99b9f6dcf96078c8a5262af79"
+        },
+        "tldw_chatbook.Skills_Interop.skill_trust_crypto": {
+          "bytes": 6918,
+          "frozen_mode": "0o444",
+          "git_mode": "100644",
+          "oid": "d28fa1e11d7d6010548f49fe497f0a4c28b828c4",
+          "path": "tldw_chatbook/Skills_Interop/skill_trust_crypto.py",
+          "sha256": "acc28fa4dc6a686d8a23325da1b53f0f9f984845aa91f6426e5723592f3c6686"
+        }
+      },
+      "dependencies": {
+        "PyYAML": "6.0.3",
+        "keyring": "25.7.0",
+        "loguru": "0.7.3",
+        "pydantic": "2.12.5",
+        "textual": "8.2.8"
+      },
+      "dependency_metadata_sha256": "b349d9781f2bf28ba5a5ed53bcf5e2a550c2ffe3703e4595882b248f2a3c26f9",
+      "entrypoint": "tldw_chatbook.Plugins.inspection.inspect_package(package_root)",
+      "environment_names": [
+        "CAPTURE_FIXTURES",
+        "CAPTURE_GUARDS",
+        "CAPTURE_PIN",
+        "CAPTURE_RESULT",
+        "CAPTURE_SOURCE",
+        "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_NOSYSTEM",
+        "HF_HUB_OFFLINE",
+        "HOME",
+        "LANG",
+        "LC_ALL",
+        "PATH",
+        "PYTHON_KEYRING_BACKEND",
+        "TERM",
+        "TLDW_CONFIG_PATH",
+        "TLDW_TEST_CONFIG_ROOT",
+        "TLDW_TEST_MODE",
+        "TMPDIR",
+        "TRANSFORMERS_OFFLINE",
+        "USERPROFILE",
+        "XDG_CACHE_HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME"
+      ],
+      "guard_sources": {
+        "network_guard.py": {
+          "mode": "0o444",
+          "sha256": "b299615d05bf7d2b09266ad01e5526ab71d80a07a3df4bba759a759c74b40d9d"
+        },
+        "real_profile_guard.py": {
+          "mode": "0o444",
+          "sha256": "d27a4023f5c058c417536a693ff1a18892518986ffc99b93d7099f93142b92f1"
+        }
+      },
+      "interpreter_sha256": "c413c0042baa93e9c328cecea9289c06da442b4a55aa13db540437c6c8f28835",
+      "loaded_product_module_count": 21,
+      "null_keyring": true,
+      "package_code_was_not_executed": true,
+      "projection": "Literal model_dump JSON minus source_identity, source_digest, materialized_identity, link_targets, diagnostics, candidates and inventory evidence/availability; no integrated selector or recipe imported.",
+      "python": "3.12.11 (main, Aug 14 2025, 16:05:17) [Clang 20.1.4 ]",
+      "raw_observation_sha256": "ce922b469fcae9f1c198179df490e8c573d6086e15b305df649f22d9146660cc",
+      "raw_result_sha256": "8b9708c75ab074d67b54b7a8d9a4d76c88bf46e40f20dd9c0b4ef00b61030fe2",
+      "runner_sha256": "eb3c735839130c9170eddea509e090c7dcb3687a813a0030367a8a8dbe1a2e32",
+      "source_archive_sha256": "677924b2ae202a78fdaf2f541ec2ab478be2541ea090e6ba0d1e806f00824e94",
+      "source_commit": "1fac8f83291f5b48c3daa7b9095253a23c05d44d",
+      "source_manifest_sha256": "d92f9bfc64d653d76be4bf3a4fee67e251db941dcd2241cbcb6421005aefb71e"
+    },
+    "7b4d5c501ba8500267d8f9f84f524742c33ec882": {
+      "actual_pre_dns_guard": true,
+      "actual_profile_guard": true,
+      "all_inputs_unchanged": true,
+      "all_loaded_product_modules_checked_against_pinned_blobs_and_modes": true,
+      "argv": [
+        "<private-literal-venv>/bin/python",
+        "-I",
+        "-B",
+        "-u",
+        "<capture>/child.py"
+      ],
+      "child_sha256": "80f9bfe9cdf11244eb246d04b04ffd4d47b8eff7a995bb40e3873a807682e31b",
+      "defining_product_modules": {
+        "tldw_chatbook.Plugins.adapters": {
+          "bytes": 56,
+          "frozen_mode": "0o444",
+          "git_mode": "100644",
+          "oid": "e708f403f93f923db0e4506b023ccedfda56a91b",
+          "path": "tldw_chatbook/Plugins/adapters/__init__.py",
+          "sha256": "15a1dc2d926e5517dd2f8cf15e28dcfbfa580bd9617a02f05033579374b4fd97"
+        },
+        "tldw_chatbook.Plugins.adapters.codex": {
+          "bytes": 16648,
+          "frozen_mode": "0o444",
+          "git_mode": "100644",
+          "oid": "6839e8b50f2fc9ac4bf58e96b79c13503b63daa4",
+          "path": "tldw_chatbook/Plugins/adapters/codex.py",
+          "sha256": "3c9292697426c7d1398b08054638bc02282af3b82cde19dbb60717fd8da6ca3c"
+        },
+        "tldw_chatbook.Plugins.adapters.portable": {
+          "bytes": 15424,
+          "frozen_mode": "0o444",
+          "git_mode": "100644",
+          "oid": "9eb7c87f6ac1b6a405dcaa7f9b9b0638d607d8f3",
+          "path": "tldw_chatbook/Plugins/adapters/portable.py",
+          "sha256": "fe45bafc7031d0a06d963f57de4fcaae98e6aadd67ebcc59a5772201e6cc87a4"
+        },
+        "tldw_chatbook.Plugins.adapters.vendor_hooks": {
+          "bytes": 13726,
+          "frozen_mode": "0o444",
+          "git_mode": "100644",
+          "oid": "77679bc1aaaeed05224ee9872366d0f0402f4689",
+          "path": "tldw_chatbook/Plugins/adapters/vendor_hooks.py",
+          "sha256": "50e5622c010aac076435a5d4e611739cc486c6511b0e8c85e3163d42acaa361a"
+        },
+        "tldw_chatbook.Plugins.inspection": {
+          "bytes": 12187,
+          "frozen_mode": "0o444",
+          "git_mode": "100644",
+          "oid": "82df2034ed5e51a684cdd527afad8bc28029e276",
+          "path": "tldw_chatbook/Plugins/inspection.py",
+          "sha256": "a142018082923b84a21a0ed99b922ce047f9a31a6a67374dd6c2343d30938c23"
+        },
+        "tldw_chatbook.Plugins.models": {
+          "bytes": 5752,
+          "frozen_mode": "0o444",
+          "git_mode": "100644",
+          "oid": "4bfd3d8d5859e03e88c7098fe1a66284e184f3c2",
+          "path": "tldw_chatbook/Plugins/models.py",
+          "sha256": "7dc86a849907e0015b17e0084a3dbfea0d97469debe0d9529043dfeff5ee2f89"
+        },
+        "tldw_chatbook.Plugins.package_files": {
+          "bytes": 20643,
+          "frozen_mode": "0o444",
+          "git_mode": "100644",
+          "oid": "6e96a5113ee4102fce3a09207f73b08d26fc366b",
+          "path": "tldw_chatbook/Plugins/package_files.py",
+          "sha256": "61816a92675006ffda7b779f80b162b7ead6e8b755e715a0d82e01800001d06e"
+        },
+        "tldw_chatbook.Plugins.schemas": {
+          "bytes": 16095,
+          "frozen_mode": "0o444",
+          "git_mode": "100644",
+          "oid": "548816205d4a860d18f96d96c6f8221133a5e2a7",
+          "path": "tldw_chatbook/Plugins/schemas.py",
+          "sha256": "ddfa68a29521194cb0729a243d85486351c9b55c08d42d5d148ca5fd93f7d126"
+        },
+        "tldw_chatbook.Skills_Interop.skill_trust_crypto": {
+          "bytes": 6918,
+          "frozen_mode": "0o444",
+          "git_mode": "100644",
+          "oid": "d28fa1e11d7d6010548f49fe497f0a4c28b828c4",
+          "path": "tldw_chatbook/Skills_Interop/skill_trust_crypto.py",
+          "sha256": "acc28fa4dc6a686d8a23325da1b53f0f9f984845aa91f6426e5723592f3c6686"
+        }
+      },
+      "dependencies": {
+        "PyYAML": "6.0.3",
+        "keyring": "25.7.0",
+        "loguru": "0.7.3",
+        "pydantic": "2.12.5",
+        "textual": "8.2.8"
+      },
+      "dependency_metadata_sha256": "b349d9781f2bf28ba5a5ed53bcf5e2a550c2ffe3703e4595882b248f2a3c26f9",
+      "entrypoint": "tldw_chatbook.Plugins.inspection.inspect_package(package_root)",
+      "environment_names": [
+        "CAPTURE_FIXTURES",
+        "CAPTURE_GUARDS",
+        "CAPTURE_PIN",
+        "CAPTURE_RESULT",
+        "CAPTURE_SOURCE",
+        "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_NOSYSTEM",
+        "HF_HUB_OFFLINE",
+        "HOME",
+        "LANG",
+        "LC_ALL",
+        "PATH",
+        "PYTHON_KEYRING_BACKEND",
+        "TERM",
+        "TLDW_CONFIG_PATH",
+        "TLDW_TEST_CONFIG_ROOT",
+        "TLDW_TEST_MODE",
+        "TMPDIR",
+        "TRANSFORMERS_OFFLINE",
+        "USERPROFILE",
+        "XDG_CACHE_HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME"
+      ],
+      "guard_sources": {
+        "network_guard.py": {
+          "mode": "0o444",
+          "sha256": "b299615d05bf7d2b09266ad01e5526ab71d80a07a3df4bba759a759c74b40d9d"
+        },
+        "real_profile_guard.py": {
+          "mode": "0o444",
+          "sha256": "d27a4023f5c058c417536a693ff1a18892518986ffc99b93d7099f93142b92f1"
+        }
+      },
+      "interpreter_sha256": "c413c0042baa93e9c328cecea9289c06da442b4a55aa13db540437c6c8f28835",
+      "loaded_product_module_count": 92,
+      "null_keyring": true,
+      "package_code_was_not_executed": true,
+      "projection": "Literal model_dump JSON minus source_identity, source_digest, materialized_identity, link_targets, diagnostics, candidates and inventory evidence/availability; no integrated selector or recipe imported.",
+      "python": "3.12.11 (main, Aug 14 2025, 16:05:17) [Clang 20.1.4 ]",
+      "raw_observation_sha256": "2549d09bf8c57819e85ec9728c1909709ac94838092392a1e0b7a08b4add2ff4",
+      "raw_result_sha256": "3969ab67325ed4a5aa61f95e1462b1412adf3e522a61124f090954a0f4b3700b",
+      "runner_sha256": "eb3c735839130c9170eddea509e090c7dcb3687a813a0030367a8a8dbe1a2e32",
+      "source_archive_sha256": "5ac222ac30fa9232515546e00a89a4fef04f94fbb7b94615a47490ea495e858d",
+      "source_commit": "7b4d5c501ba8500267d8f9f84f524742c33ec882",
+      "source_manifest_sha256": "c5d03a93c1320e594911817bc5e45d39a960eb172f89a949a1dce0a8045b67f1"
+    }
+  },
+  "schema": "chatbook-retained-literal-observation/1"
+}

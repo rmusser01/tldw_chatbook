@@ -1,0 +1,339 @@
+{
+  "HEAD": "b084d720e98e4c2a7aaaf17ab5c8386c84495aa9",
+  "excluded": [
+    "profiles",
+    "config bodies",
+    "databases",
+    "caches",
+    "private probes"
+  ],
+  "files": {
+    "task-16-fixture-fix-safe-evidence/added-hunk-format-and-inherited-debt.json": {
+      "bytes": 620,
+      "sha256": "40b3cd764237c40b0071bcc0db1367ac968daa0a6e2b0da5d365d7486bbb1275"
+    },
+    "task-16-fixture-fix-safe-evidence/before-deeper-comparison-authorized-patch-argv.json": {
+      "bytes": 576,
+      "sha256": "98899a2b639bb9d32e413098c6799b25053aea5a421e3faf3aba4db6638cfe8d"
+    },
+    "task-16-fixture-fix-safe-evidence/before-deeper-comparison-authorized-patch-result.json": {
+      "bytes": 85,
+      "sha256": "f11393db18df524946bfe81155749b10615e42089855910a4b2d6ed8d61ab923"
+    },
+    "task-16-fixture-fix-safe-evidence/before-deeper-comparison-authorized-patch.log": {
+      "bytes": 1195,
+      "sha256": "bd7b00b995e6498b5f93d397ad6d4274fa25d3d5b359c5c2089970bac17ede99"
+    },
+    "task-16-fixture-fix-safe-evidence/before-deeper-comparison-authorized-patch.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "task-16-fixture-fix-safe-evidence/before-deeper-comparison-authorized-patch.stdout": {
+      "bytes": 1195,
+      "sha256": "bd7b00b995e6498b5f93d397ad6d4274fa25d3d5b359c5c2089970bac17ede99"
+    },
+    "task-16-fixture-fix-safe-evidence/before-initial-task16-carry.json": {
+      "bytes": 24109,
+      "sha256": "54eb3e1bf5737de0972b2c6bcda4e2b3b21e0a8008b294d2906cf896e3e0da64"
+    },
+    "task-16-fixture-fix-safe-evidence/before-private-carry.json": {
+      "bytes": 31876,
+      "sha256": "a26560caa4e93f0cec21c0e401c38f47a82abcd039ae294a9be23879dfb8fc55"
+    },
+    "task-16-fixture-fix-safe-evidence/before-tracked.json": {
+      "bytes": 5882736,
+      "sha256": "91ff4e70259e66148a20d9a7278613c5f795ebed4ba8c1bfa940e23f0440314a"
+    },
+    "task-16-fixture-fix-safe-evidence/closed-process-two-marker-ownership-handoff.json": {
+      "bytes": 619,
+      "sha256": "e2f16b2aa581fd5da7b2ecc2a5913cdd7e6009ef55ecaa9a86e093bcfe4076e9"
+    },
+    "task-16-fixture-fix-safe-evidence/deeper-immutable-base-checkout-argv.json": {
+      "bytes": 298,
+      "sha256": "73fc98e5a4f8ccb534b8d3bd049fe99b110b83bb19594c3ca1965070bbd13adc"
+    },
+    "task-16-fixture-fix-safe-evidence/deeper-immutable-base-checkout-result.json": {
+      "bytes": 84,
+      "sha256": "50b156fd41d6972a6f907d8523885eb7b3b230c86edd2526e0d442e82c454611"
+    },
+    "task-16-fixture-fix-safe-evidence/deeper-immutable-base-checkout.log": {
+      "bytes": 174,
+      "sha256": "3432c50def289bc64852d685022196e131219496f420fc3056331f77d54de866"
+    },
+    "task-16-fixture-fix-safe-evidence/deeper-immutable-base-checkout.stderr": {
+      "bytes": 86,
+      "sha256": "71ca0dd78a2dd107ba818ffb8a73941d8fe485729677ce5cdff7d29683069b37"
+    },
+    "task-16-fixture-fix-safe-evidence/deeper-immutable-base-checkout.stdout": {
+      "bytes": 88,
+      "sha256": "eb9a082964fe47f8b2f2224e7d918e817dcfbad2ffcfbf1f2e9cb634453e9b38"
+    },
+    "task-16-fixture-fix-safe-evidence/deeper-immutable-exact-typed-marker-overlay-argv.json": {
+      "bytes": 533,
+      "sha256": "8df68ac5d3438090d498a1f02516f98f9a1b829d096554d0f209a14a525e6240"
+    },
+    "task-16-fixture-fix-safe-evidence/deeper-immutable-exact-typed-marker-overlay-result.json": {
+      "bytes": 85,
+      "sha256": "7d597dc5b52702201c6bac5ec6d1c8f6ad7800a674c9931ef0a2cc1f184a04d2"
+    },
+    "task-16-fixture-fix-safe-evidence/deeper-immutable-exact-typed-marker-overlay.log": {
+      "bytes": 643,
+      "sha256": "f85e1a97eb6e5d57a52c229afc85032d45d83c4e95c8da422bb5bda24c2b6c56"
+    },
+    "task-16-fixture-fix-safe-evidence/deeper-immutable-exact-typed-marker-overlay.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "task-16-fixture-fix-safe-evidence/deeper-immutable-exact-typed-marker-overlay.stdout": {
+      "bytes": 643,
+      "sha256": "f85e1a97eb6e5d57a52c229afc85032d45d83c4e95c8da422bb5bda24c2b6c56"
+    },
+    "task-16-fixture-fix-safe-evidence/deeper-immutable-typed-only-argv.json": {
+      "bytes": 17542,
+      "sha256": "45bdab40118b1c64569d42117656fd90bd10153666930763a890ec44b35b26cb"
+    },
+    "task-16-fixture-fix-safe-evidence/deeper-immutable-typed-only-cases.json": {
+      "bytes": 361,
+      "sha256": "d3dd942060eafb0b3eb542ccf3a78bccdd8abe45be840332ae74e0f57d322418"
+    },
+    "task-16-fixture-fix-safe-evidence/deeper-immutable-typed-only-result.json": {
+      "bytes": 82,
+      "sha256": "7dfb9c8ad9c98d535f6df8aed3f4f963cd8b74ba813f7e422f97f4248e8509bc"
+    },
+    "task-16-fixture-fix-safe-evidence/deeper-immutable-typed-only.log": {
+      "bytes": 45001,
+      "sha256": "41a0e48cc97af267338ee24cffe60b3dd5fb8096f613572cbabca9c5b9a724d9"
+    },
+    "task-16-fixture-fix-safe-evidence/deeper-immutable-typed-only.stderr": {
+      "bytes": 5924,
+      "sha256": "841ad95cf6b50667f3e600f1d3057c4443ce38948a686f296bcf7379e5715a2b"
+    },
+    "task-16-fixture-fix-safe-evidence/deeper-immutable-typed-only.stdout": {
+      "bytes": 39077,
+      "sha256": "c07eef44d2618430739d9fc63ac63ac4ed52eb1a38bea504990f35498bc89608"
+    },
+    "task-16-fixture-fix-safe-evidence/deeper-immutable-typed-only.xml": {
+      "bytes": 6290,
+      "sha256": "9c359b841f7d34f54301f21e8af58be60da73c73b2248986bf8e21be62c7ed59"
+    },
+    "task-16-fixture-fix-safe-evidence/exact-two-marker-patch-argv.json": {
+      "bytes": 576,
+      "sha256": "98899a2b639bb9d32e413098c6799b25053aea5a421e3faf3aba4db6638cfe8d"
+    },
+    "task-16-fixture-fix-safe-evidence/exact-two-marker-patch-result.json": {
+      "bytes": 84,
+      "sha256": "c61f5fad8cd3615efbc3248e3dac4e4a10a3852269595fcb26709c22732ae11a"
+    },
+    "task-16-fixture-fix-safe-evidence/exact-two-marker-patch.log": {
+      "bytes": 1195,
+      "sha256": "bd7b00b995e6498b5f93d397ad6d4274fa25d3d5b359c5c2089970bac17ede99"
+    },
+    "task-16-fixture-fix-safe-evidence/exact-two-marker-patch.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "task-16-fixture-fix-safe-evidence/exact-two-marker-patch.stdout": {
+      "bytes": 1195,
+      "sha256": "bd7b00b995e6498b5f93d397ad6d4274fa25d3d5b359c5c2089970bac17ede99"
+    },
+    "task-16-fixture-fix-safe-evidence/fatal-ruff-argv.json": {
+      "bytes": 689,
+      "sha256": "4c541cec13da00c84b4dd0a7335c6581aa910d629861b0ee37971e07c52bc9c1"
+    },
+    "task-16-fixture-fix-safe-evidence/fatal-ruff-result.json": {
+      "bytes": 84,
+      "sha256": "16a2010faf084347b385a16ad53c91c52dc7e30f725a6f3b07e49da9090084aa"
+    },
+    "task-16-fixture-fix-safe-evidence/fatal-ruff.log": {
+      "bytes": 19,
+      "sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18"
+    },
+    "task-16-fixture-fix-safe-evidence/fatal-ruff.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "task-16-fixture-fix-safe-evidence/fatal-ruff.stdout": {
+      "bytes": 19,
+      "sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18"
+    },
+    "task-16-fixture-fix-safe-evidence/frozen-deeper-baseline-harness-failure-and-proposal.json": {
+      "bytes": 1902,
+      "sha256": "475a88f0a961b24aa556c777c25d3c91a946fc38cf9ac2f9923ebeafb946efa6"
+    },
+    "task-16-fixture-fix-safe-evidence/owned-two-marker-handoff-patch-argv.json": {
+      "bytes": 576,
+      "sha256": "98899a2b639bb9d32e413098c6799b25053aea5a421e3faf3aba4db6638cfe8d"
+    },
+    "task-16-fixture-fix-safe-evidence/owned-two-marker-handoff-patch-result.json": {
+      "bytes": 84,
+      "sha256": "023a0c65ad6b8c648ff4012512f03231dff263a8171c6a4b3f66a678d191c086"
+    },
+    "task-16-fixture-fix-safe-evidence/owned-two-marker-handoff-patch.log": {
+      "bytes": 1195,
+      "sha256": "bd7b00b995e6498b5f93d397ad6d4274fa25d3d5b359c5c2089970bac17ede99"
+    },
+    "task-16-fixture-fix-safe-evidence/owned-two-marker-handoff-patch.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "task-16-fixture-fix-safe-evidence/owned-two-marker-handoff-patch.stdout": {
+      "bytes": 1195,
+      "sha256": "bd7b00b995e6498b5f93d397ad6d4274fa25d3d5b359c5c2089970bac17ede99"
+    },
+    "task-16-fixture-fix-safe-evidence/owned-two-marker-handoff-status-argv.json": {
+      "bytes": 256,
+      "sha256": "0373279cd873fad99cefacf654bbca9011eb7da8f88f7cfb08e62159b52385bf"
+    },
+    "task-16-fixture-fix-safe-evidence/owned-two-marker-handoff-status-result.json": {
+      "bytes": 83,
+      "sha256": "a689297e5536677d83e8377183d2786ba86c30f9f8b254bf532bc55c59b21deb"
+    },
+    "task-16-fixture-fix-safe-evidence/owned-two-marker-handoff-status.log": {
+      "bytes": 310,
+      "sha256": "aae6210d173aa21c91e9219b5e462b6eb09af9cd3c268ac15fcc5eca342a1619"
+    },
+    "task-16-fixture-fix-safe-evidence/owned-two-marker-handoff-status.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "task-16-fixture-fix-safe-evidence/owned-two-marker-handoff-status.stdout": {
+      "bytes": 310,
+      "sha256": "aae6210d173aa21c91e9219b5e462b6eb09af9cd3c268ac15fcc5eca342a1619"
+    },
+    "task-16-fixture-fix-safe-evidence/pin-fixture-fix-recovery-argv.json": {
+      "bytes": 342,
+      "sha256": "f4afa2109a77aeb79ef9006511ab85dd187f036de2fa48b7bb8baf59d1b72e94"
+    },
+    "task-16-fixture-fix-safe-evidence/pin-fixture-fix-recovery-result.json": {
+      "bytes": 85,
+      "sha256": "abdac79931713b4ee76c3880f762250844349544c3d8a31160074f1e47183e82"
+    },
+    "task-16-fixture-fix-safe-evidence/pin-fixture-fix-recovery.log": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "task-16-fixture-fix-safe-evidence/pin-fixture-fix-recovery.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "task-16-fixture-fix-safe-evidence/pin-fixture-fix-recovery.stdout": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "task-16-fixture-fix-safe-evidence/proposed-typed-harness-current-send-seams.patch": {
+      "bytes": 873,
+      "sha256": "ffc214a6ca1d46cd64c3a52fb273e2310a4b2502c2ec83425ec81f7536d40385"
+    },
+    "task-16-fixture-fix-safe-evidence/restore-metadata-base-and-authorized-patch-argv.json": {
+      "bytes": 271,
+      "sha256": "90a17fd70cc56960d28dae03e8dca46c98d3b2d9ae4997637fff95f2096d88e8"
+    },
+    "task-16-fixture-fix-safe-evidence/restore-metadata-base-and-authorized-patch-result.json": {
+      "bytes": 84,
+      "sha256": "ad712e71c2597498fe02e06b285a49f9dd32d8db0b5243c16e7018e4cf4793e4"
+    },
+    "task-16-fixture-fix-safe-evidence/restore-metadata-base-and-authorized-patch.log": {
+      "bytes": 384,
+      "sha256": "219e377ae6fc1290d267c3a0be707023bd6890f33f5b6a2aa1a6216b203a8023"
+    },
+    "task-16-fixture-fix-safe-evidence/restore-metadata-base-and-authorized-patch.stderr": {
+      "bytes": 149,
+      "sha256": "5356f81c8ed2d76960b950cfec3608a8d96e0c77f1b6d39ab88dec5e0a3f7de7"
+    },
+    "task-16-fixture-fix-safe-evidence/restore-metadata-base-and-authorized-patch.stdout": {
+      "bytes": 235,
+      "sha256": "f2e4e53d7f2d831f0c9a3e375faebb1dc1758aaba5d17700b7c56c0223a360ed"
+    },
+    "task-16-fixture-fix-safe-evidence/source-AST-body-marker-reversal.json": {
+      "bytes": 1326,
+      "sha256": "425843d910e0c5552bd1f470da3349798cffc025db4af27a51912dea18b5efdb"
+    },
+    "task-16-fixture-fix-safe-evidence/source-QA-private-snapshots-ZIP-limits-carry.json": {
+      "bytes": 5883849,
+      "sha256": "8a78aa6a51a3f03c0c8503f66c0c2787de5512207af265eaf60eb14a653f7a1e"
+    },
+    "task-16-fixture-fix-safe-evidence/two-reader-nodes-argv.json": {
+      "bytes": 21684,
+      "sha256": "f9add6d63bec2c277d74d43c06d59e5039d66fa733543b2e58eca67e64a3de25"
+    },
+    "task-16-fixture-fix-safe-evidence/two-reader-nodes-cases.json": {
+      "bytes": 522,
+      "sha256": "a7ea86eb0e86e0bc9c8d6c100444caf2fb501281d6ff2704e21e7ae481265cd9"
+    },
+    "task-16-fixture-fix-safe-evidence/two-reader-nodes-result.json": {
+      "bytes": 82,
+      "sha256": "222a2bdbd64c64eb56d5a610945019ed4772f63e3714e66a600b4035766f3e08"
+    },
+    "task-16-fixture-fix-safe-evidence/two-reader-nodes.log": {
+      "bytes": 39987,
+      "sha256": "fa913c5a0c89361e44cb66cc4e95317cd2e8cf4de7b852f1a49c55b7521ef9b7"
+    },
+    "task-16-fixture-fix-safe-evidence/two-reader-nodes.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "task-16-fixture-fix-safe-evidence/two-reader-nodes.stdout": {
+      "bytes": 39987,
+      "sha256": "fa913c5a0c89361e44cb66cc4e95317cd2e8cf4de7b852f1a49c55b7521ef9b7"
+    },
+    "task-16-fixture-fix-safe-evidence/two-reader-nodes.xml": {
+      "bytes": 6437,
+      "sha256": "64c09faca88d0f1826871f590df1c64ca9956f2e2ed6af7987cd91213bd5fde0"
+    },
+    "task-16-fixture-fix-safe-evidence/verifier-deeper-immutable-compare.py.txt": {
+      "bytes": 2376,
+      "sha256": "98fa61c05ce03282413aef131a0cbc327cf306a1d7d3a15cd0993b7dc2a846b4"
+    },
+    "task-16-fixture-fix-safe-evidence/verifier-fixture-fix.py.txt": {
+      "bytes": 8064,
+      "sha256": "630259e28f9db4d29c8847ce9878fa2c8eec8367465d18736f5e4d4f8778de99"
+    },
+    "task-16-fixture-fix-safe-evidence/whitespace-argv.json": {
+      "bytes": 531,
+      "sha256": "a8b0a2bbc35dedd6e2796a2f8a6a168843afd6997aeba4263b0126a810cff94c"
+    },
+    "task-16-fixture-fix-safe-evidence/whitespace-result.json": {
+      "bytes": 85,
+      "sha256": "71622dfc3dc160982183559bc3c9e796723ce9a73c5d666af55f0af8e83228e7"
+    },
+    "task-16-fixture-fix-safe-evidence/whitespace.log": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "task-16-fixture-fix-safe-evidence/whitespace.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "task-16-fixture-fix-safe-evidence/whitespace.stdout": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "task-16-fixture-fix-safe-evidence/whole-owner-format-check-argv.json": {
+      "bytes": 682,
+      "sha256": "4f7dae8163dcf210ed787a5618f5634634d203ec4a367708b7f2672f4c7698ee"
+    },
+    "task-16-fixture-fix-safe-evidence/whole-owner-format-check-result.json": {
+      "bytes": 84,
+      "sha256": "dd88a6c37c988bdebec200793adfec111f51946855bf2b0864a0203941a5ce34"
+    },
+    "task-16-fixture-fix-safe-evidence/whole-owner-format-check.log": {
+      "bytes": 8643,
+      "sha256": "7e47f8e4499aefb791d69dfad689e3a332a81d1f454610485406925dd2f886e5"
+    },
+    "task-16-fixture-fix-safe-evidence/whole-owner-format-check.stderr": {
+      "bytes": 54,
+      "sha256": "154b753a978ed31836540854f9678b0c3bb92c75638e3e87fa3dd9763de68523"
+    },
+    "task-16-fixture-fix-safe-evidence/whole-owner-format-check.stdout": {
+      "bytes": 8589,
+      "sha256": "beb6bb2dced5685158f7d1807933a6029989f2876f27f3e1d385ced5ac43e36c"
+    },
+    "task-16-report.md": {
+      "bytes": 22871,
+      "sha256": "3e381750d49a7e6154a2d272e189ff09d401e358d6e55b2b13cf863b7e350625"
+    }
+  },
+  "initial140_preserved_as139_children_plus_exact_report_snapshot": true,
+  "source_overlay_commits": 0,
+  "status": "NEEDS_CONTEXT"
+}

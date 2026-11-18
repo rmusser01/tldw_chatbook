@@ -1,0 +1,19 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-B",
+    "-m",
+    "pytest",
+    "-q",
+    "Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision",
+    "Tests/UI/test_console_session_controller.py::test_character_handoff_uses_current_canonical_defaults_not_stale_session",
+    "--basetemp=/private/tmp/console-finalfix-reattach-01a0fa6c"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "env": {
+    "TLDW_TEST_GC_EVERY": "1"
+  },
+  "returncode": 0,
+  "elapsed_s": 85.16356086730957,
+  "output": ".....                                                                    [100%]\n============================= slowest 25 durations =============================\n21.05s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[unchanged]\n19.37s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[switch_away]\n16.30s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[same_text]\n14.29s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[replacement]\n1.13s call     Tests/UI/test_console_session_controller.py::test_character_handoff_uses_current_canonical_defaults_not_stale_session\n\n(10 durations < 1s hidden.)\n5 passed in 79.87s (0:01:19)\n"
+}

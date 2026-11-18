@@ -18,7 +18,7 @@ from Tests.UI.test_destination_shells import (
     _build_test_app,
     _wait_for_selector,
 )
-from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_screen import NO_FOCUSED_SETTING_COPY
 
 
@@ -57,9 +57,7 @@ async def test_focused_setting_line_names_the_control_that_holds_focus():
             == "settings-appearance-reduce-motion"
         ), "precondition: search landing put focus on Reduce motion"
         assert _guide_line(screen, "appearance") == "Focused setting: Reduce motion"
-        assert (
-            screen._active_settings_field_id == "settings-appearance-reduce-motion"
-        )
+        assert screen._active_settings_field_id == "settings-appearance-reduce-motion"
 
         # Route 2: plain Tab traversal onto a different setting.
         assert await _tab_to(pilot, "settings-appearance-density"), (

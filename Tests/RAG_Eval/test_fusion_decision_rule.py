@@ -14,6 +14,7 @@ the spec's rule gets a hand-built `SweepReport` that isolates it — including
 the clause that pool widening alone can never be the winner, which is the
 one an over-eager reading of "it rescued the fixture!" would break first.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -95,11 +96,15 @@ def mode_report(
         k=K,
         queries=(),
         overall=overall or metrics(num_queries=33.0),
-        per_category=per_category
-        or {category: metrics() for category in CATEGORIES},
+        per_category=per_category or {category: metrics() for category in CATEGORIES},
         negatives=(),
-        latency={"count": 33.0, "mean_ms": 12.0, "p95_ms": 20.0, "max_ms": 30.0,
-                 "total_s": 0.4},
+        latency={
+            "count": 33.0,
+            "mean_ms": 12.0,
+            "p95_ms": 20.0,
+            "max_ms": 30.0,
+            "total_s": 0.4,
+        },
         runtime_backends=("rag-hybrid",),
         errors=(),
         mean_docs_at_k=mean_docs_at_k,
@@ -177,7 +182,9 @@ def test_strategy_carries_the_three_config_knobs_and_applies_them():
         hybrid_pool_multiplier = 2
         hybrid_alpha = 0.7
 
-    strategy = Strategy("k10+pool3", rrf_k=10, hybrid_pool_multiplier=3, hybrid_alpha=0.7)
+    strategy = Strategy(
+        "k10+pool3", rrf_k=10, hybrid_pool_multiplier=3, hybrid_alpha=0.7
+    )
     config = FakeSearchConfig()
     strategy.apply(config)
 
@@ -221,7 +228,11 @@ def test_the_shipped_base_matrix_is_the_one_the_spec_names():
     names = tuple(s.name for s in BASE_STRATEGIES)
     assert names[0] == CONTROL_NAME
     assert CONTROL in BASE_STRATEGIES
-    assert {s.rrf_k for s in BASE_STRATEGIES if s.changed_levers(CONTROL)} == {5, 10, 20}
+    assert {s.rrf_k for s in BASE_STRATEGIES if s.changed_levers(CONTROL)} == {
+        5,
+        10,
+        20,
+    }
     assert {
         s.hybrid_pool_multiplier
         for s in BASE_STRATEGIES
@@ -230,9 +241,7 @@ def test_the_shipped_base_matrix_is_the_one_the_spec_names():
     assert all(s.hybrid_alpha == CONTROL.hybrid_alpha for s in BASE_STRATEGIES), (
         "alpha is the last-resort lever; no base strategy may move it"
     )
-    assert all(
-        s.hybrid_alpha != CONTROL.hybrid_alpha for s in ALPHA_COMBO_STRATEGIES
-    )
+    assert all(s.hybrid_alpha != CONTROL.hybrid_alpha for s in ALPHA_COMBO_STRATEGIES)
 
 
 # ---------------------------------------------------------------------------
@@ -258,7 +267,9 @@ def test_the_shipped_base_matrix_is_the_one_the_spec_names():
         (0.58, 60, 25),
     ],
 )
-def test_fts_only_beats_vector_rank_matches_the_specs_arithmetic(alpha, rrf_k, expected):
+def test_fts_only_beats_vector_rank_matches_the_specs_arithmetic(
+    alpha, rrf_k, expected
+):
     assert fts_only_beats_vector_rank(alpha, rrf_k) == expected
 
 
@@ -438,9 +449,7 @@ def test_a_cell_down_by_exactly_the_warn_band_still_qualifies():
 def test_the_lever_tie_break_order_is_rrf_k_then_quota_then_alpha():
     assert LEVER_PRECEDENCE == ("rrf_k", "quota", "hybrid_alpha")
     assert (
-        lever_rank(("rrf_k",))
-        < lever_rank(("quota",))
-        < lever_rank(("hybrid_alpha",))
+        lever_rank(("rrf_k",)) < lever_rank(("quota",)) < lever_rank(("hybrid_alpha",))
     )
     assert lever_rank(("hybrid_alpha", "rrf_k")) == lever_rank(("rrf_k",)), (
         "a combination is ranked by its most-preferred lever"
@@ -539,7 +548,9 @@ def test_no_combination_when_a_family_is_missing():
 
 def test_format_matrix_prints_every_strategy_the_control_and_the_verdict():
     control = entry(CONTROL, verdict=MISSED)
-    k10 = entry(Strategy("k10", 10, 2, 0.7), verdict=rescue(rank=4, mechanism="fts-only"))
+    k10 = entry(
+        Strategy("k10", 10, 2, 0.7), verdict=rescue(rank=4, mechanism="fts-only")
+    )
     pool3 = entry(Strategy("pool3", 60, 3, 0.7), verdict=rescue(rank=1))
     report = sweep(control, k10, pool3)
 
@@ -685,7 +696,9 @@ def test_the_sweep_counts_scored_queries_the_way_run_eval_does(monkeypatch):
     )
     monkeypatch.setattr(fusion_sweep, "run_eval", _fake_run_eval([]))
 
-    report = run_fusion_sweep(FakeRuntime(), golden, BASE_STRATEGIES, k=K, seam=FakeSeam([TARGET_ROW]))
+    report = run_fusion_sweep(
+        FakeRuntime(), golden, BASE_STRATEGIES, k=K, seam=FakeSeam([TARGET_ROW])
+    )
 
     # Stated independently of both implementations: three queries, one of
     # which is averaged (negative and scoped are each excluded, for their own
@@ -748,9 +761,7 @@ def test_a_row_only_the_keyword_leg_found_is_reported_as_fts_only(monkeypatch):
 
 def test_a_missing_target_is_reported_absent_not_guessed_at(monkeypatch):
     monkeypatch.setattr(fusion_sweep, "run_eval", _fake_run_eval([]))
-    report = run_fusion_sweep(
-        FakeRuntime(), GOLDEN, (CONTROL,), k=K, seam=FakeSeam([])
-    )
+    report = run_fusion_sweep(FakeRuntime(), GOLDEN, (CONTROL,), k=K, seam=FakeSeam([]))
     verdict = report.entries[0].rescue
     assert not verdict.present
     assert verdict.rank is None
@@ -767,7 +778,9 @@ def test_config_is_restored_even_when_a_pass_explodes(monkeypatch):
     # Deliberately a strategy that moves ALL THREE knobs off the control:
     # crashing on a strategy that happens to equal the shipped defaults would
     # leave the config correct by accident and pass with no restore at all.
-    off_default = (Strategy("k5+pool3+a.55", rrf_k=5, hybrid_pool_multiplier=3, hybrid_alpha=0.55),)
+    off_default = (
+        Strategy("k5+pool3+a.55", rrf_k=5, hybrid_pool_multiplier=3, hybrid_alpha=0.55),
+    )
     with pytest.raises(RuntimeError, match="fell over"):
         run_fusion_sweep(runtime, GOLDEN, off_default, k=K, seam=FakeSeam([]))
 
@@ -921,13 +934,18 @@ def test_the_construction_round_trips_through_apply():
     config.fts_match_construction = "and"
 
     Strategy(
-        "and_or", rrf_k=5, hybrid_pool_multiplier=2, hybrid_alpha=0.7,
+        "and_or",
+        rrf_k=5,
+        hybrid_pool_multiplier=2,
+        hybrid_alpha=0.7,
         fts_match_construction="and_then_or",
     ).apply(config)
 
     assert config.fts_match_construction == "and_then_or"
     assert (config.rrf_k, config.hybrid_pool_multiplier, config.hybrid_alpha) == (
-        5, 2, 0.7,
+        5,
+        2,
+        0.7,
     )
 
 
@@ -941,7 +959,10 @@ def test_every_pre_15400_strategy_still_means_exactly_what_it_meant():
         assert strategy.fts_match_construction == "and", strategy.name
     # ...and one tuple, spelled out: the control is still the 4110 control.
     assert CONTROL == Strategy(
-        "control", rrf_k=60, hybrid_pool_multiplier=2, hybrid_alpha=0.7,
+        "control",
+        rrf_k=60,
+        hybrid_pool_multiplier=2,
+        hybrid_alpha=0.7,
         fts_match_construction="and",
     )
     assert Strategy("pool5", 60, 5, 0.7).changed_fields(CONTROL) == (
@@ -993,20 +1014,33 @@ def test_the_construction_matrix_is_the_six_the_specs_pre_registered():
     assert names[0] == CONSTRUCTION_CONTROL_NAME, "the control row must be first"
     assert all(len(name) <= 10 for name in names), "the matrix column is 10 wide"
     assert tuple(s.fts_match_construction for s in CONSTRUCTION_STRATEGIES) == (
-        "and", "and_stopword_trim", "or", "and_then_or",
-        "prefix", "and_then_prefix",
+        "and",
+        "and_stopword_trim",
+        "or",
+        "and_then_or",
+        "prefix",
+        "and_then_prefix",
     )
     # The 15400 rows, still meaning exactly what they meant: same order, same
     # constructions, appended to rather than rewritten.
     assert names[:4] == ("and", "and_trim", "or", "and_or")
-    assert tuple(
-        s.fts_match_construction for s in CONSTRUCTION_STRATEGIES[:4]
-    ) == ("and", "and_stopword_trim", "or", "and_then_or")
+    assert tuple(s.fts_match_construction for s in CONSTRUCTION_STRATEGIES[:4]) == (
+        "and",
+        "and_stopword_trim",
+        "or",
+        "and_then_or",
+    )
     # The SHIPPED fusion parameters, held fixed: this arc measures the
     # construction, and a row that also moved rrf_k would confound the two.
     for strategy in CONSTRUCTION_STRATEGIES:
-        assert (strategy.rrf_k, strategy.hybrid_pool_multiplier, strategy.hybrid_alpha) == (
-            5, 2, 0.7,
+        assert (
+            strategy.rrf_k,
+            strategy.hybrid_pool_multiplier,
+            strategy.hybrid_alpha,
+        ) == (
+            5,
+            2,
+            0.7,
         ), strategy.name
 
 
@@ -1273,9 +1307,7 @@ def hybrid_row(source_id: str, *, fts_rank, vector_rank, fts_match="and") -> dic
     return {"source_id": source_id, "provenance": provenance}
 
 
-NEGATIVE_GOLDEN = (
-    GoldenQuery("neg-one", "quantum wombat futures", "negative", ()),
-)
+NEGATIVE_GOLDEN = (GoldenQuery("neg-one", "quantum wombat futures", "negative", ()),)
 
 
 def test_only_fts_only_rows_in_a_widening_form_count_as_fallback_rows():
@@ -1287,10 +1319,10 @@ def test_only_fts_only_rows_in_a_widening_form_count_as_fallback_rows():
     the vector leg also returned is not FTS-only.
     """
     rows = [
-        hybrid_row("1", fts_rank=1, vector_rank=None, fts_match="or"),      # counted
-        hybrid_row("2", fts_rank=2, vector_rank=None, fts_match="and"),     # AND form
-        hybrid_row("3", fts_rank=3, vector_rank=4, fts_match="or"),         # merged
-        hybrid_row("4", fts_rank=None, vector_rank=1, fts_match=None),      # vector
+        hybrid_row("1", fts_rank=1, vector_rank=None, fts_match="or"),  # counted
+        hybrid_row("2", fts_rank=2, vector_rank=None, fts_match="and"),  # AND form
+        hybrid_row("3", fts_rank=3, vector_rank=4, fts_match="or"),  # merged
+        hybrid_row("4", fts_rank=None, vector_rank=1, fts_match=None),  # vector
         hybrid_row("5", fts_rank=4, vector_rank=None, fts_match="prefix"),  # counted
     ]
     composition = negative_composition(
@@ -1350,7 +1382,9 @@ def _construction_rows(*constructions: str) -> tuple[Strategy, ...]:
 
 
 def _run_instrumented(monkeypatch, service, *, expected, strategies=None, seen=None):
-    monkeypatch.setattr(fusion_sweep, "run_eval", _fake_run_eval(seen if seen is not None else []))
+    monkeypatch.setattr(
+        fusion_sweep, "run_eval", _fake_run_eval(seen if seen is not None else [])
+    )
     return run_construction_sweep(
         FakeLegRuntime(service),
         CENSUS_GOLDEN,
@@ -1418,8 +1452,7 @@ def test_every_pass_clears_the_cache_before_it_measures_anything(monkeypatch):
     for position, event in enumerate(service.events):
         if event.startswith("leg:"):
             assert "clear" in service.events[:position], (
-                "a pass measured before it cleared: "
-                f"{service.events[:position + 1]}"
+                f"a pass measured before it cleared: {service.events[: position + 1]}"
             )
     assert report.entries[0].census_hits == 1
 
@@ -1451,8 +1484,13 @@ def test_the_self_check_says_what_it_checks_and_what_it_cannot(monkeypatch):
     protected — by the keyed cache and the per-pass clear — but not by this.
     """
     census = LegCensus(
-        k=K, hits=3, scoreable=53, queries=60, hit_queries=("a", "b", "c"),
-        zero_row_queries=("d",), per_category={"keyword": (3, 16)},
+        k=K,
+        hits=3,
+        scoreable=53,
+        queries=60,
+        hit_queries=("a", "b", "c"),
+        zero_row_queries=("d",),
+        per_category={"keyword": (3, 16)},
     )
     with pytest.raises(ValueError) as excinfo:
         fusion_sweep._check_control_census(CONSTRUCTION_STRATEGIES[0], census, 20)
@@ -1528,7 +1566,9 @@ def test_fts5_reads_an_infix_near_as_a_bare_token_not_as_proximity():
     try:
         db.execute("CREATE VIRTUAL TABLE t USING fts5(body)")
         # Row 1 is what the probe is FOR: the two terms, adjacent, no "near".
-        db.execute("INSERT INTO t(body) VALUES ('the shift log summary for supervisors')")
+        db.execute(
+            "INSERT INTO t(body) VALUES ('the shift log summary for supervisors')"
+        )
         # Row 2 contains the WORD "near" and the two terms scattered — the
         # only row the infix spelling matches. Without it the claim below
         # would be 0 == 0 and prove nothing.
@@ -1569,7 +1609,9 @@ def test_fts5_prefix_syntax_is_the_star_outside_the_quotes():
 
         def hits(expression: str) -> int:
             return len(
-                db.execute("SELECT rowid FROM t WHERE t MATCH ?", (expression,)).fetchall()
+                db.execute(
+                    "SELECT rowid FROM t WHERE t MATCH ?", (expression,)
+                ).fetchall()
             )
 
         # The shipped AND misses the plural; the prefix form is what widens it.
@@ -1689,17 +1731,26 @@ def test_a_rows_rescues_are_counted_over_the_controls_zero_row_queries():
     three and loses one reports three rescues, not two.
     """
     control_census = LegCensus(
-        k=K, hits=2, scoreable=5, queries=6, hit_queries=("a", "b"),
-        zero_row_queries=("c", "d", "e", "neg"), per_category={},
+        k=K,
+        hits=2,
+        scoreable=5,
+        queries=6,
+        hit_queries=("a", "b"),
+        zero_row_queries=("c", "d", "e", "neg"),
+        per_category={},
     )
     candidate = StrategyReport(
         strategy=CONSTRUCTION_STRATEGIES[3],
         hybrid=mode_report(),
         rescue=rescue(),
         census=LegCensus(
-            k=K, hits=4, scoreable=5, queries=6,
+            k=K,
+            hits=4,
+            scoreable=5,
+            queries=6,
             hit_queries=("a", "c", "d", "e"),  # gained three, LOST "b"
-            zero_row_queries=(), per_category={},
+            zero_row_queries=(),
+            per_category={},
         ),
     )
 
@@ -1729,17 +1780,26 @@ def test_a_rows_losses_are_counted_over_the_controls_census_hits():
     reported as one.
     """
     control_census = LegCensus(
-        k=K, hits=2, scoreable=5, queries=6, hit_queries=("a", "b"),
-        zero_row_queries=("c", "d", "e", "neg"), per_category={},
+        k=K,
+        hits=2,
+        scoreable=5,
+        queries=6,
+        hit_queries=("a", "b"),
+        zero_row_queries=("c", "d", "e", "neg"),
+        per_category={},
     )
     candidate = StrategyReport(
         strategy=CONSTRUCTION_STRATEGIES[4],
         hybrid=mode_report(),
         rescue=rescue(),
         census=LegCensus(
-            k=K, hits=4, scoreable=5, queries=6,
+            k=K,
+            hits=4,
+            scoreable=5,
+            queries=6,
             hit_queries=("a", "c", "d", "e"),  # gained three, LOST "b"
-            zero_row_queries=(), per_category={},
+            zero_row_queries=(),
+            per_category={},
         ),
     )
 
@@ -1749,7 +1809,9 @@ def test_a_rows_losses_are_counted_over_the_controls_census_hits():
     # ...and none of the columns that DO exist would have said so.
     assert candidate.census_hits > control_census.hits, "census is net-positive"
     assert fusion_sweep.rescued_zero_row_queries(candidate, control_census) == (
-        "c", "d", "e",
+        "c",
+        "d",
+        "e",
     ), "resc is gains-only"
     assert candidate.census.zero_row_queries == (), "zero sees an empty leg only"
 
@@ -1761,23 +1823,35 @@ def test_a_row_that_loses_nothing_reports_no_losses():
     to ignore it — the failure mode of a column that is always non-zero.
     """
     control_census = LegCensus(
-        k=K, hits=2, scoreable=5, queries=6, hit_queries=("a", "b"),
-        zero_row_queries=("c",), per_category={},
+        k=K,
+        hits=2,
+        scoreable=5,
+        queries=6,
+        hit_queries=("a", "b"),
+        zero_row_queries=("c",),
+        per_category={},
     )
     candidate = StrategyReport(
         strategy=CONSTRUCTION_STRATEGIES[1],
         hybrid=mode_report(),
         rescue=rescue(),
         census=LegCensus(
-            k=K, hits=3, scoreable=5, queries=6,
-            hit_queries=("a", "b", "c"), zero_row_queries=(), per_category={},
+            k=K,
+            hits=3,
+            scoreable=5,
+            queries=6,
+            hit_queries=("a", "b", "c"),
+            zero_row_queries=(),
+            per_category={},
         ),
     )
 
     assert fusion_sweep.lost_census_queries(candidate, control_census) == ()
     # A row with no census at all cannot claim a clean sheet either way.
     censusless = StrategyReport(
-        strategy=CONSTRUCTION_STRATEGIES[1], hybrid=mode_report(), rescue=rescue(),
+        strategy=CONSTRUCTION_STRATEGIES[1],
+        hybrid=mode_report(),
+        rescue=rescue(),
     )
     assert fusion_sweep.lost_census_queries(censusless, control_census) == ()
 
@@ -1790,30 +1864,47 @@ def test_the_matrix_prints_what_a_widening_row_loses():
     `hit_queries` by hand at write-up time.
     """
     control_census = LegCensus(
-        k=K, hits=2, scoreable=3, queries=4, hit_queries=("kw-hit", "kw-exact"),
-        zero_row_queries=("pm-miss",), per_category={"keyword": (2, 2)},
+        k=K,
+        hits=2,
+        scoreable=3,
+        queries=4,
+        hit_queries=("kw-hit", "kw-exact"),
+        zero_row_queries=("pm-miss",),
+        per_category={"keyword": (2, 2)},
     )
     control = StrategyReport(
-        strategy=CONSTRUCTION_STRATEGIES[0], hybrid=mode_report(),
-        rescue=rescue(), census=control_census,
+        strategy=CONSTRUCTION_STRATEGIES[0],
+        hybrid=mode_report(),
+        rescue=rescue(),
+        census=control_census,
         negatives=NegativeComposition(queries=1, fallback_rows=0, fts_only_rows=1),
     )
     widening = StrategyReport(
         strategy=CONSTRUCTION_STRATEGIES[4],  # the `prefix` row
-        hybrid=mode_report(), rescue=rescue(),
+        hybrid=mode_report(),
+        rescue=rescue(),
         census=LegCensus(
-            k=K, hits=2, scoreable=3, queries=4,
+            k=K,
+            hits=2,
+            scoreable=3,
+            queries=4,
             # Gained the zero-row query, LOST its own exact-match hit: the
             # self-displacement the review measured, at fixture scale.
-            hit_queries=("kw-hit", "pm-miss"), zero_row_queries=(),
+            hit_queries=("kw-hit", "pm-miss"),
+            zero_row_queries=(),
             per_category={"keyword": (2, 2)},
         ),
         negatives=NegativeComposition(queries=1, fallback_rows=3, fts_only_rows=3),
     )
     report = SweepReport(
-        k=K, entries=(control, widening),
-        rescue_query_id="kw-hit", target_slug="note-saltmarsh-hide",
-        source_types=("media",), num_queries=4, num_scored=3, control_name="and",
+        k=K,
+        entries=(control, widening),
+        rescue_query_id="kw-hit",
+        target_slug="note-saltmarsh-hide",
+        source_types=("media",),
+        num_queries=4,
+        num_scored=3,
+        control_name="and",
     )
 
     rendered = format_construction_matrix(report)
@@ -1840,18 +1931,30 @@ def test_the_neg_wide_legend_states_both_comparability_facts():
     construction can stamp `prefix`).
     """
     control_census = LegCensus(
-        k=K, hits=1, scoreable=2, queries=3, hit_queries=("kw-hit",),
-        zero_row_queries=("pm-miss",), per_category={"keyword": (1, 1)},
+        k=K,
+        hits=1,
+        scoreable=2,
+        queries=3,
+        hit_queries=("kw-hit",),
+        zero_row_queries=("pm-miss",),
+        per_category={"keyword": (1, 1)},
     )
     control = StrategyReport(
-        strategy=CONSTRUCTION_STRATEGIES[0], hybrid=mode_report(),
-        rescue=rescue(), census=control_census,
+        strategy=CONSTRUCTION_STRATEGIES[0],
+        hybrid=mode_report(),
+        rescue=rescue(),
+        census=control_census,
         negatives=NegativeComposition(queries=1, fallback_rows=0, fts_only_rows=1),
     )
     report = SweepReport(
-        k=K, entries=(control,), rescue_query_id="kw-hit",
-        target_slug="note-saltmarsh-hide", source_types=("media",),
-        num_queries=3, num_scored=2, control_name="and",
+        k=K,
+        entries=(control,),
+        rescue_query_id="kw-hit",
+        target_slug="note-saltmarsh-hide",
+        source_types=("media",),
+        num_queries=3,
+        num_scored=2,
+        control_name="and",
     )
 
     rendered = format_construction_matrix(report)
@@ -1870,27 +1973,45 @@ def test_the_neg_wide_legend_states_both_comparability_facts():
 
 def test_the_matrix_prints_rescues_beside_the_census():
     control_census = LegCensus(
-        k=K, hits=1, scoreable=2, queries=3, hit_queries=("kw-hit",),
-        zero_row_queries=("pm-miss",), per_category={"keyword": (1, 1)},
+        k=K,
+        hits=1,
+        scoreable=2,
+        queries=3,
+        hit_queries=("kw-hit",),
+        zero_row_queries=("pm-miss",),
+        per_category={"keyword": (1, 1)},
     )
     control = StrategyReport(
-        strategy=CONSTRUCTION_STRATEGIES[0], hybrid=mode_report(),
-        rescue=rescue(), census=control_census,
+        strategy=CONSTRUCTION_STRATEGIES[0],
+        hybrid=mode_report(),
+        rescue=rescue(),
+        census=control_census,
         negatives=NegativeComposition(queries=1, fallback_rows=0, fts_only_rows=1),
     )
     candidate = StrategyReport(
-        strategy=CONSTRUCTION_STRATEGIES[3], hybrid=mode_report(), rescue=rescue(),
+        strategy=CONSTRUCTION_STRATEGIES[3],
+        hybrid=mode_report(),
+        rescue=rescue(),
         census=LegCensus(
-            k=K, hits=2, scoreable=2, queries=3,
-            hit_queries=("kw-hit", "pm-miss"), zero_row_queries=(),
+            k=K,
+            hits=2,
+            scoreable=2,
+            queries=3,
+            hit_queries=("kw-hit", "pm-miss"),
+            zero_row_queries=(),
             per_category={"keyword": (1, 1), "paraphrase": (1, 1)},
         ),
         negatives=NegativeComposition(queries=1, fallback_rows=2, fts_only_rows=3),
     )
     report = SweepReport(
-        k=K, entries=(control, candidate),
-        rescue_query_id="kw-hit", target_slug="note-saltmarsh-hide",
-        source_types=("media",), num_queries=3, num_scored=2, control_name="and",
+        k=K,
+        entries=(control, candidate),
+        rescue_query_id="kw-hit",
+        target_slug="note-saltmarsh-hide",
+        source_types=("media",),
+        num_queries=3,
+        num_scored=2,
+        control_name="and",
     )
 
     rendered = format_construction_matrix(report)

@@ -36,6 +36,8 @@ from .credential_policies import (
     GENERATION_KEYRINGS,
     HEADER_FIELDS,
     JSON_CONNECTION_OWNERS,
+    PERSONAL_CONTEXT_OWNER,
+    PERSONAL_CONTEXT_SERVICE,
     REFERENCE_FIELDS,
     SQLITE_CREDENTIAL_COLUMNS,
     URL_FIELDS,
@@ -106,7 +108,7 @@ def _read_scope(record, store):
     return store._keyring.get_password(record["service"], record["username"])
 
 
-def _capture_record(record, material, issues, *, optional=False):
+def _capture_record(record, material, issues, *, optional=False, check=None):
     if len(material) >= 10000:
         raise ValueError("credential_resource_limit")
     record["id"] = _fingerprint(record)
@@ -124,6 +126,8 @@ def _capture_record(record, material, issues, *, optional=False):
                 and len(base64.b64decode(value, validate=True)) != 32
             ):
                 raise ValueError("invalid_citation_key")
+            if check is not None and not check(value):
+                raise ValueError("credential_reference_changed")
             record.update(status="captured", value=value)
     except Exception:  # noqa: BLE001 - backend errors can contain secret values
         # Backends can include secret values in exception text. Only an opaque
@@ -300,6 +304,7 @@ def _material(staging):
             "generation",
             "encrypted_config",
             "citation",
+            "personal_context",
         }:
             raise ValueError("unsupported_credential_material")
         seen.add(record["id"])
@@ -386,11 +391,51 @@ def _material(staging):
                     valid = False
                 if not valid:
                     raise ValueError("unsupported_credential_material")
+        elif record["kind"] == "personal_context":
+            # A retained profile key must name the account its archived database
+            # names, and authenticate that copy (TASK-40134).
+            from tldw_chatbook.DB.private_sqlite import open_recovery_validation
+            from tldw_chatbook.Personal_Context.repository_keys import KEY_ACCOUNT
+
+            from .sqlite_validation import _check, _installed_owner
+
+            if (
+                record.get("service") != PERSONAL_CONTEXT_SERVICE
+                or record["remappable"]
+                or not isinstance(record.get("username"), str)
+                or not KEY_ACCOUNT.fullmatch(record["username"])
+            ):
+                raise ValueError("unsupported_credential_material")
+            installed = _installed_owner(PERSONAL_CONTEXT_OWNER)
+            with open_recovery_validation(
+                installed.owner_id,
+                Path(staging) / record["file"],
+                writable=False,
+                with_restrictions=True,
+            ) as (source, restrictions):
+                if _check(source, installed, installed.schema_policy(), restrictions)[
+                    0
+                ] or not source.execute(
+                    "SELECT 1 FROM profile_meta WHERE key_account=? AND destroyed=0",
+                    (record["username"],),
+                ).fetchone():
+                    raise ValueError("credential_reference_changed")
+                if record["status"] == "captured" and not _profile_key_opens(
+                    source, record["username"], record.get("value")
+                ):
+                    raise ValueError("unsupported_credential_material")
         elif record["kind"] != "encrypted_config":
             raise ValueError("unsupported_credential_material")
         if record["status"] == "captured" and not isinstance(record.get("value"), str):
             raise ValueError("unsupported_credential_material")
     return records
+
+
+def _profile_key_opens(connection, account, value) -> bool:
+    """Whether a keyring value is a profile key that authenticates this copy."""
+    from tldw_chatbook.Personal_Context.repository_keys import profile_key_opens
+
+    return profile_key_opens(connection, account, value)
 
 
 def plan_credential_scopes(
@@ -720,6 +765,35 @@ def _sanitize_column(value, kind):
     return json.dumps(decoded, ensure_ascii=False, separators=(",", ":"))
 
 
+def _capture_profile_key(source, account, file, material, issues):
+    """Record the profile key only after it authenticates the captured copy.
+
+    An empty reference, a removed profile or a recovery marker names no live key,
+    so it carries no record (TASK-40134).
+    """
+    from tldw_chatbook.Personal_Context.repository_keys import KEY_ACCOUNT
+
+    live = source.execute(
+        "SELECT 1 FROM profile_meta WHERE singleton=1 AND destroyed=0"
+    ).fetchone()
+    if live is None or not isinstance(account, str) or not KEY_ACCOUNT.fullmatch(
+        account
+    ):
+        return
+    _capture_record(
+        {
+            "kind": "personal_context",
+            "file": file,
+            "service": PERSONAL_CONTEXT_SERVICE,
+            "username": account,
+            "remappable": False,
+        },
+        material,
+        issues,
+        check=lambda value: _profile_key_opens(source, account, value),
+    )
+
+
 def _rewrite_database(staging, path, owner_id, *, export=None):
     from tldw_chatbook.DB.private_sqlite import (
         connect_private_sqlite,
@@ -755,7 +829,15 @@ def _rewrite_database(staging, path, owner_id, *, export=None):
                     for rowid, value in source.execute(
                         f'SELECT rowid,"{column}" FROM "{table}"'  # nosec B608 - installed policy identifiers only
                     ):
-                        if kind == "citation":
+                        if kind == "personal_context":
+                            _capture_profile_key(
+                                source,
+                                value,
+                                path.relative_to(staging).as_posix(),
+                                material,
+                                coverage,
+                            )
+                        elif kind == "citation":
                             if not isinstance(value, str) or not value:
                                 raise TypeError("unsupported_credential_format")
                             if value != RECOVERY_SETUP_REQUIRED:
@@ -1063,6 +1145,15 @@ def process_credentials(
                 issues.append(
                     "credential_skill_trust_manual_unlock_required:" + item.logical_id
                 )
+            if (
+                mode != "exclude"
+                and item.status == "included"
+                and item.owner == PERSONAL_CONTEXT_OWNER
+            ):
+                # Device-bound link keys stay in this device's keyring (decision 5).
+                issues.append(
+                    "credential_personal_context_link_keys_excluded:" + item.logical_id
+                )
 
         sqlite_owners = {rule.owner for rule in SQLITE_CREDENTIAL_COLUMNS}
         for item in inventory.items:
@@ -1097,6 +1188,8 @@ def process_credentials(
                 continue
             seen.add(path)
             if item.owner in sqlite_owners:
+                if mode == "exclude" and item.owner == PERSONAL_CONTEXT_OWNER:
+                    continue  # Its reference names an account, not a secret: kept.
                 if mode == "exclude":
                     _rewrite_database(staging, path, item.owner)
                 else:

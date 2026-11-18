@@ -203,8 +203,7 @@ class TestTemplateExecutionViaRuntime:
         assert all(len(r["text"]) >= 10 for r in results)
         # A pre operation rewrote the text, so offsets are preprocessed-based.
         assert all(
-            r["metadata"]["offset_basis"].startswith("preprocessed:")
-            for r in results
+            r["metadata"]["offset_basis"].startswith("preprocessed:") for r in results
         )
 
     def test_chunker_template_options_apply(self):

@@ -1,0 +1,28 @@
+.......................................                                  [100%]
+============================= slowest 25 durations =============================
+6.14s call     Tests/Chat/test_console_archive_recovery_followup.py::test_captured_native_turn_restores_original_second_row[True]
+5.36s call     Tests/Chat/test_console_archive_recovery_followup.py::test_captured_native_turn_restores_original_second_row[False]
+3.85s call     Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_composes_existing_transform_without_changing_its_source
+2.94s call     Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[unowned]
+2.59s call     Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[unknown]
+2.56s call     Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[history]
+2.36s call     Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[foreign]
+2.35s call     Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[role]
+2.34s setup    Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_composes_existing_transform_without_changing_its_source
+2.32s call     Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[attachment]
+2.00s call     Tests/Chat/test_console_archive_recovery_followup.py::test_retained_metadata_enters_real_first_request_fit_and_no_fit
+1.98s setup    Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[role]
+1.81s call     Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[sidecar]
+1.79s call     Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[missing_current]
+1.71s setup    Tests/Chat/test_console_archive_recovery_followup.py::test_captured_native_turn_restores_original_second_row[True]
+1.64s setup    Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[unowned]
+1.51s setup    Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[history]
+1.50s setup    Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[missing_current]
+1.48s setup    Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[attachment]
+1.48s call     Tests/Chat/test_console_archive_recovery_followup.py::test_multiple_native_cards_preserve_pages_and_bound_complete_evidence[True]
+1.47s call     Tests/Chat/test_console_archive_recovery_followup.py::test_multiple_native_cards_preserve_pages_and_bound_complete_evidence[False]
+1.46s setup    Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[foreign]
+1.37s setup    Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[unknown]
+1.33s setup    Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_turn_gates_exclude_previously_observed_selection[frozen_blocked]
+1.29s setup    Tests/Chat/test_console_archive_recovery_followup.py::test_fresh_turn_gates_exclude_previously_observed_selection[non_native]
+39 passed in 117.45s (0:01:57)

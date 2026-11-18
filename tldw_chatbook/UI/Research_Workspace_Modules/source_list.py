@@ -234,8 +234,7 @@ class ResearchSourceList(Vertical):
         if needed <= len(self._slots):
             return
         new_slots = [
-            _ResearchSourceRowSlot(index)
-            for index in range(len(self._slots), needed)
+            _ResearchSourceRowSlot(index) for index in range(len(self._slots), needed)
         ]
         self._slots.extend(new_slots)
         if self.is_attached:

@@ -105,13 +105,9 @@ def test_two_concurrent_rounds_for_different_sessions_each_get_their_own_decisio
 def test_close_session_denies_only_that_sessions_round(controller):
     """Destructive close releases its exact decisions, never a sibling session."""
     results = {}
-    thread_a = _arm(
-        controller, "https://x/one", controller.session_a, results, "one"
-    )
+    thread_a = _arm(controller, "https://x/one", controller.session_a, results, "one")
     assert _wait_until(lambda: len(controller.pending_skill_install_ids()) == 1)
-    thread_b = _arm(
-        controller, "https://x/two", controller.session_b, results, "two"
-    )
+    thread_b = _arm(controller, "https://x/two", controller.session_b, results, "two")
     assert _wait_until(lambda: len(controller.pending_skill_install_ids()) == 2)
     id_b = [
         request_id
@@ -332,14 +328,10 @@ def test_two_rounds_for_the_same_session_resolving_the_newer_one_first_leaves_th
 
 
 class _DeferredClearApp:
-    """`call_from_thread` stand-in that BLOCKS the `_remount_head` re-derive
-    closures until a test explicitly releases them, while every
-    OTHER `call_from_thread` use (mount, park) still runs immediately.
+    """Defer only `InterruptRoundHost.remount_head.<locals>._apply`.
 
-    Mirrors `test_console_mcp_approval.py`'s identical fake -- see
-    `_remount_head`'s docstring for why the re-derive closures are
-    always invoked with zero args/kwargs, which is what identifies them
-    here without any bridge-specific hook.
+    The test releases this teardown re-derive explicitly. All other
+    callbacks, including zero-argument attention updates, run immediately.
     """
 
     def __init__(self) -> None:
@@ -347,7 +339,12 @@ class _DeferredClearApp:
         self.release_clear = threading.Event()
 
     def call_from_thread(self, fn, *args, **kwargs):
-        if not args and not kwargs:
+        if (
+            not args
+            and not kwargs
+            and getattr(fn, "__qualname__", "")
+            == "InterruptRoundHost.remount_head.<locals>._apply"
+        ):
             self.clear_enqueued.set()
             self.release_clear.wait(timeout=5)
             return fn()
@@ -576,7 +573,9 @@ def test_bare_shutdown_flag_alone_denies_a_real_session_round_within_one_poll_in
         "TASK-1052 regression this test guards against"
     )
     assert results["one"] is False  # still fails closed, never auto-approved
-    assert controller.pending_skill_install_ids() == []  # round's own accounting cleaned up
+    assert (
+        controller.pending_skill_install_ids() == []
+    )  # round's own accounting cleaned up
 
 
 def test_shutdown_flag_alone_denies_both_unregistered_sessions_rounds_and_cleans_accounting(

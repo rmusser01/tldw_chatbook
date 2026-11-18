@@ -171,9 +171,7 @@ async def _open(app, watchlist_id: int | None = None, *, section: str = "items")
         screen = host.screen_stack[-1]
         assert isinstance(screen, WatchlistsCollectionsScreen)
         if watchlist_id is not None:
-            screen.tree_scope = TreeScope(
-                kind="watchlist", watchlist_id=watchlist_id
-            )
+            screen.tree_scope = TreeScope(kind="watchlist", watchlist_id=watchlist_id)
         screen.active_section = section
         await pilot.pause(0.4)
         yield screen, pilot, host
@@ -264,9 +262,9 @@ async def test_a_section_switch_leaves_both_rails_standing():
             is inspector_before
         ), f"the Inspector must survive a tab click: {counted.report()}"
         assert counted.recomposes["WatchlistTree#wl-tree"] == 0, counted.report()
-        assert (
-            counted.recomposes["InspectorPane#watchlists-entity-inspector"] == 0
-        ), counted.report()
+        assert counted.recomposes["InspectorPane#watchlists-entity-inspector"] == 0, (
+            counted.report()
+        )
 
 
 async def test_inspector_preference_and_grip_action_are_shared_across_all_tabs(
@@ -293,9 +291,7 @@ async def test_inspector_preference_and_grip_action_are_shared_across_all_tabs(
     }
 
     async with _open(app) as (screen, pilot, host):
-        collapsed_grip = screen.query_one(
-            "#wl-grip-right_rail", WatchlistsPaneGrip
-        )
+        collapsed_grip = screen.query_one("#wl-grip-right_rail", WatchlistsPaneGrip)
         assert str(collapsed_grip.label) == "<---"
         assert collapsed_grip.tooltip == "Expand Inspector"
 
@@ -322,9 +318,7 @@ async def test_inspector_preference_and_grip_action_are_shared_across_all_tabs(
 
         screen.query_one("#wl-grip-right_rail", WatchlistsPaneGrip).press()
         await _settle(pilot, host)
-        expected_collapsed = RegionLayout(
-            collapsed=frozenset({Region.RIGHT_RAIL})
-        )
+        expected_collapsed = RegionLayout(collapsed=frozenset({Region.RIGHT_RAIL}))
         assert writes == [RegionLayout(), expected_collapsed]
 
         screen.active_section = "items"
@@ -418,9 +412,9 @@ async def test_a_section_switch_builds_the_sections_pane_exactly_once():
             f"removed by task-15778: {warm.report()}"
         )
         assert warm.recomposes["WatchlistsCollectionsScreen#-"] == 0, warm.report()
-        assert (
-            screen.query_one("#rules-table", DataTable).row_count == 1
-        ), "and the row still has to be on screen"
+        assert screen.query_one("#rules-table", DataTable).row_count == 1, (
+            "and the row still has to be on screen"
+        )
 
 
 async def test_a_section_switch_shows_rows_that_land_while_the_swap_runs():
@@ -727,8 +721,7 @@ async def test_a_tree_click_updates_each_affected_pane_at_most_once():
         )
         for key, count in counted.recomposes.items():
             assert count <= 1, (
-                f"{key} was rebuilt {count} times by one tree click: "
-                f"{counted.report()}"
+                f"{key} was rebuilt {count} times by one tree click: {counted.report()}"
             )
         assert screen.tree_scope == TreeScope(kind="all"), (
             "the click still has to move the scope"
@@ -832,8 +825,7 @@ async def test_a_script_selection_never_recomposes_the_briefing_detail_region():
             await _settle(pilot, host)
 
         assert counted.recomposes["ArtifactsPane#watchlists-artifacts-pane"] == 0, (
-            "a script selection must never rebuild the pane: "
-            f"{counted.report()}"
+            f"a script selection must never rebuild the pane: {counted.report()}"
         )
         assert (
             counted.recomposes["BriefingDetailRegion#artifacts-detail-region"] == 0
@@ -843,10 +835,7 @@ async def test_a_script_selection_never_recomposes_the_briefing_detail_region():
             f"scripts table (and its focus, cursor and scroll): {counted.report()}"
         )
         assert (
-            counted.recomposes[
-                "ScriptDetailRegion#artifacts-script-detail-region"
-            ]
-            == 1
+            counted.recomposes["ScriptDetailRegion#artifacts-script-detail-region"] == 1
         ), (
             "the script selection and its audio reload landing must "
             f"coalesce into ONE script-detail-region rebuild: {counted.report()}"
@@ -930,8 +919,7 @@ async def test_a_rail_toggle_rebuilds_only_the_toggled_region():
             counted.report()
         )
         assert (
-            screen.query_one("#watchlists-entity-inspector", InspectorPane)
-            is inspector
+            screen.query_one("#watchlists-entity-inspector", InspectorPane) is inspector
         ), counted.report()
         assert screen.query_one("#wl-centre-status") is header, counted.report()
         assert counted.recomposes["WatchlistsWorkbench#wl-workbench"] == 0, (
@@ -1120,12 +1108,8 @@ async def test_resize_hysteresis_suppresses_sub_band_layout_requests(
         for width in (155, 156, 157, 158, 157, 158, 157, 158):
             await pilot.resize_terminal(width, 50)
             await _settle(pilot, host)
-            assert screen._responsive_region_layout.is_collapsed(
-                Region.RIGHT_RAIL
-            )
-            assert screen.query_one(
-                "#wl-grip-right_rail", WatchlistsPaneGrip
-            ) is grip
+            assert screen._responsive_region_layout.is_collapsed(Region.RIGHT_RAIL)
+            assert screen.query_one("#wl-grip-right_rail", WatchlistsPaneGrip) is grip
             assert screen.focused is focused
 
         assert requests == []
@@ -1133,21 +1117,15 @@ async def test_resize_hysteresis_suppresses_sub_band_layout_requests(
         await pilot.resize_terminal(159, 50)
         await _settle(pilot, host)
         assert len(requests) == 1
-        assert not screen._responsive_region_layout.is_collapsed(
-            Region.RIGHT_RAIL
-        )
+        assert not screen._responsive_region_layout.is_collapsed(Region.RIGHT_RAIL)
         right_rail_body = screen.query_one("#wl-region-right_rail")
-        assert screen.query_one(
-            "#wl-grip-right_rail", WatchlistsPaneGrip
-        ) is grip
+        assert screen.query_one("#wl-grip-right_rail", WatchlistsPaneGrip) is grip
         assert screen.focused is focused
 
         await pilot.resize_terminal(155, 50)
         await _settle(pilot, host)
         assert len(requests) == 1
-        assert not screen._responsive_region_layout.is_collapsed(
-            Region.RIGHT_RAIL
-        )
+        assert not screen._responsive_region_layout.is_collapsed(Region.RIGHT_RAIL)
         assert screen.query_one("#wl-region-right_rail") is right_rail_body
         assert screen.focused is focused
 
@@ -1156,9 +1134,7 @@ async def test_resize_hysteresis_suppresses_sub_band_layout_requests(
         assert len(requests) == 2
         assert screen._responsive_region_layout.is_collapsed(Region.RIGHT_RAIL)
         assert not screen.query("#wl-region-right_rail")
-        assert screen.query_one(
-            "#wl-grip-right_rail", WatchlistsPaneGrip
-        ) is grip
+        assert screen.query_one("#wl-grip-right_rail", WatchlistsPaneGrip) is grip
         assert screen.focused is focused
 
 
@@ -1277,9 +1253,7 @@ async def test_responsive_grip_open_protects_preferred_open_pane(
         screen.query_one("#wl-grip-right_rail", Button).press()
         await _settle(pilot, host)
 
-        expected_lease = ResponsivePriorityLease(
-            Region.RIGHT_RAIL, read_mode=True
-        )
+        expected_lease = ResponsivePriorityLease(Region.RIGHT_RAIL, read_mode=True)
         assert screen._responsive_priority_lease == expected_lease
         assert not screen.region_layout.is_collapsed(Region.RIGHT_RAIL)
         assert not screen._effective_region_layout.is_collapsed(Region.RIGHT_RAIL)
@@ -1392,7 +1366,9 @@ async def test_priority_lease_parks_across_management_and_replaces_in_read() -> 
         assert screen._responsive_priority_lease is None
 
 
-async def test_priority_lease_clears_only_after_origin_mode_fits_past_dead_band() -> None:
+async def test_priority_lease_clears_only_after_origin_mode_fits_past_dead_band() -> (
+    None
+):
     app = _build_test_app()
     async with _open(app) as (screen, pilot, host):
         await pilot.resize_terminal(154, 50)
@@ -1517,42 +1493,40 @@ async def test_mounted_layout_cycles_preserve_complete_reader_and_list_state() -
         assert reader_scroll_y > 0
 
         async def assert_restored() -> None:
-            restored = screen.query_one(
-                "#watchlists-items-pane", ArticleListPane
-            )
+            restored = screen.query_one("#watchlists-items-pane", ArticleListPane)
             restored_table = restored.query_one("#items-table", ListView)
             assert str(restored.selected_item["id"]) == selected_id
             assert restored.status_filter == "unread"
             assert restored.search_query == "Story"
             assert restored.page_number == 3
-            assert getattr(
-                restored_table.highlighted_child, "item_id_key", None
-            ) == anchor_id
+            assert (
+                getattr(restored_table.highlighted_child, "item_id_key", None)
+                == anchor_id
+            )
             assert float(restored_table.scroll_y) == list_scroll_y
             assert restored_table.has_focus
             assert screen.tree_scope == scope
             assert screen._items_page_index == page_index
-            assert screen.query_one(
-                "#watchlists-content-pane", ContentPane
-            ) is reader
-            assert float(
-                reader.query_one("#content-body-scroll", VerticalScroll).scroll_y
-            ) == reader_scroll_y
+            assert screen.query_one("#watchlists-content-pane", ContentPane) is reader
+            assert (
+                float(reader.query_one("#content-body-scroll", VerticalScroll).scroll_y)
+                == reader_scroll_y
+            )
 
         for key in ("[", "]"):
-            items_identity = screen.query_one(
-                "#watchlists-items-pane", ArticleListPane
+            items_identity = screen.query_one("#watchlists-items-pane", ArticleListPane)
+            await pilot.press(key)
+            await _settle(pilot, host)
+            assert (
+                screen.query_one("#watchlists-items-pane", ArticleListPane)
+                is items_identity
             )
             await pilot.press(key)
             await _settle(pilot, host)
-            assert screen.query_one(
-                "#watchlists-items-pane", ArticleListPane
-            ) is items_identity
-            await pilot.press(key)
-            await _settle(pilot, host)
-            assert screen.query_one(
-                "#watchlists-items-pane", ArticleListPane
-            ) is items_identity
+            assert (
+                screen.query_one("#watchlists-items-pane", ArticleListPane)
+                is items_identity
+            )
             await assert_restored()
 
         await pilot.press("z")
@@ -1586,7 +1560,8 @@ async def test_mounted_layout_cycles_preserve_complete_reader_and_list_state() -
 
 @pytest.mark.parametrize("failure", [False, OSError("disk full")])
 async def test_layout_persistence_advances_only_after_current_success(
-    monkeypatch, failure,
+    monkeypatch,
+    failure,
 ) -> None:
     results = iter([failure, True])
 
@@ -1618,7 +1593,8 @@ async def test_layout_persistence_advances_only_after_current_success(
 
 @pytest.mark.parametrize("failure", [False, OSError("disk full")])
 async def test_manual_focus_exit_retries_pending_preference_without_changing_it(
-    monkeypatch, failure,
+    monkeypatch,
+    failure,
 ) -> None:
     writes: list[RegionLayout] = []
     results = iter([failure, True])
@@ -1760,7 +1736,9 @@ async def test_layout_persist_disarm_is_atomic_with_a_newer_generation(
         assert screen._layout_persist_draining is False
 
 
-async def test_layout_acknowledgements_ignore_stale_tokens_and_clear_current_noop() -> None:
+async def test_layout_acknowledgements_ignore_stale_tokens_and_clear_current_noop() -> (
+    None
+):
     app = _build_test_app()
     async with _open(app) as (screen, pilot, host):
         layout = screen._effective_region_layout
@@ -1817,9 +1795,7 @@ async def test_stale_failure_cannot_rollback_rekeyed_manual_intent(
     async with _open(app) as (screen, pilot, host):
         preferred = screen.region_layout
         effective = screen._effective_region_layout
-        lease_before = ResponsivePriorityLease(
-            Region.RIGHT_RAIL, read_mode=False
-        )
+        lease_before = ResponsivePriorityLease(Region.RIGHT_RAIL, read_mode=False)
         effective_before = effective.toggle_preferred(Region.RIGHT_RAIL)
         responsive_before = effective.toggle_preferred(Region.LEFT_RAIL)
         token1 = screen._next_layout_request_token()
@@ -1836,15 +1812,9 @@ async def test_stale_failure_cannot_rollback_rekeyed_manual_intent(
 
         token2 = screen._next_layout_request_token()
         assert screen._manual_layout_rollback is not None
-        assert (
-            screen._manual_layout_rollback.priority_lease_before
-            == lease_before
-        )
+        assert screen._manual_layout_rollback.priority_lease_before == lease_before
         assert screen._manual_layout_rollback.effective_before == effective_before
-        assert (
-            screen._manual_layout_rollback.responsive_before
-            == responsive_before
-        )
+        assert screen._manual_layout_rollback.responsive_before == responsive_before
         screen.post_message(
             RegionLayoutApplyFailed(
                 token=token1,
@@ -1944,9 +1914,7 @@ async def test_failed_responsive_inspector_open_restores_layout_snapshots(
         effective_before = screen._effective_region_layout
         responsive_before = screen._responsive_region_layout
         focus_before = screen._article_focus_active
-        parked_lease = ResponsivePriorityLease(
-            Region.LEFT_RAIL, read_mode=False
-        )
+        parked_lease = ResponsivePriorityLease(Region.LEFT_RAIL, read_mode=False)
         screen._responsive_priority_lease = parked_lease
 
         assert not preferred_before.is_collapsed(Region.RIGHT_RAIL)
@@ -2018,9 +1986,7 @@ async def test_failed_manual_expansion_rolls_back_full_layout_intent(
         fallback = screen.region_layout
         persisted.clear()
 
-        parked_lease = ResponsivePriorityLease(
-            Region.RIGHT_RAIL, read_mode=False
-        )
+        parked_lease = ResponsivePriorityLease(Region.RIGHT_RAIL, read_mode=False)
         screen._responsive_priority_lease = parked_lease
         screen._article_focus_active = True
 
@@ -2209,9 +2175,10 @@ async def test_management_scope_invalidates_reader_return_to_read_failure_is_hon
         assert pane.new_items_note == ""
         assert pane.page_loading is False
         assert pane.display is False
-        assert _static_text(
-            screen.query_one("#watchlists-items-retry-state")
-        ) == "Couldn't load Unassigned. Retry to load Feed Items."
+        assert (
+            _static_text(screen.query_one("#watchlists-items-retry-state"))
+            == "Couldn't load Unassigned. Retry to load Feed Items."
+        )
         retry = screen.query_one("#watchlists-items-retry-button", Button)
         assert str(retry.label) == "Retry"
         assert retry.disabled is False
@@ -2272,12 +2239,13 @@ async def test_reader_retry_repeated_failure_retains_scoped_retry_authority():
         await _settle(pilot, host)
 
         assert failed.await_count == 2
-        assert _static_text(
-            screen.query_one("#watchlists-items-retry-state")
-        ) == "Couldn't load Unassigned. Retry to load Feed Items."
-        assert screen.query_one(
-            "#watchlists-items-retry-button", Button
-        ).disabled is False
+        assert (
+            _static_text(screen.query_one("#watchlists-items-retry-state"))
+            == "Couldn't load Unassigned. Retry to load Feed Items."
+        )
+        assert (
+            screen.query_one("#watchlists-items-retry-button", Button).disabled is False
+        )
 
 
 async def test_reader_retry_rapid_presses_coalesce_around_one_producer():
@@ -2307,9 +2275,9 @@ async def test_reader_retry_rapid_presses_coalesce_around_one_producer():
 
         assert retry_loader.await_count == 1
         assert screen._items_retry_message is not None
-        assert screen.query_one(
-            "#watchlists-items-retry-button", Button
-        ).disabled is True
+        assert (
+            screen.query_one("#watchlists-items-retry-button", Button).disabled is True
+        )
 
         release.set()
         await _settle(pilot, host)
@@ -2338,12 +2306,13 @@ async def test_reader_retry_scheduling_failure_keeps_retry_available(monkeypatch
         screen.query_one("#watchlists-items-retry-button", Button).press()
         await pilot.pause()
 
-        assert _static_text(
-            screen.query_one("#watchlists-items-retry-state")
-        ) == "Couldn't load Unassigned. Retry to load Feed Items."
-        assert screen.query_one(
-            "#watchlists-items-retry-button", Button
-        ).disabled is False
+        assert (
+            _static_text(screen.query_one("#watchlists-items-retry-state"))
+            == "Couldn't load Unassigned. Retry to load Feed Items."
+        )
+        assert (
+            screen.query_one("#watchlists-items-retry-button", Button).disabled is False
+        )
 
 
 async def test_layout_persist_scheduler_and_thread_handoff_failures_are_retryable(
@@ -2410,9 +2379,7 @@ async def test_management_expansion_failure_preserves_parked_feed_preference(
         pilot,
         host,
     ):
-        fallback = RegionLayout(
-            collapsed=frozenset({Region.LEFT_RAIL, Region.ITEMS})
-        )
+        fallback = RegionLayout(collapsed=frozenset({Region.LEFT_RAIL, Region.ITEMS}))
         screen._apply_layout(fallback)
         await _settle(pilot, host)
         persisted.clear()
@@ -2480,9 +2447,7 @@ async def test_section_factory_failure_rolls_back_mode_and_can_retry(
         reader = screen.query_one("#watchlists-content-pane", ContentPane)
         items_grip = screen.query_one("#wl-grip-items", WatchlistsPaneGrip)
         before_layout = screen._effective_region_layout
-        assert before_layout.collapsed == frozenset(
-            {Region.LEFT_RAIL, Region.ITEMS}
-        )
+        assert before_layout.collapsed == frozenset({Region.LEFT_RAIL, Region.ITEMS})
         original_factory = screen._build_detail_pane
         fail = True
 
@@ -2503,9 +2468,7 @@ async def test_section_factory_failure_rolls_back_mode_and_can_retry(
         assert workbench.read_mode is True
         assert workbench.region_layout == before_layout
         assert screen.query_one("#watchlists-content-pane", ContentPane) is reader
-        assert screen.query_one(
-            "#wl-grip-items", WatchlistsPaneGrip
-        ) is items_grip
+        assert screen.query_one("#wl-grip-items", WatchlistsPaneGrip) is items_grip
         assert screen._responsive_priority_lease == parked_lease
         assert screen._responsive_region_layout == before_layout
         assert persisted == []

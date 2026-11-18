@@ -1,0 +1,54 @@
+"""Keep the real startup timer pending until the readiness helper waits."""
+
+import asyncio
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def pending_startup_projection(request, monkeypatch):
+    from Tests.private_profile import is_private_profile_child
+
+    if not is_private_profile_child(request):
+        return
+
+    from textual.timer import Timer
+    from Tests.UI import test_console_mcp_approval as helpers
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    original_ready = helpers._wait_for_production_console_ready
+    original_tick = Timer._tick
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def tick(timer, **kwargs):
+        scheduled = getattr(timer._callback, "args", ())
+        target = scheduled[0] if scheduled else None
+        if (
+            isinstance(getattr(target, "__self__", None), ChatScreen)
+            and getattr(target, "__func__", None) is ChatScreen.sync_task_resume_state
+        ):
+            entered.set()
+            await release.wait()
+        return await original_tick(timer, **kwargs)
+
+    async def ready_with_pending_timer(app, pilot):
+        readiness = asyncio.create_task(original_ready(app, pilot))
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=10.0)
+            assert isinstance(app.screen, ChatScreen)
+            drained = asyncio.Event()
+            app.screen.call_after_refresh(drained.set)
+            await asyncio.wait_for(drained.wait(), timeout=10.0)
+            done, _ = await asyncio.wait((readiness,), timeout=0.1)
+            assert not done, "Readiness returned while its real projection timer was held"
+            print("PR3034 probe: readiness waits for the actual pending timer", flush=True)
+        finally:
+            release.set()
+            await asyncio.wait_for(asyncio.shield(readiness), timeout=10.0)
+        return readiness.result()
+
+    monkeypatch.setattr(Timer, "_tick", tick)
+    monkeypatch.setattr(
+        helpers, "_wait_for_production_console_ready", ready_with_pending_timer
+    )

@@ -1,0 +1,125 @@
+{
+  "retrieved": "2026-09-16",
+  "purpose": "Inert parser fixtures; synthetic runnable controls are separate pytest temporary packages. API tree/catalog JSON is provenance, not an upstream file-blob match.",
+  "packages": {
+    "cursor-teaching-f5bdd682": {
+      "commit": "f5bdd6826fd0a0d9cbc4347134c3a74a200b9d9d",
+      "repository": "cursor/plugins",
+      "source_prefix": "teaching",
+      "license": "MIT; supplied package notice, Copyright (c) 2026 Cursor",
+      "expected_inventory": {
+        "skill": [
+          "create-learning-path",
+          "run-learning-retrospective"
+        ],
+        "mcp": [],
+        "rule": [],
+        "agent": [],
+        "command": [],
+        "hook": []
+      },
+      "limits": "Selected manifest, two complete skill files, and notice only; assets and README omitted. All four copied files matched upstream tree blobs. No original-host runtime comparison."
+    },
+    "codex-linear-1dc19589": {
+      "commit": "1dc195897af4161d039b80d8471ec0a10c9bbc89",
+      "repository": "openai/plugins",
+      "source_prefix": "plugins/linear",
+      "license": "MIT declaration in manifest only; same-commit package listing has no LICENSE",
+      "expected_inventory": {
+        "skill": [],
+        "mcp": [
+          "linear"
+        ],
+        "apps": {
+          "linear": "asdk_app_69a089a326dc8191b32a3f2553f5be2c"
+        }
+      },
+      "limits": "Selected JSON metadata only. Assets and README omitted; no licensing claim for omitted material. All three copied files matched upstream tree blobs. OAuth resource and app declaration create no connection, grant, or runtime qualification."
+    },
+    "portable-arch-7568a482": {
+      "commit": "7568a482ce2df38f8965ab5336a3220db796a4ba",
+      "repository": "github/awesome-copilot",
+      "source_prefix": "plugins/arch",
+      "license": "MIT; same-commit repository notice, Copyright GitHub, Inc.",
+      "expected_inventory": {
+        "skill": [],
+        "mcp": []
+      },
+      "limits": "Manifest matched upstream blob. LICENSE fetched from pinned raw URL but not independently matched against root tree. Package listing contains README.md and plugin.json only; extension skills/doc-and-modernize is absent and must not be followed outside package. No runtime qualification."
+    }
+  },
+  "files": [
+    {
+      "destination": "Tests/Plugins/fixtures/interop/upstream/cursor-teaching-f5bdd682/.cursor-plugin/plugin.json",
+      "bytes": 733,
+      "sha256": "a1c1073b4c3d9b64370607d194b07dc336ba2ebaf2aadaec153d2575a93f8523",
+      "git_blob": "6691793e9ef4a3536f45b78bb7487ed1254e23a9",
+      "git_blob_matched": true,
+      "original_url": "https://github.com/cursor/plugins/blob/f5bdd6826fd0a0d9cbc4347134c3a74a200b9d9d/teaching/.cursor-plugin/plugin.json"
+    },
+    {
+      "destination": "Tests/Plugins/fixtures/interop/upstream/cursor-teaching-f5bdd682/LICENSE",
+      "bytes": 1063,
+      "sha256": "702f5f331b56aff0e33d8c7826df5202559f894145eb70355c6477b55b5bb8a0",
+      "git_blob": "ca2bba771cd39dbef6acf96b52481133983451f3",
+      "git_blob_matched": true,
+      "original_url": "https://github.com/cursor/plugins/blob/f5bdd6826fd0a0d9cbc4347134c3a74a200b9d9d/teaching/LICENSE"
+    },
+    {
+      "destination": "Tests/Plugins/fixtures/interop/upstream/cursor-teaching-f5bdd682/skills/create-learning-path/SKILL.md",
+      "bytes": 821,
+      "sha256": "3d247cc4d5baf6fb397a398f6957ab7427c7852d613a42bb057fa93ca20fcc63",
+      "git_blob": "1744f1ab457eff46126fcf9de2a60ad6aff7009f",
+      "git_blob_matched": true,
+      "original_url": "https://github.com/cursor/plugins/blob/f5bdd6826fd0a0d9cbc4347134c3a74a200b9d9d/teaching/skills/create-learning-path/SKILL.md"
+    },
+    {
+      "destination": "Tests/Plugins/fixtures/interop/upstream/cursor-teaching-f5bdd682/skills/run-learning-retrospective/SKILL.md",
+      "bytes": 637,
+      "sha256": "71b0159d0d4c19e94d873a11b1dc96d5fe0600e1e46a0eae3fab92e05bb0cc91",
+      "git_blob": "d8f465c9eb1a4d087b16423aafd40c85a9fc7dba",
+      "git_blob_matched": true,
+      "original_url": "https://github.com/cursor/plugins/blob/f5bdd6826fd0a0d9cbc4347134c3a74a200b9d9d/teaching/skills/run-learning-retrospective/SKILL.md"
+    },
+    {
+      "destination": "Tests/Plugins/fixtures/interop/upstream/codex-linear-1dc19589/.codex-plugin/plugin.json",
+      "bytes": 1333,
+      "sha256": "04c0e2af139b23c4bff3388cd66fbe40095972df203e6926394afbb2246e9354",
+      "git_blob": "20cbb2e260a55e60bf0bbc1e7381abc01b291801",
+      "git_blob_matched": true,
+      "original_url": "https://github.com/openai/plugins/blob/1dc195897af4161d039b80d8471ec0a10c9bbc89/plugins/linear/.codex-plugin/plugin.json"
+    },
+    {
+      "destination": "Tests/Plugins/fixtures/interop/upstream/codex-linear-1dc19589/.mcp.json",
+      "bytes": 166,
+      "sha256": "ae58cb99fbb0b80d7b5f3c992aeba7c32f8cc797e0ecb47f9a5f959fa5359b61",
+      "git_blob": "c1c906cccb68f4818f544b9bd51e4a1c212be0a5",
+      "git_blob_matched": true,
+      "original_url": "https://github.com/openai/plugins/blob/1dc195897af4161d039b80d8471ec0a10c9bbc89/plugins/linear/.mcp.json"
+    },
+    {
+      "destination": "Tests/Plugins/fixtures/interop/upstream/codex-linear-1dc19589/.app.json",
+      "bytes": 97,
+      "sha256": "9d1294990e2f8a81bcd894c562fc5e7f06ac55d799c8049fdb01a62c0358c574",
+      "git_blob": "e04e01af889e2216f99879bb38729f4edfa9d430",
+      "git_blob_matched": true,
+      "original_url": "https://github.com/openai/plugins/blob/1dc195897af4161d039b80d8471ec0a10c9bbc89/plugins/linear/.app.json"
+    },
+    {
+      "destination": "Tests/Plugins/fixtures/interop/upstream/portable-arch-7568a482/plugin.json",
+      "bytes": 717,
+      "sha256": "6e69360d3f446205d4e579cf09c42103dbfebf8bb8fa2d83595efe0b1aa4b4b1",
+      "git_blob": "9e42a68720d18ad8a3812ad6e7ea229a0401bab0",
+      "git_blob_matched": true,
+      "original_url": "https://github.com/github/awesome-copilot/blob/7568a482ce2df38f8965ab5336a3220db796a4ba/plugins/arch/plugin.json"
+    },
+    {
+      "destination": "Tests/Plugins/fixtures/interop/upstream/portable-arch-7568a482/LICENSE",
+      "bytes": 1059,
+      "sha256": "e32449d23085399adc1222f7a17408b730550258e51627c153cb108ca9955823",
+      "git_blob": "89bc5e962c9944cdb050887062afdaaf89be504a",
+      "git_blob_matched": false,
+      "original_url": "https://github.com/github/awesome-copilot/blob/7568a482ce2df38f8965ab5336a3220db796a4ba/LICENSE"
+    }
+  ]
+}

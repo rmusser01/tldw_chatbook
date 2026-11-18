@@ -1,0 +1,24 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/UI/test_console_idle_heap_refreeze.py::test_mounted_received_custody_blocks_completion_and_idle_timer_reclaims",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "-p",
+    "probe",
+    "--timeout=180",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f0a-ui18-42od1l_t/ordered-red-tmp",
+    "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f0a-ui18-42od1l_t/ordered-red.xml"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+  "code": 1,
+  "elapsed": 11.538974292110652,
+  "diagnostic_environment": {
+    "UI18_ORDERED": "1"
+  },
+  "observation_source": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f0a-ui18-42od1l_t/probe.py",
+  "observation_source_sha256": "01680d00545ffaf767e1436da94ba2b727a55f22f5d11e87f025457e213462a5"
+}

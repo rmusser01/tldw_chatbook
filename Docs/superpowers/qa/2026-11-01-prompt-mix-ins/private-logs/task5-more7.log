@@ -1,0 +1,9 @@
+....F........................................................            [100%]
+=================================== FAILURES ===================================
+/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Chat/console_trace_provenance.py:640: tldw_chatbook.Chat.console_trace_provenance.TraceProvenanceAlignmentError: current-turn text requires one saved source and its active artifact
+============================= slowest 25 durations =============================
+
+(25 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_console_prompt_mixin_composition.py::test_agent_tool_loop_preserves_mixin_owner_and_counts_body_once
+1 failed, 60 passed in 29.71s

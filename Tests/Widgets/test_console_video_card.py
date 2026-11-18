@@ -36,7 +36,9 @@ def _spec(status="ready", **meta_overrides):
 
 
 def test_signature_flips_on_status_change():
-    assert video_card_signature(_spec("ready")) != video_card_signature(_spec("expired"))
+    assert video_card_signature(_spec("ready")) != video_card_signature(
+        _spec("expired")
+    )
 
 
 def test_signature_stable_across_path_moves_same_status():

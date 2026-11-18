@@ -1,0 +1,81 @@
+2026-11-01 18:03:39.566 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+2026-11-01 18:03:43 [WARNING ] tldw_chatbook.Web_Server.serve:651 - Passkeys disabled: python-fido2 is missing; reinstall the app with the [web] extra (e.g. pip install -e ".[web]") to enable passkeys
+___ ____ _  _ ___ _  _ ____ _       ____ ____ ____ _  _ ____ 
+ |  |___  \/   |  |  | |__| |    __ [__  |___ |__/ |  | |___ 
+ |  |___ _/\_  |  |__| |  | |___    ___] |___ |  \  \/  |___ v1.1.3
+
+Serving '/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m 
+tldw_chatbook.app' on http://127.0.0.1:18879
+
+Press Ctrl+C to quit
+2026-11-01 18:03:53.281 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+╭──────────────────────────────────────────── Traceback (most recent call last) ─────────────────────────────────────────────╮
+│ /Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/app_collections_wiring.py:836 in            │
+│ _deferred_wire_collections_capture_services                                                                                │
+│                                                                                                                            │
+│    833 │   │   task = vars(self).get("_collections_capture_initializer_task")                                              │
+│    834 │   │   if task is not None and not task.done():                                                                    │
+│    835 │   │   │   return                                                                                                  │
+│ ❱  836 │   │   request = _source_wiring._capture_deferred_collections_setup(self)                                          │
+│    837 │   │   if request is not None:                                                                                     │
+│    838 │   │   │   self._collections_capture_setup = request                                                               │
+│    839 │   │   │   task = _source_wiring._COLLECTIONS_TASK(                                                                │
+│                                                                                                                            │
+│ ╭──────────────────────────────────────────── locals ────────────────────────────────────────────╮                         │
+│ │ self = TldwCli(title='tldw chatbook', classes={'-dark-mode'}, pseudo_classes={'blur', 'dark'}) │                         │
+│ │ task = None                                                                                    │                         │
+│ ╰────────────────────────────────────────────────────────────────────────────────────────────────╯                         │
+│                                                                                                                            │
+│ /Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/app_collections_wiring.py:188 in            │
+│ _capture_deferred_collections_setup                                                                                        │
+│                                                                                                                            │
+│    185 │                                                                                                                   │
+│    186 │   app_module = sys.modules["tldw_chatbook.app"]                                                                   │
+│    187 │   app_type, defining, factory, factory_code, _runtime_type = (                                                    │
+│ ❱  188 │   │   app_module._CONSOLE_SKILL_APP_SOURCE                                                                        │
+│    189 │   )                                                                                                               │
+│    190 │   fields = vars(app)                                                                                              │
+│    191 │   database = fields.get("local_library_collections_db")                                                           │
+│                                                                                                                            │
+│ ╭──────────────────────────────────────────────────────── locals ────────────────────────────────────────────────────────╮ │
+│ │                 _source_wiring = <module 'tldw_chatbook.app_service_wiring' from                                       │ │
+│ │                                  '/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/app_… │ │
+│ │                            app = TldwCli(                                                                              │ │
+│ │                                  │   title='tldw chatbook',                                                            │ │
+│ │                                  │   classes={'-dark-mode'},                                                           │ │
+│ │                                  │   pseudo_classes={'blur', 'dark'}                                                   │ │
+│ │                                  )                                                                                     │ │
+│ │                     app_module = <module 'tldw_chatbook.app' from                                                      │ │
+│ │                                  '/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/app.… │ │
+│ │ collections_capture_repository = <module 'tldw_chatbook.Library.collections_capture_repository' from                   │ │
+│ │                                  '/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Libr… │ │
+│ │    collections_capture_service = <module 'tldw_chatbook.Library.collections_capture_service' from                      │ │
+│ │                                  '/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Libr… │ │
+│ │    collections_legacy_recovery = <module 'tldw_chatbook.Library.collections_legacy_recovery' from                      │ │
+│ │                                  '/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Libr… │ │
+│ │      collections_offline_store = <module 'tldw_chatbook.Library.collections_offline_store' from                        │ │
+│ │                                  '/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/Libr… │ │
+│ │                         config = <module 'tldw_chatbook.config' from                                                   │ │
+│ │                                  '/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/conf… │ │
+│ │                        inspect = <module 'inspect' from                                                                │ │
+│ │                                  '/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/py… │ │
+│ │         Library_Collections_DB = <module 'tldw_chatbook.DB.Library_Collections_DB' from                                │ │
+│ │                                  '/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/DB/L… │ │
+│ │                            sys = <module 'sys' (built-in)>                                                             │ │
+│ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+│                                                                                                                            │
+│ /Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/app.py:5680 in __getattr__                  │
+│                                                                                                                            │
+│   5677 │   │   from tldw_chatbook import app_entry                                                                         │
+│   5678 │   │                                                                                                               │
+│   5679 │   │   return getattr(app_entry, name)                                                                             │
+│ ❱ 5680 │   raise AttributeError(f"module {__name__!r} has no attribute {name!r}")                                          │
+│   5681                                                                                                                     │
+│   5682                                                                                                                     │
+│   5683 # --- Main execution block ---                                                                                      │
+│                                                                                                                            │
+│ ╭────────────── locals ──────────────╮                                                                                     │
+│ │ name = '_CONSOLE_SKILL_APP_SOURCE' │                                                                                     │
+│ ╰────────────────────────────────────╯                                                                                     │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+AttributeError: module '__main__' has no attribute '_CONSOLE_SKILL_APP_SOURCE'

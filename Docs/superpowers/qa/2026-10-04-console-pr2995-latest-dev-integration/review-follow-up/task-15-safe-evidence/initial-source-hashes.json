@@ -1,0 +1,7 @@
+{
+  "tldw_chatbook/Chat/console_chat_start.py": "d0cd0a4da8dd3a4cd2f185b2323d26a3517a975bc2860cf815f8437cea300c0a",
+  "tldw_chatbook/DB/automatic_work.py": "53e3cc87df9d6029aa34076b2456a9333a041caac8ed558342c88bb797ba6f1c",
+  "tldw_chatbook/Chat/console_chat_fork.py": "55a16b1eefe7d9d50ef46644f4dbb7a760c7fc7a13c64ee1a088570c7d1cbc72",
+  "Tests/Chat/test_console_chat_start.py": "63f1eb28fc8c30d3d8fa7fee99e393fab2f212fed8c2b7af72ce777a1a158511",
+  "Tests/DB/test_automatic_chat_starts.py": "7055d0addda58c916d3a3f68f96e6b57ebb5c2de03f343c7dc842012c1ff2b6a"
+}

@@ -1,6 +1,6 @@
 # ADR-033: Application Session State Ownership
 
-Status: Accepted
+Status: Accepted (confirmed and amended 2026-10-03: one coordinator for every binding surface, with rollback — TASK-34100.17)
 Date: 2026-07-26
 Related Tasks:
 [TASK-643](../tasks/task-643%20-%20Make-runtime-policy-the-sole-application-runtime-source-authority.md),
@@ -224,6 +224,32 @@ interface decisions, so they require one canonical ADR before implementation.
   session repository exists.
 - Service construction and shutdown remain outside this tranche, including the
   duplicated writing and chat-conversation wiring calls in `TldwCli.__init__`.
+
+## Amendment 2026-10-03 (TASK-34100.17, D3): one coordinator for every binding surface
+
+Source: the [first-run setup shape spec](../../Docs/superpowers/specs/2026-10-03-first-run-setup-shape-design.md), D3, approved by the owner on
+2026-10-03, and [TASK-34100.17](../tasks/task-34100.17%20-%20Owner-approved-design-spec-for-the-setup-flow-Quick-track-tldw-server-re-run-dashboard-Say-hello.md).
+
+**Confirmed.** `RuntimePolicyContext` stays the sole authority for the active runtime
+source.
+
+- **One coordinator.** "Settings saves the changed URL and token … and passes it to
+  one app-level coordinator" applies to every setup surface that binds: Settings,
+  the setup tldw server step, and Ready's "Connect a tldw server…". They call the
+  same coordinator, and none of them writes `[tldw_api]` or the binding itself.
+- **Rollback.** The coordinator restores the prior `[tldw_api]` values, and removes
+  any token it stored, when the bind fails. "A failed commit leaves every observer on
+  the old binding" therefore holds on disk as well. This narrows the Decision's "no
+  cross-file rollback is claimed" for the Settings TOML half of a failed bind.
+- **The token.** Server-token storage is unchanged: the coordinator stores the token
+  where Settings stores it today. (The spec's revision-2 draft stored it only in a
+  secure keychain; that was withdrawn with the owner's ruling that keychain storage
+  is optional.)
+- **Plain mode.** `tldw-cli setup --plain` has no app, so it saves a server for
+  activation at the next launch through the same coordinator. It never binds by
+  itself.
+- **Sync.** Binding a server prepares the Sync v2 profile on every surface alike,
+  disclosed before the choice (the owner kept parity with Settings, the spec's Q5).
 
 ## Links
 

@@ -71,7 +71,9 @@ def _cap_continuation(text: str) -> str:
 
 
 def _utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    return (
+        datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    )
 
 
 def _parse_status_code(detail: str) -> Optional[int]:
@@ -166,16 +168,16 @@ class WordBenchCaptureClient:
         transport: Optional[httpx.BaseTransport] = None,
     ) -> None:
         """Args:
-            base_url: The provider endpoint's base URL (trailing ``/``
-                stripped); ``/v1/completions`` or ``/v1/chat/completions``
-                is appended per call by ``_build_request``.
-            api_key: Sent as ``Authorization: Bearer <api_key>`` when set;
-                omitted entirely otherwise.
-            timeout: Per-request timeout, in seconds, for the pooled
-                ``httpx.AsyncClient`` created on first use.
-            transport: Overrides the client's transport -- tests pass an
-                ``httpx.MockTransport`` here so no real network call is
-                made.
+        base_url: The provider endpoint's base URL (trailing ``/``
+            stripped); ``/v1/completions`` or ``/v1/chat/completions``
+            is appended per call by ``_build_request``.
+        api_key: Sent as ``Authorization: Bearer <api_key>`` when set;
+            omitted entirely otherwise.
+        timeout: Per-request timeout, in seconds, for the pooled
+            ``httpx.AsyncClient`` created on first use.
+        transport: Overrides the client's transport -- tests pass an
+            ``httpx.MockTransport`` here so no real network call is
+            made.
         """
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
@@ -216,8 +218,8 @@ class WordBenchCaptureClient:
 
     async def __aenter__(self) -> "WordBenchCaptureClient":
         """Returns:
-            This instance, so it can be used as
-            ``async with WordBenchCaptureClient(...) as client:``.
+        This instance, so it can be used as
+        ``async with WordBenchCaptureClient(...) as client:``.
         """
         return self
 
@@ -300,7 +302,9 @@ class WordBenchCaptureClient:
             a ``CellError`` describing why the cell could not be measured
             (never raised).
         """
-        result, _payload = await self._capture_with_payload(snippet, target, mode, top_k)
+        result, _payload = await self._capture_with_payload(
+            snippet, target, mode, top_k
+        )
         return result
 
     async def _capture_with_payload(
@@ -326,7 +330,9 @@ class WordBenchCaptureClient:
         try:
             data = await self._post(url, payload)
         except httpx.HTTPStatusError as exc:
-            return CellError(reason="http_error", detail=f"{exc.response.status_code}"), None
+            return CellError(
+                reason="http_error", detail=f"{exc.response.status_code}"
+            ), None
         except httpx.HTTPError as exc:
             return CellError(reason="unreachable", detail=str(exc)), None
         except ValueError as exc:
@@ -334,16 +340,22 @@ class WordBenchCaptureClient:
             # the body isn't JSON at all -- e.g. a proxy returning an HTML
             # error page with a 200 status. One malformed response must not
             # abort an entire multi-hundred-cell run.
-            return CellError(reason="bad_response", detail=f"invalid JSON body: {exc}"), None
+            return CellError(
+                reason="bad_response", detail=f"invalid JSON body: {exc}"
+            ), None
 
         try:
-            tokens, offset = normalize_logprobs(data, want_content_token=(mode == "chat"))
+            tokens, offset = normalize_logprobs(
+                data, want_content_token=(mode == "chat")
+            )
         except NormalizerError as exc:
             return CellError(reason=exc.code, detail=str(exc)), data
         except (KeyError, TypeError) as exc:
             # A malformed top_logprobs entry (missing "token"/"logprob", or a
             # value of the wrong type) must not raise past this call either.
-            return CellError(reason="bad_response", detail=f"malformed entry: {exc!r}"), data
+            return CellError(
+                reason="bad_response", detail=f"malformed entry: {exc!r}"
+            ), data
 
         return CellCapture(
             prompt_mode=mode,
@@ -411,7 +423,9 @@ class WordBenchCaptureClient:
         result, payload = await self._capture_with_payload(snippet, target, mode, top_k)
         if isinstance(result, CellError):
             return result, ""
-        continuation = await self._resolve_continuation(target, mode, payload, content=snippet)
+        continuation = await self._resolve_continuation(
+            target, mode, payload, content=snippet
+        )
         return result, continuation
 
     async def preflight(
@@ -462,8 +476,12 @@ class WordBenchCaptureClient:
         if isinstance(result, CellError):
             state = _preflight_state_for_error(result)
             return PreflightResult(
-                state=state, k_returned=None, canary="unchecked",
-                detail=result.detail, checked_at=checked_at, continuation="",
+                state=state,
+                k_returned=None,
+                canary="unchecked",
+                detail=result.detail,
+                checked_at=checked_at,
+                continuation="",
             )
 
         observed = {tok.token for tok in result.top_k}
@@ -477,8 +495,11 @@ class WordBenchCaptureClient:
             )
         continuation = await self._resolve_continuation(target, mode, canary_payload)
         return PreflightResult(
-            state="ok", k_returned=result.k_returned, canary=canary,
-            checked_at=checked_at, continuation=continuation,
+            state="ok",
+            k_returned=result.k_returned,
+            canary=canary,
+            checked_at=checked_at,
+            continuation=continuation,
         )
 
     async def _resolve_continuation(

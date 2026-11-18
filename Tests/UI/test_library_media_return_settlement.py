@@ -305,7 +305,7 @@ async def test_viewer_return_capture_is_frozen_receipt_from_normal_media(
             capture_layout_signature,
         )
         row = screen.query_one("#library-media-row-15", Button)
-        screen._open_library_media_viewer(str(row.media_id))
+        screen._media_controller._open_library_media_viewer(str(row.media_id))
 
         receipt = screen._media_state.viewer_return
         assert type(receipt) is receipt_type
@@ -1887,11 +1887,11 @@ async def test_deadline_uses_one_current_geometry_fallback_and_never_requeues(
 
         monkeypatch.setattr(screen, "set_focus", observe_focus)
         outer_generation = screen._library_list_entry_focus_generation
-        screen._expire_library_media_return_settlement(
+        screen._media_controller._expire_library_media_return_settlement(
             request.request_id,
             outer_generation,
         )
-        screen._expire_library_media_return_settlement(
+        screen._media_controller._expire_library_media_return_settlement(
             request.request_id,
             outer_generation,
         )
@@ -1938,11 +1938,11 @@ async def test_deadline_without_geometry_fails_once_with_metadata_only_warning(
 
         monkeypatch.setattr(app, "notify", capture_notice)
         outer_generation = screen._library_list_entry_focus_generation
-        screen._expire_library_media_return_settlement(
+        screen._media_controller._expire_library_media_return_settlement(
             request.request_id,
             outer_generation,
         )
-        screen._expire_library_media_return_settlement(
+        screen._media_controller._expire_library_media_return_settlement(
             request.request_id,
             outer_generation,
         )
@@ -1999,7 +1999,7 @@ async def test_stale_request_generation_and_subview_fences_cannot_settle(
                 request,
                 request_id=request.request_id + 1,
             )
-            screen._settle_library_media_return_from_geometry(
+            screen._media_controller._settle_library_media_return_from_geometry(
                 request,
                 owner,
                 geometry.geometry,
@@ -2068,7 +2068,7 @@ async def test_mounted_media_shell_replacement_rejects_delayed_old_owner_geometr
         replacement_shell = LibraryBrowseReaderShell(
             retained_rail,
             old_items,
-            screen._build_library_media_reader(),
+            screen._media_controller._build_library_media_reader(),
             screen._media_state.reader_layout,
             id="library-browse-reader-shell",
         )

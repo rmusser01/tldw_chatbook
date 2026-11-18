@@ -1,0 +1,673 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="14" skipped="0" tests="19" time="12.062" timestamp="2026-10-04T14:40:36.737807-07:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_missing_start_confirmation_requires_successful_owned_transaction[absent]" time="0.365"><failure message="AttributeError: 'AutomaticWorkLedger' object has no attribute '_confirm_chat_start_absent'">db = &lt;tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10e1e9a30&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10dbb3e90&gt;
+case = 'absent'
+
+    @pytest.mark.parametrize(
+        "case",
+        ["absent", "present", "foreign_attempt", "stale_runtime", "missing_runtime", "exit_failure"],
+    )
+    def test_missing_start_confirmation_requires_successful_owned_transaction(db, monkeypatch, case):
+        """Only a successful exact-owner transaction may establish missing authority."""
+        ledger = db.automatic_work
+        ledger.recover(current_owner_id="owner")
+        root, source = source_run(db)
+        if case in {"present", "foreign_attempt"}:
+            prepare(db, source, "target", "attempt")
+        if case == "foreign_attempt":
+            with db.transaction() as conn:
+                conn.execute("UPDATE automatic_chat_start_attempts SET owner_id='foreign' WHERE id='attempt'")
+        if case in {"stale_runtime", "missing_runtime"}:
+            with db.transaction() as conn:
+                if case == "stale_runtime":
+                    conn.execute("UPDATE automatic_work_runtime_owner SET owner_id='replacement'")
+                else:
+                    conn.execute("DELETE FROM automatic_work_runtime_owner")
+        with db.connection() as conn:
+            before = tuple(tuple(row) for row in conn.execute("SELECT * FROM automatic_chat_start_attempts"))
+            reservations = tuple(tuple(row) for row in conn.execute("SELECT * FROM automatic_work_reservations"))
+        transaction = ledger.transaction
+        if case == "exit_failure":
+            @contextmanager
+            def fail_exit():
+                with transaction() as conn:
+                    yield conn
+                raise sqlite3.OperationalError("policy restoration unavailable")
+            monkeypatch.setattr(ledger, "transaction", fail_exit)
+            with pytest.raises(sqlite3.OperationalError):
+                ledger._confirm_chat_start_absent("attempt", owner_id="owner")
+            monkeypatch.setattr(ledger, "transaction", transaction)
+        else:
+&gt;           assert ledger._confirm_chat_start_absent("attempt", owner_id="owner") is (case == "absent")
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           AttributeError: 'AutomaticWorkLedger' object has no attribute '_confirm_chat_start_absent'
+
+Tests/DB/test_automatic_chat_starts.py:662: AttributeError</failure></testcase><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_missing_start_confirmation_requires_successful_owned_transaction[present]" time="0.181"><failure message="AttributeError: 'AutomaticWorkLedger' object has no attribute '_confirm_chat_start_absent'">db = &lt;tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10d83fa40&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10d85ee70&gt;
+case = 'present'
+
+    @pytest.mark.parametrize(
+        "case",
+        ["absent", "present", "foreign_attempt", "stale_runtime", "missing_runtime", "exit_failure"],
+    )
+    def test_missing_start_confirmation_requires_successful_owned_transaction(db, monkeypatch, case):
+        """Only a successful exact-owner transaction may establish missing authority."""
+        ledger = db.automatic_work
+        ledger.recover(current_owner_id="owner")
+        root, source = source_run(db)
+        if case in {"present", "foreign_attempt"}:
+            prepare(db, source, "target", "attempt")
+        if case == "foreign_attempt":
+            with db.transaction() as conn:
+                conn.execute("UPDATE automatic_chat_start_attempts SET owner_id='foreign' WHERE id='attempt'")
+        if case in {"stale_runtime", "missing_runtime"}:
+            with db.transaction() as conn:
+                if case == "stale_runtime":
+                    conn.execute("UPDATE automatic_work_runtime_owner SET owner_id='replacement'")
+                else:
+                    conn.execute("DELETE FROM automatic_work_runtime_owner")
+        with db.connection() as conn:
+            before = tuple(tuple(row) for row in conn.execute("SELECT * FROM automatic_chat_start_attempts"))
+            reservations = tuple(tuple(row) for row in conn.execute("SELECT * FROM automatic_work_reservations"))
+        transaction = ledger.transaction
+        if case == "exit_failure":
+            @contextmanager
+            def fail_exit():
+                with transaction() as conn:
+                    yield conn
+                raise sqlite3.OperationalError("policy restoration unavailable")
+            monkeypatch.setattr(ledger, "transaction", fail_exit)
+            with pytest.raises(sqlite3.OperationalError):
+                ledger._confirm_chat_start_absent("attempt", owner_id="owner")
+            monkeypatch.setattr(ledger, "transaction", transaction)
+        else:
+&gt;           assert ledger._confirm_chat_start_absent("attempt", owner_id="owner") is (case == "absent")
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           AttributeError: 'AutomaticWorkLedger' object has no attribute '_confirm_chat_start_absent'
+
+Tests/DB/test_automatic_chat_starts.py:662: AttributeError</failure></testcase><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_missing_start_confirmation_requires_successful_owned_transaction[foreign_attempt]" time="0.152"><failure message="sqlite3.IntegrityError: chat start identity is immutable">db = &lt;tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10da207a0&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10d83f380&gt;
+case = 'foreign_attempt'
+
+    @pytest.mark.parametrize(
+        "case",
+        ["absent", "present", "foreign_attempt", "stale_runtime", "missing_runtime", "exit_failure"],
+    )
+    def test_missing_start_confirmation_requires_successful_owned_transaction(db, monkeypatch, case):
+        """Only a successful exact-owner transaction may establish missing authority."""
+        ledger = db.automatic_work
+        ledger.recover(current_owner_id="owner")
+        root, source = source_run(db)
+        if case in {"present", "foreign_attempt"}:
+            prepare(db, source, "target", "attempt")
+        if case == "foreign_attempt":
+            with db.transaction() as conn:
+&gt;               conn.execute("UPDATE automatic_chat_start_attempts SET owner_id='foreign' WHERE id='attempt'")
+E               sqlite3.IntegrityError: chat start identity is immutable
+
+Tests/DB/test_automatic_chat_starts.py:640: IntegrityError</failure></testcase><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_missing_start_confirmation_requires_successful_owned_transaction[stale_runtime]" time="0.150"><failure message="AttributeError: 'AutomaticWorkLedger' object has no attribute '_confirm_chat_start_absent'">db = &lt;tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10da20d70&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10da21910&gt;
+case = 'stale_runtime'
+
+    @pytest.mark.parametrize(
+        "case",
+        ["absent", "present", "foreign_attempt", "stale_runtime", "missing_runtime", "exit_failure"],
+    )
+    def test_missing_start_confirmation_requires_successful_owned_transaction(db, monkeypatch, case):
+        """Only a successful exact-owner transaction may establish missing authority."""
+        ledger = db.automatic_work
+        ledger.recover(current_owner_id="owner")
+        root, source = source_run(db)
+        if case in {"present", "foreign_attempt"}:
+            prepare(db, source, "target", "attempt")
+        if case == "foreign_attempt":
+            with db.transaction() as conn:
+                conn.execute("UPDATE automatic_chat_start_attempts SET owner_id='foreign' WHERE id='attempt'")
+        if case in {"stale_runtime", "missing_runtime"}:
+            with db.transaction() as conn:
+                if case == "stale_runtime":
+                    conn.execute("UPDATE automatic_work_runtime_owner SET owner_id='replacement'")
+                else:
+                    conn.execute("DELETE FROM automatic_work_runtime_owner")
+        with db.connection() as conn:
+            before = tuple(tuple(row) for row in conn.execute("SELECT * FROM automatic_chat_start_attempts"))
+            reservations = tuple(tuple(row) for row in conn.execute("SELECT * FROM automatic_work_reservations"))
+        transaction = ledger.transaction
+        if case == "exit_failure":
+            @contextmanager
+            def fail_exit():
+                with transaction() as conn:
+                    yield conn
+                raise sqlite3.OperationalError("policy restoration unavailable")
+            monkeypatch.setattr(ledger, "transaction", fail_exit)
+            with pytest.raises(sqlite3.OperationalError):
+                ledger._confirm_chat_start_absent("attempt", owner_id="owner")
+            monkeypatch.setattr(ledger, "transaction", transaction)
+        else:
+&gt;           assert ledger._confirm_chat_start_absent("attempt", owner_id="owner") is (case == "absent")
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           AttributeError: 'AutomaticWorkLedger' object has no attribute '_confirm_chat_start_absent'
+
+Tests/DB/test_automatic_chat_starts.py:662: AttributeError</failure></testcase><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_missing_start_confirmation_requires_successful_owned_transaction[missing_runtime]" time="0.169"><failure message="AttributeError: 'AutomaticWorkLedger' object has no attribute '_confirm_chat_start_absent'">db = &lt;tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10d9e75c0&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10d9e76e0&gt;
+case = 'missing_runtime'
+
+    @pytest.mark.parametrize(
+        "case",
+        ["absent", "present", "foreign_attempt", "stale_runtime", "missing_runtime", "exit_failure"],
+    )
+    def test_missing_start_confirmation_requires_successful_owned_transaction(db, monkeypatch, case):
+        """Only a successful exact-owner transaction may establish missing authority."""
+        ledger = db.automatic_work
+        ledger.recover(current_owner_id="owner")
+        root, source = source_run(db)
+        if case in {"present", "foreign_attempt"}:
+            prepare(db, source, "target", "attempt")
+        if case == "foreign_attempt":
+            with db.transaction() as conn:
+                conn.execute("UPDATE automatic_chat_start_attempts SET owner_id='foreign' WHERE id='attempt'")
+        if case in {"stale_runtime", "missing_runtime"}:
+            with db.transaction() as conn:
+                if case == "stale_runtime":
+                    conn.execute("UPDATE automatic_work_runtime_owner SET owner_id='replacement'")
+                else:
+                    conn.execute("DELETE FROM automatic_work_runtime_owner")
+        with db.connection() as conn:
+            before = tuple(tuple(row) for row in conn.execute("SELECT * FROM automatic_chat_start_attempts"))
+            reservations = tuple(tuple(row) for row in conn.execute("SELECT * FROM automatic_work_reservations"))
+        transaction = ledger.transaction
+        if case == "exit_failure":
+            @contextmanager
+            def fail_exit():
+                with transaction() as conn:
+                    yield conn
+                raise sqlite3.OperationalError("policy restoration unavailable")
+            monkeypatch.setattr(ledger, "transaction", fail_exit)
+            with pytest.raises(sqlite3.OperationalError):
+                ledger._confirm_chat_start_absent("attempt", owner_id="owner")
+            monkeypatch.setattr(ledger, "transaction", transaction)
+        else:
+&gt;           assert ledger._confirm_chat_start_absent("attempt", owner_id="owner") is (case == "absent")
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           AttributeError: 'AutomaticWorkLedger' object has no attribute '_confirm_chat_start_absent'
+
+Tests/DB/test_automatic_chat_starts.py:662: AttributeError</failure></testcase><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_missing_start_confirmation_requires_successful_owned_transaction[exit_failure]" time="0.182"><failure message="AttributeError: 'AutomaticWorkLedger' object has no attribute '_confirm_chat_start_absent'">db = &lt;tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10d9e4440&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10d9e5610&gt;
+case = 'exit_failure'
+
+    @pytest.mark.parametrize(
+        "case",
+        ["absent", "present", "foreign_attempt", "stale_runtime", "missing_runtime", "exit_failure"],
+    )
+    def test_missing_start_confirmation_requires_successful_owned_transaction(db, monkeypatch, case):
+        """Only a successful exact-owner transaction may establish missing authority."""
+        ledger = db.automatic_work
+        ledger.recover(current_owner_id="owner")
+        root, source = source_run(db)
+        if case in {"present", "foreign_attempt"}:
+            prepare(db, source, "target", "attempt")
+        if case == "foreign_attempt":
+            with db.transaction() as conn:
+                conn.execute("UPDATE automatic_chat_start_attempts SET owner_id='foreign' WHERE id='attempt'")
+        if case in {"stale_runtime", "missing_runtime"}:
+            with db.transaction() as conn:
+                if case == "stale_runtime":
+                    conn.execute("UPDATE automatic_work_runtime_owner SET owner_id='replacement'")
+                else:
+                    conn.execute("DELETE FROM automatic_work_runtime_owner")
+        with db.connection() as conn:
+            before = tuple(tuple(row) for row in conn.execute("SELECT * FROM automatic_chat_start_attempts"))
+            reservations = tuple(tuple(row) for row in conn.execute("SELECT * FROM automatic_work_reservations"))
+        transaction = ledger.transaction
+        if case == "exit_failure":
+            @contextmanager
+            def fail_exit():
+                with transaction() as conn:
+                    yield conn
+                raise sqlite3.OperationalError("policy restoration unavailable")
+            monkeypatch.setattr(ledger, "transaction", fail_exit)
+            with pytest.raises(sqlite3.OperationalError):
+&gt;               ledger._confirm_chat_start_absent("attempt", owner_id="owner")
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               AttributeError: 'AutomaticWorkLedger' object has no attribute '_confirm_chat_start_absent'
+
+Tests/DB/test_automatic_chat_starts.py:659: AttributeError</failure></testcase><testcase classname="Tests.Chat.test_console_chat_start" name="test_failed_preparation_with_no_attempt_clears_only_its_restriction[False-False]" time="0.823"><failure message="AssertionError: assert ('review_requ..._unconfirmed') == ('not_started...start_failed')&#10;  &#10;  At index 0 diff: 'review_required' != 'not_started'&#10;  Use -v to get more diff">tmp_path = PosixPath('/private/tmp/pr2995-task15/red/test_failed_preparation_with_n0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10da18bc0&gt;
+registration_failure = False, another_restriction = False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("registration_failure", [False, True])
+    @pytest.mark.parametrize("another_restriction", [False, True])
+    async def test_failed_preparation_with_no_attempt_clears_only_its_restriction(
+        tmp_path, monkeypatch, registration_failure, another_restriction
+    ):
+        """A rolled-back reservation must not leave every unrelated root blocked."""
+        import asyncio
+        from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    
+        controller, store, runs, source, target, chain, request = await _native_start_rig(tmp_path)
+        ledger = runs.automatic_work
+        owner = controller.fleet_wake.runtime_owner_id
+        ledger.recover(current_owner_id=owner)
+        unrelated = ledger.create_chain("unrelated", root_submission_id="unrelated")
+        peer = AgentRunsDB(runs.db_path, client_id="peer", reconcile_on_init=False)
+        with runs.transaction() as conn:
+            conn.execute("CREATE TRIGGER deny_start BEFORE INSERT ON automatic_chat_start_attempts BEGIN SELECT RAISE(ABORT, 'private rollback'); END")
+        register = ledger._restrict_chat_start
+        def register_with_peer(*args, **kwargs):
+            if another_restriction:
+                register("another", owner_id=owner, chain_id=chain)
+            if registration_failure:
+                raise OSError("private identity failure")
+            return register(*args, **kwargs)
+        monkeypatch.setattr(ledger, "_restrict_chat_start", register_with_peer)
+        start = asyncio.create_task(controller._chat_start.start(request))
+        try:
+            await asyncio.sleep(0)
+            item = controller._chat_start._active[target.id]
+            results = await asyncio.gather(item.task, return_exceptions=True)
+            assert results == [None]
+            assert item.outcome.done()
+            outcome = await start
+&gt;           assert (outcome.launch_status, outcome.reason) == ("not_started", "start_failed")
+E           AssertionError: assert ('review_requ..._unconfirmed') == ('not_started...start_failed')
+E             
+E             At index 0 diff: 'review_required' != 'not_started'
+E             Use -v to get more diff
+
+Tests/Chat/test_console_chat_start.py:3275: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_chat_start" name="test_failed_preparation_with_no_attempt_clears_only_its_restriction[False-True]" time="0.606"><failure message="AssertionError: assert [OSError('pri...ity failure')] == [None]&#10;  &#10;  At index 0 diff: OSError('private identity failure') != None&#10;  Use -v to get more diff">tmp_path = PosixPath('/private/tmp/pr2995-task15/red/test_failed_preparation_with_n1')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10d9e7710&gt;
+registration_failure = True, another_restriction = False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("registration_failure", [False, True])
+    @pytest.mark.parametrize("another_restriction", [False, True])
+    async def test_failed_preparation_with_no_attempt_clears_only_its_restriction(
+        tmp_path, monkeypatch, registration_failure, another_restriction
+    ):
+        """A rolled-back reservation must not leave every unrelated root blocked."""
+        import asyncio
+        from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    
+        controller, store, runs, source, target, chain, request = await _native_start_rig(tmp_path)
+        ledger = runs.automatic_work
+        owner = controller.fleet_wake.runtime_owner_id
+        ledger.recover(current_owner_id=owner)
+        unrelated = ledger.create_chain("unrelated", root_submission_id="unrelated")
+        peer = AgentRunsDB(runs.db_path, client_id="peer", reconcile_on_init=False)
+        with runs.transaction() as conn:
+            conn.execute("CREATE TRIGGER deny_start BEFORE INSERT ON automatic_chat_start_attempts BEGIN SELECT RAISE(ABORT, 'private rollback'); END")
+        register = ledger._restrict_chat_start
+        def register_with_peer(*args, **kwargs):
+            if another_restriction:
+                register("another", owner_id=owner, chain_id=chain)
+            if registration_failure:
+                raise OSError("private identity failure")
+            return register(*args, **kwargs)
+        monkeypatch.setattr(ledger, "_restrict_chat_start", register_with_peer)
+        start = asyncio.create_task(controller._chat_start.start(request))
+        try:
+            await asyncio.sleep(0)
+            item = controller._chat_start._active[target.id]
+            results = await asyncio.gather(item.task, return_exceptions=True)
+&gt;           assert results == [None]
+E           AssertionError: assert [OSError('pri...ity failure')] == [None]
+E             
+E             At index 0 diff: OSError('private identity failure') != None
+E             Use -v to get more diff
+
+Tests/Chat/test_console_chat_start.py:3272: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_chat_start" name="test_failed_preparation_with_no_attempt_clears_only_its_restriction[True-False]" time="0.663"><failure message="AssertionError: assert ('review_requ..._unconfirmed') == ('not_started...start_failed')&#10;  &#10;  At index 0 diff: 'review_required' != 'not_started'&#10;  Use -v to get more diff">tmp_path = PosixPath('/private/tmp/pr2995-task15/red/test_failed_preparation_with_n2')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10d662d80&gt;
+registration_failure = False, another_restriction = True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("registration_failure", [False, True])
+    @pytest.mark.parametrize("another_restriction", [False, True])
+    async def test_failed_preparation_with_no_attempt_clears_only_its_restriction(
+        tmp_path, monkeypatch, registration_failure, another_restriction
+    ):
+        """A rolled-back reservation must not leave every unrelated root blocked."""
+        import asyncio
+        from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    
+        controller, store, runs, source, target, chain, request = await _native_start_rig(tmp_path)
+        ledger = runs.automatic_work
+        owner = controller.fleet_wake.runtime_owner_id
+        ledger.recover(current_owner_id=owner)
+        unrelated = ledger.create_chain("unrelated", root_submission_id="unrelated")
+        peer = AgentRunsDB(runs.db_path, client_id="peer", reconcile_on_init=False)
+        with runs.transaction() as conn:
+            conn.execute("CREATE TRIGGER deny_start BEFORE INSERT ON automatic_chat_start_attempts BEGIN SELECT RAISE(ABORT, 'private rollback'); END")
+        register = ledger._restrict_chat_start
+        def register_with_peer(*args, **kwargs):
+            if another_restriction:
+                register("another", owner_id=owner, chain_id=chain)
+            if registration_failure:
+                raise OSError("private identity failure")
+            return register(*args, **kwargs)
+        monkeypatch.setattr(ledger, "_restrict_chat_start", register_with_peer)
+        start = asyncio.create_task(controller._chat_start.start(request))
+        try:
+            await asyncio.sleep(0)
+            item = controller._chat_start._active[target.id]
+            results = await asyncio.gather(item.task, return_exceptions=True)
+            assert results == [None]
+            assert item.outcome.done()
+            outcome = await start
+&gt;           assert (outcome.launch_status, outcome.reason) == ("not_started", "start_failed")
+E           AssertionError: assert ('review_requ..._unconfirmed') == ('not_started...start_failed')
+E             
+E             At index 0 diff: 'review_required' != 'not_started'
+E             Use -v to get more diff
+
+Tests/Chat/test_console_chat_start.py:3275: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_chat_start" name="test_failed_preparation_with_no_attempt_clears_only_its_restriction[True-True]" time="0.565"><failure message="AssertionError: assert [OSError('pri...ity failure')] == [None]&#10;  &#10;  At index 0 diff: OSError('private identity failure') != None&#10;  Use -v to get more diff">tmp_path = PosixPath('/private/tmp/pr2995-task15/red/test_failed_preparation_with_n3')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10de9ce30&gt;
+registration_failure = True, another_restriction = True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("registration_failure", [False, True])
+    @pytest.mark.parametrize("another_restriction", [False, True])
+    async def test_failed_preparation_with_no_attempt_clears_only_its_restriction(
+        tmp_path, monkeypatch, registration_failure, another_restriction
+    ):
+        """A rolled-back reservation must not leave every unrelated root blocked."""
+        import asyncio
+        from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    
+        controller, store, runs, source, target, chain, request = await _native_start_rig(tmp_path)
+        ledger = runs.automatic_work
+        owner = controller.fleet_wake.runtime_owner_id
+        ledger.recover(current_owner_id=owner)
+        unrelated = ledger.create_chain("unrelated", root_submission_id="unrelated")
+        peer = AgentRunsDB(runs.db_path, client_id="peer", reconcile_on_init=False)
+        with runs.transaction() as conn:
+            conn.execute("CREATE TRIGGER deny_start BEFORE INSERT ON automatic_chat_start_attempts BEGIN SELECT RAISE(ABORT, 'private rollback'); END")
+        register = ledger._restrict_chat_start
+        def register_with_peer(*args, **kwargs):
+            if another_restriction:
+                register("another", owner_id=owner, chain_id=chain)
+            if registration_failure:
+                raise OSError("private identity failure")
+            return register(*args, **kwargs)
+        monkeypatch.setattr(ledger, "_restrict_chat_start", register_with_peer)
+        start = asyncio.create_task(controller._chat_start.start(request))
+        try:
+            await asyncio.sleep(0)
+            item = controller._chat_start._active[target.id]
+            results = await asyncio.gather(item.task, return_exceptions=True)
+&gt;           assert results == [None]
+E           AssertionError: assert [OSError('pri...ity failure')] == [None]
+E             
+E             At index 0 diff: OSError('private identity failure') != None
+E             Use -v to get more diff
+
+Tests/Chat/test_console_chat_start.py:3272: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_chat_start" name="test_preparation_exception_reconciles_persisted_authority_conservatively[prepared]" time="0.736" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_preparation_exception_reconciles_persisted_authority_conservatively[accepted]" time="0.715" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_preparation_exception_reconciles_persisted_authority_conservatively[observation_failure]" time="0.658" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_preparation_exception_reconciles_persisted_authority_conservatively[missing_runtime]" time="0.667" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_preparation_exception_reconciles_persisted_authority_conservatively[stale_runtime]" time="0.643" /><testcase classname="Tests.Chat.test_console_chat_start" name="test_restriction_registration_failure_still_drains_exact_native_owners[commit-first]" time="0.798"><failure message="AssertionError: assert not True&#10; +  where True = &lt;built-in method done of _asyncio.Task object at 0x10c0996c0&gt;()&#10; +    where &lt;built-in method done of _asyncio.Task object at 0x10c0996c0&gt; = &lt;Task finished name='Task-74' coro=&lt;ConsoleChatStartCoordinator._run() done, defined at /Users/macbook-dev/.codex/work...t-starts/tldw_chatbook/tldw_chatbook/Chat/console_chat_start.py:364&gt; exception=OSError('private registration failure')&gt;.done&#10; +      where &lt;Task finished name='Task-74' coro=&lt;ConsoleChatStartCoordinator._run() done, defined at /Users/macbook-dev/.codex/work...t-starts/tldw_chatbook/tldw_chatbook/Chat/console_chat_start.py:364&gt; exception=OSError('private registration failure')&gt; = &lt;tldw_chatbook.Chat.console_chat_start.AgentChatStartAuthorization object at 0x10c1bd370&gt;.task">tmp_path = PosixPath('/private/tmp/pr2995-task15/red/test_restriction_registration_0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10d598d10&gt;
+registration_site = 'first', worker = 'commit'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("registration_site", ["first", "second"])
+    @pytest.mark.parametrize("worker", ["commit", "provider"])
+    async def test_restriction_registration_failure_still_drains_exact_native_owners(tmp_path, monkeypatch, registration_site, worker):
+        """Registration failure must not strand native physical custody or its result."""
+        import asyncio
+        from threading import Event
+        from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    
+        controller, store, runs, source, target, chain, request = await _native_start_rig(tmp_path)
+        ledger = runs.automatic_work
+        owner = controller.fleet_wake.runtime_owner_id
+        ledger.recover(current_owner_id=owner)
+        peer = AgentRunsDB(runs.db_path, client_id="peer", reconcile_on_init=False)
+        entered, release, exited = Event(), Event(), Event()
+        original = store.commit_durable_turn if worker == "commit" else controller._agent_bridge.run_reply
+        def held(*args, **kwargs):
+            entered.set()
+            try:
+                assert release.wait(10)
+                return original(*args, **kwargs)
+            finally:
+                exited.set()
+        monkeypatch.setattr(store if worker == "commit" else controller._agent_bridge, "commit_durable_turn" if worker == "commit" else "run_reply", held)
+        register = ledger._restrict_chat_start
+        registrations = []
+        def broken_registration(*args, **kwargs):
+            registrations.append(kwargs["chain_id"])
+            if len(registrations) == (1 if registration_site == "first" else 2):
+                raise OSError("private registration failure")
+            return register(*args, **kwargs)
+        monkeypatch.setattr(ledger, "_restrict_chat_start", broken_registration)
+        if registration_site == "second":
+            def fail_settlement(*args, **kwargs):
+                raise OSError("private settlement failure")
+            monkeypatch.setattr(ledger, "mark_chat_start_review_required", fail_settlement)
+        start = asyncio.create_task(controller._chat_start.start(request))
+        try:
+            assert await asyncio.to_thread(entered.wait, 5)
+            item = controller._chat_start._active[target.id]
+            captured_owner, captured_token = item.capacity_owner, item.token
+            # The real provider has passed the two commits; simulate a lost local receipt
+            # flag while retaining its already-published outcome and physical worker.
+            if worker == "provider":
+                assert (await start).launch_status == "started"
+                item.receipted = False
+            item.task.cancel()
+            await asyncio.sleep(0.05)
+            item.task.cancel()
+            await asyncio.sleep(0.05)
+            assert captured_owner._automatic_primary_claims[target.id] is captured_token
+            assert not exited.is_set()
+&gt;           assert not item.task.done()
+E           AssertionError: assert not True
+E            +  where True = &lt;built-in method done of _asyncio.Task object at 0x10c0996c0&gt;()
+E            +    where &lt;built-in method done of _asyncio.Task object at 0x10c0996c0&gt; = &lt;Task finished name='Task-74' coro=&lt;ConsoleChatStartCoordinator._run() done, defined at /Users/macbook-dev/.codex/work...t-starts/tldw_chatbook/tldw_chatbook/Chat/console_chat_start.py:364&gt; exception=OSError('private registration failure')&gt;.done
+E            +      where &lt;Task finished name='Task-74' coro=&lt;ConsoleChatStartCoordinator._run() done, defined at /Users/macbook-dev/.codex/work...t-starts/tldw_chatbook/tldw_chatbook/Chat/console_chat_start.py:364&gt; exception=OSError('private registration failure')&gt; = &lt;tldw_chatbook.Chat.console_chat_start.AgentChatStartAuthorization object at 0x10c1bd370&gt;.task
+
+Tests/Chat/test_console_chat_start.py:3417: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_chat_start" name="test_restriction_registration_failure_still_drains_exact_native_owners[commit-second]" time="0.854"><failure message="AssertionError: assert [OSError('pri...ion failure')] == [None]&#10;  &#10;  At index 0 diff: OSError('private registration failure') != None&#10;  Use -v to get more diff">tmp_path = PosixPath('/private/tmp/pr2995-task15/red/test_restriction_registration_1')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10c1fe450&gt;
+registration_site = 'second', worker = 'commit'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("registration_site", ["first", "second"])
+    @pytest.mark.parametrize("worker", ["commit", "provider"])
+    async def test_restriction_registration_failure_still_drains_exact_native_owners(tmp_path, monkeypatch, registration_site, worker):
+        """Registration failure must not strand native physical custody or its result."""
+        import asyncio
+        from threading import Event
+        from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    
+        controller, store, runs, source, target, chain, request = await _native_start_rig(tmp_path)
+        ledger = runs.automatic_work
+        owner = controller.fleet_wake.runtime_owner_id
+        ledger.recover(current_owner_id=owner)
+        peer = AgentRunsDB(runs.db_path, client_id="peer", reconcile_on_init=False)
+        entered, release, exited = Event(), Event(), Event()
+        original = store.commit_durable_turn if worker == "commit" else controller._agent_bridge.run_reply
+        def held(*args, **kwargs):
+            entered.set()
+            try:
+                assert release.wait(10)
+                return original(*args, **kwargs)
+            finally:
+                exited.set()
+        monkeypatch.setattr(store if worker == "commit" else controller._agent_bridge, "commit_durable_turn" if worker == "commit" else "run_reply", held)
+        register = ledger._restrict_chat_start
+        registrations = []
+        def broken_registration(*args, **kwargs):
+            registrations.append(kwargs["chain_id"])
+            if len(registrations) == (1 if registration_site == "first" else 2):
+                raise OSError("private registration failure")
+            return register(*args, **kwargs)
+        monkeypatch.setattr(ledger, "_restrict_chat_start", broken_registration)
+        if registration_site == "second":
+            def fail_settlement(*args, **kwargs):
+                raise OSError("private settlement failure")
+            monkeypatch.setattr(ledger, "mark_chat_start_review_required", fail_settlement)
+        start = asyncio.create_task(controller._chat_start.start(request))
+        try:
+            assert await asyncio.to_thread(entered.wait, 5)
+            item = controller._chat_start._active[target.id]
+            captured_owner, captured_token = item.capacity_owner, item.token
+            # The real provider has passed the two commits; simulate a lost local receipt
+            # flag while retaining its already-published outcome and physical worker.
+            if worker == "provider":
+                assert (await start).launch_status == "started"
+                item.receipted = False
+            item.task.cancel()
+            await asyncio.sleep(0.05)
+            item.task.cancel()
+            await asyncio.sleep(0.05)
+            assert captured_owner._automatic_primary_claims[target.id] is captured_token
+            assert not exited.is_set()
+            assert not item.task.done()
+            if worker == "commit":
+                assert not item.outcome.done()
+            if registration_site == "second":
+                with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+                    peer.automatic_work.check_active(chain, owner_id=owner)
+            release.set()
+&gt;           assert await asyncio.gather(item.task, return_exceptions=True) == [None]
+E           AssertionError: assert [OSError('pri...ion failure')] == [None]
+E             
+E             At index 0 diff: OSError('private registration failure') != None
+E             Use -v to get more diff
+
+Tests/Chat/test_console_chat_start.py:3424: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_chat_start" name="test_restriction_registration_failure_still_drains_exact_native_owners[provider-first]" time="1.297"><failure message="AssertionError: assert not True&#10; +  where True = &lt;built-in method done of _asyncio.Task object at 0x10c099fc0&gt;()&#10; +    where &lt;built-in method done of _asyncio.Task object at 0x10c099fc0&gt; = &lt;Task finished name='Task-89' coro=&lt;ConsoleChatStartCoordinator._run() done, defined at /Users/macbook-dev/.codex/work...t-starts/tldw_chatbook/tldw_chatbook/Chat/console_chat_start.py:364&gt; exception=OSError('private registration failure')&gt;.done&#10; +      where &lt;Task finished name='Task-89' coro=&lt;ConsoleChatStartCoordinator._run() done, defined at /Users/macbook-dev/.codex/work...t-starts/tldw_chatbook/tldw_chatbook/Chat/console_chat_start.py:364&gt; exception=OSError('private registration failure')&gt; = &lt;tldw_chatbook.Chat.console_chat_start.AgentChatStartAuthorization object at 0x10c1bcda0&gt;.task">tmp_path = PosixPath('/private/tmp/pr2995-task15/red/test_restriction_registration_2')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10d9e6cf0&gt;
+registration_site = 'first', worker = 'provider'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("registration_site", ["first", "second"])
+    @pytest.mark.parametrize("worker", ["commit", "provider"])
+    async def test_restriction_registration_failure_still_drains_exact_native_owners(tmp_path, monkeypatch, registration_site, worker):
+        """Registration failure must not strand native physical custody or its result."""
+        import asyncio
+        from threading import Event
+        from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    
+        controller, store, runs, source, target, chain, request = await _native_start_rig(tmp_path)
+        ledger = runs.automatic_work
+        owner = controller.fleet_wake.runtime_owner_id
+        ledger.recover(current_owner_id=owner)
+        peer = AgentRunsDB(runs.db_path, client_id="peer", reconcile_on_init=False)
+        entered, release, exited = Event(), Event(), Event()
+        original = store.commit_durable_turn if worker == "commit" else controller._agent_bridge.run_reply
+        def held(*args, **kwargs):
+            entered.set()
+            try:
+                assert release.wait(10)
+                return original(*args, **kwargs)
+            finally:
+                exited.set()
+        monkeypatch.setattr(store if worker == "commit" else controller._agent_bridge, "commit_durable_turn" if worker == "commit" else "run_reply", held)
+        register = ledger._restrict_chat_start
+        registrations = []
+        def broken_registration(*args, **kwargs):
+            registrations.append(kwargs["chain_id"])
+            if len(registrations) == (1 if registration_site == "first" else 2):
+                raise OSError("private registration failure")
+            return register(*args, **kwargs)
+        monkeypatch.setattr(ledger, "_restrict_chat_start", broken_registration)
+        if registration_site == "second":
+            def fail_settlement(*args, **kwargs):
+                raise OSError("private settlement failure")
+            monkeypatch.setattr(ledger, "mark_chat_start_review_required", fail_settlement)
+        start = asyncio.create_task(controller._chat_start.start(request))
+        try:
+            assert await asyncio.to_thread(entered.wait, 5)
+            item = controller._chat_start._active[target.id]
+            captured_owner, captured_token = item.capacity_owner, item.token
+            # The real provider has passed the two commits; simulate a lost local receipt
+            # flag while retaining its already-published outcome and physical worker.
+            if worker == "provider":
+                assert (await start).launch_status == "started"
+                item.receipted = False
+            item.task.cancel()
+            await asyncio.sleep(0.05)
+            item.task.cancel()
+            await asyncio.sleep(0.05)
+            assert captured_owner._automatic_primary_claims[target.id] is captured_token
+            assert not exited.is_set()
+&gt;           assert not item.task.done()
+E           AssertionError: assert not True
+E            +  where True = &lt;built-in method done of _asyncio.Task object at 0x10c099fc0&gt;()
+E            +    where &lt;built-in method done of _asyncio.Task object at 0x10c099fc0&gt; = &lt;Task finished name='Task-89' coro=&lt;ConsoleChatStartCoordinator._run() done, defined at /Users/macbook-dev/.codex/work...t-starts/tldw_chatbook/tldw_chatbook/Chat/console_chat_start.py:364&gt; exception=OSError('private registration failure')&gt;.done
+E            +      where &lt;Task finished name='Task-89' coro=&lt;ConsoleChatStartCoordinator._run() done, defined at /Users/macbook-dev/.codex/work...t-starts/tldw_chatbook/tldw_chatbook/Chat/console_chat_start.py:364&gt; exception=OSError('private registration failure')&gt; = &lt;tldw_chatbook.Chat.console_chat_start.AgentChatStartAuthorization object at 0x10c1bcda0&gt;.task
+
+Tests/Chat/test_console_chat_start.py:3417: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_chat_start" name="test_restriction_registration_failure_still_drains_exact_native_owners[provider-second]" time="1.022"><failure message="AssertionError: assert [OSError('pri...ion failure')] == [None]&#10;  &#10;  At index 0 diff: OSError('private registration failure') != None&#10;  Use -v to get more diff">tmp_path = PosixPath('/private/tmp/pr2995-task15/red/test_restriction_registration_3')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10c465d30&gt;
+registration_site = 'second', worker = 'provider'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("registration_site", ["first", "second"])
+    @pytest.mark.parametrize("worker", ["commit", "provider"])
+    async def test_restriction_registration_failure_still_drains_exact_native_owners(tmp_path, monkeypatch, registration_site, worker):
+        """Registration failure must not strand native physical custody or its result."""
+        import asyncio
+        from threading import Event
+        from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    
+        controller, store, runs, source, target, chain, request = await _native_start_rig(tmp_path)
+        ledger = runs.automatic_work
+        owner = controller.fleet_wake.runtime_owner_id
+        ledger.recover(current_owner_id=owner)
+        peer = AgentRunsDB(runs.db_path, client_id="peer", reconcile_on_init=False)
+        entered, release, exited = Event(), Event(), Event()
+        original = store.commit_durable_turn if worker == "commit" else controller._agent_bridge.run_reply
+        def held(*args, **kwargs):
+            entered.set()
+            try:
+                assert release.wait(10)
+                return original(*args, **kwargs)
+            finally:
+                exited.set()
+        monkeypatch.setattr(store if worker == "commit" else controller._agent_bridge, "commit_durable_turn" if worker == "commit" else "run_reply", held)
+        register = ledger._restrict_chat_start
+        registrations = []
+        def broken_registration(*args, **kwargs):
+            registrations.append(kwargs["chain_id"])
+            if len(registrations) == (1 if registration_site == "first" else 2):
+                raise OSError("private registration failure")
+            return register(*args, **kwargs)
+        monkeypatch.setattr(ledger, "_restrict_chat_start", broken_registration)
+        if registration_site == "second":
+            def fail_settlement(*args, **kwargs):
+                raise OSError("private settlement failure")
+            monkeypatch.setattr(ledger, "mark_chat_start_review_required", fail_settlement)
+        start = asyncio.create_task(controller._chat_start.start(request))
+        try:
+            assert await asyncio.to_thread(entered.wait, 5)
+            item = controller._chat_start._active[target.id]
+            captured_owner, captured_token = item.capacity_owner, item.token
+            # The real provider has passed the two commits; simulate a lost local receipt
+            # flag while retaining its already-published outcome and physical worker.
+            if worker == "provider":
+                assert (await start).launch_status == "started"
+                item.receipted = False
+            item.task.cancel()
+            await asyncio.sleep(0.05)
+            item.task.cancel()
+            await asyncio.sleep(0.05)
+            assert captured_owner._automatic_primary_claims[target.id] is captured_token
+            assert not exited.is_set()
+            assert not item.task.done()
+            if worker == "commit":
+                assert not item.outcome.done()
+            if registration_site == "second":
+                with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+                    peer.automatic_work.check_active(chain, owner_id=owner)
+            release.set()
+&gt;           assert await asyncio.gather(item.task, return_exceptions=True) == [None]
+E           AssertionError: assert [OSError('pri...ion failure')] == [None]
+E             
+E             At index 0 diff: OSError('private registration failure') != None
+E             Use -v to get more diff
+
+Tests/Chat/test_console_chat_start.py:3424: AssertionError</failure></testcase></testsuite></testsuites>

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 import io
 import json
 import logging
@@ -21,6 +22,7 @@ import pytest
 import tldw_chatbook.Tools.git_tool_impls as git_tool_impls
 import tldw_chatbook.Tools.workspace_tool_executor as workspace_tool_executor_module
 import tldw_chatbook.Tools.workspace_tool_worker as workspace_tool_worker
+from tldw_chatbook.Tools import local_tool_impls, remote_worker_bundle
 from tldw_chatbook.Tools.local_tool_impls import LocalToolError
 from tldw_chatbook.Tools.workspace_tool_executor import (
     DIAGNOSTIC_STDERR_MAX_BYTES,
@@ -42,6 +44,7 @@ from tldw_chatbook.Tools.workspace_tool_protocol import (
     WorkspaceToolResponse,
 )
 from tldw_chatbook.Tools.workspace_tool_worker import run_workspace_worker
+from Tests.workspace_worker_test_support import run_in_process_workspace_worker
 from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
 
 
@@ -50,11 +53,25 @@ _OPERATION_ID = "fixed-operation-id"
 
 READ_CASES = (
     ("fs_list", {"path": ".", "sensitive_exclusions": []}, "A_ONLY"),
-    ("fs_read", {"path": "sentinel.txt", "offset": 1, "sensitive_exclusions": []}, "A_ONLY"),
-    ("fs_glob", {"pattern": "**/*.txt", "max_results": 100, "sensitive_exclusions": []}, "sentinel.txt"),
+    (
+        "fs_read",
+        {"path": "sentinel.txt", "offset": 1, "sensitive_exclusions": []},
+        "A_ONLY",
+    ),
+    (
+        "fs_glob",
+        {"pattern": "**/*.txt", "max_results": 100, "sensitive_exclusions": []},
+        "sentinel.txt",
+    ),
     (
         "fs_grep",
-        {"pattern": "A_ONLY", "mode": "content", "max_results": 100, "sensitive_exclusions": [], "content_exclusions": []},
+        {
+            "pattern": "A_ONLY",
+            "mode": "content",
+            "max_results": 100,
+            "sensitive_exclusions": [],
+            "content_exclusions": [],
+        },
         "A_ONLY",
     ),
 )
@@ -418,7 +435,11 @@ def test_worker_environment_is_a_small_allowlist(
         "TMP",
     }
     assert environment["NoDefaultCurrentDirectoryInExePath"] == "1"
-    for marker in ("private-key-marker", "private-proxy-marker", "private-python-marker"):
+    for marker in (
+        "private-key-marker",
+        "private-proxy-marker",
+        "private-python-marker",
+    ):
         assert marker not in repr(environment)
 
 
@@ -525,9 +546,14 @@ def test_worker_pins_and_dispatches_one_real_stat_request(tmp_path: Path) -> Non
     )
     stdout = io.BytesIO()
 
-    exit_code = run_workspace_worker(io.BytesIO(request.to_bytes()), stdout, io.BytesIO())
+    exit_code = run_in_process_workspace_worker(
+        io.BytesIO(request.to_bytes()), stdout, io.BytesIO()
+    )
 
-    frames = [WorkspaceToolResponse.from_bytes(line) for line in stdout.getvalue().splitlines()]
+    frames = [
+        WorkspaceToolResponse.from_bytes(line)
+        for line in stdout.getvalue().splitlines()
+    ]
     assert exit_code == 0
     assert [frame.outcome for frame in frames] == ["admitted", "success"]
     assert frames[1].code == "ok"
@@ -557,9 +583,14 @@ def test_worker_dispatch_refuses_cross_platform_rooted_stat_paths(
     )
     stdout = io.BytesIO()
 
-    exit_code = run_workspace_worker(io.BytesIO(request.to_bytes()), stdout, io.BytesIO())
+    exit_code = run_in_process_workspace_worker(
+        io.BytesIO(request.to_bytes()), stdout, io.BytesIO()
+    )
 
-    frames = [WorkspaceToolResponse.from_bytes(line) for line in stdout.getvalue().splitlines()]
+    frames = [
+        WorkspaceToolResponse.from_bytes(line)
+        for line in stdout.getvalue().splitlines()
+    ]
     assert exit_code == 2
     assert [frame.outcome for frame in frames] == ["admitted", "failure"]
     assert frames[1].code == "invalid_request"
@@ -574,8 +605,10 @@ def isolated_runtime_python(tmp_path_factory: pytest.TempPathFactory) -> Path:
     # Symlinking preserves the signed macOS interpreter; copying it can make the
     # temporary launcher abort before Python starts. Windows ignores this flag.
     venv.EnvBuilder(with_pip=False, symlinks=True).create(environment_root)
-    runtime_python = environment_root / ("Scripts" if os.name == "nt" else "bin") / (
-        "python.exe" if os.name == "nt" else "python"
+    runtime_python = (
+        environment_root
+        / ("Scripts" if os.name == "nt" else "bin")
+        / ("python.exe" if os.name == "nt" else "python")
     )
     try:
         site_query = subprocess.run(
@@ -687,7 +720,9 @@ print(json.dumps({"worker_source": str(worker_source), "result": result}))
             "protocol_failure",
             id="unvalidated-error",
         ),
-        pytest.param(b"x" * (MAX_RESPONSE_BYTES + 1), "protocol_failure", id="oversized"),
+        pytest.param(
+            b"x" * (MAX_RESPONSE_BYTES + 1), "protocol_failure", id="oversized"
+        ),
         pytest.param(
             _response() + _response().splitlines()[-1] + b"\n",
             "protocol_failure",
@@ -708,7 +743,9 @@ def test_malformed_oversized_or_duplicate_worker_output_is_refused(
     )
 
     with pytest.raises(WorkspaceToolExecutionError) as caught:
-        executor.execute("stat_path", {"path": "private-path-marker.txt"}, intent="read")
+        executor.execute(
+            "stat_path", {"path": "private-path-marker.txt"}, intent="read"
+        )
 
     assert caught.value.code == code
     assert "private-path-marker.txt" not in str(caught.value)
@@ -740,7 +777,9 @@ def test_admitted_frame_requires_exact_content_free_root_pinned_shape(
     )
 
     with pytest.raises(WorkspaceToolExecutionError) as caught:
-        executor.execute("stat_path", {"path": "private-path-marker.txt"}, intent="read")
+        executor.execute(
+            "stat_path", {"path": "private-path-marker.txt"}, intent="read"
+        )
 
     assert caught.value.code == "protocol_failure"
 
@@ -757,7 +796,9 @@ def test_nonzero_worker_exit_rejects_a_valid_success_frame(
     )
 
     with pytest.raises(WorkspaceToolExecutionError) as caught:
-        executor.execute("stat_path", {"path": "private-path-marker.txt"}, intent="read")
+        executor.execute(
+            "stat_path", {"path": "private-path-marker.txt"}, intent="read"
+        )
 
     assert caught.value.code == "worker_crashed"
     assert caught.value.__cause__ is None
@@ -879,7 +920,9 @@ def test_timeout_terminates_the_tree_and_returns_no_in_process_result(
     )
 
     with pytest.raises(WorkspaceToolExecutionError) as caught:
-        executor.execute("stat_path", {"path": "private-path-marker.txt"}, intent="read")
+        executor.execute(
+            "stat_path", {"path": "private-path-marker.txt"}, intent="read"
+        )
 
     assert caught.value.code == "worker_timed_out"
     assert "terminate-tree" in events
@@ -1151,7 +1194,9 @@ def test_cancellation_identity_survives_cleanup_exception_and_closes_pipes(
     )
 
     with pytest.raises(BaseException) as caught:
-        executor.execute("stat_path", {"path": "private-path-marker.txt"}, intent="read")
+        executor.execute(
+            "stat_path", {"path": "private-path-marker.txt"}, intent="read"
+        )
 
     assert caught.value is cancellation
     assert "terminate-tree" in events
@@ -1250,7 +1295,9 @@ def test_cleanup_supervisor_start_failure_precedes_authority_and_falls_back(
     monkeypatch.setattr(threading.Thread, "start", fail_cleanup_supervisor)
 
     with pytest.raises(BaseException) as caught:
-        executor.execute("stat_path", {"path": "private-path-marker.txt"}, intent="read")
+        executor.execute(
+            "stat_path", {"path": "private-path-marker.txt"}, intent="read"
+        )
 
     if expected_code is None:
         assert caught.value is start_error
@@ -1288,7 +1335,9 @@ def test_pipe_closer_start_failure_is_bounded_and_preserves_cancellation(
     started_at = time.monotonic()
 
     with pytest.raises(BaseException) as caught:
-        executor.execute("stat_path", {"path": "private-path-marker.txt"}, intent="read")
+        executor.execute(
+            "stat_path", {"path": "private-path-marker.txt"}, intent="read"
+        )
 
     assert time.monotonic() - started_at < 1
     if cancel_during_wait:
@@ -1334,7 +1383,9 @@ def test_post_spawn_lifecycle_exceptions_always_cleanup_and_close_pipes(
     )
 
     with pytest.raises(BaseException) as caught:
-        executor.execute("stat_path", {"path": "private-path-marker.txt"}, intent="read")
+        executor.execute(
+            "stat_path", {"path": "private-path-marker.txt"}, intent="read"
+        )
 
     if propagates:
         assert caught.value is lifecycle_error
@@ -1382,7 +1433,9 @@ def test_unproven_cleanup_refuses_an_otherwise_successful_result(
     _FakeTree.cleanup_proven = False
 
     with pytest.raises(WorkspaceToolExecutionError) as caught:
-        executor.execute("stat_path", {"path": "private-path-marker.txt"}, intent="read")
+        executor.execute(
+            "stat_path", {"path": "private-path-marker.txt"}, intent="read"
+        )
 
     assert caught.value.code == "cleanup_unproven"
 
@@ -1408,6 +1461,49 @@ def test_unsupported_closed_operation_is_a_stable_worker_refusal(
     assert caught.value.code == "unsupported_operation"
 
 
+def test_fs_mkdir_admits_creates_and_retries_through_the_real_worker(
+    tmp_path: Path,
+) -> None:
+    """TASK-35081: fs_mkdir end to end -- admission, creation with missing
+    parents, and the already-exists success no-op a retried call needs."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    executor = WorkspaceToolExecutor(workspace)
+
+    created = _run_worker_request(
+        executor._build_request(
+            "fs_mkdir", {"path": "reports/2026/oct"}, intent="write"
+        )
+    )
+    assert created.outcome == "success"
+    assert "created directory" in (created.result or "")
+    assert (workspace / "reports" / "2026" / "oct").is_dir()
+
+    retried = _run_worker_request(
+        executor._build_request(
+            "fs_mkdir", {"path": "reports/2026/oct"}, intent="write"
+        )
+    )
+    assert retried.outcome == "success"
+    assert "already exists" in (retried.result or "")
+
+
+def test_fs_mkdir_admission_refuses_a_git_metadata_target(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    executor = WorkspaceToolExecutor(workspace)
+
+    with pytest.raises(WorkspaceToolExecutionError) as caught:
+        executor._build_request(
+            "fs_mkdir", {"path": ".git/hooks"}, intent="write"
+        )
+
+    assert caught.value.code == "invalid_request"
+    assert not (workspace / ".git").exists()
+
+
 @pytest.mark.parametrize("pattern", ("../outside/*.txt", "safe\x00name/*.txt"))
 def test_direct_worker_rejects_a_bypassed_unsafe_glob_pattern(pattern: str) -> None:
     chain = capture_directory_chain(Path.cwd())
@@ -1429,12 +1525,19 @@ def test_direct_worker_rejects_a_bypassed_unsafe_glob_pattern(pattern: str) -> N
     assert caught.value.code == "invalid_request"
 
 
-def _run_worker_request(request: WorkspaceToolRequest) -> WorkspaceToolResponse:
+def _run_worker_request(
+    request: WorkspaceToolRequest,
+    *,
+    worker: Callable[..., int] = workspace_tool_worker.run_workspace_worker,
+) -> WorkspaceToolResponse:
     """Run a hand-built pinned request and return its sole terminal frame."""
     stdout = io.BytesIO()
-    exit_code = run_workspace_worker(io.BytesIO(request.to_bytes()), stdout, io.BytesIO())
+    exit_code = run_in_process_workspace_worker(
+        io.BytesIO(request.to_bytes()), stdout, io.BytesIO(), worker=worker
+    )
     frames = [
-        WorkspaceToolResponse.from_bytes(line) for line in stdout.getvalue().splitlines()
+        WorkspaceToolResponse.from_bytes(line)
+        for line in stdout.getvalue().splitlines()
     ]
     assert exit_code == (0 if frames[-1].outcome == "success" else 2), frames
     return frames[-1]
@@ -1508,9 +1611,16 @@ def test_worker_does_not_surface_arbitrary_value_error_text(
     assert response.error == "workspace operation failed"
 
 
+@pytest.mark.parametrize("backend", ["source", "bundle"])
 def test_pinned_worker_applies_exclusions_to_both_lexical_and_resolved_aliases(
     tmp_path: Path,
+    backend: str,
 ) -> None:
+    worker = (
+        workspace_tool_worker.run_workspace_worker
+        if backend == "source"
+        else remote_worker_bundle.run_workspace_worker
+    )
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     (workspace / "public.txt").write_text("PUBLIC", encoding="utf-8")
@@ -1532,7 +1642,7 @@ def test_pinned_worker_applies_exclusions_to_both_lexical_and_resolved_aliases(
         output_max_bytes=MAX_RESPONSE_BYTES,
     )
 
-    denied = _run_worker_request(request)
+    denied = _run_worker_request(request, worker=worker)
     assert denied.outcome == "failure"
     assert "PUBLIC" not in (denied.error or "")
 
@@ -1553,9 +1663,82 @@ def test_pinned_worker_applies_exclusions_to_both_lexical_and_resolved_aliases(
         timeout_seconds=30,
         output_max_bytes=MAX_RESPONSE_BYTES,
     )
-    accepted = _run_worker_request(allowed)
+    accepted = _run_worker_request(allowed, worker=worker)
     assert accepted.outcome == "success"
     assert accepted.result is not None and "PUBLIC" in accepted.result
+
+
+@pytest.mark.parametrize("backend", ["source", "bundle"])
+@pytest.mark.parametrize("target_kind", ["escaping", "sensitive"])
+def test_pinned_read_rechecks_a_leaf_alias_before_opening_its_resolved_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    target_kind: str,
+    backend: str,
+) -> None:
+    implementation = local_tool_impls if backend == "source" else remote_worker_bundle
+    worker = (
+        workspace_tool_worker.run_workspace_worker
+        if backend == "source"
+        else remote_worker_bundle.run_workspace_worker
+    )
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "public.txt").write_text("PUBLIC", encoding="utf-8")
+    protected = workspace / "credentials"
+    protected.write_text("PRIVATE_TARGET", encoding="utf-8")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("PRIVATE_TARGET", encoding="utf-8")
+    link = workspace / "link"
+    link.symlink_to(workspace / "public.txt")
+    chain = capture_directory_chain(workspace)
+    real_safe = implementation._relative_target_is_safe
+    retargeted = []
+
+    def retarget_after_check(relative, root, exclusions, **kwargs):
+        safe = real_safe(relative, root, exclusions, **kwargs)
+        if relative == Path("link") and safe and not retargeted:
+            link.unlink()
+            link.symlink_to(outside if target_kind == "escaping" else protected)
+            retargeted.append(True)
+        return safe
+
+    real_open = os.open
+    opened = []
+
+    def record_open(path, flags, *args, **kwargs):
+        # The flat bundle also opens directories while pinning its root.
+        if not flags & getattr(os, "O_DIRECTORY", 0):
+            opened.append(path)
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(implementation, "os", SimpleNamespace(**vars(os)))
+    monkeypatch.setattr(implementation.os, "open", record_open)
+    monkeypatch.setattr(
+        implementation, "_relative_target_is_safe", retarget_after_check
+    )
+    request = WorkspaceToolRequest(
+        operation_id="retargeted-leaf-alias",
+        operation="fs_read",
+        intent="read",
+        root_locator=chain.canonical_root,
+        root_identity=chain.identities[0],
+        ancestor_identities=chain.identities,
+        arguments={
+            "path": "link",
+            "sensitive_exclusions": [{"kind": "name", "value": "credentials"}],
+        },
+        timeout_seconds=30,
+        output_max_bytes=MAX_RESPONSE_BYTES,
+    )
+
+    response = _run_worker_request(request, worker=worker)
+
+    assert retargeted == [True]
+    assert response.outcome == "failure"
+    assert not opened
+    assert "PRIVATE_TARGET" not in (response.result or "")
+    assert "PRIVATE_TARGET" not in (response.error or "")
 
 
 @pytest.mark.parametrize(
@@ -1587,11 +1770,13 @@ def test_pinned_worker_honors_direct_children_exclusions(
         ancestor_identities=chain.identities,
         arguments={
             **arguments,
-            "sensitive_exclusions": [
-                {"kind": "direct_children", "value": "protected"}
-            ],
+            "sensitive_exclusions": [{"kind": "direct_children", "value": "protected"}],
             **(
-                {"content_exclusions": [{"kind": "direct_children", "value": "protected"}]}
+                {
+                    "content_exclusions": [
+                        {"kind": "direct_children", "value": "protected"}
+                    ]
+                }
                 if operation == "fs_grep"
                 else {}
             ),
@@ -1634,7 +1819,9 @@ def test_pinned_worker_refuses_stably_retargeted_symlinks_before_operation(
         operation, arguments, intent="read"
     )
     os.unlink(link)
-    os.symlink(outside if target_kind == "escaping" else workspace / "credentials", link)
+    os.symlink(
+        outside if target_kind == "escaping" else workspace / "credentials", link
+    )
 
     response = _run_worker_request(request)
     if operation == "fs_read":
@@ -1679,12 +1866,13 @@ def test_pre_pin_read_operations_refuse_a_replaced_root(
     )
     stdout = io.BytesIO()
 
-    exit_code = run_workspace_worker(
+    exit_code = run_in_process_workspace_worker(
         io.BytesIO(request.to_bytes()), stdout, io.BytesIO()
     )
 
     frames = [
-        WorkspaceToolResponse.from_bytes(line) for line in stdout.getvalue().splitlines()
+        WorkspaceToolResponse.from_bytes(line)
+        for line in stdout.getvalue().splitlines()
     ]
     assert exit_code == 2
     assert [frame.outcome for frame in frames] == ["failure"]
@@ -1926,9 +2114,7 @@ def test_platform_evidence_representative_one_shot_operations(
     assert status.outcome == "success"
     assert "written.txt" in (status.result or "")
 
-    diff = _run_worker_request(
-        executor._build_request("git_diff", {}, intent="read")
-    )
+    diff = _run_worker_request(executor._build_request("git_diff", {}, intent="read"))
     assert diff.outcome == "success"
     assert "+after" in (diff.result or "")
 
@@ -1962,9 +2148,7 @@ def test_platform_evidence_outer_executor_git_ignores_workspace_path(
     )
     monkeypatch.setattr(sys, "executable", str(isolated_runtime_python))
 
-    result = WorkspaceToolExecutor(workspace).execute(
-        "git_status", {}, intent="read"
-    )
+    result = WorkspaceToolExecutor(workspace).execute("git_status", {}, intent="read")
 
     assert "tracked.txt" in result
 
@@ -2103,7 +2287,9 @@ def test_post_pin_mutations_never_redirect_to_replaced_root(
     """Post-pin mutations land only in retained A, or root replacement is refused."""
     locator = tmp_path / "workspace"
     locator.mkdir()
-    (locator / "note.txt").write_bytes(b"before\n" if operation == "fs_patch" else b"before")
+    (locator / "note.txt").write_bytes(
+        b"before\n" if operation == "fs_patch" else b"before"
+    )
     if operation == "fs_patch":
         (locator / "other.txt").write_bytes(b"first\n")
     request = WorkspaceToolExecutor(locator)._build_request(
@@ -2177,12 +2363,13 @@ def test_two_file_patch_uses_one_admitted_frame_and_one_requested_root_identity(
     )
     stdout = io.BytesIO()
 
-    exit_code = run_workspace_worker(
+    exit_code = run_in_process_workspace_worker(
         io.BytesIO(request.to_bytes()), stdout, io.BytesIO()
     )
 
     frames = [
-        WorkspaceToolResponse.from_bytes(line) for line in stdout.getvalue().splitlines()
+        WorkspaceToolResponse.from_bytes(line)
+        for line in stdout.getvalue().splitlines()
     ]
     assert exit_code == 0
     assert [frame.outcome for frame in frames] == ["admitted", "success"]
@@ -2193,7 +2380,9 @@ def test_two_file_patch_uses_one_admitted_frame_and_one_requested_root_identity(
     assert (workspace / "other.txt").read_bytes() == b"second\n"
 
 
-def test_worker_rejects_patch_target_set_mismatch_before_writing(tmp_path: Path) -> None:
+def test_worker_rejects_patch_target_set_mismatch_before_writing(
+    tmp_path: Path,
+) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     (workspace / "note.txt").write_bytes(b"before\n")
@@ -2274,9 +2463,11 @@ def test_parent_validates_every_patch_target_before_worker_spawn(
     runtime_config = workspace / "runtime-config.toml"
     runtime_config.write_bytes(b"SECRET\n")
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(runtime_config))
-    diff = TWO_FILE_PATCH.replace("other.txt", "runtime-config.toml").replace(
-        "first", "SECRET"
-    ).replace("second", "CHANGED")
+    diff = (
+        TWO_FILE_PATCH.replace("other.txt", "runtime-config.toml")
+        .replace("first", "SECRET")
+        .replace("second", "CHANGED")
+    )
 
     def unexpected_spawn(*args: Any, **kwargs: Any) -> Any:
         raise AssertionError("invalid patch targets must be refused before spawn")
@@ -2418,9 +2609,7 @@ def test_pinned_worker_preserves_runtime_git_exclusions_after_environment_scrubb
     status_request = executor._build_request(
         "git_status", {"path": "repo"}, intent="read"
     )
-    diff_request = executor._build_request(
-        "git_diff", {"path": "repo"}, intent="read"
-    )
+    diff_request = executor._build_request("git_diff", {"path": "repo"}, intent="read")
     monkeypatch.delenv("TLDW_CONFIG_PATH")
 
     def _unexpected_worker_policy_resolution() -> None:
@@ -2536,11 +2725,12 @@ def test_pinned_operations_do_not_disclose_in_root_sensitive_symlink_aliases(
 
     request = executor._build_request(operation, arguments, intent="read")
     stdout = io.BytesIO()
-    exit_code = run_workspace_worker(
+    exit_code = run_in_process_workspace_worker(
         io.BytesIO(request.to_bytes()), stdout, io.BytesIO()
     )
     frames = [
-        WorkspaceToolResponse.from_bytes(line) for line in stdout.getvalue().splitlines()
+        WorkspaceToolResponse.from_bytes(line)
+        for line in stdout.getvalue().splitlines()
     ]
 
     assert exit_code == 0
@@ -2565,7 +2755,9 @@ def test_parent_exclusions_survive_root_replacement_and_worker_env_stripping(
     chain = capture_directory_chain(locator)
     replacement = tmp_path / "replacement-b"
     replacement.mkdir()
-    (replacement / "runtime-config.toml").write_text("B_CONFIG_SECRET", encoding="utf-8")
+    (replacement / "runtime-config.toml").write_text(
+        "B_CONFIG_SECRET", encoding="utf-8"
+    )
 
     context = multiprocessing.get_context("spawn")
     ready = context.Event()
@@ -2584,7 +2776,9 @@ def test_parent_exclusions_survive_root_replacement_and_worker_env_stripping(
         os.replace(replacement, locator)
     except OSError as error:
         if os.name == "nt":
-            pytest.skip(f"Windows current-directory sharing refused root replacement: {error}")
+            pytest.skip(
+                f"Windows current-directory sharing refused root replacement: {error}"
+            )
         pytest.fail(f"POSIX root replacement unexpectedly failed: {error}")
     finally:
         resume.set()
@@ -2605,7 +2799,9 @@ def test_user_exclusion_refuses_read(tmp_path: Path) -> None:
     root = tmp_path
     (root / "secrets").mkdir()
     (root / "secrets" / "key.pem").write_text("k")
-    executor = WorkspaceToolExecutor(root, user_exclusion_paths=lambda: (root / "secrets",))
+    executor = WorkspaceToolExecutor(
+        root, user_exclusion_paths=lambda: (root / "secrets",)
+    )
     with pytest.raises(WorkspaceToolExecutionError):
         executor.execute("fs_read", {"path": "secrets/key.pem"}, intent="read")
 
@@ -2614,7 +2810,9 @@ def test_user_exclusion_omits_from_listing(tmp_path: Path) -> None:
     root = tmp_path
     (root / "secrets").mkdir()
     (root / "public.txt").write_text("p")
-    executor = WorkspaceToolExecutor(root, user_exclusion_paths=lambda: (root / "secrets",))
+    executor = WorkspaceToolExecutor(
+        root, user_exclusion_paths=lambda: (root / "secrets",)
+    )
     result = executor.execute("fs_list", {"path": "."}, intent="read")
     assert "secrets" not in result
     assert "public.txt" in result
@@ -2623,9 +2821,13 @@ def test_user_exclusion_omits_from_listing(tmp_path: Path) -> None:
 def test_user_exclusion_refuses_write_and_stat(tmp_path: Path) -> None:
     root = tmp_path
     (root / "notes.txt").write_text("n")
-    executor = WorkspaceToolExecutor(root, user_exclusion_paths=lambda: (root / "notes.txt",))
+    executor = WorkspaceToolExecutor(
+        root, user_exclusion_paths=lambda: (root / "notes.txt",)
+    )
     with pytest.raises(WorkspaceToolExecutionError):
-        executor.execute("fs_write", {"path": "notes.txt", "content": "x"}, intent="write")
+        executor.execute(
+            "fs_write", {"path": "notes.txt", "content": "x"}, intent="write"
+        )
     with pytest.raises(WorkspaceToolExecutionError):
         executor.execute("stat_path", {"path": "notes.txt"}, intent="read")
 
@@ -2663,7 +2865,10 @@ def _remote_chain() -> "list[list[object]]":
 def _remote_exclusions() -> "tuple[Any, ...]":
     from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
 
-    return (SensitiveExclusion("subtree", "secrets"), SensitiveExclusion("name", ".env"))
+    return (
+        SensitiveExclusion("subtree", "secrets"),
+        SensitiveExclusion("name", ".env"),
+    )
 
 
 def _remote_executor(**kwargs: Any) -> WorkspaceToolExecutor:
@@ -2681,9 +2886,7 @@ def test_remote_root_constructor_never_touches_the_laptop_disk(
     monkeypatch.setattr(
         workspace_tool_executor_module, "capture_directory_chain", blow_up
     )
-    monkeypatch.setattr(
-        workspace_tool_executor_module, "validate_path", blow_up
-    )
+    monkeypatch.setattr(workspace_tool_executor_module, "validate_path", blow_up)
 
     executor = _remote_executor()
 
@@ -2731,6 +2934,39 @@ def test_remote_request_carries_cached_identity_without_laptop_capture(
 
 def blow_up_on_disk(*_args: Any, **_kwargs: Any) -> Any:
     raise AssertionError("remote request building must not touch the laptop disk")
+
+
+def test_remote_fs_mkdir_request_normalizes_and_carries_exclusions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-35081 review follow-up: fs_mkdir's remote admission is lexical."""
+    monkeypatch.setattr(
+        workspace_tool_executor_module, "capture_directory_chain", blow_up_on_disk
+    )
+    executor = _remote_executor()
+
+    request = executor._build_request(
+        "fs_mkdir", {"path": "./deploy//v2"}, intent="write"
+    )
+
+    # The denormalized input ("./", doubled separator) is collapsed to the
+    # canonical root-relative form the worker pins against.
+    assert request.arguments["path"] == "deploy/v2"
+    assert request.arguments["sensitive_exclusions"] == [
+        {"kind": "subtree", "value": "secrets"},
+        {"kind": "name", "value": ".env"},
+    ]
+
+
+def test_remote_fs_mkdir_request_rejects_git_metadata_lexically() -> None:
+    """The one lexically-checkable hidden-path write rule the remote
+    builder enforces: a ``.git`` path component refuses admission."""
+    executor = _remote_executor()
+
+    with pytest.raises(WorkspaceToolExecutionError) as caught:
+        executor._build_request("fs_mkdir", {"path": ".git/hooks"}, intent="write")
+
+    assert caught.value.code == "invalid_request"
 
 
 @pytest.mark.parametrize(
@@ -2802,9 +3038,7 @@ def test_remote_patch_targets_are_normalized_lexically() -> None:
     with pytest.raises(WorkspaceToolExecutionError):
         executor._build_request(
             "fs_patch",
-            {
-                "diff": "--- a/x.txt\n+++ b/../../escape.txt\n@@ -1 +1 @@\n-a\n+b\n"
-            },
+            {"diff": "--- a/x.txt\n+++ b/../../escape.txt\n@@ -1 +1 @@\n-a\n+b\n"},
             intent="write",
         )
 
@@ -2815,9 +3049,7 @@ def test_remote_mode_execute_refuses_to_spawn_a_laptop_worker(
     def blow_up(*_args: Any, **_kwargs: Any) -> Any:
         raise AssertionError("remote mode must never spawn a local worker")
 
-    monkeypatch.setattr(
-        workspace_tool_executor_module.subprocess, "Popen", blow_up
-    )
+    monkeypatch.setattr(workspace_tool_executor_module.subprocess, "Popen", blow_up)
     executor = _remote_executor()
 
     with pytest.raises((TypeError, NotImplementedError)) as caught:
@@ -2931,9 +3163,7 @@ def test_remote_exclusions_serialize_raw_relative_without_laptop_resolution(
         remote_sensitive_exclusions=_remote_exclusions,
     )
 
-    request = executor._build_request(
-        "fs_read", {"path": "notes.txt"}, intent="read"
-    )
+    request = executor._build_request("fs_read", {"path": "notes.txt"}, intent="read")
 
     assert str(request.root_locator) == "/var/www/site"
     assert request.arguments["sensitive_exclusions"] == [
@@ -2990,4 +3220,3 @@ def test_remote_stat_path_admits_unexcluded_target() -> None:
     request = executor._build_request("stat_path", {"path": "ok.txt"}, intent="read")
 
     assert request.arguments["path"] == "ok.txt"
-

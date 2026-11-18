@@ -1,0 +1,14 @@
+{
+  "baseCount": 192,
+  "workCount": 192,
+  "baseExit": 1,
+  "workExit": 1,
+  "newSignatures": [],
+  "removedSignatures": [],
+  "positionOnlyChanges": [
+    {
+      "working": "F811 Redefinition of unused `on_button_pressed` from line 24455: `on_button_pressed` redefined here",
+      "base": "F811 Redefinition of unused `on_button_pressed` from line 24482: `on_button_pressed` redefined here"
+    }
+  ]
+}

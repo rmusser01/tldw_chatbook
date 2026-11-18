@@ -20,6 +20,7 @@ Under test:
 3. the idempotent-ALTER migration -- an old file without the column gains
    it on reopen, exactly like ``assistant_message_id`` before it.
 """
+
 from __future__ import annotations
 
 import sqlite3

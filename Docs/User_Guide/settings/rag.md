@@ -30,7 +30,7 @@ choice.
 Open **Settings** — press **F4**, click "F4 Settings" in the nav bar, or
 press **Ctrl+P** and pick "Tab Navigation: Switch to Settings". Then pick
 **RAG** in the
-category rail: click **Domain Defaults ▸ (10)** to expand the group (it is
+category rail: click **Domain Defaults ▸ (12)** to expand the group (it is
 collapsed by default), then **RAG** — or skip the expanding entirely: press
 `/`, type `rag`, press Enter (the filter reveals collapsed rows).
 
@@ -40,7 +40,8 @@ collapsed by default), then **RAG** — or skip the expanding entirely: press
 
 The detail pane begins with two Console cards. **New Console conversations**
 owns the future **Conversation defaults**: **Automatic retrieval**
-(`Never` / `Automatic`) and **Assistant access** (`Blocked` / `Allowed`).
+(`Never` / `Automatic`) and **Agent Library access** (`Blocked` /
+`Allowed`).
 These values apply only to conversations created after the next save; use the
 Console Library chip to change an existing conversation. **Allowed Library
 access** owns the Direct/RAG selector and explains what an Allowed assistant
@@ -52,8 +53,8 @@ shows the **first-run starter panel** while the **Editing: `<profile>`** field
 wall is collapsed. The editing card holds the ⚠ legend and five folds —
 **Search**, **Embedding**, **Chunking**, **Vector store**, **Reranking**.
 
-The pinned **State banner** above them reads `State: Draft — save with s |
-Defaults affect future Library/RAG retrieval and display.`, switching to
+The pinned **State banner** above them reads `State: No changes · edits save
+with s | Defaults affect future Library/RAG retrieval and display.`, switching to
 `State: Draft — save with s · 1 unsaved · revert with r | …` once you edit a
 field; the count follows how many fields differ from their saved values.
 **Save (s)** and **Revert (r)** live in the **Scope Inspector** on the right,
@@ -66,7 +67,7 @@ in your config file.
 
 Choose the defaults for future Console conversations, then press **Save (s)**.
 **Automatic retrieval** controls whether an ordinary send performs the fixed
-Notes, Media, and Conversations search. **Assistant access** controls whether
+Notes, Media, and Conversations search. **Agent Library access** controls whether
 the assistant receives any Library tool schema. The **Allowed Library access**
 checkbox chooses Direct tools or the single Library RAG tool only when access
 is Allowed. Existing conversations retain their own device-local choices.
@@ -197,9 +198,11 @@ not:
   **Clone** / **Rename**; Enter submits, Esc cancels.
 - **Unsaved Library/RAG changes** — "Save your changes before switching the
   active profile, or discard them?" (**Cancel** / **Discard** / **Save**),
-  raised only when you press **Set active** with an unsaved draft. Only one
-  other unsaved-changes prompt exists in Settings — leaving **Speech & TTS**
-  with edits; every other category keeps your draft silently.
+  raised only when you press **Set active** with an unsaved draft. Leaving
+  **Speech & TTS** with edits, or **Theme** with an edited theme, asks too,
+  and **Ctrl+Q** asks before discarding any staged draft, from Settings or
+  from any screen after you left it;
+  leaving any other category keeps your draft silently.
 - **Delete profile** — 'Delete the "`<name>`" RAG profile? This cannot be
   undone.' (**Cancel** / **Delete**).
 - **Re-index required** — the destructive one, raised on **Save** when a ⚠
@@ -388,101 +391,3 @@ field has focus the footer relabels the hints as `Esc, s` / `Esc, r` /
   sanitized before chunking (null bytes and unusual control characters become
   spaces, Unicode is normalized when that doesn't shift offsets) — see
   [Import & export](../library/import-and-export.md).
-
-—
-*Verified against dev @ e7b9ebabd — 2026-08-06. Verified against d6b6a738f
-— 2026-08-07 (RAG-port P0 live walkthrough on a scratch profile holding a
-copy of the real Library DBs): **Set active** on the Profile select writes
-`[rag.service] profile` immediately and the "Active:" line follows it —
-switched Hybrid Basic → BM25 Only → Hybrid Full → Hybrid Basic, and every
-switch changed what the next Library Search/RAG run actually did. The index
-line is honest about the switch: Hybrid Basic reads "Index: built · 453
-vectors · built with all-MiniLM-L6-v2 / chunk 384·64", and selecting a
-profile with a different embedding model immediately reads "Index: absent —
-will be created on next backfill" plus "Semantic index not built — Hybrid
-search is keyword-only until you Backfill" — which is exactly what the
-subsequent search then disclosed.*
-
-*Verified against `feat/rag-3502-reranker-followups` — 2026-08-16
-(TASK-3502 AC#1/AC#2, the **Reranking** fold's new **Reranker provider**
-Select and its cost line). Verified by mounted-widget tests over the real
-`SettingsScreen`, not a live TUI walkthrough: the Select's options are
-asserted equal to `chat_api_call`'s own dispatch table, the cost line's
-exact sentence is asserted with reranking still OFF, and it is re-asserted
-after staging a different provider and rerank top-k
-(`Tests/UI/test_settings_rag_profile_region.py`). Copy corrected in the
-final-review fix wave (same branch, same date): the picker ENUMERATES the
-registered chat providers — measured against the engine, the reranker's
-credential path can currently call almost none of them, so the "can
-dispatch" / "billed to the provider you picked" phrasing above was an
-over-claim and now points at TASK-17065 instead.*
-
-*Verified against `feat/rag-p2a-instrument-renewal` at 0c34be595 —
-2026-08-11 (TASK-15020 final review wave, doc-only: correcting the
-Quirks bullet above to match B3's already-shipped behavior — **Default
-results** drives the Library window's per-source cap, clamped at 50; no
-code changed here).*
-
-*Verified against `fix/task-17065-reranker-dispatch` — 2026-08-17 (TASK-17065,
-doc-only on this page): the reranker's bespoke credential lookup and its
-mis-ordered positional `chat_api_call` are deleted, so the copy above that said
-its credential path "reaches far fewer" providers than the picker offers is no
-longer true and has been corrected — the reranker now passes no credential and
-each provider handler resolves its own. Pinned by
-`Tests/RAG_Search/test_reranker_degraded_paths.py` (a seam guard that drives the
-real caller and binds through `inspect.signature(chat_api_call)`, plus nine
-parametrised provider cells covering the five keyless locals and four remotes).
-No live provider call was made; the picker itself was not touched.*
-
-*Verified against `fix/task-17065-reranker-dispatch` — 2026-08-17 (TASK-17065
-final-review fix wave, F1/F2): the spend numbers above are MEASURED, not
-inferred — counting `chat_api_call` invocations through the real reranker with
-the provider seam faked, one `rerank()` at a time. Pointwise with the shipped
-retry settings: 9 calls for 3 candidates against an erroring provider, 60 for
-20. Pairwise at `Rerank results` 20: 40 calls best case, 69 worst (49–65 across
-200 randomised comparison outcomes), matching the merge sort's own bounds.
-Listwise: exactly 1 on success, 3 against an erroring provider (the retry rule is strategy-independent). The three built-in presets that carry a reranker config
-were read back off `ConfigProfileManager` over an empty profiles dir — Hybrid
-Full, High Accuracy, Research Papers, all `openai`; the other nine built-ins,
-including the default Hybrid Basic, carry none. The Settings cost line was
-changed to disclose the retried ceiling and re-pinned in
-`Tests/UI/test_settings_rag_profile_region.py`. No live provider call was made.*
-
-*Verified against `feat/rag-16965-cross-encoder` — 2026-08-17 (TASK-16965,
-doc-only on this page): the `cross_encoder` row and the "reranking has never
-been shown to improve search here" quirk above are the measurement's own
-output, not an estimate. The strategy was implemented as a local
-sentence-transformers cross-encoder and run over the 60-query golden set on
-the gated eval instrument in two pre-declared arms, against a decision rule
-fixed in `Docs/superpowers/plans/2026-08-17-cross-encoder-measurement.md`
-BEFORE the strategy was written; the probe reproduced the retrieval census
-from its own retrievals and asserted the model actually scored (3,621 rows
-scored, 0 failed) so a null could not be faked by a silently-degraded load.
-Zero network and zero provider spend, confirmed three ways. Numbers,
-per-category tables and the verbatim probe output:
-`Docs/superpowers/qa/2026-08-17-cross-encoder/report.md`. `cross_encoder` is
-not exposed in this pane — it is a config-file strategy — and no built-in
-profile uses it, so nothing on this screen changed behaviour.*
-
-*Verified against the chunking-engine-parity worktree — 2026-08-19
-(chunking-engine-parity, doc-only on this page): the chunking engine under
-this pane is now the server's engine (vendored, behind a compatibility
-shim), verified in `tldw_chatbook/Chunking/Chunk_Lib.py`'s method map and
-`tldw_chatbook/RAG_Search/chunking_service.py`'s now-whitelist-free
-delegation — every engine method (`words`, `sentences`, `paragraphs`,
-`tokens`, `semantic`, `json`, `xml`, `ebook_chapters`, `rolling_summarize`,
-`fixed_size`, `code`, `code_ast`, `structure_aware`) routes through for
-pipeline callers, while this pane's Method picker still offers the three
-text methods. The clamp-vs-raise overlap change and the `tokens` exception
-are the shim's `_guard_tokens_overlap` and the engine strategies' clamp
-(`tldw_chatbook/Chunking/engine/strategies/paragraphs.py`), pinned by
-`Tests/Chunking/`. No live TUI walkthrough; no behavior of this pane's own
-controls changed.*
-
-*Verified against feat/settings-ux-critique-burndown — 2026-08-28
-(TASK-23108 review round: the Backfill failure toasts documented above changed
-shape — the crash toast is plain language with the exception type name and a
-next step, and the partial-failure toast reports counts and points at Logs (F3)
-instead of embedding the last raw error string. Pinned by
-`Tests/UI/test_settings_rag_profile_region.py`'s backfill toast tests; no other
-behavior of this pane changed.)*

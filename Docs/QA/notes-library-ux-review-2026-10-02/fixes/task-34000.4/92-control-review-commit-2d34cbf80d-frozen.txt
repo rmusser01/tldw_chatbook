@@ -1,0 +1,5 @@
+CONTROL: the commit the review ran against, 2d34cbf80d (git archive export), golden profile, 160x45, socket=w1b-t1-5
+Clicked Export… in the Media Items toolbar. "Export bundle (.zip)" appeared within 12s: NO
+Pane byte-identical before and after F1, Ctrl+P, Escape: YES
+After resize-window 160x45 -> 120x36, row 2 still paints the 160-column nav bar ("F2 Lab" present): YES  (capture 91)
+8s after Ctrl+Q: tmux session alive; app process pid 65691 -- pid etime cputime %cpu: 65691 01:10   0:10.58   0.6 (cpu time before Ctrl+Q: 0:10.53)

@@ -1,0 +1,160 @@
+{
+  "conversations": [
+    {
+      "id": "7b25dcf7-aa70-4a3f-99ce-1cd27469abb6",
+      "title": "Maple archival notes",
+      "version": 2,
+      "archived": 1,
+      "archived_at": "2026-09-28T03:12:36.401Z",
+      "active_leaf_message_id": "b25a3e43-3e1a-49ec-a170-640adde7195b"
+    },
+    {
+      "id": "1dd1ab0d-77b7-4e0b-9ade-9f877e7cd394",
+      "title": "Linden planning conversation",
+      "version": 1,
+      "archived": 0,
+      "archived_at": null,
+      "active_leaf_message_id": "a2bcc696-9f90-4b13-9b5d-56d9ea43ddea"
+    },
+    {
+      "id": "934feeaa-46ec-4126-bfe7-18e70fb4e50d",
+      "title": "Birch itinerary conversation",
+      "version": 2,
+      "archived": 1,
+      "archived_at": "2026-09-28T03:12:36.412Z",
+      "active_leaf_message_id": "2876219f-0221-4bae-83b9-010c34611d83"
+    },
+    {
+      "id": "6d3d404f-d9d7-4534-9d08-1450cd7c5109",
+      "title": "Find recently archived chat...",
+      "version": 1,
+      "archived": 0,
+      "archived_at": null,
+      "active_leaf_message_id": "5671a83c-3f87-41a5-8760-2390a84761a7"
+    }
+  ],
+  "messages": [
+    {
+      "id": "a2bcc696-9f90-4b13-9b5d-56d9ea43ddea",
+      "conversation_id": "1dd1ab0d-77b7-4e0b-9ade-9f877e7cd394",
+      "parent_message_id": "eec6f59f-96dc-4550-9f0e-1f4fb6ee4bce",
+      "sender": "assistant",
+      "content": "Saved reply for Linden planning conversation",
+      "version": 1,
+      "deleted": 0
+    },
+    {
+      "id": "eec6f59f-96dc-4550-9f0e-1f4fb6ee4bce",
+      "conversation_id": "1dd1ab0d-77b7-4e0b-9ade-9f877e7cd394",
+      "parent_message_id": null,
+      "sender": "user",
+      "content": "Original history for Linden planning conversation",
+      "version": 1,
+      "deleted": 0
+    },
+    {
+      "id": "53eddc26-600d-4ef6-9cfc-bce3bdb44c0c",
+      "conversation_id": "7b25dcf7-aa70-4a3f-99ce-1cd27469abb6",
+      "parent_message_id": null,
+      "sender": "user",
+      "content": "Original history for Maple archival notes",
+      "version": 1,
+      "deleted": 0
+    },
+    {
+      "id": "b25a3e43-3e1a-49ec-a170-640adde7195b",
+      "conversation_id": "7b25dcf7-aa70-4a3f-99ce-1cd27469abb6",
+      "parent_message_id": "53eddc26-600d-4ef6-9cfc-bce3bdb44c0c",
+      "sender": "assistant",
+      "content": "Saved reply for Maple archival notes",
+      "version": 1,
+      "deleted": 0
+    },
+    {
+      "id": "2876219f-0221-4bae-83b9-010c34611d83",
+      "conversation_id": "934feeaa-46ec-4126-bfe7-18e70fb4e50d",
+      "parent_message_id": "4a20964b-1501-40f3-b649-18cbf49259de",
+      "sender": "assistant",
+      "content": "Saved reply for Birch itinerary conversation",
+      "version": 1,
+      "deleted": 0
+    },
+    {
+      "id": "4a20964b-1501-40f3-b649-18cbf49259de",
+      "conversation_id": "934feeaa-46ec-4126-bfe7-18e70fb4e50d",
+      "parent_message_id": null,
+      "sender": "user",
+      "content": "Original history for Birch itinerary conversation",
+      "version": 1,
+      "deleted": 0
+    }
+  ],
+  "source_messages": [
+    {
+      "sender": "user",
+      "content": "Find recently archived chats across all workspaces."
+    },
+    {
+      "sender": "assistant",
+      "content": "I found the following recently archived conversations:\n\n*   **Birch itinerary conversation** (Archived on 2026-09-28 03:12:36 UTC in workspace \"Vault Trips\")\n*   **Maple archival notes** (Archived on 2026-09-28 03:12:36 UTC)"
+    },
+    {
+      "sender": "user",
+      "content": "Restore the second one."
+    },
+    {
+      "sender": "assistant",
+      "content": "The \"Linden planning conversation\" has been successfully restored."
+    }
+  ],
+  "workspace_records": [
+    {
+      "workspace_id": "atlas",
+      "name": "Atlas Research",
+      "active": 1,
+      "archived": 0,
+      "archived_at": null,
+      "archive_revision": 2
+    },
+    {
+      "workspace_id": "vault",
+      "name": "Vault Trips",
+      "active": 0,
+      "archived": 1,
+      "archived_at": "2026-09-28T03:12:36.413192+00:00",
+      "archive_revision": 1
+    },
+    {
+      "workspace_id": "workspace-default",
+      "name": "Default",
+      "active": 0,
+      "archived": 0,
+      "archived_at": null,
+      "archive_revision": 0
+    }
+  ],
+  "runs": [
+    {
+      "id": "e13d53da-f9c9-47c3-ad05-db28150ccce0",
+      "conversation_id": "6d3d404f-d9d7-4534-9d08-1450cd7c5109",
+      "parent_run_id": null,
+      "agent_kind": "primary",
+      "task": null,
+      "status": "done",
+      "assistant_message_id": "10873233-5e02-4659-8980-a4b1680d4d97"
+    },
+    {
+      "id": "76b7b7b2-e088-409a-91e7-621fd1b5b07d",
+      "conversation_id": "6d3d404f-d9d7-4534-9d08-1450cd7c5109",
+      "parent_run_id": null,
+      "agent_kind": "primary",
+      "task": null,
+      "status": "done",
+      "assistant_message_id": "5671a83c-3f87-41a5-8760-2390a84761a7"
+    }
+  ],
+  "step_counts": [
+    0,
+    0
+  ]
+}

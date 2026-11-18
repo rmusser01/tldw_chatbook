@@ -87,6 +87,193 @@ async def test_malformed_user_theme_survives_css_refresh(tmp_path):
     assert app.return_code in (None, 0)
 
 
+_AUTO_VARIABLES_THEME = """[theme]
+name = "auto_probe"
+dark = true
+[colors]
+primary = "#3366CC"
+background = "#101010"
+surface = "#181818"
+panel = "#202020"
+foreground = "#E0E0E0"
+[variables]
+surface-lighten-2 = "auto 50%"
+block-cursor-blurred-background = "auto 30%"
+text-primary = "auto 80%"
+tldw-boundary = "auto 40%"
+text-muted = "auto 70%"
+scrollbar-color = "auto 50%"
+"""
+_AUTO_DROPPED = (
+    "surface-lighten-2",
+    "block-cursor-blurred-background",
+    "text-primary",
+    "tldw-boundary",
+)
+
+
+def test_load_user_themes_drops_auto_on_a_background_variable(tmp_path):
+    """TASK-33003.16: Textual's CSS takes 'auto NN%' as a text colour only.
+    On a name a stylesheet paints as a background or a border it is a
+    stylesheet error, so the loader drops it with a warning. It is kept on a
+    name Textual itself sets to auto (text-muted) and on a name no stylesheet
+    knows (scrollbar-color)."""
+    from loguru import logger
+
+    _write(tmp_path, "auto_probe", _AUTO_VARIABLES_THEME)
+    messages: list[str] = []
+    sink = logger.add(lambda m: messages.append(m.record["message"]), level="WARNING")
+    try:
+        [theme] = load_user_themes(tmp_path)
+    finally:
+        logger.remove(sink)
+
+    for name in _AUTO_DROPPED:
+        assert not str(theme.variables.get(name, "")).startswith("auto"), name
+        assert any(f"dropping invalid variable {name!r}" in m for m in messages), name
+    assert theme.variables["text-muted"] == "auto 70%"
+    assert theme.variables["scrollbar-color"] == "auto 50%"
+    assert len(messages) == len(_AUTO_DROPPED), messages
+
+
+async def test_auto_on_a_background_variable_survives_css_refresh(tmp_path):
+    """TASK-33003.16 AC#1: the loaded theme applies where the stylesheet
+    paints those names as a background, a border and a text colour."""
+    from textual.app import App
+    from textual.widgets import Static
+
+    _write(tmp_path, "auto_probe", _AUTO_VARIABLES_THEME)
+    [theme] = load_user_themes(tmp_path)
+
+    class Painted(App):
+        CSS = """
+        Screen { background: $surface-lighten-2; }
+        Static {
+            background: $block-cursor-blurred-background;
+            border: solid $tldw-boundary;
+            border-left: thick $text-primary;
+            color: $text-muted;
+        }
+        """
+
+        def compose(self):
+            yield Static("probe")
+
+    app = Painted()
+    async with app.run_test() as pilot:
+        app.register_theme(theme)
+        app.theme = "auto_probe"
+        await pilot.pause()
+        app.refresh_css()
+        await pilot.pause()
+        assert app.theme == "auto_probe"
+        probe = app.query_one(Static)
+        assert probe.styles.auto_color, "text-muted's auto was not kept"
+        assert probe.styles.background.a > 0
+    assert app.return_code in (None, 0)
+
+
+_WRONG_KIND_THEME = """[theme]
+name = "kind_probe"
+dark = true
+[colors]
+primary = "#3366CC"
+background = "#101010"
+surface = "#181818"
+panel = "#202020"
+foreground = "#E0E0E0"
+[variables]
+surface-lighten-2 = "bold"
+text = "bold"
+tldw-boundary = "none"
+link-style = "#ff0000"
+block-cursor-text-style = "#ffffff 50%"
+link-style-hover = "italic"
+my-own-style = "underline"
+markdown-h1-text-style = "none bold"
+my-own-reset = "none none"
+button-focus-text-style = "none"
+"""
+_WRONG_KIND_DROPPED = {
+    "surface-lighten-2": "bold",
+    "text": "bold",
+    "tldw-boundary": "none",
+    "link-style": "#ff0000",
+    "block-cursor-text-style": "#ffffff 50%",
+    # Textual refuses `none` beside another flag, or twice, on any name.
+    "markdown-h1-text-style": "none bold",
+    "my-own-reset": "none none",
+}
+
+
+def test_load_user_themes_drops_a_value_of_the_wrong_kind(tmp_path):
+    """TASK-33003.16 AC#4: a text style on a name Textual paints as a colour
+    (`color: bold`), or a colour on a name it uses as a text style
+    (`link-style: #ff0000`), is a stylesheet error, so the loader drops it
+    with a warning. A text style is kept on a text-style name
+    (link-style-hover) and on a name no stylesheet knows. `none` is a text
+    style only on its own: `none bold` and `none none` end the app with
+    "cannot mix 'none' with other style flags", so they are dropped."""
+    from loguru import logger
+
+    _write(tmp_path, "kind_probe", _WRONG_KIND_THEME)
+    messages: list[str] = []
+    sink = logger.add(lambda m: messages.append(m.record["message"]), level="WARNING")
+    try:
+        [theme] = load_user_themes(tmp_path)
+    finally:
+        logger.remove(sink)
+
+    for name, value in _WRONG_KIND_DROPPED.items():
+        assert theme.variables.get(name) != value, name
+        assert any(f"dropping invalid variable {name!r}" in m for m in messages), name
+    assert theme.variables["link-style-hover"] == "italic"
+    assert theme.variables["my-own-style"] == "underline"
+    assert theme.variables["button-focus-text-style"] == "none"
+    assert len(messages) == len(_WRONG_KIND_DROPPED), messages
+
+
+async def test_a_value_of_the_wrong_kind_survives_css_refresh(tmp_path):
+    """TASK-33003.16 AC#4: the loaded theme applies where the stylesheet
+    paints those names as a fill, a text colour, a border and a text style
+    (Textual's own widget CSS reads $link-style on every widget)."""
+    from textual.app import App
+    from textual.widgets import Static
+
+    _write(tmp_path, "kind_probe", _WRONG_KIND_THEME)
+    [theme] = load_user_themes(tmp_path)
+
+    class Painted(App):
+        CSS = """
+        Screen { background: $surface-lighten-2; color: $text; }
+        Static {
+            border: solid $tldw-boundary;
+            link-style: $block-cursor-text-style;
+            text-style: $link-style-hover;
+        }
+        #mixed { text-style: $markdown-h1-text-style; }
+        #reset { text-style: $button-focus-text-style; }
+        """
+
+        def compose(self):
+            yield Static("probe")
+            yield Static("mixed", id="mixed")
+            yield Static("reset", id="reset")
+
+    app = Painted()
+    async with app.run_test() as pilot:
+        app.register_theme(theme)
+        app.theme = "kind_probe"
+        await pilot.pause()
+        app.refresh_css()
+        await pilot.pause()
+        assert app.theme == "kind_probe"
+        assert app.query_one(Static).styles.text_style.italic, "link-style-hover was not kept"
+        # Textual's own value for the name is "b reverse".
+        assert not app.query_one("#reset").styles.text_style.reverse, "`none` alone was not kept"
+    assert app.return_code in (None, 0)
+
+
 def test_theme_from_file_data_refuses_non_colour_keys():
     """R32: `variables`/`dark` are Theme kwargs, not colours; accepting them
     built a theme whose generate() raised AttributeError."""

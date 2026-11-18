@@ -1,0 +1,14 @@
+{
+  "refs": 395,
+  "task_trees": 339,
+  "worktrees": 53,
+  "id": "TASK-37144",
+  "unique_filename_owner": "task-37144 - Keep-Console-typing-census-independent-of-elapsed-draft-pause-timers.md",
+  "no_collision": true,
+  "local_owners": [
+    {
+      "worktree": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui",
+      "path": "task-37144 - Keep-Console-typing-census-independent-of-elapsed-draft-pause-timers.md"
+    }
+  ]
+}

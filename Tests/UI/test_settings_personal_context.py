@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
+from textual.screen import Screen
 from textual.widgets import Button, Input, Select, Static
 from tldw_profile_core import (
     AgentVisibility,
@@ -21,46 +22,62 @@ from tldw_profile_core import (
     SyncMode,
 )
 
+from Tests.private_profile import private_profile_test
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
     _visible_text,
 )
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.test_personal_context_provenance import until as _until
 from Tests.UI.test_screen_navigation import _build_test_app
 from Tests.UI.test_settings_category_sweep import (
     _click_settings_category,
     _settle_settings,
 )
 from Tests.UI.test_settings_narrow_layout import _SettingsCssHarness
-from tldw_chatbook.Personal_Context.runtime_policy import AgentAuthority
+from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Personal_Context.key_protector import (
     InMemoryProfileKeyProtector,
     ProfileLockedError,
 )
 from tldw_chatbook.Personal_Context.repository import PersonalContextRepository
+from tldw_chatbook.Personal_Context.runtime_policy import AgentAuthority
 from tldw_chatbook.Personal_Context.service import (
-    PersonalContextSettingsSnapshot,
     PersonalContextService,
+    PersonalContextSettingsSnapshot,
     ProfileConflictError,
     ProfileKeyCollisionError,
     ProfileOperationalState,
     ProfileOperationalStatus,
     SettingsScopeSnapshot,
 )
-from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
-from tldw_chatbook.app import TldwCli
 from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
+from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileSave
 from tldw_chatbook.Widgets.Settings_Widgets.personal_context_panel import (
     PersonalContextSettingsPanel,
     RecoveryPassphraseDialog,
 )
-from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
-from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileSave
 
+# Real config getters retain the private source selected at collection.
+pytestmark = pytest.mark.bootstrap_profile
 
 NOW = datetime(2026, 8, 29, 12, 0, tzinfo=UTC)
+
+
+async def _wait_profile_record(pilot, panel, record):
+    """A save's worker may finish before its follow-up Settings read renders."""
+    await _until(
+        pilot,
+        lambda: (
+            panel._selected_record() is not None
+            and panel._selected_record().version_id == record.version_id
+        ),
+    )
+    await pilot.pause()
 
 
 class _ProfileServiceStub:
@@ -830,6 +847,56 @@ async def test_my_profile_named_states_are_safe_and_actionable(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reason", "copy"),
+    [
+        ("personal_context_key_not_in_backup", "this backup did not include its key"),
+        ("personal_context_keyring_unavailable", "can't open in a separately restored copy"),
+        ("personal_context_key_install_unavailable", "no secure keyring to hold its key"),
+        ("personal_context_key_mismatch", "belongs to a different copy of the profile"),
+        ("profile_locked", "Unlock secure key storage and try again."),
+    ],
+)
+async def test_locked_profile_says_why_and_offers_only_what_a_locked_profile_allows(
+    reason: str, copy: str
+) -> None:
+    """TASK-40136 AC#5: each locked reason has the spec's copy; restore cases
+    name only Backup & Restore and Try again (Remove and Start fresh refuse
+    while locked)."""
+    status = ProfileOperationalStatus(
+        state=ProfileOperationalState.LOCKED,
+        profile_present=True,
+        locked=True,
+        runtime_enabled=False,
+        reason_code=reason,
+    )
+    app = _build_test_app()
+    app._personal_context_service = _ProfileServiceStub(
+        PersonalContextSettingsSnapshot(status=status)
+    )
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(100, 30)) as pilot:
+        await _settle_settings(pilot)
+        await _click_settings_category(pilot, "personal-context")
+        screen = _active_destination_screen(host)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        text = str(screen.query_one("#personal-context-locked-reason").renderable)
+        assert copy in text
+        assert screen.query("#personal-context-reload")
+        for absent in (
+            "#personal-context-finish-removal",
+            "#personal-context-start-fresh",
+            "#personal-context-create",
+        ):
+            assert not screen.query(absent)
+        if reason != "profile_locked":
+            assert "Unlock secure key storage" not in text
+
+
+@pytest.mark.asyncio
 async def test_profile_load_error_is_content_free() -> None:
     app = _build_test_app()
     app._personal_context_service = _ExplodingProfileService()
@@ -971,6 +1038,7 @@ async def test_working_context_retention_defaults_can_be_overridden_and_are_pres
         bounded = service.settings_snapshot().records[0]
         assert bounded.expires_at == bounded.created_at + timedelta(days=30)
         assert bounded.no_expiry is False
+        await _wait_profile_record(pilot, panel, bounded)
 
         panel = _active_destination_screen(host).query_one(
             "#personal-context-settings-panel", PersonalContextSettingsPanel
@@ -987,6 +1055,7 @@ async def test_working_context_retention_defaults_can_be_overridden_and_are_pres
         await pilot.pause()
         preserved = service.settings_snapshot().records[0]
         assert preserved.expires_at == bounded.expires_at
+        await _wait_profile_record(pilot, panel, preserved)
 
         panel = _active_destination_screen(host).query_one(
             "#personal-context-settings-panel", PersonalContextSettingsPanel
@@ -1211,7 +1280,9 @@ async def test_restore_collision_keeps_record_archived_and_gives_safe_recovery()
 
 
 def test_my_profile_footer_contract_advertises_only_working_actions() -> None:
-    shortcuts = SettingsScreen._category_footer_shortcuts(
+    # task-35150: the mapping is an instance method (the TOOLS branch reads
+    # the mounted hub pane's mode), so the call needs a screen instance.
+    shortcuts = SettingsScreen(_build_test_app())._category_footer_shortcuts(
         SettingsCategoryId.PERSONAL_CONTEXT
     )
     assert shortcuts == (
@@ -1326,6 +1397,7 @@ async def test_profile_record_add_edit_archive_restore_and_delete_use_service(
         await pilot.pause()
         record = service.settings_snapshot().records[0]
         assert record.payload.value == "brief"
+        await _wait_profile_record(pilot, panel, record)
 
         panel = screen.query_one(
             "#personal-context-settings-panel", PersonalContextSettingsPanel
@@ -1342,6 +1414,7 @@ async def test_profile_record_add_edit_archive_restore_and_delete_use_service(
         assert record.payload.value == "detailed"
         assert record.controls.sync_mode is SyncMode.DEVICE_ONLY
         assert record.controls.agent_visibility is AgentVisibility.USER_ONLY
+        await _wait_profile_record(pilot, panel, record)
 
         panel = screen.query_one(
             "#personal-context-settings-panel", PersonalContextSettingsPanel
@@ -1350,6 +1423,10 @@ async def test_profile_record_add_edit_archive_restore_and_delete_use_service(
         await host.workers.wait_for_complete()
         await pilot.pause()
         assert service.settings_snapshot().records[0].state is RecordState.ARCHIVED
+        await _until(
+            pilot, lambda: panel._selected_record().state is RecordState.ARCHIVED
+        )
+        await pilot.pause()
         panel = screen.query_one(
             "#personal-context-settings-panel", PersonalContextSettingsPanel
         )
@@ -1357,6 +1434,10 @@ async def test_profile_record_add_edit_archive_restore_and_delete_use_service(
         await host.workers.wait_for_complete()
         await pilot.pause()
         assert service.settings_snapshot().records[0].state is RecordState.ACTIVE
+        await _until(
+            pilot, lambda: panel._selected_record().state is RecordState.ACTIVE
+        )
+        await pilot.pause()
 
         panel = screen.query_one(
             "#personal-context-settings-panel", PersonalContextSettingsPanel
@@ -1430,6 +1511,11 @@ async def test_runtime_and_scope_authority_controls_show_exact_state_and_persist
         await host.workers.wait_for_complete()
         await pilot.pause()
         assert service.status().state is ProfileOperationalState.DISABLED
+        await _until(
+            pilot,
+            lambda: panel.snapshot.status.state is ProfileOperationalState.DISABLED,
+        )
+        await pilot.pause()
 
         panel = screen.query_one(
             "#personal-context-settings-panel", PersonalContextSettingsPanel
@@ -1437,11 +1523,40 @@ async def test_runtime_and_scope_authority_controls_show_exact_state_and_persist
         authority = panel.query_one("#personal-context-authority-0", Select)
         assert authority.value == AgentAuthority.PROPOSE.value
         authority.value = AgentAuthority.READ_ONLY.value
+        await pilot.pause()
         await host.workers.wait_for_complete()
+        await _until(
+            pilot,
+            lambda: panel.snapshot.scopes[0].authority is AgentAuthority.READ_ONLY,
+        )
         await pilot.pause()
         assert (
             service.get_scope_authority(service.list_scopes()[0].scope_id)
             is AgentAuthority.READ_ONLY
+        )
+        # TASK-41121 fix round 3: the select drives Off too, and shows it.
+        panel = screen.query_one(
+            "#personal-context-settings-panel", PersonalContextSettingsPanel
+        )
+        authority = panel.query_one("#personal-context-authority-0", Select)
+        authority.value = AgentAuthority.OFF.value
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await _until(
+            pilot,
+            lambda: panel.snapshot.scopes[0].authority is AgentAuthority.OFF,
+        )
+        await pilot.pause()
+        assert (
+            service.get_scope_authority(service.list_scopes()[0].scope_id)
+            is AgentAuthority.OFF
+        )
+        panel = screen.query_one(
+            "#personal-context-settings-panel", PersonalContextSettingsPanel
+        )
+        assert (
+            panel.query_one("#personal-context-authority-0", Select).value
+            == AgentAuthority.OFF.value
         )
 
 
@@ -1476,6 +1591,150 @@ async def test_scope_authority_control_carries_snapshot_policy_version() -> None
             "scope-policy-version",
         )
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("replacement", ["scope", "policy"])
+@pytest.mark.parametrize("timing", ["before_recompose", "after_recompose"])
+async def test_obsolete_scope_authority_control_cannot_mutate_replacement(
+    replacement,
+    timing,
+) -> None:
+    snapshot = _multi_scope_snapshot()
+    service = _ProfileServiceStub(snapshot)
+    app = _build_test_app()
+    app._personal_context_service = service
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        await _settle_settings(pilot)
+        await _click_settings_category(pilot, "personal-context")
+        await host.workers.wait_for_complete()
+        panel = _active_destination_screen(host).query_one(
+            "#personal-context-settings-panel", PersonalContextSettingsPanel
+        )
+        origin = panel.query_one("#personal-context-authority-0", Select)
+        held = Select.Changed(origin, AgentAuthority.READ_ONLY.value)
+        scopes = snapshot.scopes
+        if replacement == "scope":
+            scopes = (scopes[1], scopes[0], scopes[2])
+        else:
+            scopes = (replace(scopes[0], policy_version_id="new-policy"), *scopes[1:])
+        service.snapshot = replace(snapshot, scopes=scopes)
+        if timing == "before_recompose":
+            panel._apply_snapshot(panel._load_generation, service.snapshot, service)
+            assert panel.query_one("#personal-context-authority-0", Select) is origin
+        else:
+            panel.load_records()
+            await host.workers.wait_for_complete()
+            await pilot.pause()
+            assert (
+                panel.query_one("#personal-context-authority-0", Select) is not origin
+            )
+
+        panel.handle_select_changed(held)
+        await host.workers.wait_for_complete()
+        assert service.authority_changes == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("control", ["runtime", "record"])
+@pytest.mark.parametrize("timing", ["before_recompose", "after_recompose"])
+async def test_obsolete_profile_button_cannot_act_on_replacement(
+    control,
+    timing,
+) -> None:
+    snapshot = _multi_scope_snapshot()
+    service = _ProfileServiceStub(snapshot)
+    app = _build_test_app()
+    app._personal_context_service = service
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        await _settle_settings(pilot)
+        await _click_settings_category(pilot, "personal-context")
+        await host.workers.wait_for_complete()
+        panel = _active_destination_screen(host).query_one(
+            "#personal-context-settings-panel", PersonalContextSettingsPanel
+        )
+        button_id = (
+            "personal-context-runtime"
+            if control == "runtime"
+            else "personal-context-record-1"
+        )
+        origin = panel.query_one(f"#{button_id}", Button)
+        held = Button.Pressed(origin)
+        if control == "runtime":
+            service.snapshot = replace(
+                snapshot,
+                status=replace(
+                    snapshot.status, runtime_enabled=not snapshot.status.runtime_enabled
+                ),
+            )
+        else:
+            service.snapshot = replace(
+                snapshot,
+                records=(snapshot.records[0], snapshot.records[2], snapshot.records[1]),
+            )
+        if timing == "before_recompose":
+            panel._apply_snapshot(panel._load_generation, service.snapshot, service)
+            assert panel.query_one(f"#{button_id}", Button) is origin
+        else:
+            panel.load_records()
+            await host.workers.wait_for_complete()
+            await pilot.pause()
+            assert panel.query_one(f"#{button_id}", Button) is not origin
+        selected = panel.selected_record_id
+
+        panel.handle_button_pressed(held)
+        await host.workers.wait_for_complete()
+        assert panel.selected_record_id == selected
+        assert service.runtime_changes == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("control", ["record", "edit"])
+@pytest.mark.parametrize("timing", ["before_recompose", "after_recompose"])
+async def test_obsolete_profile_button_cannot_act_on_changed_local_view(
+    control,
+    timing,
+) -> None:
+    snapshot = _multi_scope_snapshot()
+    service = _ProfileServiceStub(snapshot)
+    app = _build_test_app()
+    app._personal_context_service = service
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(120, 35)) as pilot:
+        await _settle_settings(pilot)
+        await _click_settings_category(pilot, "personal-context")
+        await host.workers.wait_for_complete()
+        panel = _active_destination_screen(host).query_one(
+            "#personal-context-settings-panel", PersonalContextSettingsPanel
+        )
+        button_id = (
+            "personal-context-record-0"
+            if control == "record"
+            else "personal-context-edit"
+        )
+        origin = panel.query_one(f"#{button_id}", Button)
+        held = Button.Pressed(origin)
+        if control == "record":
+            panel.selected_scope_id = snapshot.scopes[1].scope.scope_id
+        else:
+            panel.selected_record_id = snapshot.records[1].record_id
+        assert panel.snapshot is snapshot
+        if timing == "before_recompose":
+            assert panel.query_one(f"#{button_id}", Button) is origin
+        else:
+            await pilot.pause()
+            assert panel.query_one(f"#{button_id}", Button) is not origin
+        selected = panel.selected_record_id
+
+        panel.handle_button_pressed(held)
+        await host.workers.wait_for_complete()
+        assert panel.selected_record_id == selected
+        assert panel.editor_mode == ""
 
 
 @pytest.mark.asyncio
@@ -1571,6 +1830,8 @@ async def test_local_removal_is_confirmed_and_only_start_fresh_recreates_storage
 async def test_partial_local_removal_failure_redacts_stale_snapshot_and_reloads_removed(
     tmp_path, monkeypatch
 ) -> None:
+    from Tests.UI.test_personal_context_provenance import until
+
     protector = InMemoryProfileKeyProtector()
     service = PersonalContextService(
         PersonalContextRepository(
@@ -1604,17 +1865,32 @@ async def test_partial_local_removal_failure_redacts_stale_snapshot_and_reloads_
     async with host.run_test(size=(120, 35)) as pilot:
         await _settle_settings(pilot)
         await _click_settings_category(pilot, "personal-context")
-        await host.workers.wait_for_complete()
         panel = _active_destination_screen(host).query_one(
             "#personal-context-settings-panel", PersonalContextSettingsPanel
         )
+        await until(pilot, lambda: panel.snapshot is not None)
         assert "private removal canary" in _visible_text(panel)
 
         panel._confirm_remove_local()
-        await pilot.pause()
-        await pilot.click("#confirm-button")
-        await host.workers.wait_for_complete()
-        await pilot.pause()
+        await until(
+            pilot,
+            lambda: (
+                isinstance(host.screen, ConfirmationDialog)
+                and bool(host.screen.query("#confirm-button"))
+            ),
+        )
+        host.screen.query_one("#confirm-button", Button).focus()
+        await pilot.press("enter")
+        # Completion is this mutation's rendered removed state, not idleness
+        # of every unrelated app worker. Keep the existing bounded UI wait.
+        await until(
+            pilot,
+            lambda: bool(
+                panel.snapshot
+                and panel.snapshot.status.state is ProfileOperationalState.REMOVED
+                and panel.query("#personal-context-finish-removal")
+            ),
+        )
         screen = _active_destination_screen(host)
 
         assert service.status().state is ProfileOperationalState.REMOVED
@@ -1769,3 +2045,586 @@ async def test_my_profile_f1_help_advertises_exact_working_category_actions() ->
             "- d: delete record",
             "- x: export profile",
         ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(100, 35), (60, 24)])
+@private_profile_test
+async def test_production_settings_inspects_private_and_deleted_metadata(
+    tmp_path, size, request
+):
+    from Tests.UI.test_personal_context_provenance import rendered, until
+    from tldw_chatbook.Widgets.Settings_Widgets.personal_context_provenance import (
+        PersonalContextProvenanceDetails,
+    )
+
+    service = _real_service(tmp_path)
+    record = service.create_manual_record(
+        scope_id=service.list_scopes()[0].scope_id,
+        payload=PreferencePayload(
+            subject="private preference",
+            polarity="like",
+            value="DELETED_PAYLOAD_MARKER",
+        ),
+        semantic_key=None,
+        controls={"sync_mode": "syncable", "agent_visibility": "user_only"},
+    )
+    app = _build_test_app()
+    app._personal_context_service = service
+    host = _SettingsCssHarness(app, "settings")
+    async with host.run_test(size=size) as pilot:
+        await _settle_settings(pilot)
+        await _click_settings_category(pilot, "personal-context")
+        screen = _active_destination_screen(host)
+        panel = screen.query_one(PersonalContextSettingsPanel)
+        await until(pilot, lambda: panel.snapshot is not None)
+        detail = panel.query_one(PersonalContextProvenanceDetails)
+        detail.query_one("CollapsibleTitle").focus()
+        await pilot.press("enter")
+        await until(pilot, lambda: "Recorded source: manual" in rendered(detail))
+        assert "DELETED_PAYLOAD_MARKER" not in rendered(detail)
+        detail.query_one("CollapsibleTitle").scroll_visible(
+            top=True, animate=False, force=True
+        )
+        await pilot.pause()
+        assert detail.query_one("CollapsibleTitle").is_on_screen
+        assert detail.query_one("CollapsibleTitle").region.right <= detail.region.right
+        host.save_screenshot(f"provenance-record-{size[0]}.svg", path=str(tmp_path))
+        await host.push_screen(Screen())
+        await pilot.pause()
+        assert "Recorded source: manual" not in rendered(detail)
+        await host.pop_screen()
+        await until(pilot, lambda: "Recorded source: manual" in rendered(detail))
+        service.delete_record(record.record_id, expected_version_id=record.version_id)
+        detail._tick()
+        await until(pilot, lambda: "Record changed; reload details" in rendered(detail))
+        button = detail.query_one(".personal-context-provenance-reload", Button)
+        button.focus()
+        await pilot.press("enter")
+        await until(
+            pilot, lambda: bool(panel.snapshot and panel.snapshot.deleted_records)
+        )
+        await until(
+            pilot,
+            lambda: bool(
+                panel.query("#personal-context-deleted-metadata CollapsibleTitle")
+            ),
+        )
+        deleted = panel.query_one("#personal-context-deleted-metadata")
+        deleted.query_one("CollapsibleTitle").focus()
+        await pilot.press("enter")
+        panel.query_one("#personal-context-deleted-0", Button).focus()
+        await pilot.press("enter")
+        await until(pilot, lambda: panel.selected_deleted_record_id == record.record_id)
+        await until(
+            pilot,
+            lambda: bool(
+                panel.query("PersonalContextProvenanceDetails CollapsibleTitle")
+            ),
+        )
+        detail = panel.query_one(PersonalContextProvenanceDetails)
+        await until(pilot, lambda: detail.is_mounted and not detail._latched)
+        title = detail.query_one("CollapsibleTitle")
+        title.focus()
+        await pilot.pause()
+        assert host.focused is title
+        await pilot.press("enter")
+        await until(pilot, lambda: "State: deleted" in rendered(detail))
+        assert "DELETED_PAYLOAD_MARKER" not in rendered(detail)
+        for name in ("edit", "archive-restore", "delete"):
+            assert panel.query_one(f"#personal-context-{name}", Button).disabled
+        assert detail.region.right <= size[0]
+        detail.query_one("CollapsibleTitle").scroll_visible(
+            top=True, animate=False, force=True
+        )
+        await pilot.pause()
+        assert detail.query_one("CollapsibleTitle").is_on_screen
+        assert detail.query_one("CollapsibleTitle").region.right <= detail.region.right
+        host.save_screenshot(f"provenance-deleted-{size[0]}.svg", path=str(tmp_path))
+
+
+def test_profile_reload_resolves_replacement_without_stale_worker_overwriting_owner():
+    first = _ProfileServiceStub(_ready_snapshot())
+    replacement = _ProfileServiceStub(_ready_snapshot())
+    panel = PersonalContextSettingsPanel(lambda **_kwargs: replacement)
+    panel._service = first
+    assert panel._fresh_service() is replacement
+    assert panel._service is first  # Cache changes only when the UI accepts the result.
+    panel._load_generation = 2
+    panel._apply_snapshot(2, replacement.snapshot, replacement)
+    panel._apply_snapshot(1, first.snapshot, first)
+    assert panel._service is replacement
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["current", "replacement", "absent", "injected"])
+@pytest.mark.parametrize("object_type", ["record", "proposal"])
+async def test_canonical_settings_pending_provenance_uses_cheap_current_owner(
+    change, object_type
+):
+    from threading import Event, get_ident
+
+    from Tests.UI.test_personal_context_provenance import Reader, rendered, until
+    from tldw_chatbook.Personal_Context.settings_provenance import (
+        SettingsProfileIdentity,
+        provenance_subject,
+    )
+    from tldw_chatbook.Widgets.Settings_Widgets.personal_context_provenance import (
+        PersonalContextProvenanceDetails,
+    )
+
+    ui_thread = get_ident()
+    snapshot = _ready_snapshot()
+    identity = SettingsProfileIdentity(snapshot.records[0].profile_id, 0)
+    from Tests.UI.test_personal_context_proposal_review import (
+        _proposal,
+        _ProposalService,
+    )
+
+    proposal = _proposal()
+    selected = proposal if object_type == "proposal" else snapshot.records[0]
+    subject = provenance_subject(identity, selected)
+    snapshot = replace(
+        snapshot,
+        profile_identity=identity,
+        provenance_subjects=(subject,),
+        proposals=(proposal,) if object_type == "proposal" else (),
+    )
+
+    class CurrentReader(Reader):
+        def proposal_service(self):
+            return _ProposalService(proposal)
+
+        def settings_snapshot(self):
+            assert get_ident() != ui_thread
+            return snapshot
+
+        def status(self):
+            raise AssertionError("The UI identity check must not read service status")
+
+        def settings_provenance(self, requested):
+            assert get_ident() != ui_thread
+            return super().settings_provenance(requested)
+
+    original = CurrentReader()
+    original.gate = Event()
+    app = _build_test_app()
+    app._personal_context_service = original
+    resolutions = []
+
+    def resolve(**_kwargs):
+        assert get_ident() != ui_thread
+        resolutions.append(app._personal_context_service)
+        return app._personal_context_service
+
+    app.get_personal_context_service = resolve
+    screen = SettingsScreen(
+        app, personal_context_service=original if change == "injected" else None
+    )
+    screen.active_category = SettingsCategoryId.PERSONAL_CONTEXT.value
+    # Use the actual canonical host's composition, then mount its exact panel.
+    panel = next(screen._render_detail_pane())
+    assert resolutions == []
+
+    class PanelHost(ConsolidatedCSSApp):
+        def compose(self):
+            yield panel
+
+    host = PanelHost()
+    async with host.run_test(size=(100, 35)) as pilot:
+        await until(pilot, lambda: panel.snapshot is not None)
+        if object_type == "proposal":
+            panel._review_proposal_index("personal-context-proposal-0")
+            await until(
+                pilot, lambda: bool(host.screen.query(PersonalContextProvenanceDetails))
+            )
+            detail = host.screen.query_one(PersonalContextProvenanceDetails)
+        else:
+            await until(
+                pilot, lambda: bool(panel.query(PersonalContextProvenanceDetails))
+            )
+            detail = panel.query_one(PersonalContextProvenanceDetails)
+        detail.collapsed = False
+        await until(pilot, original.entered.is_set)
+        assert detail._owner is None
+        resolved_before_finish = len(resolutions)
+        try:
+            if change in {"replacement", "injected"}:
+                app._personal_context_service = CurrentReader()
+            elif change == "absent":
+                app._personal_context_service = None
+        finally:
+            original.gate.set()
+        await until(pilot, lambda: not detail._pending)
+        assert ("SOURCE_MARKER" in rendered(detail)) is (
+            change in {"current", "injected"}
+        )
+        assert len(resolutions) == resolved_before_finish
+        if change == "injected":
+            assert not resolutions
+
+
+@pytest.mark.asyncio
+async def test_export_and_deleted_labels_keep_literal_metadata(monkeypatch):
+    from tldw_chatbook.Personal_Context.settings_provenance import (
+        SettingsDeletedRecord,
+        SettingsProfileIdentity,
+        SettingsProvenanceSubject,
+    )
+
+    snapshot = _ready_snapshot()
+    identity = SettingsProfileIdentity(snapshot.records[0].profile_id, 0)
+    object_id = "[bold]retired[/bold]\x1b\u202e"
+    subject = SettingsProvenanceSubject(identity, "record", object_id, "deleted-v1")
+    snapshot = replace(
+        snapshot,
+        profile_identity=identity,
+        deleted_records=(
+            SettingsDeletedRecord(subject, snapshot.scopes[0].scope.scope_id, NOW),
+        ),
+    )
+    panel = PersonalContextSettingsPanel(_ProfileServiceStub(snapshot))
+    scope_label = "[bold]workspace[/bold]"
+    monkeypatch.setattr(panel, "_selected_export_scope", lambda: (None, scope_label))
+
+    class PanelHost(ConsolidatedCSSApp):
+        def compose(self):
+            yield panel
+
+    async with PanelHost().run_test(size=(100, 35)) as pilot:
+        await _until(pilot, lambda: bool(panel.query("#personal-context-deleted-0")))
+        export = panel.query_one("#personal-context-export-plaintext", Button).label
+        deleted = panel.query_one("#personal-context-deleted-0", Button).label
+        assert not export.spans
+        assert export.plain == "Export plaintext: " + scope_label
+        assert not deleted.spans
+        assert (
+            deleted.plain
+            == f"Deleted · [bold]retired[/bold]   · Updated {NOW.isoformat()}"
+        )
+
+
+class _RestoredProfileService(_ProfileServiceStub):
+    _repository = SimpleNamespace(db_path="restored-personal-context.db")
+
+    def __init__(
+        self, snapshot, *, fail_reencrypt: bool = False, damaged=None
+    ) -> None:
+        super().__init__(snapshot)
+        self.fail_reencrypt = fail_reencrypt
+        self.damaged = damaged or {}
+        self.steps: list[str] = []
+
+    def damaged_object_counts(self) -> dict[str, int]:
+        return self.damaged
+
+    def reencrypt_after_restore(self, *, expected_damaged=None) -> str:
+        self.steps.append(("reencrypt", expected_damaged) if expected_damaged else "reencrypt")
+        if self.fail_reencrypt:
+            raise RuntimeError("private-key-detail-that-must-never-render")
+        return "personal-context:profile_" + "f" * 32
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("review", ["available", "link_state", "unavailable"])
+async def test_restored_profile_review_never_claims_sync_resumes(
+    monkeypatch, review
+) -> None:
+    """TASK-40134 AC#10, TASK-40139 AC#8: Settings offers the Personal Context
+    review whenever it can approve it, its copy keeps sync off, and a restore that
+    brought back link state says to link again and to remove a lost old device
+    on the server."""
+    import tldw_chatbook.Widgets.Settings_Widgets.personal_context_panel as module
+    from tldw_chatbook.Personal_Context import recovery
+
+    state = {
+        "available": recovery.REVIEW_AVAILABLE,
+        "link_state": recovery.RESTORED_LINK_STATE,
+        "unavailable": recovery.REVIEW_UNAVAILABLE,
+    }[review]
+    reviewed: list[str] = []
+    monkeypatch.setattr(module, "restore_review", lambda path: None if reviewed else state)
+    monkeypatch.setattr(module, "approve_restore_review", lambda path: reviewed.append(path))
+    panel = PersonalContextSettingsPanel(_RestoredProfileService(_ready_snapshot()))
+
+    class _PanelHost(ConsolidatedCSSApp):
+        def compose(self):
+            yield panel
+
+    host = _PanelHost()
+    async with host.run_test(size=(100, 40)) as pilot:
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        copy = str(panel.query_one("#personal-context-restore-review-copy", Static).render())
+        assert "sync" in copy.lower() and "off" in copy
+        assert "resume" not in copy.replace("resume the old device", "")
+        buttons = panel.query("#personal-context-restore-review")
+        if review == "link_state":
+            assert "because this profile was restored" in copy
+            assert "Link to home server again" in copy
+            assert "If the old device is lost, remove it on your server" in copy
+        if review == "unavailable":
+            assert "could not be read" in copy
+            assert not buttons
+            return
+        await pilot.click("#personal-context-restore-review")
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        assert reviewed == ["restored-personal-context.db"]
+        assert not panel.query("#personal-context-restore-review-copy")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["reencrypted", "reencrypt_failed"])
+async def test_restored_profile_review_reencrypts_before_it_approves(
+    monkeypatch, outcome
+) -> None:
+    """TASK-40140, owner decision 2026-11-13 ("As part of the restored-profile
+    review"): confirming Review restored profile re-encrypts on a worker, then
+    approves. A failed re-encryption approves nothing, keeps the review
+    offered, and shows the panel's content-free failure copy."""
+    import tldw_chatbook.Widgets.Settings_Widgets.personal_context_panel as module
+    from tldw_chatbook.Personal_Context import recovery
+
+    service = _RestoredProfileService(
+        _ready_snapshot(), fail_reencrypt=outcome == "reencrypt_failed"
+    )
+    monkeypatch.setattr(
+        module,
+        "restore_review",
+        lambda path: None if "approve" in service.steps else recovery.REVIEW_AVAILABLE,
+    )
+    monkeypatch.setattr(
+        module, "approve_restore_review", lambda path: service.steps.append("approve")
+    )
+    panel = PersonalContextSettingsPanel(service)
+    notices: list[str] = []
+    monkeypatch.setattr(panel, "notify", lambda message, **_: notices.append(message))
+
+    class _PanelHost(ConsolidatedCSSApp):
+        def compose(self):
+            yield panel
+
+    host = _PanelHost()
+    async with host.run_test(size=(100, 40)) as pilot:
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        await pilot.click("#personal-context-restore-review")
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        assert notices[0] == "Re-encrypting the restored profile under a new key…"
+        if outcome == "reencrypted":
+            assert service.steps == ["reencrypt", "approve"]
+            assert notices[-1] == (
+                "Restored profile reviewed and re-encrypted under a new key."
+            )
+            assert not panel.query("#personal-context-restore-review")
+            return
+        assert service.steps == ["reencrypt"]
+        assert notices[-1].startswith("The profile change could not be saved.")
+        assert "private-key-detail" not in " ".join(notices)
+        assert panel.query("#personal-context-restore-review")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("damaged", "copy"),
+    [
+        ({"record": 2}, "2 damaged records can't be read and will be removed"),
+        # TASK-41121, owner decision 2026-11-15: other kinds, counted by kind.
+        (
+            {"scope_binding": 1, "record": 2, "undo": 2, "manifest_history": 1},
+            "2 damaged records, 1 damaged older profile version, 2 damaged undo "
+            "entries and 1 damaged workspace mapping can't be read and will be "
+            "removed",
+        ),
+        # Owner decisions 2026-11-16: a damaged scope is rebuilt with its
+        # records, and a lost agent access setting is Off.
+        (
+            {"scope": 1, "rebuilt_scope_records": 3, "runtime_policy": 1},
+            "1 damaged scope will be rebuilt; its 3 records are kept. 1 damaged "
+            "agent access setting can't be read and will be removed. Agent access "
+            "for that scope is Off until you set it again",
+        ),
+        (
+            {"scope": 2, "rebuilt_scope_records": 1, "scope_binding_history": 1},
+            "2 damaged scopes will be rebuilt; their 1 record is kept. 1 damaged "
+            "older workspace mapping version can't be read and will be removed",
+        ),
+        # Fix round 3: no records, the global switch, and ambiguous scopes.
+        (
+            {"scope": 1, "rebuilt_scope_records": 0, "runtime_switch": 1},
+            "1 damaged scope will be rebuilt; it has no records. 1 damaged Personal "
+            "Context on/off setting can't be read and will be removed. Agent use of "
+            "Personal Context stays off until you turn it on",
+        ),
+        (
+            {"runtime_policy": 2},
+            "2 damaged agent access settings can't be read and will be removed. "
+            "Agent access for those scopes is Off until you set it again",
+        ),
+        (
+            {
+                "scope": 2,
+                "rebuilt_scope_records": 2,
+                "personal_context_damaged_scopes_ambiguous": 2,
+            },
+            "Some damaged scopes can't be told apart, so this restored profile can't "
+            "be confirmed. Restore Personal Context again from another backup, or "
+            "roll the restore back in Backup & Restore > Recovery copies",
+        ),
+    ],
+)
+async def test_restored_profile_review_shows_and_removes_the_damaged_count(
+    monkeypatch, damaged, copy
+) -> None:
+    """TASK-40140 AC#5, owner decision 2026-11-14: before confirming, the review
+    says "N damaged records can't be read and will be removed"; confirming
+    passes exactly that count to re-encryption. TASK-41121: any other kind
+    counts the same way, by kind."""
+    import tldw_chatbook.Widgets.Settings_Widgets.personal_context_panel as module
+    from tldw_chatbook.Personal_Context import recovery
+
+    service = _RestoredProfileService(_ready_snapshot(), damaged=damaged)
+    monkeypatch.setattr(
+        module,
+        "restore_review",
+        lambda path: None if "approve" in service.steps else recovery.REVIEW_AVAILABLE,
+    )
+    monkeypatch.setattr(
+        module, "approve_restore_review", lambda path: service.steps.append("approve")
+    )
+    panel = PersonalContextSettingsPanel(service)
+
+    class _PanelHost(ConsolidatedCSSApp):
+        def compose(self):
+            yield panel
+
+    host = _PanelHost()
+    async with host.run_test(size=(100, 40)) as pilot:
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        line = str(
+            panel.query_one("#personal-context-restore-review-damaged", Static).render()
+        )
+        assert line == copy
+        await pilot.click("#personal-context-restore-review")
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        assert service.steps == [("reencrypt", damaged), "approve"]
+
+
+@pytest.mark.asyncio
+async def test_sync_stays_named_off_until_the_sync_identity_review(monkeypatch) -> None:
+    """TASK-40139 (review r14pccB): after the Personal Context review, while sync
+    is still off, the panel names the Backup & Restore step; no review button."""
+    import tldw_chatbook.Widgets.Settings_Widgets.personal_context_panel as module
+    from tldw_chatbook.Personal_Context import recovery
+
+    monkeypatch.setattr(
+        module, "restore_review", lambda path: recovery.SYNC_IDENTITY_PENDING
+    )
+    panel = PersonalContextSettingsPanel(_RestoredProfileService(_ready_snapshot()))
+
+    class _PanelHost(ConsolidatedCSSApp):
+        def compose(self):
+            yield panel
+
+    host = _PanelHost()
+    async with host.run_test(size=(100, 40)) as pilot:
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        copy = str(panel.query_one("#personal-context-restore-review-copy", Static).render())
+        assert "sync is still off" in copy
+        assert "Backup & Restore > Restored profiles > Sync identity review" in copy
+        assert not panel.query("#personal-context-restore-review")
+
+
+
+@pytest.mark.asyncio
+async def test_a_refused_review_reloads_the_damaged_count(monkeypatch) -> None:
+    """TASK-40140 (review r14pcc-rev2): one damaged record reads in the
+    singular; when re-encryption refuses (the count changed), the panel reloads
+    and shows the new count before the next confirm."""
+    import tldw_chatbook.Widgets.Settings_Widgets.personal_context_panel as module
+    from tldw_chatbook.Personal_Context import recovery
+
+    class _CountChanged(_RestoredProfileService):
+        def reencrypt_after_restore(self, *, expected_damaged=None) -> str:
+            self.steps.append(("reencrypt", expected_damaged))
+            self.damaged = {"record": 2}
+            raise RuntimeError("damaged records changed since review")
+
+    service = _CountChanged(_ready_snapshot(), damaged={"record": 1})
+    monkeypatch.setattr(module, "restore_review", lambda path: recovery.REVIEW_AVAILABLE)
+    monkeypatch.setattr(
+        module, "approve_restore_review", lambda path: service.steps.append("approve")
+    )
+    panel = PersonalContextSettingsPanel(service)
+
+    class _PanelHost(ConsolidatedCSSApp):
+        def compose(self):
+            yield panel
+
+    def damaged_line():
+        return str(
+            panel.query_one("#personal-context-restore-review-damaged", Static).render()
+        )
+
+    host = _PanelHost()
+    async with host.run_test(size=(100, 40)) as pilot:
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        assert damaged_line() == "1 damaged record can't be read and will be removed"
+        await pilot.click("#personal-context-restore-review")
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        assert service.steps == [("reencrypt", {"record": 1})]
+        assert damaged_line() == "2 damaged records can't be read and will be removed"
+
+
+@pytest.mark.asyncio
+async def test_an_ambiguous_scope_refusal_says_what_to_do(monkeypatch) -> None:
+    """TASK-41121 fix round 3: when re-encryption refuses because damaged scopes
+    can't be told apart, the notice says to restore from another backup or roll
+    back, not the generic failure copy, and the review stays offered."""
+    import tldw_chatbook.Widgets.Settings_Widgets.personal_context_panel as module
+    from tldw_chatbook.Personal_Context import recovery
+    from tldw_chatbook.Personal_Context.repository_keys import AMBIGUOUS_SCOPES
+
+    class _Ambiguous(_RestoredProfileService):
+        def reencrypt_after_restore(self, *, expected_damaged=None) -> str:
+            self.steps.append("reencrypt")
+            refusal = ProfileLockedError("private-scope-detail")
+            refusal.reason_code = AMBIGUOUS_SCOPES
+            raise refusal
+
+    service = _Ambiguous(_ready_snapshot())
+    monkeypatch.setattr(module, "restore_review", lambda path: recovery.REVIEW_AVAILABLE)
+    monkeypatch.setattr(
+        module, "approve_restore_review", lambda path: service.steps.append("approve")
+    )
+    panel = PersonalContextSettingsPanel(service)
+    notices: list[str] = []
+    monkeypatch.setattr(panel, "notify", lambda message, **_: notices.append(message))
+
+    class _PanelHost(ConsolidatedCSSApp):
+        def compose(self):
+            yield panel
+
+    host = _PanelHost()
+    async with host.run_test(size=(100, 40)) as pilot:
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        await pilot.click("#personal-context-restore-review")
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        assert service.steps == ["reencrypt"]
+        assert notices[-1].startswith("Some damaged scopes can't be told apart"), notices
+        assert "another backup" in notices[-1]
+        assert "private-scope-detail" not in " ".join(notices)
+        assert panel.query("#personal-context-restore-review")

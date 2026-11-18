@@ -3,9 +3,11 @@
 #
 # Imports
 import logging
+import math
 from pathlib import Path
 from typing import Dict, Any, Optional, List, IO, Tuple
 import mimetypes
+from urllib.parse import quote
 
 #
 # 3rd-party Libraries
@@ -14,6 +16,57 @@ from pydantic import BaseModel
 #######################################################################################################################
 #
 # Functions:
+
+
+def _workspace_source_path_id(value: Any, field_name: str) -> str:
+    """Validate and quote one opaque workspace/source path segment."""
+    from .notes_workspace_schemas import MAX_WORKSPACE_SOURCE_ID_CHARS
+
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} must be text")
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(f"{field_name} must not be blank")
+    if (
+        len(normalized) > MAX_WORKSPACE_SOURCE_ID_CHARS
+        or len(normalized.encode("utf-8")) > 4096
+    ):
+        raise ValueError(f"{field_name} is too long")
+    return quote(normalized, safe="")
+
+
+def _validate_timeout(value: Any, field: str) -> float:
+    """Reject a nonsensical timeout at the boundary instead of at request time.
+
+    httpx validates none of this -- ``httpx.Timeout(300.0, connect=-5)``,
+    ``connect=nan`` and even ``connect="abc"`` are all accepted -- so an
+    invalid value would otherwise cross this public boundary and only
+    misbehave later, at the request, far from the call that caused it.
+    NaN is the sharp case: ``min(nan, cap)`` is ``nan``, which would
+    silently defeat the connect ceiling that keeps an unreachable host
+    from freezing the app.
+
+    Args:
+        value: The candidate timeout, in seconds.
+        field: Parameter name, used in the error message.
+
+    Returns:
+        The validated timeout as a float.
+
+    Raises:
+        TypeError: If ``value`` is not a real number.
+        ValueError: If ``value`` is not finite and positive.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(
+            f"{field} must be a number of seconds, got {type(value).__name__}"
+        )
+    value = float(value)
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(
+            f"{field} must be a finite, positive number of seconds, got {value!r}"
+        )
+    return value
 
 
 def model_to_form_data(model_instance: BaseModel) -> Dict[str, Any]:

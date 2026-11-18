@@ -1,0 +1,88 @@
+{
+  "files": [
+    {
+      "path": "tldw_chatbook/Widgets/Console/console_composer_bar.py",
+      "old": 12,
+      "new": 12,
+      "added": []
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Console/console_speech_controls.py",
+      "old": 1,
+      "new": 1,
+      "added": []
+    },
+    {
+      "path": "tldw_chatbook/LLM_Calls/LLM_API_Calls.py",
+      "old": 248,
+      "new": 246,
+      "added": []
+    },
+    {
+      "path": "tldw_chatbook/LLM_Calls/openai_protocol.py",
+      "old": 0,
+      "new": 2,
+      "added": [
+        [
+          "('S110', '`try`-`except`-`pass` detected, consider logging the exception')",
+          1
+        ],
+        [
+          "('BLE001', 'Do not catch blind exception: `Exception`')",
+          1
+        ]
+      ]
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/composer_run_controls.py",
+      "old": 3,
+      "new": 3,
+      "added": []
+    },
+    {
+      "path": "Tests/Chat/test_openai_streaming_usage.py",
+      "old": 0,
+      "new": 0,
+      "added": []
+    },
+    {
+      "path": "Tests/UI/test_console_voice_chip.py",
+      "old": 1,
+      "new": 1,
+      "added": []
+    },
+    {
+      "path": "Tests/UI/test_console_idle_voice_boot.py",
+      "old": 0,
+      "new": 0,
+      "added": []
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_first_send_modules.py",
+      "old": 0,
+      "new": 0,
+      "added": []
+    },
+    {
+      "path": "tldw_chatbook/app_idle_warmup.py",
+      "old": 0,
+      "new": 0,
+      "added": []
+    },
+    {
+      "path": "Tests/UI/test_console_first_send_preimport.py",
+      "old": 3,
+      "new": 3,
+      "added": []
+    },
+    {
+      "path": "Tests/UI/test_console_idle_heap_refreeze.py",
+      "old": 0,
+      "new": 0,
+      "added": []
+    }
+  ],
+  "old_total": 268,
+  "new_total": 268,
+  "introduced": []
+}

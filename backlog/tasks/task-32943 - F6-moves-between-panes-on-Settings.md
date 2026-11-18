@@ -43,3 +43,6 @@ Test: `test_settings_f6_cycles_rail_detail_inspector` (hub file, `@private_profi
 
 Files: `tldw_chatbook/UI/Screens/settings_screen.py`, `Tests/UI/test_settings_configuration_hub.py`, `Docs/User_Guide/settings.md`.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/settings.md`: F6 cycle, j/k, labels, the Built-in group and the invalid swatch: pinned by pilot tests, not driven live.

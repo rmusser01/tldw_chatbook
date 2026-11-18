@@ -1,0 +1,27 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "--tb=short",
+    "Tests/Chat/test_workflow_native_journeys.py::test_original_workflow_hook_validation_preserves_capture_return",
+    "Tests/Agents/test_native_legacy_hooks.py",
+    "Tests/Agents/test_workflow_task_scope.py",
+    "--basetemp",
+    "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/t10-hook_controls-57ysxlzg/pytest",
+    "--junitxml",
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-hook_controls/tests.xml"
+  ],
+  "basetemp": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/t10-hook_controls-57ysxlzg",
+  "elapsed": 65.33930358290672,
+  "pgid": 89668,
+  "pid": 89668,
+  "primary": 1,
+  "process_wait": 1,
+  "signals": [],
+  "source_deltas": [],
+  "sources": 8325,
+  "started": 1793853173.497121,
+  "whole_bound": 180
+}

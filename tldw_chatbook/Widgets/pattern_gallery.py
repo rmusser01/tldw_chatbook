@@ -5,6 +5,14 @@ production bundle's own rules: the gallery composes the canonical classes and
 contributes no family styling of its own (``features/_pattern_gallery.tcss``
 is layout glue only). The dark+light SVG snapshots in
 ``Tests/UI/snapshots/pattern_gallery/`` pin this rendering (spec 3.4).
+
+Widget-contract families have no public classes, so nothing of theirs is
+composed here by class name: ``lists`` is exercised through the stock widgets
+below, and ``panes`` (``AdaptivePaneShell``/``AdaptivePaneGrip``/
+``DestinationRailRowButton``; the shared adaptive-pane-shell ADR) is deliberately NOT rendered -- its
+rules are keyed to destination classes in lazy split sheets, and this gallery
+renders against the boot bundle only, so a sample would paint unstyled and
+misdocument the family. See ``backlog/docs/component-patterns.md``.
 """
 
 from __future__ import annotations
@@ -63,9 +71,7 @@ class PatternGalleryScreen(Screen):
                     # fixed 24-col column with panel background; a documented
                     # variant of form-label, NOT a merge candidate (probe).
                     with Horizontal(classes="form-row"):
-                        yield Static(
-                            "Palette limit", classes="settings-input-label"
-                        )
+                        yield Static("Palette limit", classes="settings-input-label")
                         yield Static("24", classes="settings-compact-input")
                     # ADR-161 task 9: the read-only detail-line variant --
                     # panel fill, primary text, one-row minimum; a documented
@@ -74,9 +80,7 @@ class PatternGalleryScreen(Screen):
                     yield Static(
                         "Saved profile: default", classes="settings-detail-row"
                     )
-                    yield Label(
-                        "Generation parameters", classes="form-section-title"
-                    )
+                    yield Label("Generation parameters", classes="form-section-title")
                     with Collapsible(
                         title="Advanced", classes="form-section-collapsible"
                     ):
@@ -153,8 +157,7 @@ class PatternGalleryScreen(Screen):
                 classes="pg-msg-assistant",
             )
             # ADR-161 task 8c: the shared bubble grammar (header band,
-            # body, action strip) -- same classes ChatMessage (Console
-            # transcripts) and ChatMessageEnhanced (Chat window) compose.
+            # body, action strip).
             with Container(classes="pg-msg-frame"):
                 yield Label("user", classes="message-header")
                 yield Static("message body", classes="message-text")
@@ -201,7 +204,7 @@ class PatternGalleryScreen(Screen):
             # Bounded cells show each explicit override, including finite sizes.
             for offset in range(0, len(EXTENDED_UTILITIES), 4):
                 with Horizontal(classes="pg-utility-row"):
-                    for utility in EXTENDED_UTILITIES[offset:offset + 4]:
+                    for utility in EXTENDED_UTILITIES[offset : offset + 4]:
                         with Container(classes="pg-utility-cell"):
                             yield Label(utility)
                             yield Static("Sample", classes=utility)
@@ -209,42 +212,42 @@ class PatternGalleryScreen(Screen):
 
 EXTENDED_UTILITIES = (
     "w-7",
-    'w-1',
-    'w-3',
-    'w-4',
-    'w-5',
-    'w-9',
-    'w-11',
-    'w-12',
-    'w-13',
-    'w-17',
-    'w-18',
-    'w-20',
-    'w-21',
-    'w-23',
-    'w-24',
-    'w-28',
-    'w-3fr',
-    'w-4fr',
-    'w-13fr',
-    'h-4',
-    'h-5',
-    'h-6',
-    'h-7',
-    'h-8',
-    'h-9',
-    'p-inline-1',
-    'm-left-2',
-    'm-left-3',
-    'ds-text-error',
-    'ds-text-warning',
-    'ds-text-ready',
-    'ds-text-primary',
-    'ds-text-muted',
-    'w-6',
-    'w-8',
-    'w-10',
-    'w-16',
-    'h-10',
-    'p-left-1',
+    "w-1",
+    "w-3",
+    "w-4",
+    "w-5",
+    "w-9",
+    "w-11",
+    "w-12",
+    "w-13",
+    "w-17",
+    "w-18",
+    "w-20",
+    "w-21",
+    "w-23",
+    "w-24",
+    "w-28",
+    "w-3fr",
+    "w-4fr",
+    "w-13fr",
+    "h-4",
+    "h-5",
+    "h-6",
+    "h-7",
+    "h-8",
+    "h-9",
+    "p-inline-1",
+    "m-left-2",
+    "m-left-3",
+    "ds-text-error",
+    "ds-text-warning",
+    "ds-text-ready",
+    "ds-text-primary",
+    "ds-text-muted",
+    "w-6",
+    "w-8",
+    "w-10",
+    "w-16",
+    "h-10",
+    "p-left-1",
 )

@@ -1,0 +1,48 @@
+{
+  "cases": [
+    {
+      "key": "chat_only",
+      "conversation_id": "0208a362-f32f-4122-b41a-b8bf21f63a60",
+      "title": "Maple archival notes",
+      "workspace_id": null,
+      "message_ids": [
+        "f0da1932-962e-40be-872e-8b68cb2fc637",
+        "f46c66b4-e0dd-44aa-bb64-7d73ba0914db"
+      ],
+      "active_leaf": "f46c66b4-e0dd-44aa-bb64-7d73ba0914db",
+      "chat_archived": true,
+      "workspace_archived": false
+    },
+    {
+      "key": "workspace_only",
+      "conversation_id": "efff8e96-821d-44c6-bcf3-808813c2fe5c",
+      "title": "Linden planning conversation",
+      "workspace_id": "atlas",
+      "message_ids": [
+        "c90d303e-31f8-422c-8417-5c1fed979808",
+        "84ea5f86-c005-4a6a-86cf-8ba7498b1feb"
+      ],
+      "active_leaf": "84ea5f86-c005-4a6a-86cf-8ba7498b1feb",
+      "chat_archived": false,
+      "workspace_archived": true
+    },
+    {
+      "key": "both",
+      "conversation_id": "e5b25106-844a-47f7-969d-d55cdbdde41d",
+      "title": "Birch itinerary conversation",
+      "workspace_id": "vault",
+      "message_ids": [
+        "80761111-f4f1-4d6e-a132-8cc276a344fd",
+        "c0e73c5a-5353-412e-a607-b3294ef93786"
+      ],
+      "active_leaf": "c0e73c5a-5353-412e-a607-b3294ef93786",
+      "chat_archived": true,
+      "workspace_archived": true
+    }
+  ],
+  "paths": {
+    "user_data": "/private/tmp/archive-capture-native-_yuzjq8a/rag/data/task7_live",
+    "chat_db": "/private/tmp/archive-capture-native-_yuzjq8a/rag/data/task7_live/tldw_chatbook_ChaChaNotes.db",
+    "workspace_db": "/private/tmp/archive-capture-native-_yuzjq8a/rag/data/task7_live/tldw_chatbook_workspaces.db"
+  }
+}

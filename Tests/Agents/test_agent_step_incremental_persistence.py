@@ -156,9 +156,7 @@ def test_terminal_error_step_without_live_timestamp_uses_wall_clock_fallback(
     assert outcome.status == "error"
     live_step = outcome.steps[0]
     durable_step = next(
-        step
-        for step in db.get_run(run_id)["steps"]
-        if step["index"] == live_step.index
+        step for step in db.get_run(run_id)["steps"] if step["index"] == live_step.index
     )
     durable_timestamp = durable_step["created_at"]
     assert outcome.steps[0].created_at == durable_timestamp
@@ -254,16 +252,12 @@ def test_failed_incremental_write_does_not_abort_and_terminal_write_recovers(
 
     monkeypatch.setattr(db, "insert_steps_at_indices", fail_once)
 
-    run_id, outcome = _run(
-        _service(db, chat_call=lambda **_kwargs: replies.pop(0))
-    )
+    run_id, outcome = _run(_service(db, chat_call=lambda **_kwargs: replies.pop(0)))
 
     assert outcome.status == "done"
     assert failed_runtime_write
     assert any(len(indices) == len(outcome.steps) for indices in calls)
-    durable_by_index = {
-        step["index"]: step for step in db.get_run(run_id)["steps"]
-    }
+    durable_by_index = {step["index"]: step for step in db.get_run(run_id)["steps"]}
     assert all(step.index in durable_by_index for step in outcome.steps)
 
 
@@ -291,9 +285,7 @@ def test_terminal_recovery_does_not_duplicate_successful_incremental_rows(
         ),
         _reply(),
     ]
-    run_id, outcome = _run(
-        _service(db, chat_call=lambda **_kwargs: replies.pop(0))
-    )
+    run_id, outcome = _run(_service(db, chat_call=lambda **_kwargs: replies.pop(0)))
 
     expected_indices = [step.index for step in outcome.steps]
     assert len(expected_indices) > 1
@@ -304,9 +296,7 @@ def test_terminal_recovery_does_not_duplicate_successful_incremental_rows(
         ).fetchall()
     outcome_rows = [row for row in rows if row["seq"] in expected_indices]
     assert [row["seq"] for row in outcome_rows] == expected_indices
-    durable_indices = {
-        step["index"] for step in db.get_run(run_id)["steps"]
-    }
+    durable_indices = {step["index"] for step in db.get_run(run_id)["steps"]}
     assert all(index in durable_indices for index in expected_indices)
 
 
@@ -329,9 +319,7 @@ def test_explicit_index_insert_is_idempotent_and_first_writer_wins(
             "SELECT seq, payload FROM agent_run_steps WHERE run_id = ?", (run_id,)
         ).fetchall()
     assert [row["seq"] for row in rows] == [4]
-    assert rows[0]["payload"] == (
-        '{"index":4,"kind":"model","summary":"original"}'
-    )
+    assert rows[0]["payload"] == ('{"index":4,"kind":"model","summary":"original"}')
     assert db.get_run(run_id)["steps"] == [original]
 
 
@@ -464,9 +452,7 @@ def test_explicit_index_json_serialization_occurs_before_transaction(
 
     monkeypatch.setattr(db, "transaction", transaction_started)
     with pytest.raises(TypeError):
-        db.insert_steps_at_indices(
-            run_id, [(0, {"index": 0, "value": object()})]
-        )
+        db.insert_steps_at_indices(run_id, [(0, {"index": 0, "value": object()})])
 
 
 def test_explicit_step_insert_preserves_terminal_lifecycle_timestamp_and_wake(
@@ -501,9 +487,7 @@ def test_explicit_step_insert_preserves_terminal_lifecycle_timestamp_and_wake(
 
 def test_explicit_index_insert_rejects_unknown_run(db: AgentRunsDB) -> None:
     with pytest.raises(KeyError, match="Unknown run id: missing"):
-        db.insert_steps_at_indices(
-            "missing", [(0, {"index": 0, "kind": "model"})]
-        )
+        db.insert_steps_at_indices("missing", [(0, {"index": 0, "kind": "model"})])
 
 
 def test_legacy_append_steps_keeps_allocating_after_existing_rows(

@@ -1,0 +1,25 @@
+{
+  "focused_runs": {
+    "stalls-green": "1 failed, 15 passed, 1 warning in 214.47s (0:03:34)",
+    "stalls-fallback-green": "1 failed, 2 passed, 8 deselected, 1 warning in 56.69s",
+    "stalls-compatibility": "1 failed, 28 passed, 2 warnings in 146.70s (0:02:26)",
+    "stalls-rail-green": "1 passed, 2 warnings in 20.55s"
+  },
+  "distinct_passing_cases": 46,
+  "full_suite_run": false,
+  "app_exit_codes": [
+    0,
+    0,
+    0,
+    0,
+    0
+  ],
+  "accelerated_dump_count": 49,
+  "original_exit_cause": "unreproduced/unclassified",
+  "reviews": "independent Home/diagnostic and Console/retirement reviews; native-fallback blocker fixed and verified",
+  "final_focused_batch": "15 passed, 2 warnings in 101.67s (0:01:41)",
+  "resolved_initial_failures": {
+    "inspector": "Config read-count/freshness passed; restricted output comparison to model row, since bridge setup changes unrelated actions. Passed in compatibility and final batch.",
+    "rail": "Original-code failure reproduced. Added existing bootstrap_profile marker, preserving storage checks. Passed separately and final batch."
+  }
+}

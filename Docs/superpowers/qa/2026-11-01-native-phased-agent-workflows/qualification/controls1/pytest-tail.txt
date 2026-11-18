@@ -1,0 +1,16 @@
+..........                                                               [100%]
+- generated xml file: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-controls1/tests.xml -
+============================= slowest 25 durations =============================
+7.68s call     Tests/Chat/test_workflow_native_journeys.py::test_public_workflow_shell_revocation_prevents_child_effect[source]
+7.33s call     Tests/Chat/test_workflow_native_journeys.py::test_public_workflow_shell_revocation_prevents_child_effect[disarm]
+7.17s call     Tests/Chat/test_workflow_native_journeys.py::test_public_workflow_shell_revocation_prevents_child_effect[kill]
+1.67s call     Tests/Agents/test_workflow_run_service.py::test_native_verifier_checkpoint_reopens_with_complete_private_output[0-40000-False]
+1.40s call     Tests/Agents/test_workflow_run_service.py::test_native_verifier_checkpoint_reopens_with_complete_private_output[7-150000-False]
+1.32s call     Tests/Agents/test_workflow_run_service.py::test_native_verifier_checkpoint_reopens_with_complete_private_output[0-40000-True]
+1.31s call     Tests/Agents/test_workflow_run_service.py::test_native_verifier_checkpoint_reopens_with_complete_private_output[7-40000-False]
+1.30s call     Tests/Agents/test_workflow_run_service.py::test_native_verifier_checkpoint_reopens_with_complete_private_output[7-40000-True]
+1.27s call     Tests/Agents/test_workflow_run_service.py::test_native_verifier_checkpoint_reopens_with_complete_private_output[7-150000-True]
+1.09s call     Tests/Agents/test_workflow_run_service.py::test_native_done_without_approved_verifier_stays_missing_and_blocks_quality_and_next_phase
+
+(15 durations < 1s hidden.)
+10 passed in 32.10s

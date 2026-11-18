@@ -7,7 +7,7 @@ import json
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
-from importlib.resources import files
+from importlib.resources import as_file, files
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING
@@ -431,12 +431,23 @@ class BuddyLibrary:
         for declaration in json.loads(source.joinpath("assets.json").read_bytes()):
             fields = dict(declaration)
             filename = fields.pop("filename")
-            assets.append(
-                BuddyAssetSnapshot(
-                    PersonaVisualAssetMetadata(**fields),
-                    source.joinpath(filename).read_bytes(),
+            # TASK-39124: one flat bundled name, read without following a link
+            # (the deleted Persona_Visual installer's checks).
+            if (
+                type(filename) is not str
+                or filename in {"", ".", ".."}
+                or Path(filename).name != filename
+            ):
+                raise ValueError("pixel_migu_asset_path_invalid")
+            metadata = PersonaVisualAssetMetadata(**fields)
+            # as_file also materializes ZIP-backed Traversables.
+            with as_file(source.joinpath(filename)) as materialized:
+                loaded = load_persona_visual_asset(
+                    materialized.parent.resolve(strict=True),
+                    storage_key=materialized.name,
+                    metadata=metadata,
                 )
-            )
+            assets.append(BuddyAssetSnapshot(metadata, loaded.data))
         review = BuddySnapshot(
             "pixel-migu",
             manifest,

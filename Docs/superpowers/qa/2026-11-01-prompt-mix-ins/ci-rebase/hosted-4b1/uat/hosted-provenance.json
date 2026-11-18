@@ -1,0 +1,14 @@
+{
+  "head": "4b1e070c972320e1353b6bac7e185035db125571",
+  "run": 41547453582,
+  "attempt": 1,
+  "job": 125628364692,
+  "source_artifact_root": "/private/tmp/mixins-4b1-uat-artifacts/project-chat-uat/wrong-family-144c3637",
+  "raw_job_log": "/private/tmp/mixins-4b1-admission2.log",
+  "raw_job_log_sha256": "ef8fa524e6027067053bd57fdff6622b85357684bfc475ba831733c373f0e9d9",
+  "copied_artifacts": {
+    "/private/tmp/mixins-4b1-uat-fix/hosted-wrong-family/receipt.json": "9c32bed267e049529251820e3d73f5fe7860496ef1a0a36b51f349deb6bffd8b",
+    "/private/tmp/mixins-4b1-uat-fix/hosted-wrong-family/viewport.txt": "745b19d08f7fcb154fea161ddade82ca8a01374e2f980a4abbc9728d78d9e425",
+    "/private/tmp/mixins-4b1-uat-fix/hosted-wrong-family/viewport.svg": "05250142cdc69920b26c60f7ebf98e8423ffc33958a51f1977eb418850ae6931"
+  }
+}

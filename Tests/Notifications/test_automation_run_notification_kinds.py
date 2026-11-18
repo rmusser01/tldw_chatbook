@@ -20,6 +20,7 @@ _AUTOMATION_KINDS = (
     "automation_run_failed",
     "automation_run_timed_out",
     "automation_run_skipped",
+    "automation_run_approval_required",
 )
 
 
@@ -51,7 +52,7 @@ def test_inbox_list_parses_a_feed_containing_automation_run_results():
     response = NotificationsListResponse.model_validate(
         {"items": items, "total": len(items)}
     )
-    assert response.total == 4
+    assert response.total == len(_AUTOMATION_KINDS)
     assert [item.kind for item in response.items] == list(_AUTOMATION_KINDS)
     # The pass-back payload fields survive the parse: definition name as
     # title, result summary as message, source ids for correlation.

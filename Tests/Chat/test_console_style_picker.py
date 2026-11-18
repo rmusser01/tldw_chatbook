@@ -544,7 +544,13 @@ async def test_style_picker_selection_inserts_style_token_into_draft():
         await pilot.pause(0.2)
         assert len(host.screen_stack) == baseline_depth + 1
 
-        await pilot.click(f"#{ROW_ID_PREFIX}style_anime")
+        row = host.screen.query_one(f"#{ROW_ID_PREFIX}style_anime", Button)
+        row.scroll_visible(animate=False, immediate=True)
+        await pilot.pause()
+        assert row.is_mounted and row.display and not row.disabled
+        assert row.parent.content_region.contains_region(row.region)
+        assert host.get_widget_at(row.region.x, row.region.y)[0] is row
+        assert await pilot.click(row)
         await pilot.pause(0.2)
 
         assert len(host.screen_stack) == baseline_depth, (
@@ -599,7 +605,13 @@ async def test_style_picker_insert_replaces_existing_leading_style_token():
         console.action_open_console_style_insert()
         await pilot.pause(0.2)
 
-        await pilot.click(f"#{ROW_ID_PREFIX}style_anime")
+        row = host.screen.query_one(f"#{ROW_ID_PREFIX}style_anime", Button)
+        row.scroll_visible(animate=False, immediate=True)
+        await pilot.pause()
+        assert row.is_mounted and row.display and not row.disabled
+        assert row.parent.content_region.contains_region(row.region)
+        assert host.get_widget_at(row.region.x, row.region.y)[0] is row
+        assert await pilot.click(row)
         await pilot.pause(0.2)
 
         assert (

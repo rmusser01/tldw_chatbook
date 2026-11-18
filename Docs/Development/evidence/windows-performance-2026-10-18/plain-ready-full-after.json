@@ -1,0 +1,26 @@
+{
+  "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+  "platform": "Windows-10-10.0.19045-SP0",
+  "textual": "8.2.8",
+  "profiled": false,
+  "viewport": [
+    170,
+    48
+  ],
+  "routes": [],
+  "typing": [],
+  "temporary_profile": "C:\\Users\\GDesktop-1\\.tmp-windows-perf-04dw03_n",
+  "import_ms": 3527.015699990443,
+  "construct_ms": 15153.397999994922,
+  "mount_ready_ms": 25162.73949999595,
+  "startup_phases": {
+    "basic_init": 1.095399500001804,
+    "attribute_init": 9.499999578110874e-06,
+    "parallel_init": 7.233032300006016,
+    "total_init": 15.15274620000855
+  },
+  "console_resume": [],
+  "final_screen": null,
+  "blocked_network_attempts": 0,
+  "real_profile_refusals": 0
+}

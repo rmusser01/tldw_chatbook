@@ -50,6 +50,30 @@ tests could not exercise since jobs ran synchronously at dispatch time):
   dispatch's result can arrive after a newer one already landed. A
   landing is honored only when its token still matches the tier's latest
   issued token; otherwise it's a stale, superseded result and is dropped.
+- Root reads stay off the UI loop (TASK-33620.15.1.6). A root read is a
+  Change Review consent lookup, a SELECT on the workspace registry
+  database: measured live at load 30-47 one took up to 145 ms on the loop,
+  and a refresh made two or three (``poll_tick`` asked before delegating,
+  and ``_land``'s stale-scope guard asked again). The automatic refreshes
+  (rail open, run completion, focus regain, the 10 s poll) now read the
+  root on a worker (``ROOT_WORKER_GROUP``) and continue on the UI loop with
+  the answer; only an explicit Refresh press still reads it there, once,
+  because its acknowledgment is decided against the root at the press. A
+  gathered landing is checked against the root its worker read AFTER
+  gathering and against the newest root any refresh determined -- so a
+  landing is still dropped when the root changed during its gather, or when
+  a later refresh saw another root. The hop between the worker's re-check
+  and the landing reaching the UI loop is covered by the screen's scope
+  stamp (``scope_stamp_accessor``): an in-memory reading, no database, of
+  everything the root depends on, which every in-app change moves (a
+  session switch, a folder bound or unbound, consent toggled, a root
+  finishing preparation). The worker takes it before its re-check and
+  ``_land`` drops the landing when it has moved; a root answer whose stamp
+  has moved by the time it reaches the UI loop is read again, once, rather
+  than acted on (the unbound landing is made from that answer). A change
+  made outside the app in that hop (another process writing the registry, a
+  folder removed on disk) moves no stamp; the next refresh corrects it, as
+  it does a change made just after a landing.
 - The deferred net re-dispatch re-checks ``rail_open_accessor`` (the rail
   can close during the deferral), and a pending net request whose scope is
   dropped mid-flight is cleared rather than latched -- otherwise its
@@ -97,7 +121,7 @@ I/O implementation only when the panel requests work (ADR-097).
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Callable
+from collections.abc import Callable, Hashable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -129,6 +153,22 @@ def gather_pr_env(
     from tldw_chatbook.Workspaces.environment_status import gather_pr_env as gather
 
     return gather(root, branch, previous=previous)
+
+
+def read_root_off_loop(accessor: Callable[[], Any]) -> Any:
+    """Ask the root accessor from a worker; a failure is "cannot tell".
+
+    The read opens the worker thread's own registry connection, so it runs
+    as a finite local worker operation, which retires that connection again
+    (pinned with the real registry in
+    ``Tests/UI/test_console_environment_bound_registry.py``).
+    """
+    from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
+
+    try:
+        return run_finite_local_worker(accessor)
+    except Exception:  # noqa: BLE001 -- an unreadable root drops the landing
+        return UNKNOWN_ROOT
 
 
 _LOCAL_TIER = "local"
@@ -171,6 +211,10 @@ class ConsoleEnvironmentController:
 
     LOCAL_WORKER_GROUP = "console-environment-local"
     NET_WORKER_GROUP = "console-environment-net"
+    #: Root reads for the automatic refreshes (TASK-33620.15.1.6). Not
+    #: exclusive: every read's continuation runs, each acting on the newest
+    #: answer (see ``_root_read``).
+    ROOT_WORKER_GROUP = "console-environment-root"
 
     _MAX_FAILURES = 3
     _NET_TTL = timedelta(seconds=60)
@@ -190,10 +234,28 @@ class ConsoleEnvironmentController:
         rail_open_accessor: Callable[[], bool],
         on_snapshot: Callable[[EnvironmentSnapshot], None],
         now: Callable[[], datetime] | None = None,
+        scope_stamp_accessor: Callable[[], Hashable] | None = None,
     ) -> None:
+        """Wire the controller to its seams.
+
+        Args:
+            run_worker: Dispatches a job (``thread=True``) in a worker group.
+            marshal_to_ui: Runs ``fn(*args)`` on the UI loop from a worker.
+            workspace_root_accessor: The root (``str``), ``None`` when no
+                folder is bound, or ``UNKNOWN_ROOT``. A database read: asked
+                on workers, except once per explicit Refresh press.
+            rail_open_accessor: Whether the Inspect rail is open.
+            on_snapshot: Paints a landed snapshot (UI loop).
+            now: Clock for the net TTL.
+            scope_stamp_accessor: A cheap, in-memory reading of everything the
+                root depends on that moves with every in-app change of it
+                (TASK-33620.15.1.6); read on workers and on the UI loop. Without
+                one, only the root comparisons guard a landing.
+        """
         self._run_worker = run_worker
         self._marshal_to_ui = marshal_to_ui
         self._workspace_root_accessor = workspace_root_accessor
+        self._scope_stamp_accessor = scope_stamp_accessor
         self._rail_open_accessor = rail_open_accessor
         self._on_snapshot = on_snapshot
         self._now = now or (lambda: datetime.now(UTC))
@@ -216,6 +278,16 @@ class ConsoleEnvironmentController:
         # reset the net TTL that still belongs to the old root.
         self._landed_root: str | None = None
         self._has_landed = False
+        # The newest root a refresh DETERMINED (``str | None``), for the
+        # stale-scope guard (TASK-33620.15.1.6). ``UNKNOWN_ROOT`` only until
+        # the first determined answer; an undetermined read never sets it.
+        self._observed_root: "str | None | UnknownRoot" = UNKNOWN_ROOT
+        # Root reads are numbered in issue order; a read answered after a
+        # newer one acts on the newer answer (``_root_read``).
+        self._root_reads_issued = 0
+        self._root_read_newest = 0
+        self._root_newest: "str | None | UnknownRoot" = UNKNOWN_ROOT
+        self._root_newest_stamp: Hashable = None
 
         # A net refresh requested before the local tier has landed for the
         # CURRENT root defers until `_land` supplies a known branch (C1).
@@ -320,10 +392,132 @@ class ConsoleEnvironmentController:
         out to do nothing (``UNKNOWN_ROOT``, rail closed, both tiers
         backed off) simply never touches it, and the screen's post-call
         check of ``pending_ack_tiers`` correctly finds nothing to wait for.
+
+        TASK-33620.15.1.3: the rail guard runs BEFORE the root is asked for.
+        A closed rail discards the root, and asking cost a whole turn
+        configuration build (0.1-1.0 s on the UI loop) at every run
+        completion and poll tick after the rail had once been open.
+
+        TASK-33620.15.1.6: an automatic refresh reads the root on a worker
+        and continues with it on the UI loop (``_read_root_then``); a
+        ``force_net`` press reads it here, once, so ``pending_ack_tiers``
+        is settled by the time this returns, as the screen expects.
         """
-        root = self._workspace_root_accessor()
         if not self._rail_open_accessor():
             return
+        if force_net:
+            stamp = self._scope_stamp()
+            root = self._workspace_root_accessor()
+            self._refresh_with_root(
+                self._note_root_read(root, stamp),
+                include_net=include_net,
+                force_net=True,
+            )
+            return
+        self._read_root_then(
+            lambda root: self._refresh_with_root(
+                root, include_net=include_net, force_net=False
+            )
+        )
+
+    def _scope_stamp(self) -> Hashable:
+        """Read the scope stamp; ``None`` without one or when it cannot be read.
+
+        An unreadable stamp falls back to the root comparisons rather than
+        dropping every landing: a stamp that always failed would otherwise
+        leave the panel unable to land anything.
+        """
+        accessor = self._scope_stamp_accessor
+        if accessor is None:
+            return None
+        try:
+            return accessor()
+        except Exception:  # noqa: BLE001 -- the root checks still apply
+            return None
+
+    def _read_root_then(
+        self, then: Callable[[Any], None], *, again: bool = False
+    ) -> None:
+        """Read the root on a worker; run ``then`` with it on the UI loop.
+
+        The worker takes the scope stamp before the root, so a change made
+        between the two reads still moves the stamp the answer carries.
+        """
+        self._root_reads_issued += 1
+        number = self._root_reads_issued
+        accessor = self._workspace_root_accessor
+
+        def job() -> None:
+            stamp = self._scope_stamp()
+            root = read_root_off_loop(accessor)
+            self._marshal_to_ui(self._root_read, number, root, stamp, then, again)
+
+        self._run_worker(job, thread=True, exclusive=False, group=self.ROOT_WORKER_GROUP)
+
+    def _note_root_read(
+        self, root: Any, stamp: Hashable, number: int | None = None
+    ) -> Any:
+        """Record a current root read; return the newest current answer.
+
+        A read issued before another but answered after it is the older
+        answer, so the newer one stands (``number`` orders them; a read on
+        the UI loop is the newest when it is made) -- unless the newer one
+        was taken under a scope stamp that has since moved, when this
+        current one replaces it.
+        """
+        if number is None:
+            self._root_reads_issued += 1
+            number = self._root_reads_issued
+        if number > self._root_read_newest or stamp != self._root_newest_stamp:
+            self._root_read_newest = max(number, self._root_read_newest)
+            self._root_newest = root
+            self._root_newest_stamp = stamp
+        return self._root_newest
+
+    def _root_read(
+        self,
+        number: int,
+        root: Any,
+        stamp: Hashable,
+        then: Callable[[Any], None],
+        again: bool = False,
+    ) -> None:
+        """Continue an automatic refresh on the UI loop with its root read.
+
+        An answer whose scope stamp has moved since the worker took it may
+        name a root that is gone -- and an unbound landing is made from the
+        answer itself -- so it is read again, once; an answer overtaken twice
+        is left to the next refresh. The rail guard is applied again: the
+        rail may have closed while the root was read, and a closed rail
+        dispatches nothing.
+        """
+        if stamp != self._scope_stamp():
+            if not again and self._rail_open_accessor():
+                self._read_root_then(then, again=True)
+            return
+        newest = self._note_root_read(root, stamp, number)
+        if not self._rail_open_accessor():
+            return
+        then(newest)
+
+    def _refresh_with_root(
+        self,
+        root: "str | None | UnknownRoot",
+        *,
+        include_net: bool,
+        force_net: bool,
+    ) -> None:
+        """Run ``request_refresh`` for the root its one read returned.
+
+        The ONE root read of a refresh (TASK-33620.15.1.6) happens before
+        this: on a worker for an automatic refresh, on the UI loop for an
+        explicit press. Nothing here asks for the root again.
+
+        Args:
+            root: The newest root answer (see ``_note_root_read``).
+            include_net: As for ``request_refresh``.
+            force_net: As for ``request_refresh``.
+        """
         if root is UNKNOWN_ROOT:
             # "Cannot tell" is not an answer: skip silently, exactly as this
             # method did for every falsy root before TASK-31660. Landing
@@ -342,6 +536,7 @@ class ConsoleEnvironmentController:
             return
         self._unknown_ticks = 0
         self._unknown_landed = False
+        self._observed_root = root
         if root is None:
             if force_net:
                 self._failures = {_LOCAL_TIER: 0, _NET_TIER: 0}
@@ -395,10 +590,18 @@ class ConsoleEnvironmentController:
         must wipe the previous repository's paint within one tick, AC #3)
         and ``None -> root`` (which must retire the old root's ``gh`` TTL
         and re-fetch both tiers).
+
+        The rail guard runs first, as in ``request_refresh``: a closed rail
+        never needs the root (TASK-33620.15.1.3). The root is read on a
+        worker, once, and the tick continues with it on the UI loop
+        (TASK-33620.15.1.6).
         """
-        root = self._workspace_root_accessor()
         if not self._rail_open_accessor():
             return
+        self._read_root_then(self._poll_with_root)
+
+    def _poll_with_root(self, root: "str | None | UnknownRoot") -> None:
+        """Run one poll tick for the root its worker read."""
         if root is UNKNOWN_ROOT:
             # See `request_refresh`: an undetermined root must not be
             # mistaken for a root CHANGE either, or a transient accessor
@@ -423,9 +626,9 @@ class ConsoleEnvironmentController:
         if self._has_landed and root != self._landed_root:
             self._failures = {_LOCAL_TIER: 0, _NET_TIER: 0}
             self._net_fetched_at = None
-            self.request_refresh(include_net=True)
+            self._refresh_with_root(root, include_net=True, force_net=False)
             return
-        self.request_refresh(include_net=False)
+        self._refresh_with_root(root, include_net=False, force_net=False)
 
     def notify_rail_opened(self) -> None:
         """Called when the Inspect rail opens: both tiers, TTL-respecting."""
@@ -451,8 +654,15 @@ class ConsoleEnvironmentController:
         def job() -> None:
             git_result = gather_git_env(Path(scope_root), previous=previous_git)
             tasks_result = scanner.scan(Path(scope_root), git_result.branch)
+            stamp = self._scope_stamp()
             self._marshal_to_ui(
-                self._land, scope_root, _LOCAL_TIER, (git_result, tasks_result), token
+                self._land,
+                scope_root,
+                _LOCAL_TIER,
+                (git_result, tasks_result),
+                token,
+                read_root_off_loop(self._workspace_root_accessor),
+                stamp,
             )
 
         self._run_worker(
@@ -486,7 +696,16 @@ class ConsoleEnvironmentController:
 
         def job() -> None:
             pr_result = gather_pr_env(Path(scope_root), branch, previous=previous_pr)
-            self._marshal_to_ui(self._land, scope_root, _NET_TIER, pr_result, token)
+            stamp = self._scope_stamp()
+            self._marshal_to_ui(
+                self._land,
+                scope_root,
+                _NET_TIER,
+                pr_result,
+                token,
+                read_root_off_loop(self._workspace_root_accessor),
+                stamp,
+            )
 
         self._run_worker(job, thread=True, exclusive=True, group=self.NET_WORKER_GROUP)
 
@@ -510,9 +729,13 @@ class ConsoleEnvironmentController:
         and ``on_snapshot`` -- so an UNBOUND state is superseded and
         supersedes exactly like a gathered one.
 
-        The scope is ``None``, which the stale-scope guard now accepts as a
-        landable scope (it compares against the accessor, which is what
-        just returned ``None``).
+        The scope is ``None``, which the stale-scope guard accepts as a
+        landable scope: the current root it is checked against is the
+        ``None`` read that chose this landing, not a second read
+        (TASK-33620.15.1.6). That read is current: an automatic refresh's
+        answer whose scope stamp had moved was read again before reaching
+        here (``_root_read``), and an explicit press read it in this same
+        callback.
         """
         unbound = unbound_snapshot()
         self._land(
@@ -520,6 +743,8 @@ class ConsoleEnvironmentController:
             _LOCAL_TIER,
             (unbound.git, unbound.tasks),
             self._next_token(_LOCAL_TIER),
+            None,
+            self._scope_stamp(),
         )
 
     def _land_unknown(self) -> None:
@@ -541,9 +766,38 @@ class ConsoleEnvironmentController:
         self.snapshot = unknown_snapshot(target=self.snapshot.target)
         self._on_snapshot(self.snapshot)
 
-    def _land(self, scope_root: str | None, tier: str, result: Any, token: int) -> None:
-        if scope_root != self._workspace_root_accessor():
-            # Stale-scope guard: a newer refresh already superseded this one.
+    def _land(
+        self,
+        scope_root: str | None,
+        tier: str,
+        result: Any,
+        token: int,
+        current_root: "str | None | UnknownRoot",
+        scope_stamp: Hashable,
+    ) -> None:
+        """Apply one tier's result, unless its scope or dispatch is stale.
+
+        Args:
+            scope_root: The root the result was gathered for.
+            tier: ``"local"`` or ``"net"``.
+            result: The tier's gathered state.
+            token: The dispatch token the result belongs to.
+            current_root: The root read after the gather -- by the worker,
+                off the UI loop, for a gathered result; the same read that
+                chose an unbound landing for that one (TASK-33620.15.1.6).
+            scope_stamp: The scope stamp taken just before ``current_root``
+                was read; compared with the current one here, in memory.
+        """
+        observed = self._observed_root
+        if (
+            scope_root != current_root
+            or (observed is not UNKNOWN_ROOT and scope_root != observed)
+            or scope_stamp != self._scope_stamp()
+        ):
+            # Stale-scope guard: the root changed during the gather (the
+            # worker's read says so), a newer refresh already saw another
+            # root and superseded this one, or an in-app change after the
+            # worker's read moved the scope stamp (the hop to the UI loop).
             # B2: a net request deferred against THIS scope was waiting on
             # exactly this landing to supply its branch, so nothing can ever
             # re-issue it -- and leaving it latched lets its accumulated

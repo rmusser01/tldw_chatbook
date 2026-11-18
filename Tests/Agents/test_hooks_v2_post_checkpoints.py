@@ -6,6 +6,7 @@ import threading
 import pytest
 
 from Tests.Agents.test_hooks_v2_execution import event
+from Tests.Plugins import platform_support
 from tldw_chatbook.Agents.activation import worker_guard
 from tldw_chatbook.Agents.hooks_v2.engine import HookEventOutcome, HookFailure
 from tldw_chatbook.Agents.hooks_v2.models import ContextBlock, HookResult
@@ -215,6 +216,7 @@ def test_shared_context_limits_whole_blocks_events_and_actual_send():
     )
 
 
+@platform_support.v2_command
 @pytest.mark.asyncio
 @pytest.mark.parametrize("large", [False, True])
 async def test_required_context_is_ready_before_release_and_reaches_actual_send(
@@ -287,6 +289,7 @@ async def test_required_context_is_ready_before_release_and_reaches_actual_send(
         db.close()
 
 
+@platform_support.v2_command
 @pytest.mark.asyncio
 @pytest.mark.parametrize("definitive", [False, True])
 async def test_service_completion_observer_sees_both_pending_events_once(
@@ -359,6 +362,7 @@ async def test_service_completion_observer_sees_both_pending_events_once(
         await engine.close()
 
 
+@platform_support.v2_command
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("state", "expected"),
@@ -440,6 +444,7 @@ async def test_terminal_failure_still_joins_other_pending_required_event():
             await task
 
 
+@platform_support.v2_command
 @pytest.mark.asyncio
 async def test_skill_completion_installs_requirements_before_service_observer(tmp_path):
     from dataclasses import replace
@@ -519,6 +524,7 @@ async def test_skill_completion_installs_requirements_before_service_observer(tm
         db.close()
 
 
+@platform_support.v2_command
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["budget", "success", "error", "later_spawn_budget"])
 async def test_inline_skill_precheck_and_dispatched_child_budget_have_distinct_provenance(

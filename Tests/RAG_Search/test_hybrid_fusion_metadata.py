@@ -6,6 +6,7 @@ ceiling sits below the UI's similarity band thresholds and moves whenever k
 is retuned, so the vector leg's original similarity is the only honest
 banding input for hybrid rows (spec Workstream A item 3).
 """
+
 import pytest
 from tldw_chatbook.RAG_Search.simplified.rag_service import RAGService
 from tldw_chatbook.RAG_Search.simplified.vector_store import SearchResult
@@ -19,8 +20,11 @@ def test_fused_rows_preserve_original_leg_scores():
     keyword = [_result("m1", 0.001), _result("m2", 0.001)]
     semantic = [_result("m2", 0.83), _result("m3", 0.41)]
     fused = RAGService._fuse_hybrid_results(
-        keyword_results=keyword, semantic_results=semantic,
-        top_k=10, alpha=0.7, include_citations=False,
+        keyword_results=keyword,
+        semantic_results=semantic,
+        top_k=10,
+        alpha=0.7,
+        include_citations=False,
     )
     by_id = {r.id: r for r in fused}
     both = by_id["m2"].metadata["hybrid_fusion"]

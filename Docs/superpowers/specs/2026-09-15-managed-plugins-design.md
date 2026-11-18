@@ -602,7 +602,7 @@ Never execute the foreign app or its plugins to discover installation state.
 Local copies receive their own fingerprint and installation identity.
 Binding a copied package to an upstream update source is a separate review.
 Partial import failures are reported per item; successful copies remain
-installed but never inherit foreign grants or activation.
+available for separate installation review and never inherit foreign grants or activation.
 
 ## 7. Activation and run ownership
 
@@ -1588,3 +1588,547 @@ visible. Parsing and exercised Chatbook behavior are separate from original-host
 comparison; fixtures record immutable upstream references and license context in
 `Tests/Plugins/fixtures/interop/README.md`. TASK-32687 implements this conservative
 subset, with evidence in the current-dev integration report.
+
+
+### Native agent invocation owner (R76)
+
+Ruling: R76 — native agent components adapt to the existing AgentDefinition child spawn/resume owner and captured roster; I1 does not introduce a primary-run preset mode for @alias:agent — the accepted contract names AgentDefinition, which is a sub-agent template, and the existing path already owns child budgets, permissions and hooks — cost if wrong: add separately specified primary-preset routing later; native agents remain usable as children, and unsupported selectors must refuse visibly rather than silently changing the primary run or falling back to another component.
+
+### I1 native runtime entry points
+
+`PluginService.capture_maximum` publishes metadata-only native capability summaries through the existing `available_skills` inventory; `admit` preserves that immutable ceiling. `PluginComponents.project(snapshot)` projects only selected ready records, ordered by component identity. Projection keeps the existing `ComponentRecord` with its explicit runtime snapshot; persisted component serialization stays unchanged. Current commands use `$installation-alias:command:local-id` and current manual rules use `$installation-alias:rule:local-id`. Original `/installation-alias:local-id` commands and `@installation-alias:local-id` manual rules route only to their exact typed rows. `render_command(snapshot, component_id, arguments)` returns separately attributed user-role instruction and literal argument blocks. Always rules precede the triggering input in stable installation/component order. Unsupported activation modes remain blocked pending explicit manual adaptation. Reference content and rendered instructions cannot introduce further invocations.
+
+Native agents populate the existing captured child-agent roster with stable host IDs and installation aliases. `agent_definition` projects native metadata through the existing `AgentDefinition` owner: native prose is user-role context, and explicit empty tool lists stay empty through spawn and retained-child resume. Canonical builtin/local IDs are intersected with the actual parent's eligible registry. Other declared tool tokens require reviewed `component_tools` rows targeting an exact selected same-installation M4 mapping; they never create permissions. Standalone definition serialization and fingerprints remain unchanged.
+
+`review_configuration(..., models={component_id: canonical_provider_model_id}, component_tools={component_id: {declared_token: "mcp:component::raw-tool"}})` captures current existing-owner references. Model mapping uses the same application `LocalLLMProviderCatalogService`, canonical metadata and endpoint fingerprint; no network refresh occurs. Review, commit, admission, final use and authenticated recovery reject missing or changed references. The selected model must remain on the parent's provider. Required constraints are never silently removed.
+
+`TldwCli._build_plugin_service`, implemented by `SkillServiceWiringMixin` in `app_skill_wiring.py`, lazily supplies the application's existing model/MCP owners. Console composes scoped `PluginMCPProvider` instances through the same `ConnectionOwnership`, normal catalog, permissions and connected-only hook adapter. Import/startup performs no plugin discovery, connection or profile I/O. Management uses the existing I7 surface.
+
+Reference expansion retains original selector spans in the existing private, bounded `_PreparedSendContinuation` (hidden from repr), while `ConsoleTurnPreparation.executed_draft` remains a plain validated string. Paused/resumed sends reuse that captured expansion without rereading files. A resumed plugin attempt receives a fresh pending custody ID but keeps the original component/generation/dependency ceiling and must pass current owning-service admission. Disable or changed definitions during the pause cannot revive the old admission.
+
+### PR3148 native entry compatibility (2026-10-17, TASK32695)
+
+Retain current `$alias:command:id` and `$alias:rule:id` names and the existing
+strict named-JSON command argument parser. Preserve the published branch's
+`/alias:id` command and `@alias:id` manual-rule spellings by routing only to the
+exact corresponding typed component in the original captured installation and
+capability ceiling. Unknown, unavailable, ambiguous or wrong-kind targets cannot
+fall back to another component or display name. Reference expansion and rendered
+content cannot create invocations; original selector spans and opaque argument
+text remain authoritative.
+
+Only the original `/alias:id` command route retains its original caller rule:
+one declared argument receives the opaque captured remainder; zero or multiple
+declared arguments use strict JSON. Current `$alias:command:id` always keeps
+strict JSON. The admitted snapshot's existing renderer validates exact declared
+keys and string values again. Argument-name metadata may identify that closed
+legacy case; it carries no argument values or authority. This adds no public
+argument mode, service, schema, grant or invocation framework.
+
+### PR3148 native builtin-reference continuity (2026-10-17, TASK32695)
+
+Current `tool_references` review input can map a declared alias to an exact
+`builtin:*` tool. Preserve that capability through the existing closed dev-tool
+reference form and `BuiltinToolProvider` schema owner, including for a fresh
+explicit review. Such a row is not an MCP configuration reference. Its complete
+identity, definition/configuration digests, installation/revision and current
+actual parent registry still validate; EMPTY and normal permission gates narrow
+use. Existing protected rows stay unchanged.
+
+New MCP alias reviews use canonical configuration references to exact reviewed
+same-installation/revision MCP targets and dependency closure. The general
+canonical-new-review rule has this narrow builtin-alias exception so integration
+does not remove current host functionality. It introduces no third stored form,
+conversion, dispatcher, permission owner or grant. Unknown target families refuse.
+
+### I2 reviewed branch adapter subset (2026-10-15; TASK-32687)
+
+This records the published branch recipe. The PR3148 reconciliation below governs
+fresh /2 inspections and retained interpretation; historical unsupported hooks
+cannot become supported merely through recovery.
+
+`chatbook-codex/1` and `chatbook-cursor/1` pin package interpretation to the official
+contracts researched on 2026-09-16; `documented-2026-09-16` is a documentation date,
+not an upstream package version. Root portable identity and fixed skill/MCP paths
+survive OpenAI overlays; an inline OpenAI object replaces the entire compatibility
+object, including when empty. Cursor manifest fields replace catalog fields and
+explicit paths replace discovery, including empty arrays. Invalid portable roots
+cannot fall through to a standalone vendor interpretation. Recognized malformed
+native constraints remain blocking in every selected vendor interpretation.
+
+The existing inventory owner validates normalized vendor records, counts,
+duplicates, variables and complete dependency closure. Supported instruction
+metadata maps to native manual-only/inline/fork semantics. File-glob Cursor rules
+are explicitly manual; no file activation is inferred. Agents require explicit
+tool declarations; empty stays empty, unavailable models/tools require the same
+native mappings. Unsupported declarations remain visible. Foreign app/OAuth
+metadata supplies neither grants nor connections. The inert Linear capture's
+`http` spelling normalizes to native `streamable-http`; this establishes parsing,
+not a live Linear or OAuth connection.
+
+Public catalog data uses the authenticated `catalog-v1:` carrier (R77), bounded to
+16384 UTF-8 bytes including prefix, with existing JSON depth/node bounds. Duplicate,
+malformed, unknown-version and noncanonical carriers refuse. Unknown top-level catalog fields (including host credential references) refuse;
+nested declarations use the existing structural validators. Public variable names
+and literal headers remain valid. The parser does not detect secret content:
+callers must supply public catalog metadata, never private host/vendor state. Review, materialized
+recapture and recovery replay the same carrier without reading a mutable catalog.
+Package bytes retain their original content digest. Vendor effective identity also
+binds those bytes, normalized definitions, constraints, and reviewed catalog data.
+
+Pinned selected captures and exact notice limits live in
+`Tests/Plugins/fixtures/interop/README.md` and `upstream/provenance.json`. Parser
+fixtures are never executed. Separately authored temporary packages qualify the
+native owners. No original Cursor/Codex host equivalence is claimed.
+
+
+## PR3148 current-dev reconciliation (2026-10-17, TASK32695)
+
+Integrate the reviewed branch into current dev's existing owners; this amendment
+records compatibility, not new permission or runtime authority. The accepted
+proposal is the integration plan's StageA proposal/addendum (SHA256
+`9648b48ea2683c95633f9e6cad449a591aa325e88db92d0e7043ac567013dfa2`).
+
+- Keep current `NativeHooks`, `host_references` and `MCPProviderGroup` as the
+  defining seams. Port accepted launch-value, requirement, exact root/scratch and
+  cancellation behavior there. Do not retain parallel NativeHookSet/NativeMCPProviders
+  runtimes. Preserve current trust-directory selection, finite workspace connection
+  ownership and lazy service construction.
+- Retain the two closed existing host-reference forms. Historical dev model
+  records keep `native-model-*` identity and `provider::model`; historical dev
+  native tool records keep `native-tool-*` identity and kind `tool`. Canonical
+  records keep `<component>:model` catalog identity and
+  `<component>:tool:<hash>`/kind `configuration` with an exact reviewed target.
+  New model/MCP reviews write canonical records; fresh builtin aliases retain the
+  existing `dev_tool` form under the builtin-reference continuity amendment. Dispatch by exact kind, recomputed identity
+  and component owner, never by delimiter alone. Validate complete retained rows
+  with the original catalog/MCP/variable owner, dependency closure, credentials,
+  generation and installation/revision binding. Unknown, substituted or competing
+  representations refuse. EMPTY and actual-parent ceilings remain narrowing.
+  There is no automatic conversion, re-signing, new grant or plaintext fallback.
+- New inspections use `chatbook-portable/2`, `chatbook-codex/2` and
+  `chatbook-cursor/2`, with dialects `portable`, `openai`, `cursor`. Source formats
+  stay separately versioned. New identity never silently changes old interpretation.
+  Retained portable `chatbook-portable/1` may use only the bounded pinned-dev and
+  published-branch historical recipes. Retained openai
+  `chatbook-openai/2026-10-01.1` and cursor `chatbook-cursor/2026-10-01.1` use
+  only the pinned-dev recipe; openai `chatbook-codex/1` and cursor
+  `chatbook-cursor/1` use only the published-branch recipe. `/2` uses only the
+  integrated recipe. All other pairs refuse. These recipes share pure parsing
+  where identical; they add no extensible normalizer framework or runtime owner.
+- Retained interpretation selection follows verified protected authority and
+  exact safe byte capture. Compare the complete retained revision/component
+  projection, variables, dependencies, blockers, content/effective identity and
+  original source custody. Registry labels, diagnostics or a matching version
+  alone are insufficient. Coalesce only identical complete selected semantics;
+  zero matches or multiple distinct matching semantic results refuse. Never pick
+  the newest, ready or least restrictive candidate. Keep exact in-process review
+  identity stricter than observational diagnostic/candidate-menu reconstruction.
+  The private selector is not exported and cannot authenticate or mint authority.
+- Materialization may accept a trailing `expected` inspection only to preserve
+  an already checked original interpretation; it does not bypass capture, path,
+  quota, provenance, review or commit checks. Review, recovery and rollback use
+  the same bounded comparison. Explicit new inspection requires normal `/2`
+  review and selection; old unsupported hooks stay unsupported under recovery.
+- Preserve current ChaChaNotes v81 and the shipped v74-to-v75 hook receipt step;
+  the old branch's v73-to-v74 receipt DDL is identical and must not duplicate it
+  or displace the shipped auxiliary-failure/response-rule/recovery migrations.
+  The accepted plugin-registry v4-to-v5 marketplace-source step remains separate.
+
+Preserve current ADR126/197/230/232 lifetime, consent, source and machine-followup
+contracts. Existing/current-profile compatibility is qualified with independently
+produced historical projections, real protected recovery and negative controls;
+new-base tests and independent review remain required. No success follows merely
+from this amendment, and no new schema of authenticated authority is introduced.
+
+
+### Integrated adapter catalog and agent-tool decisions (2026-10-17)
+
+Fresh `/2` inspections use the captured regular-file `.chatbook-plugin/catalog.json` when no explicit external overlay is supplied. An explicitly reviewed external overlay uses the bounded canonical `catalog-v1:` carrier. Conflicting simultaneous captured and external catalog inputs refuse before review; no carrier silently wins. Manifest fields replace catalog fields wholesale. Historical dev and published-branch recipes retain their original carrier and replacement rules.
+
+Fresh `/2` foreign agents require an explicit supported tool contract. Omitted tools leave that agent unavailable with a visible blocker while independently valid siblings remain inspectable. An explicit empty tool list stays EMPTY; omission never means inheritance or a wider authority ceiling. Unsupported source constraints remain visible and fence the affected scope. Historical dev inheritance and published-branch explicit-tool semantics remain exact under their closed retained recipes. Existing actual-parent, mapping and permission-store gates still apply.
+
+### I3 acquisition operation contract (R83/R84)
+
+`PluginService.acquisition_destination(operation_id)` selects the only permitted
+output, `staging/<sha256(operation_id)>/snapshot`, under the existing profile
+owner. `await service.acquire_snapshot(source, operation_id, destination)` runs
+on the original storage worker. Authority must already be initialized and
+unlocked. The frozen `AcquiredSnapshot` carries the operation/nonce, selected
+transport/origin/repository/ref/subdirectory, pinned Git commit and selected tree
+(or no Git IDs for a plain directory), materialized path, F1 inspection/digests
+and metadata-only diagnostics. It grants neither trust nor activation.
+
+Use `parse_source_locator` for `https://host/repository`,
+`ssh://user@host[:port]/repository`, or `github:owner/repository`, with optional
+`#ref=refs/heads/main&subdir=relative/package`. Use `select_local_source(Path)`
+only after explicit local selection. Remote declarations cannot select local
+paths. The initial parser deliberately refuses scp syntax, HTTP/file/ext, URL
+passwords, HTTPS usernames, queries, encoded/whitespace repository paths and
+IPv6 literals. Local regular directories use F1; ordinary or bare SHA-1 Git
+repositories are copied through bounded descriptor-backed storage reads into an
+owned bare repository. Source Git config, hooks, filters and upload-pack commands
+are never read or invoked. Linked worktrees, commondir, alternates, linked/special
+object storage, required submodules and LFS pointers refuse explicitly. Packed
+refs are supported. No checkout, submodule update, LFS client, build or install
+runs. Selected commit, every ancestor/descendant tree and each materialized blob
+are checked against their object ID before returning provenance.
+
+Limits remain two unsettled acquisitions, 120 seconds, 500 MiB staging per
+operation, 100 MiB expanded package, 10 MiB per file, 10,000 files and depth 32,
+plus F7's 2 GiB managed usage and 100 MiB minimum free space. Streaming process
+output, file writes, local storage copying and F1 revalidation have bounded
+checkpoints. Disk use is polled during external Git execution; this is not an OS
+filesystem quota and can overshoot between polls. A deadline starts cancellation;
+it never authorizes releasing an unproved producer.
+
+The result keeps an authenticated recovery reference until the caller has
+finished consuming or explicitly discarded it and calls
+`release_acquired_snapshot(result)`. I4 must bind its separate origin/commit/tree
+and selected catalog/update origin into authenticated review/recovery. Passing
+only `materialized_identity` to the existing `review_install(Path)` does not
+persist this provenance. Release is not cleanup: `cleanup_acquisitions()` reuses
+F7 only after exact authenticated terminal custody, physical identity checks,
+release and 24-hour age. The bounded 1,000-record inventory retires only oldest authenticated, released,
+already-cleaned receipts at capacity or after 30 days (R85), after exact original
+root/anchor qualification and confirmed staging absence. A retained operation
+label cannot be reused. After eligible retirement, the label may start fresh
+bounded acquisition with a new nonce and physical incarnation requiring new
+review; an old result/receipt cannot release or hide the new leaf. Protected
+inventory exhaustion refuses work rather than dropping protections. Unknown, lost, tampered, replaced, nonterminal or recovery-referenced
+staging is never inferred abandoned. A restart can reconcile an exact released
+terminal receipt on the same native boot/filesystem incarnation. There is no
+automatic reconciliation of a pending receipt after process/host loss.
+
+Host authentication uses explicitly supported host authority, under R84. Ordered
+Git helpers/username/useHttpPath, including host Git includes and credential URL
+contexts, are projected into private operation config. HTTPS preserves sslVerify,
+sslCAInfo/sslCAPath, sslCert/sslKey/sslCertPasswordProtected, sslVersion,
+sslCipherList and pinnedPubkey; unsupported HTTP policy, proxy/extra-header,
+rewrites, redirects and command overrides refuse visibly. SSH statically refuses
+Match/Include and unknown configured fields before fixed installed `ssh -G`.
+Supported identities/certificates/agent, public-key/preferred authentication,
+known-host/strict checking, host-key algorithms and exact user/host/port are
+frozen into private config. Proxy/jump, forwarding, commands, canonicalization,
+retargeting and nondefault key-provider forms refuse. The installed SSH default
+`$SSH_SK_PROVIDER` is accepted only with that environment override absent, then
+pinned to the internal provider. Authentication is noninteractive. Private
+operation config can contain host helper/configuration values; credentials never
+enter result models, custody receipts or diagnostic output. These forms are a
+conservative subset of Git/OpenSSH configuration, not arbitrary config support.
+
+Qualified evidence uses installed Apple Git 2.39.5 on macOS/APFS, controlled
+local repositories, a local TLS Git endpoint with fake ordered credential
+helpers, and controlled SSH transport with actual installed `ssh -G` projection.
+The SSH transport fixture proves generated configuration/argv and immutable Git
+fetch, not a real remote account login or every TLS/client-certificate option.
+Other platforms and SHA-256 repositories are not qualified by this evidence.
+
+## I4 delivered source and import contract (TASK-32689)
+
+`SourceService(plugin_service)` uses the original PluginService storage worker.
+Every mutation and disk read is async; `search(query, offset=..., limit=50)` and
+`list_sources()` read immutable memory only. Call `await load_cached()` on opening
+the browser, including while locked. It returns valid CatalogSnapshots and also
+populates SourceSummary rows for all configured sources, including never-refreshed,
+failed and unusable caches. Display metadata is untrusted; it grants no source,
+host authentication, installation or activation authority.
+
+- `await add(locator, catalog_path=None)` creates an immutable selected source ID.
+  A different origin requires a new source. `await refresh(source_id)` fetches that
+  signed source, retaining the last good listing/error when refresh fails. A first
+  failed refresh has no successful cache; a successful empty catalog does.
+- `await review_entry(source_id, entry_identity, selection=..., workspace_id=...,
+  selected_locator=...)` acquires the actual retained entry and returns an ordinary
+  install review. For remote entries the UI must pass the exact displayed normalized
+  locator; mutable names never select an alternate authentication context. Submit
+  the returned review through `PluginService.commit`.
+- For direct repository/local installs, use `PluginService.acquire_snapshot`, then
+  `await SourceService.review_acquired(snapshot, selection=..., workspace_id=...)`.
+  This verifies the full producer result and binds compact origin/ref/commit/tree
+  and byte provenance. Passing a materialized Path to `review_install` does not
+  provide this direct-source update contract.
+- `await check_updates(installation_id)` returns candidates only from the exact
+  retained original locator. `await review_update(installation_id, candidate)`
+  returns an ordinary revision review; `PluginService.apply_revision` performs the
+  existing drain and mutation. `await remove(source_id)` pauses catalog updates
+  without uninstalling. Explicit `await review_rebind(installation_id, source_id,
+  entry_identity, selected_locator=...)` reviews a newly selected source; applying
+  it preserves old immutable provenance even when package bytes are unchanged.
+- `await discard_candidate(snapshot_or_inspection)` invalidates candidate reviews
+  and releases only unshared producer references. Use this facade for its candidates,
+  including after commit; installed/history references remain protected. Original
+  I3 low-level release remains caller-controlled and is not a source-aware discard.
+- `inspect_app_import(app, selected_root)` reads only known catalog paths and one
+  explicitly selected complete package root. Cursor uses `.cursor-plugin`, Codex
+  uses `.agents/plugins` / `.claude-plugin` catalogs and supported package manifests.
+  It does not scan vendor profile/cache layouts or infer undocumented configuration.
+  `await commit_import(preview)` returns copied source IDs, AcquiredSnapshot package
+  candidates, exclusions and bounded per-item failures. Copies have local managed
+  provenance; review/install and upstream rebinding are separate explicit actions.
+  Root/preview mutation, acquisition, authority, quota and storage failures remain
+  hard refusals. Only local allowlisted preparation/copy failures are per-item.
+
+Schema5 adds independent marketplace_sources; historical migrations are unchanged.
+Compact optional catalog_binding/acquisition_reference fields are mutually exclusive
+and omitted for legacy records through serialization, projection and reconstruction.
+New source-bound revision digests include stable selected provenance, excluding
+operation/nonce/staging identities. Repeated acquisition is stable; explicit source
+rebinding creates a distinct immutable revision without changing old unbound digests.
+
+Retained interpretation verifies signed successful producer references, exact physical
+incarnation and actual bytes without requiring boot equality. Cleanup retains its
+original same-boot destructive qualification and 24-hour age. Signed current and
+retained authority, sources, reviews and persisted candidate dependencies protect
+catalog/import bases across restart; unknown or pending custody refuses cleanup.
+Registry loss can reconstruct installed provenance but cannot invent lost discovery
+sources; catalog updates remain paused until explicit reviewed rebinding.
+
+Qualification uses independently authored temporary packages, real SQLite, private
+profiles, controlled Git repositories/loopback TLS, actual worker/coordinator/recovery
+and existing pinned inert I2 vendor fixtures. Changed-boot evidence is a simulation,
+not a real reboot or cross-platform qualification. No foreign grants are imported.
+
+Update candidates are bound to the requested installation identity; a candidate for
+one installation cannot be submitted as another installation's update. Explicit
+rebinding remains a separate reviewed action. During active acquisition only,
+quota monitoring tolerates a vanished descendant inside its physically qualified
+staging leaf. Final acceptance and all non-acquisition capacity scans remain strict;
+this exception does not grant deletion authority or suppress other storage errors.
+
+### I5 navigation and display implementation
+
+The Plugins destination uses standard `PluginsScreen(app)` construction and
+shared shell metadata (F8; Settings remains F4). The app owns one lazy
+`SourceService` around its existing `PluginService`; imports, construction and
+startup do not refresh catalogs. Installed metadata uses the paged, read-only
+`management_snapshot` facade. Explicit README details use
+`management_readme(installation_id, revision_digest, *, workspace_id)` against
+current authority, descriptor-pinned retained bytes, and the display limits in
+section 10. Source text is literal, controls are stripped and images are not
+loaded. Display data never supplies execution or mutation authority.
+
+In-session repository/import/catalog previews retain actual public service
+objects for I6 review. I6's management increment owns protected persisted
+terminal candidate enumeration and reviewed reference discard, including the
+full dependency union and boot-qualified destructive release. Compact source
+or candidate summaries cannot reconstruct full acquisition evidence or justify
+pending/reboot adoption. See ADR162 and the I5/I6 implementation plan handoff.
+
+### Task23 Fix1 — R99/R100 authenticated recorded display and actual category use
+
+Passive Installed listing and explicit README metadata lookup use recorded inspection metadata authenticated in the same registry SQLite projection that is compared with protected current authority and the published snapshot. This replaces the earlier contradictory `capture(fresh=False)` display requirement: that call still fully reinspects package bodies and remains mandatory for execution, not passive display. The registry collector is untrusted until coordinator equality gates succeed. Only requested current revision metadata is returned; unprotected evidence/availability/diagnostics/candidates are stripped and dependency edges derive from authenticated component constraints. No schema, store, owner or authority format changes.
+
+Admission shares its existing activation/trust/selection/mapping/dependency/revocation/live-fence checks between full capture and recorded eligibility. Display returns only component IDs, never RunPluginSnapshot, tokens, leases or run admission. Execution retains complete retained-byte verification, drain gates, component ceilings, data-root epochs and current authority checks. UI labels recorded eligibility and explicitly says package bytes are not reverified. Explicit README opens only the selected current root's no-follow regular README, reads at most65537 bytes including sentinel and returns at most65536 UTF8 bytes including truncation marker; it is a bounded literal preview, not proof of whole-package integrity.
+
+R100 requires actual cold Overview and unrelated shared handlers to leave unopened category panels/models deferred. Symbol resolution follows its matching category/field/ID/saved-content/nonempty-query branch; genuine shared Overview model use must be identified and tested. Original class/export/assigned-module-patch identity and saved drafts are preserved. ADR097 caps and all routes remain unchanged.
+
+Fix1 controls cover zero package-member reads for list/search, entire selected README read bound, authenticated-record tampering, identical shared eligibility/runtime gates with full runtime verification, cold Overview then actual category/draft behavior, held-load Back/form/new-owner cleanup and scoped token-backed title/placeholder contrast. See task-23-fix1-proposal.md and CLI5 plan; root owns independent re-review and closeout.
+
+
+### Current dev navigation ownership (2026-10-17 integration)
+
+The removed `UI/Workbench/route_inventory.py` is not restored. Shared route and shell coverage uses current `UI/Navigation/screen_registry.py` and `shell_destinations.py`, including Meetings, Research and the new Plugins destination. Plugins uses F8; all existing shortcuts, including Settings F4, remain. The lazy source facade follows the current app skill-wiring owner. This preserves the route-coverage outcome of historical I5 AC5 through current owners; rebased-source checks remain TASK32695 AC15.
+
+
+### I5 route-owned Plugins styling (2026-10-17 integration)
+
+Apply the existing ADR097 first-navigation stylesheet owner. The current builder splits only `plugins`-prefixed browser selectors from `features/_plugins.tcss` into generated `screen_feature_plugins.tcss`; the app's existing route CSS map loads it on Plugins entry. Shared-selector, singular `plugin-review` and type-only modal rules stay in the normal boot remainder, so standalone plugin review/authority/status modals retain first-open styling. Current classifier/cascade rules and all startup caps remain unchanged. There is no new loader, Screen.CSS_PATH feature duplication, modal owner, token or cap exception. Existing source builder alone generates the sheets; qualify source synchronization, the full boot budget, first navigation and standalone modal first use at both terminal sizes.
+
+### Task24 / I6 exact management owners (R101–R103)
+
+The management UI consumes issued immutable reviews and the single app-owned
+PluginService/SourceService. Acquired format selection authenticates the unchanged
+full producer before reinspection; reference-discard separately authenticates
+terminal custody and the complete protected dependency union. Install-and-enable
+records only a named workspace intent, atomically with the default-disabled,
+untrusted installation. Trust and configuration remain separate gates.
+
+R101 adds the existing select result kind to the public reviewed selection path.
+It drains through the revision owner, commits exact selection/current revision and
+advances installation authority without changing trust, mappings or activation.
+
+Operation history derives from authenticated transition/current-marker evidence,
+never SQLite hints. App-owned UI awaiters preserve submitted work across navigation;
+restart resolves durable evidence, and session-only failure or uncertain cleanup
+never becomes durable success or confirmed stop. Nonsecret drafts survive Close;
+secrets remain exclusively in the owning ephemeral credential flow.
+
+R102 permits explicit hook/connection tests only through a lazy Console-owned
+review/reservation adapter for an existing real session in the captured workspace.
+It uses normal current authority, permission/persona/parent ceilings, process and
+MCP owners, budgets and cleanup. Review executes nothing; explicit execution
+discloses initialization, makes no model request and displays test effects without
+injecting them into conversation context. No UI-fabricated caller context.
+
+R103 exposes explicit reviewed reboot reconciliation only with a separately
+protected namespace/current-marker-matching clean checkpoint, exact native root
+identities and drained current users. The existing root owner retains that
+positive proof across its own fenced dirty publication and rechecks it at apply.
+Changed boot alone, SQL row absence, operator assertion and released locks never
+prove whole-root quiescence. Dirty, unknown, legacy, reconstructed, reduced-backend,
+remote-uncertain and pending-rebind cases remain Recovery required without proof;
+show specific reasons and available actual stop/wait/retry/resume actions. There
+is no automatic rebind, new persistent proof store or universal recovery claim.
+
+Concrete APIs/scope and controls: `.superpowers/sdd/2026-09-15-managed-plugins-delivery/`
+`task-24-seam-proposal-e817ec8df5.md`, its root-proof addendum and root seam decision.
+ADR required: yes; this amends ADR162 and the ADR163 Console execution handoff.
+
+### Reviewed management removal (R105)
+
+Management device-wide disable/uninstall obtains an actual issued PluginReview
+through PluginService.review_removal before confirmation. The existing
+coordinator binds current revision, authority and consequences.
+PluginService.begin_reviewed_removal validates the retained original object,
+kind, expiry and installation from minimal facade custody, then uses the existing
+immediate fence/cancel request and worker persistence. It carries the original
+review and operation ID; worker revalidation cannot replace them with newer
+state. Refusal after sealing remains a conservative session-only block with an
+honest persistence error, without deletion or automatic reopening. Scoped
+disable uses review_activation(intent="disabled") and commit. Existing emergency
+begin_disable/begin_uninstall behavior is unchanged. Same-request retry retains
+custody; navigation never retargets the reviewed installation or workspace.
+
+### I6 startup validation repair (R107 / CLI6)
+
+The exact Task24 BASE and implemented tree both measured the same975 warm
+UI-ready modules against the unchanged973 ratchet. Repay that inherited task-base
+breach by moving only Console side-chat and image-generation helper imports to
+their existing first-use handlers; canonical functions/classes, admission and
+owners remain unchanged. Keep both modules absent at ready and cover real later
+use. The preimport ordering fixture disables its optional7s splash through the
+existing private TOML setter before test-app construction (R108/CLI7), while retaining the5s ordering bound. This directly
+implements ADR097's defer/shed rule; no cap, token, production default, credential
+or runtime-owner change is authorized by this repair.
+
+## Task24 Fix1 — bounded saved-root impact (R110 / CLI9)
+
+RootUsage.blocker_status(roots, *, limit=50, offset=0) returns the existing
+one-pass owner projection as blockers plus blockers_complete. Existing blockers
+keeps its tuple/page contract. Completeness means offset==0 and the entire
+collected projection fits the requested limit, never atomic quiescence or a
+permission grant. Preserve short live-lock then separate storage access; never
+hold the live fence lock over database reads. PluginService.data_status adds
+this completeness field without a new runtime owner or raised page cap.
+
+Before saved-root confirmation, disclose exact IDs/generations/paths and actual
+owner/workspace/reason/recovery/cleanup metadata. Unknown coverage, missing or
+false completeness, or oversized disclosure disables confirmation. Reread exact
+refs and the displayed projection before submit; changed users or generations
+require renewed review. Normal owner revalidation/fencing/drain still governs
+users arriving later. Wait, cancel operation and cancel affected work remain
+distinct. Uninstalled packages remain absent; history routes by original exact
+installation ID to their retained roots through existing data owners. Mixed
+PluginReview/RootReview acquisition protection retains original dependencies,
+root custody and fail-closed behavior for unknown review kinds.
+
+ADR required: existing ADR162 amendment for the additive status projection; no
+new ADR/schema/owner. ADR163/150/097 remain unchanged. Fix1 retains all initial
+failed phases and qualifies the three Important review findings independently.
+
+
+### Fix1 exact retained-owner pages (R111 / CLI10)
+
+PluginService.data_status accepts optional installation_id and filters the
+authenticated original root owner before page slicing and exact-ref equality.
+The row need not still be installed. Missing IDs return no roots; mismatching
+exact refs refuse. Existing no-filter and installed attached-root exact-ref
+callers retain behavior. The manager's256-root review bound counts only the
+exact target installation, with one bounded lookahead; unrelated roots cannot
+strand retained cleanup. No name matching, fabricated install, raised page cap
+or new authority. ADR162 records this additive read-only facade argument.
+
+### I6 current Console test admission (2026-10-17 integration)
+
+Explicit managed-plugin tests use current asynchronous configuration capture and the actual originating Console session, runtime and received-turn/reservation owners. A shared private nonawaiting publication helper preserves the ordinary submission's existing admission checks. The explicit test path first refuses pending received turns/claims and busy or full capacity, then reserves without an intervening await; it never claims or consumes a received turn. Recapture/currentness, consent, persona/profile/parent ceilings, scope cancellation and original process/root terminal custody remain mandatory. Synthetic initialization and test effects stay outside later conversation context; test-only cleanup cannot retire another turn's or live session's resources.
+
+The existing private MCP composer may retain its actual empty owned-provider group only on the explicit discovery path. That flag does not bypass its kill switch, source/currentness, permissions or captured maximums; normal callers still receive no empty catalog. Discovery uses the exact selected owned component and existing ConnectionOwnership, grants no tools, and detaches only leases acquired by the test's original owner. Review makes no connection/model request. The actual lazy app mixin owns management operations. Existing R4/R12 closed reference forms and complete-set configuration remain authoritative; do not import a later prefill helper into this increment. Current route-owned Plugins CSS and boot-loaded standalone modal rules stay under R15, with unchanged caps.
+
+This directly integrates existing ADR162/163 contracts through current private seams. Original validation counts are historical; TASK32695 AC15 qualifies the latest dev source with real Console capture/reservation, empty discovery and normal-run controls, cancellation/cleanup, complete configuration and both modal visit orders.
+
+## I7 authenticated cleaned-absence display (R115 / CLI2)
+
+`PluginService.data_status(roots=None, *, installation_id=None, limit=50, offset=0)`
+retains its existing exact-reference validation, original-installation filter and
+bounded pagination. Each result adds only `cleaned_absent: bool`: true when the
+authenticated published root custody is `cleaned_absent`, the existing `open_root`
+validation succeeds, and no recovery reason is present. Unknown/present custody,
+wrong boot/anchors, unexpected recreated leaves and recovery reasons produce false.
+No raw custody, checkpoint or proof body is projected.
+
+This is a point-in-time read-only display fact, not future absence, quiescence,
+root access or permission to bypass reviewed cleanup/drain/recovery. Presentation
+uses recovery reason first, then cleanup state, then known cleaned absence, then
+retained. Existing blockers and cleanup remain authoritative. Public reviewed
+create/delete/status and mounted retained-data Refresh controls cover the seam.
+
+### I7 current moved owners and typed manual routes (2026-10-17 integration)
+
+The former session capture resides in `UI/Console_Modules/turn_admission.py::capture_authority`; it passes the captured `AuthorityInputs.workspace_id` to the existing skill-context capture. Keep the original session module unchanged. The compaction preflight lives in `Chat/console_context_compaction.py::ConsoleCompactionPreflight` under ADR220 (`backlog/decisions/220-console-human-decision-coordination-ownership.md`). Add one explicitly named live `read_controller__release_compaction_submission` accessor beside the existing hook accessor and wire it at the sole current constructor. Cleanup surrounds the actual compact/finish/wait path without removing retry fences, failure latches, admission/projection rules or same-task placeholder semantics. Standalone hook preparation uses current awaited capture and actual reservation gates before nonawaiting publication; it cannot steal a pending received turn or another operation's state/scope.
+
+Current component summaries distinguish skills, commands and manual rules by exact typed identities. Preserve `execute_skill`'s accepted skill/command/manual-rule routes and `current_definition`'s exact current identity checks; the bridge and R11 selectors use them. Apply the private optional component-kind filter to supporting `read_skill_file`, which is skill-only. No display-name fallback, delimiter-derived authorization or MCP-as-instruction execution is introduced. Adapt original collision witnesses to current typed names, supporting-file wrong-kind refusal, valid manual command/rule use and retired/current-token controls. This integrates the original intent while preserving current host callers; existing ADR162/163/220 apply, with no new owner/schema/runtime or raised cap.
+
+## Final integration repair interfaces (R163 / CLI44, 2026-10-17)
+
+[ADR-162's final integration amendment](../../../backlog/decisions/162-managed-agent-plugins.md)
+records the concrete typed host-variable interfaces and data/custody rules.
+Configured values use distinct schema2 plugin_variable records in the existing
+protected credential owner. Public create/revoke variable-reference services and
+reviewed `variables` name-to-var1-handle configuration provide user-reachable
+typed/masked entry without values in generated authority or handler metadata.
+Unavailable secure storage refuses configuration. Readiness is per consumed
+variable and dependency closure, preserving required constraints and independent
+siblings; revalidate references through the actual owner at use/acceptance.
+
+PLUGIN_DATA stays shared; reserved CHATBOOK_WORKSPACE_DATA uses the exact admitted
+named-workspace root or actual unscoped Console scratch capability. No synthesized
+path, scope fallback or fake persistent scratch root. Retain scratch through
+confirmed terminal settlement. Bare owned command lookup uses the captured host
+PATH before package env; explicit contained package executables stay separate.
+Revocation/drain cancels distinct leases, and stdio cleanup retries retain
+request/root custody until positive direct-child termination evidence.
+
+R164/CLI45 concretizes protected variable revocation as
+`revoke_variable(reference_id, *, installation_id: str)`: the installation check
+and idempotent tombstone occur in one protected transaction (ADR-162).
+
+R166/CLI47 retains selected valid unavailable controlling/explicit-required hooks
+as host-only `unavailable_hooks` requirement metadata, separate from executable
+selection. Internal exact `check_requirement` projection preserves original
+matchers and inherited ceilings; normal execution validation still refuses.
+Matching required/control occurrences fail before owner reservation, nonmatches
+remain nonfailures, and dependency-only siblings stay independent. See the R166
+amendments in ADR-162/163; no new runtime, persisted schema or owner is added.
+
+R168/CLI49 completes actor/resume requirement custody within service.py. A private
+projection gate preserves execution-only validation, while a service-private
+wrapper retains only requirement metadata proven by the original signed
+installation/scope/revision/generation/mapping/root pin and host snapshot. Unknown
+custody refuses; no ready capability, unrelated installation, pin/schema/public
+interface or runtime owner is added. See the R168 amendments in ADR-162/163.
+
+### Current dev integration: required occurrences and capture failures (R18)
+
+Native hook requirement parsing uses authenticated in-memory declarations and the unchanged public parser. Its private non-executable occurrence projection withholds package-relative cwd solely to preserve the declared event, matcher and effects when execution is unavailable. The complete original declaration, including cwd, remains bound to the revision. Execution rejoins and validates the contained existing absolute package cwd, current bytes, mappings and authority before launch. Unavailable occurrence metadata cannot supply a callable snapshot or fallback process owner.
+
+The existing plugin service publishes constraint-verification failures atomically with its catalog. Exact affected installation/workspace scopes refuse; an attempted refresh that cannot authenticate the constraint set refuses as unknown. Verified inactive, unselected, untrusted or revoked scopes retain ordinary empty eligibility, including explicit workspace disable over global inheritance. Successful authoritative refresh clears the failure; failed reads never revive old executable snapshots or imply removal of a requirement. The private failure member stores only scope keys, with no new registry, body, secret or grant.
+
+At the actual Console configuration capture boundary, only `PluginUnavailable("plugin_constraint_verification_failed")` becomes the existing `RecoveryRequired` with that fixed code. The synchronous optional-catalog wrapper propagates this recovery failure; the two existing preparation wrappers already do so. Ordinary optional failures keep their current behavior. Existing admission and final publication recheck the captured installation/workspace so a previously captured requirement cannot survive loss of its proof as an executable grant. Existing ADR162/163 govern this integration; no new storage or permission authority is introduced.
+
+
+### Rebase qualification: captured refusal ceiling and actual submission custody (R31)
+
+The plugin service retains one private immutable service/session/workspace/capture-bound requirement ceiling beside removable availability rows. It references exact existing snapshot identities and is never serialized or projected to model/UI text. Missing, foreign, stale or replaced proof refuses; an initialized genuinely empty capture carries explicit empty proof. Only original unavailable-hook occurrence metadata may be retained through the existing constraint-only path. Removing executable rows never restores a skill, command, rule, agent, MCP definition, executable hook or absent archive producer. Existing currentness, dependency, permission and sealed-resume owners remain authoritative.
+
+Direct provider custody follows actual checked typed component origins as well as real skill bindings. Automatic submission checks the dependencies of that material after UserPromptSubmit and before acceptance. Each resumed attempt receives a fresh pending lifetime while retaining the same frozen maximum and refusal ceiling; it never recaptures broader selections. Consumed shared hook data requires its authenticated shared root. Bare executable lookup refuses an absent or wholly empty host PATH, preserving explicit empty segments in a nonempty PATH, absolute executables and explicit package-relative commands. These repairs implement existing ADR162/163 contracts with no new durable authority, schema or public API.
+
+
+Legacy schema-v1 resume retains zero plugin authority. Only its existing service owner may validate a present captured requirement record, or establish absence of native rows, intersect to zero, and issue a private empty record. Ordinary missing proof still refuses. A verified zero record cannot reactivate substituted native rows: the existing zero intersection discards them. No current catalog supplies absent archive producers or requirements. (Rebase qualification R33.)
+
+
+### Rebase qualification: MCP effect lane, scratch publication and attempt cleanup (R36)
+
+MCP delivery currentness uses the existing nonblocking effect-authority callback only on the exact owning HookEngine loop. Other threads/loops retain full worker authority. Full admission/use/acceptance, context/dependency, cancellation/deadline/inherited-policy, definition, permissions, audit, provenance and terminal resource checks remain. The ordinary provider keeps its sanitized failure boundary. A disconnected definition refuses before approval; a test cannot reconnect or acquire authority by expecting an approval.
+
+Native hook worker authority validates actual scratch physical identity with the existing is_live owner, including result acceptance. Effects consult only a new private published-current query under the existing scratch manager lock: exact issued snapshot/record, alive and not tombstoned/disposed, with no filesystem IO or resource acquisition. This memory check detects logical close/disposal; external filesystem replacement still requires the existing worker physical checks. Process/root custody remains until terminal and reap. Resumed attempts preserve the original frozen ceiling in an attempt-local context with a fresh pending ID. Input-hook failure abandons only the exact preaccept preparation through the existing store owner, which protects accepted commit custody. No new authority owner, persistent state, schema or public API is introduced.

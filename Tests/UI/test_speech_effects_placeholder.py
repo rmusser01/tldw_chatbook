@@ -15,7 +15,12 @@ import pytest
 from textual.widgets import Button, Static
 
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.background_signals import wait_for_signal
 from tldw_chatbook.UI.Screens.stts_screen import SPEECH_NON_VIEW_KEYS, STTSScreen
+
+
+# Source-bound mounted tests keep their selected profile for this lifetime.
+pytestmark = pytest.mark.bootstrap_profile
 
 
 @pytest.mark.asyncio
@@ -28,10 +33,16 @@ async def test_the_rail_entry_is_reachable():
         await pilot.pause()
         await pilot.pause()
         row = next(
-            b for b in screen.query(Button)
+            b
+            for b in screen.query(Button)
             if getattr(b, "lab_view_key", None) == "effects"
         )
         assert not row.disabled, "Audio Effects cannot be opened"
+        assert screen.stts_window is not None
+        await wait_for_signal(
+            screen.stts_window._mounted_event, what="Speech window native mount"
+        )
+        await app.workers.wait_for_complete()
 
 
 @pytest.mark.asyncio
@@ -44,7 +55,8 @@ async def test_opening_it_states_that_it_is_not_built_and_where_it_is_going():
         await app.push_screen(screen)
         await pilot.pause()
         row = next(
-            b for b in screen.query(Button)
+            b
+            for b in screen.query(Button)
             if getattr(b, "lab_view_key", None) == "effects"
         )
         row.press()

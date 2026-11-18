@@ -1,0 +1,27 @@
+{
+  "argv": [
+    "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-m",
+    "pytest",
+    "Tests/UI/test_console_archive_recovery_flow.py::test_stock_received_send_keeps_exact_recovery_user_proof",
+    "Tests/UI/test_console_runtime_ownership.py::test_attach_and_detach_cover_exactly_the_same_slot_set",
+    "Tests/UI/test_console_runtime_ownership.py::test_view_hook_inventory_contains_only_disposable_projections",
+    "Tests/UI/test_console_runtime_ownership.py::test_detach_releases_the_old_chat_screen_from_every_runtime_hook",
+    "Tests/Chat/test_console_viewless_hooks.py::test_every_slot_names_a_real_attribute_on_the_target_it_declares",
+    "Tests/Chat/test_console_archive_recovery_followup.py::test_agent_factory_thinking_alias_keeps_only_exact_saved_owner",
+    "Tests/DB/test_archive_chronology.py",
+    "Tests/Chat/test_console_archive_recovery_dispatch.py::test_real_console_native_dispatch_waits_for_exact_confirmation[True-True-None]",
+    "Tests/Chat/test_console_archive_recovery_dispatch.py::test_real_console_native_dispatch_waits_for_exact_confirmation[False-True-received]",
+    "Tests/Chat/test_console_archive_recovery_followup.py::test_captured_native_turn_restores_original_second_row[structured-True]",
+    "-q",
+    "--tb=short",
+    "--show-capture=no",
+    "--maxfail=1",
+    "-o",
+    "faulthandler_timeout=60",
+    "--junitxml=Docs\\superpowers\\qa\\2026-10-31-pr3162-backlog-rebase\\remaining-feature.xml"
+  ],
+  "profile": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3162-resync\\test-runtime\\remaining-feature-bb05b92f5d594dc0a7f9782b1bbad7f9"
+}

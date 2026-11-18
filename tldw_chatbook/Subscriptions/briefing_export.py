@@ -283,8 +283,8 @@ def default_briefing_filename(
         never a path.
     """
     created_at = str(briefing.get("created_at") or "").strip()
-    stem_source = f"{watchlist_name} {created_at}".strip() if created_at else (
-        watchlist_name
+    stem_source = (
+        f"{watchlist_name} {created_at}".strip() if created_at else (watchlist_name)
     )
     briefing_id = briefing.get("id")
     fallback = f"briefing-{briefing_id}" if briefing_id is not None else "briefing"

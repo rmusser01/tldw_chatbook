@@ -1,0 +1,257 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_________ test_mounted_selection_order_toggles_reopen_and_origin_fence _________
+
+runtime = (<tldw_chatbook.DB.Prompts_DB.PromptsDatabase object at 0x111866f60>, <tldw_chatbook.Prompt_Management.prompt_scope_se...ct at 0x111867bf0>), <tldw_chatbook.Chat.console_prompt_mixin_service.ConsolePromptMixinService object at 0x111867c80>)
+
+    @pytest.mark.asyncio
+    async def test_mounted_selection_order_toggles_reopen_and_origin_fence(runtime):
+        _, scope, store, origin, other, service = runtime
+        await seed(scope)
+        app = WorkbenchHarness(runtime)
+        async with app.run_test(size=(100, 30)) as pilot:
+            app.pilot = pilot
+            await ready(app)
+            for name in ('Style', 'Summary', 'Diagram'):
+>               await add(app, name)
+
+Tests/UI/test_console_prompt_mixins.py:97: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/UI/test_console_prompt_mixins.py:77: in add
+    await ready(app)
+Tests/UI/test_console_prompt_mixins.py:68: in ready
+    await _wait_for_condition(app.pilot, lambda: bool(app.screen.query('#console-mixins-add')), message='Mix-ins did not load')
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+pilot = <Pilot app=WorkbenchHarness(title='WorkbenchHarness', classes={'-dark-mode'}, pseudo_classes={'focus', 'nocolor', 'dark'})>
+predicate = <function ready.<locals>.<lambda> at 0x111877420>
+
+    async def _wait_for_condition(
+        pilot, predicate, *, timeout=15.0, message, interval=0.02
+    ) -> None:
+        """Await until ``predicate()`` is truthy, or raise once ``timeout`` wall-clock seconds elapse.
+    
+        A deadline (not a fixed iteration count) so the wait survives CPU contention
+        yet returns the instant the condition is met. ``message`` may be a string or a
+        zero-arg callable (evaluated at raise time, so dynamic diagnostics report the
+        stuck state).
+    
+        Textual query misses during targeted recomposition are retried; all other
+        predicate exceptions propagate immediately.
+    
+        The predicate is checked FIRST each iteration -- before the deadline test and
+        before pausing -- so it is evaluated at least once (even at ``timeout=0``) and
+        is always given a final chance after a ``pause`` that overshoots the deadline
+        under contention (which is exactly when a state transition it is waiting for
+        may have just landed).
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                matched = predicate()
+            except (NoMatches, QueryError):
+                matched = False
+            if matched:
+                return
+            if time.monotonic() >= deadline:
+                break
+            await pilot.pause(interval)
+>       raise AssertionError(message() if callable(message) else message)
+E       AssertionError: Mix-ins did not load
+
+Tests/UI/test_library_shell.py:4040: AssertionError
+
+During handling of the above exception, another exception occurred:
+
+runtime = (<tldw_chatbook.DB.Prompts_DB.PromptsDatabase object at 0x111866f60>, <tldw_chatbook.Prompt_Management.prompt_scope_se...ct at 0x111867bf0>), <tldw_chatbook.Chat.console_prompt_mixin_service.ConsolePromptMixinService object at 0x111867c80>)
+
+    @pytest.mark.asyncio
+    async def test_mounted_selection_order_toggles_reopen_and_origin_fence(runtime):
+        _, scope, store, origin, other, service = runtime
+        await seed(scope)
+        app = WorkbenchHarness(runtime)
+>       async with app.run_test(size=(100, 30)) as pilot:
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_console_prompt_mixins.py:93: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:231: in __aexit__
+    await self.gen.athrow(value)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/app.py:2218: in run_test
+    raise self._exception
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:663: in _process_messages_loop
+    await self._dispatch_message(message)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:739: in _dispatch_message
+    await self._on_message(message)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:829: in _on_message
+    await invoke(method, message)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/_callback.py:96: in invoke
+    return await _invoke(callback, *params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/_callback.py:56: in _invoke
+    result = callback(*params[:parameter_count])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:396: in _mixins_intent
+    if self._holds_dirty_edit():
+       ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:1878: in _holds_dirty_edit
+    return bool(view and view.dirty)
+                         ^^^^^^^^^^
+tldw_chatbook/Widgets/Console/console_prompt_mixins_view.py:117: in dirty
+    editor = self.query(PromptMixinEditor).first()
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <DOMQuery query='PromptMixinEditor'>, expect_type = None
+
+    def first(
+        self, expect_type: type[ExpectType] | None = None
+    ) -> QueryType | ExpectType:
+        """Get the *first* matching node.
+    
+        Args:
+            expect_type: Require matched node is of this type,
+                or None for any type.
+    
+        Raises:
+            WrongType: If the wrong type was found.
+            NoMatches: If there are no matching nodes in the query.
+    
+        Returns:
+            The matching Widget.
+        """
+        _rich_traceback_omit = True
+        if self.nodes:
+            first = self.nodes[0]
+            if expect_type is not None:
+                if not isinstance(first, expect_type):
+                    raise WrongType(
+                        f"Query value is the wrong type; expected type {expect_type.__name__!r}, found {first}"
+                    )
+            return first
+        else:
+>           raise NoMatches(f"No nodes match {self!r} on {self.node!r}")
+E           textual.css.query.NoMatches: No nodes match <DOMQuery query='PromptMixinEditor'> on ConsolePromptMixinsView()
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/css/query.py:249: NoMatches
+---------------------------- Captured stderr setup -----------------------------
+2026-11-01 16:55:27.629 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-11-01 16:55:27.636 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-11-01 16:55:27.677 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-11-01 16:55:27.679 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+2026-11-01 16:55:27.680 | INFO     | tldw_chatbook.DB.Prompts_DB:__init__:405 - Initializing PromptsDatabase object for path: :memory: [Client ID: workbench-test]
+2026-11-01 16:55:27.681 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_get_thread_connection:557 - Opened/Reopened SQLite connection to :memory: [Client: workbench-test, Thread: MainThread]
+2026-11-01 16:55:27.681 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1135 - Checking DB schema. Current: 0, Code supports: 6
+2026-11-01 16:55:27.681 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Initial prompts schema (v0 -> v1)
+2026-11-01 16:55:27.681 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:823 - Applying initial schema (Version 1) to DB: :memory:...
+2026-11-01 16:55:27.681 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 16:55:27.681 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:834 - [Schema V1] Applying Core Schema + Version Update...
+2026-11-01 16:55:27.681 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:836 - [Schema V1] Core Schema script (incl. version update) executed.
+2026-11-01 16:55:27.681 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:860 - [Schema V1] Prompts table structure validated.
+2026-11-01 16:55:27.681 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 16:55:27.682 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:869 - [Schema V1] Core Schema V1 applied and committed for DB: :memory:.
+2026-11-01 16:55:27.682 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:873 - [Schema V1] Applying FTS Tables...
+2026-11-01 16:55:27.682 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:876 - [Schema V1] FTS Tables created successfully.
+2026-11-01 16:55:27.682 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add structured prompt metadata columns (v1 -> v2)
+2026-11-01 16:55:27.682 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v1_to_v2:887 - Applying prompts migration from version 1 to 2 for DB: :memory:...
+2026-11-01 16:55:27.682 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 16:55:27.682 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 16:55:27.682 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v1_to_v2:923 - Prompts migration to version 2 applied successfully for DB: :memory:.
+2026-11-01 16:55:27.682 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add prompt artifact type (v2 -> v3)
+2026-11-01 16:55:27.682 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v2_to_v3:934 - Applying prompts migration from version 2 to 3 for DB: :memory:...
+2026-11-01 16:55:27.682 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 16:55:27.683 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 16:55:27.683 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add retained Prompt history index (v3 -> v4)
+2026-11-01 16:55:27.683 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v3_to_v4:969 - Applying prompts migration from version 3 to 4 for DB: :memory:...
+2026-11-01 16:55:27.683 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 16:55:27.683 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 16:55:27.683 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add local Console Prompt Draft Shelf (v4 -> v5)
+2026-11-01 16:55:27.683 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v4_to_v5:1033 - Applying prompts migration from version 4 to 5.
+2026-11-01 16:55:27.683 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 16:55:27.683 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 16:55:27.683 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add literal mix-in artifact type (v5 -> v6)
+2026-11-01 16:55:27.683 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 16:55:27.684 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 16:55:27.684 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1184 - Verified FTS tables exist after migrations.
+2026-11-01 16:55:27.684 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1190 - Database schema initialized/migrated to version 6.
+2026-11-01 16:55:27.684 | DEBUG    | tldw_chatbook.DB.Prompts_DB:__init__:457 - PromptsDatabase initialization completed successfully for :memory:
+----------------------------- Captured stderr call -----------------------------
+2026-11-01 16:55:27.685 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 16:55:27.685 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 16:55:27.685 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT * FROM Prompts WHERE uuid = ?... Params: (a1c310ef-221a-434e-8ff2-a22e1d7cbad9)
+2026-11-01 16:55:27.685 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT k.keyword FROM PromptKeywordsTable k
+                                             JOIN PromptKeywordLinks pkl ON k.id = pkl.keyword_id
+                   WHERE pkl.prompt_id = ? ORDER BY k.keyw... Params: (1)
+2026-11-01 16:55:27.685 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 16:55:27.686 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 16:55:27.686 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT * FROM Prompts WHERE uuid = ?... Params: (5e10e7eb-4572-4c34-830a-e6400569d6fc)
+2026-11-01 16:55:27.686 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT k.keyword FROM PromptKeywordsTable k
+                                             JOIN PromptKeywordLinks pkl ON k.id = pkl.keyword_id
+                   WHERE pkl.prompt_id = ? ORDER BY k.keyw... Params: (2)
+2026-11-01 16:55:27.686 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 16:55:27.686 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 16:55:27.686 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT * FROM Prompts WHERE uuid = ?... Params: (a3bf9024-fc9a-4b36-a1eb-af855085c7c1)
+2026-11-01 16:55:27.686 | DEBUG    | tldw_chatbook.DB.Prompts_DB:execute_query:663 - Executing Query: SELECT k.keyword FROM PromptKeywordsTable k
+                                             JOIN PromptKeywordLinks pkl ON k.id = pkl.keyword_id
+                   WHERE pkl.prompt_id = ? ORDER BY k.keyw... Params: (3)
+2026-11-01 16:55:27.945 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 16:55:27.945 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+╭───────────────────── Traceback (most recent call last) ──────────────────────╮
+│ /Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbo │
+│ ok/Widgets/Console/console_prompts_modal.py:396 in _mixins_intent            │
+│                                                                              │
+│    393 │                                                                     │
+│    394 │   @on(ConsolePromptMixinsView.IntentRequested)                      │
+│    395 │   def _mixins_intent(self, event) -> None:                          │
+│ ❱  396 │   │   if self._holds_dirty_edit():                                  │
+│    397 │   │   │   self._show_dirty_guard()                                  │
+│    398 │   │   │   return                                                    │
+│    399 │   │   self.run_worker(self._apply_mixin_intent(event.intent), exclu │
+│                                                                              │
+│ ╭─────────── locals ────────────╮                                            │
+│ │ event = IntentRequested()     │                                            │
+│ │  self = ConsolePromptsModal() │                                            │
+│ ╰───────────────────────────────╯                                            │
+│                                                                              │
+│ /Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbo │
+│ ok/Widgets/Console/console_prompts_modal.py:1878 in _holds_dirty_edit        │
+│                                                                              │
+│   1875 │   │   """Whether closing now would discard edits -- the dirty guard │
+│   1876 │   │   if self.state.mode == "mixins":                               │
+│   1877 │   │   │   view = self.query(ConsolePromptMixinsView).first()        │
+│ ❱ 1878 │   │   │   return bool(view and view.dirty)                          │
+│   1879 │   │   return self.state.mode in {"edit", "recipe", "draft_edit"} an │
+│   1880 │   │   │   self.state.dirty                                          │
+│   1881 │   │   )                                                             │
+│                                                                              │
+│ ╭───────────── locals ─────────────╮                                         │
+│ │ self = ConsolePromptsModal()     │                                         │
+│ │ view = ConsolePromptMixinsView() │                                         │
+│ ╰──────────────────────────────────╯                                         │
+│                                                                              │
+│ /Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbo │
+│ ok/Widgets/Console/console_prompt_mixins_view.py:117 in dirty                │
+│                                                                              │
+│   114 │                                                                      │
+│   115 │   @property                                                          │
+│   116 │   def dirty(self) -> bool:                                           │
+│ ❱ 117 │   │   editor = self.query(PromptMixinEditor).first()                 │
+│   118 │   │   return editor is not None and editor.read_draft() != self.edit │
+│   119 │                                                                      │
+│   120 │   def intent(self, action, source=None) -> MixinWorkbenchIntent:     │
+│                                                                              │
+│ ╭───────────── locals ─────────────╮                                         │
+│ │ self = ConsolePromptMixinsView() │                                         │
+│ ╰──────────────────────────────────╯                                         │
+╰──────────────────────────────────────────────────────────────────────────────╯
+NoMatches: No nodes match <DOMQuery query='PromptMixinEditor'> on 
+ConsolePromptMixinsView()
+--------------------------- Captured stderr teardown ---------------------------
+2026-11-01 16:55:43.616 | DEBUG    | tldw_chatbook.DB.Prompts_DB:close_connection:583 - Closed connection for thread MainThread.
+============================= slowest 25 durations =============================
+15.60s call     Tests/UI/test_console_prompt_mixins.py::test_mounted_selection_order_toggles_reopen_and_origin_fence
+
+(2 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_console_prompt_mixins.py::test_mounted_selection_order_toggles_reopen_and_origin_fence
+1 failed in 17.35s

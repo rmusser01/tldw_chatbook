@@ -1,0 +1,11 @@
+{
+  "later_edit": false,
+  "before": null,
+  "after": {
+    "text": "Saved",
+    "same_input": false,
+    "focus": true,
+    "cursor": 5
+  },
+  "stored": "Saved"
+}

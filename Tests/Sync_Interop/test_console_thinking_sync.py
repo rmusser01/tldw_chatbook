@@ -31,6 +31,7 @@ from tldw_chatbook.Sync_Interop.envelope_builder import SyncEnvelopeBuilder
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
 from tldw_chatbook.tldw_api import SyncV2Envelope
+from tldw_chatbook.Sync_Interop.chat_sync_source import CharactersRAGDBChatSyncSource
 
 
 def _thinking(*, proprietary: bool = False, text: str = "visible reasoning") -> str:
@@ -168,7 +169,7 @@ def _reconcile(
     result = ChatSyncV2OutboxProducer(
         state_repository=_sync_repository(tmp_path),
         dataset_keys={"dataset-1": dataset_key},
-        source=source,
+        source=CharactersRAGDBChatSyncSource(source),
     ).reconcile_chat_message_intent(
         server_profile_id="server-a",
         authenticated_principal_id="user-a",
@@ -256,7 +257,7 @@ def test_thinking_deletion_round_trips_as_whole_record(tmp_path) -> None:
         deleted_result = ChatSyncV2OutboxProducer(
             state_repository=_sync_repository(tmp_path),
             dataset_keys={"dataset-1": dataset_key},
-            source=source,
+            source=CharactersRAGDBChatSyncSource(source),
         ).reconcile_chat_message_delete_intent(
             server_profile_id="server-a",
             authenticated_principal_id="user-a",
@@ -345,7 +346,7 @@ def test_uninstrumented_v50_delete_without_base_proof_fails_closed(tmp_path) -> 
         delete_hash = canonical_payload_hash({"deleted": True})
 
         assert (
-            source.read_committed_chat_delete_intent(
+            CharactersRAGDBChatSyncSource(source).read_committed_chat_delete_intent(
                 message_id=message_id,
                 message_version=2,
                 payload_hash=delete_hash,
@@ -355,7 +356,7 @@ def test_uninstrumented_v50_delete_without_base_proof_fails_closed(tmp_path) -> 
         result = ChatSyncV2OutboxProducer(
             state_repository=_sync_repository(tmp_path / "raw-delete"),
             dataset_keys={"dataset-1": generate_dataset_key()},
-            source=source,
+            source=CharactersRAGDBChatSyncSource(source),
         ).reconcile_chat_message_delete_intent(
             server_profile_id="server-a",
             authenticated_principal_id="user-a",

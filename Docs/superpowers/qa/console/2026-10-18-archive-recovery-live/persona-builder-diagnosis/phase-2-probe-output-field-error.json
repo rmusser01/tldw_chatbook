@@ -1,0 +1,49 @@
+{
+  "actual_db_connections": 0,
+  "baseline": {
+    "75b671c001e84bf2713c380e30de3e587bcc8ae0": {
+      "producer_descriptors_ast_sha256": "a6985df68b359df269c3c862ab4e8f63240adecefe2dd34fcc9dc99722bc0b86",
+      "producer_descriptors_line": 10517,
+      "producer_descriptors_source": "descriptors = tuple(\n            saved_by_position.get(index)\n            or ProviderArtifactTraceProvenance(\n                TraceProvenanceSource.ACTIVE_REQUEST,\n                policy,\n            )\n            for index in range(len(visible_messages))\n        )",
+      "validator_class_ast_sha256": "b9d3912e991711041614c097ef462296df42ff1fb557e9882e40c3bc0fd66303"
+    },
+    "HEAD": {
+      "producer_descriptors_ast_sha256": "a6985df68b359df269c3c862ab4e8f63240adecefe2dd34fcc9dc99722bc0b86",
+      "producer_descriptors_line": 10517,
+      "producer_descriptors_source": "descriptors = tuple(\n            saved_by_position.get(index)\n            or ProviderArtifactTraceProvenance(\n                TraceProvenanceSource.ACTIVE_REQUEST,\n                policy,\n            )\n            for index in range(len(visible_messages))\n        )",
+      "validator_class_ast_sha256": "b9d3912e991711041614c097ef462296df42ff1fb557e9882e40c3bc0fd66303"
+    }
+  },
+  "limits": "Pure request builder reproduction with exact retained Persona text/current saved user revision, not a recovered live exception traceback. No app/controller constructed or native send performed. Frozen policy opaque ID/version synthetic; PII settings match retained live config.",
+  "live_artifacts_sha256_after": {
+    "blocked-checkpoints.json": "e56cf02c6231dbe9bf9acc816099e5eb5aa004f2cda6c6e24efc2b3f3b6afe6f",
+    "blocked-initial.json": "e95f53c54a33fc14370ba7011a663253acfff23fd6269c4dbbcdd1e889f4b679",
+    "config.toml": "06db0135fbe740257e718c9873c43809ef17ea60c313e7161811349eb57e86a6",
+    "data/task7_live/tldw_cli_app.log": "da156008ba06d7acf49046907cc54593428b5b80a4099a4bdd2c10cf22e339df",
+    "persona-control.json": "0f26a63c74e84a18cf6c9009c487f1386c605f64834e7dd621e24603864f5235"
+  },
+  "live_artifacts_sha256_before": {
+    "blocked-checkpoints.json": "e56cf02c6231dbe9bf9acc816099e5eb5aa004f2cda6c6e24efc2b3f3b6afe6f",
+    "blocked-initial.json": "e95f53c54a33fc14370ba7011a663253acfff23fd6269c4dbbcdd1e889f4b679",
+    "config.toml": "06db0135fbe740257e718c9873c43809ef17ea60c313e7161811349eb57e86a6",
+    "data/task7_live/tldw_cli_app.log": "da156008ba06d7acf49046907cc54593428b5b80a4099a4bdd2c10cf22e339df",
+    "persona-control.json": "0f26a63c74e84a18cf6c9009c487f1386c605f64834e7dd621e24603864f5235"
+  },
+  "live_artifacts_unchanged": true,
+  "network_attempts": [],
+  "preexisting_at_base75b": true,
+  "results": {
+    "empty_persona_system_omitted": {
+      "exception_message": "'PreparedConsoleRequest' object has no attribute 'semantic'",
+      "exception_type": "AttributeError",
+      "outcome": "raised",
+      "traceback": "Traceback (most recent call last):\n  File \"/private/tmp/archive-recovery-persona-builder-diagnosis-20261018/probe.py\", line 84, in <module>\n    results[label] = {'outcome':'built', 'system_count':len(request.semantic.system), 'active_request_count':len(request.semantic.active_request)}\n                                                            ^^^^^^^^^^^^^^^^\nAttributeError: 'PreparedConsoleRequest' object has no attribute 'semantic'\n"
+    },
+    "nonempty_persona_system": {
+      "exception_message": "trace provenance category mismatch: system",
+      "exception_type": "TraceProvenanceAlignmentError",
+      "outcome": "raised",
+      "traceback": "Traceback (most recent call last):\n  File \"/private/tmp/archive-recovery-persona-builder-diagnosis-20261018/probe.py\", line 76, in <module>\n    request = build_console_request(\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_prepared_request.py\", line 1049, in build_console_request\n    ConsoleRequestProvenance(\n  File \"<string>\", line 14, in __init__\n  File \"/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_trace_provenance.py\", line 989, in __post_init__\n    _validate_category(\n  File \"/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_trace_provenance.py\", line 855, in _validate_category\n    raise TraceProvenanceAlignmentError(\ntldw_chatbook.Chat.console_trace_provenance.TraceProvenanceAlignmentError: trace provenance category mismatch: system\n"
+    }
+  }
+}

@@ -39,16 +39,18 @@ source or copied token definitions are needed (TASK-32816).
 
 - **Surfaces:** `$ds-surface-panel`, `$ds-surface-raised`,
   `$ds-surface-inspector`, `$ds-grid-line`, `$ds-column-line`
-  (`$ds-grid-line` and `$ds-control-edge` resolve to the theme variable
-  `$tldw-boundary`; the themes.py guard function `ensure_readable_text_hues`
-  pins that variable to 3:1 on surface and panel for every theme,
-  TASK-33003.6),
+  (`$ds-grid-line`, `$ds-column-line` and `$ds-control-edge` resolve to the
+  theme variable `$tldw-boundary`; the themes.py guard function
+  `ensure_readable_text_hues` pins that variable to 3:1 on surface and panel
+  for every theme, TASK-33003.6, TASK-33003.15),
   `$ds-surface-sunken` (recessed resting surface for **enabled** chrome —
   inactive toggles, sunken strips; never a disabled state)
 - **Text:** `$ds-text-primary`, `$ds-text-muted`, `$ds-text-disabled`
 - **Focus (non-obscuring focus contract):** `$ds-focus-bg`, `$ds-focus-fg`,
   `$ds-focus-accent`, `$ds-action-focus`, `$ds-input-focus-border`,
   `$ds-input-focus-bg`, `$ds-input-focus-accent`, `$ds-control-edge`
+  (`$ds-focus-list-tint: 12%` tints a focused list behind its separately
+  highlighted option; the option retains the full focus colors and marker)
 - **Status:** `$ds-status-ready | -running | -info | -warning |
   -approval-required | -blocked | -error | -error-readable | -paused |
   -unsaved | -recovered`
@@ -74,6 +76,8 @@ make intent visible:
 
 ### 2.3 Control sizing
 
+- `$ds-note-folder-picker-max-height: 50vh` — folder choices leave room for the filter, pager, and actions.
+
 - `$ds-control-height: 3` — standard action control (buttons, selects,
   single-line inputs)
 - `$ds-control-height-compact: 1` — tab bars, status lines, chip rows, and
@@ -89,7 +93,12 @@ make intent visible:
 
 `$ds-duration-fast: 0.2s` (hover feedback), `$ds-duration-medium: 0.3s`
 (panel/visibility changes), `$ds-duration-slow: 0.5s` (large layout shifts
-only). No other durations in new UI.
+only). Living portraits use `$ds-portrait-blink-min: 3s`,
+`$ds-portrait-blink-max: 7s`, `$ds-portrait-idle-cycle: 6s` and
+`$ds-portrait-idle-offset-px: 0`; blink hold reuses `$ds-duration-fast`.
+Portraits stay registered: idle animation is blinking, without whole-image
+translation. The retained cycle token does not move the portrait at zero amplitude.
+Other new motion durations must be added to this language first.
 
 ### 2.5 Opacity and the disabled state
 
@@ -122,7 +131,10 @@ Every interactive control must define, at minimum:
   `$primary`), and a focus cue that is an edge must reach 3:1 against the
   row it marks (TASK-33003.6: the Settings rail edge is `$ds-active-fg`).
   A default Button's focus fill is `$tldw-focus-fill`, never closer to its
-  card than the resting fill (themes.py `FOCUS_FILL_VARIABLE`)
+  card than the resting fill (themes.py `FOCUS_FILL_VARIABLE`). The active
+  top tab keeps its `$primary-darken-1` fill hovered and focused, because
+  its outline `$tldw-active-edge` is pinned at 3:1 against that fill only
+  (themes.py `ACTIVE_EDGE_VARIABLE`, TASK-33641.1)
 - **disabled:** `$ds-disabled-bg` + `$ds-text-disabled-readable` at full
   opacity (never opacity-stacked — see §2.5); hover on disabled keeps the
   disabled surface
@@ -132,9 +144,41 @@ Every interactive control must define, at minimum:
 - **Standard shell sidebar:** `$ds-sidebar-width: 25%`,
   `$ds-sidebar-min-width: 35`, `$ds-sidebar-max-width: 80`, docked left,
   collapsible to zero width (never a sliver).
+  **Exception (ADR-212):** on adaptive-pane-shell routes (Library adaptive
+  readers, Roleplay) the navigation rail follows the resolver's 29-39 rail
+  policy with a 24-cell floor, and a collapsed pane keeps a full-height
+  five-cell grip — a labelled control, not a sliver — at every width until
+  the single-stage follow-up lands.
 - **Feature geometry stays local** until a second consumer appears; then it
   promotes to `_variables.tcss` (e.g. `$ds-console-composer-height`).
-- Pane borders use `$ds-grid-line` / `$ds-column-line`, never raw hex.
+  **Runtime geometry** — widths a resolver computes from the measured
+  terminal — promotes instead to the config-safe Python leaf
+  `Utils/adaptive_reader_state.py` (ADR-212): a stylesheet token cannot
+  depend on the measured shell.
+- Pane borders use `$ds-grid-line` / `$ds-column-line`, never raw hex. The
+  pane that carries one sets its own `$ds-surface-panel` or
+  `$ds-surface-raised` fill: the line colour is pinned to 3:1 against those
+  two fills only, and on `$background` it fell to 1.32:1 on litestep
+  (Workflows, TASK-33003.15). Text that sits straight on that fill takes
+  `$ds-text-primary`, not the inherited `$foreground`, which reads under
+  4.5:1 on `$panel` in nine themes (atom-one-dark 3.45:1). The pane's fill
+  also shows through a translucent fill inside it: the house focus tint over
+  `$panel` reads under 4.5:1 on five themes (catppuccin-frappe 4.12:1). In
+  the Workflows rails a focused button and the focused search field take
+  `$tldw-focus-fill`, which §2.7 keeps at least as far from the rail as the
+  resting fill. The field drops Textual's own focus tint; on that fill its
+  placeholder takes `$ds-focus-fg` in italic and its focus outline takes
+  `$ds-active-fg`, because `$ds-text-muted` and `$primary` do not read on
+  it (under 4.5:1 on 59 themes, under 3:1 on 54). Its selected text and its
+  caret are `$ds-focus-fg`, the auto ink, reversed (`text-style: reverse`
+  over a transparent `background`). Textual paints both in the theme's own
+  `$foreground`, and on that fill selected text read under 4.5:1 on 46
+  themes and the caret under 3:1 on 8. A `background` cannot take the auto
+  ink, and each selection fill tried under it left themes under 4.5:1
+  (`$ds-focus-bg` 17, Textual's own tint 22, `$ds-active-fg` 4). A focus
+  fill is measured against the pane as well as under its text: the tint on
+  an opaque `$background` kept the field's text and matched the rail's
+  luminance on the default theme (1.00x).
 
 ## 3. Interaction rules (binding on all screens)
 

@@ -225,3 +225,270 @@ def test_inactive_sync_preserves_real_pending_outbox(tmp_path):
         "    assert repo.list_sync_v2_outbox_entries(**scope_args, dataset_id='dataset-1') == outbox",
     )
     _run(tmp_path, "local", "inactive", script=script)
+
+
+_PERSONAL_CONTEXT_SCRIPT = r"""
+import os, sys
+from pathlib import Path
+from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storage
+from tldw_chatbook.Backup_Recovery.activation import bind_activation, ActivationStore
+from tldw_chatbook.Backup_Recovery.control_records import admission_authority, register_pending
+import tldw_chatbook.Personal_Context.recovery as pc
+case = sys.argv[1]
+selector = Path(os.environ['TLDW_CONFIG_PATH'])
+data = selector.parent.parent / 'data'
+selector.write_text('[general]\nusers_name="test"\n')
+selector.chmod(0o600)
+db = data / 'tldw_chatbook_personal_context.db'
+root = bootstrap.default_bootstrap_root()
+startup = storage._startups.pop((os.getpid(), str(root)), None)
+if startup: startup.close()
+authority = admission_authority(root)
+authority.register('profile', (selector.parent, data))
+control = selector.parent.parent / 'operation'
+control.mkdir(mode=0o700)
+if case == 'ordinary':
+    assert pc.sync_allowed(db) and pc.restore_review(db) is None
+    print('retired and reopened')
+    raise SystemExit(0)
+register_pending(root, 'restore', ('profile',), control, (selector,))
+with authority.maintenance(('profile',), 2) as session:
+    bind_activation(root, 'restore', selector, 'generation',
+        ('config', 'personal_context.repository', 'runtime.sync_state'), session=session)
+(root / ('pending-' + bootstrap._key('restore') + '.json')).unlink()
+# The restore plan's published owners (read from its journal in production).
+published = {
+    'neither': frozenset({'config'}),
+    'sync_state': frozenset({'config', 'runtime.sync_state'}),
+    'repository': frozenset({'personal_context.repository'}),
+    'unknown': None,
+}[case]
+pc._published_owners = lambda witness: published
+# AC#9: the guard holds on its own, before any review.
+assert not pc.sync_allowed(db)
+try:
+    pc.require_sync_allowed(db)
+except ValueError as error:
+    assert str(error) == pc.SYNC_REVIEW_REQUIRED
+else:
+    raise AssertionError('restored Personal Context sync resumed')
+store = ActivationStore(control / 'activation')
+if case == 'neither':
+    assert pc.restore_review(db) == pc.REVIEW_AVAILABLE
+    pc.approve_restore_review(db)
+    assert store.allowed('generation', 'personal_context.repository')
+    assert pc.restore_review(db) == pc.SYNC_IDENTITY_PENDING  # sync still off
+else:
+    # TASK-40139: the review clears the restored link first, then approves.
+    assert pc.restore_review(db) == pc.RESTORED_LINK_STATE
+    pc.approve_restore_review(db)
+    assert store.allowed('generation', 'personal_context.repository')
+# AC#10: never the shared owners, so Personal Context sync stays off.
+assert not store.allowed('generation', 'config')
+assert not store.allowed('generation', 'runtime.sync_state')
+assert not pc.sync_allowed(db)
+print('retired and reopened')
+"""
+
+
+@pytest.mark.parametrize(
+    "case", ["ordinary", "neither", "sync_state", "repository", "unknown"]
+)
+def test_restored_personal_context_sync_waits_for_its_own_review(tmp_path, case):
+    """TASK-40134 AC#9-10: after any restore Personal Context sync does not load;
+    its review approves only ``personal_context.repository`` (TASK-40139: after
+    clearing a restored link when the restore published either owner)."""
+    _run(tmp_path, case, "unused", script=_PERSONAL_CONTEXT_SCRIPT)
+
+
+# TASK-40139: a restored profile never resumes its old link, and Notes/Chat
+# never act as the old device: the Personal Context review clears the restored
+# link, and the sync-identity review clears the restored identity (counts
+# confirmed) before it approves `config` and `runtime.sync_state` together.
+_RELINK_SCRIPT = r"""
+import asyncio, os, sys
+from pathlib import Path
+from Tests.network_guard import install, blocked_attempts
+install()
+from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storage
+from tldw_chatbook.Backup_Recovery.activation import bind_activation, ActivationStore
+from tldw_chatbook.Backup_Recovery.control_records import admission_authority, register_pending
+import tldw_chatbook.Personal_Context.recovery as pc
+import tldw_chatbook.Sync_Interop.recovery as sync_recovery
+from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
+from tldw_chatbook.Sync_Interop.server_sync_service import ServerSyncService
+from tldw_chatbook.Sync_Interop.local_first_sync_service import LocalFirstSyncService
+from tldw_chatbook.Sync_Interop.notes_local_store import InMemoryNotesStore
+case = sys.argv[1]
+selector = Path(os.environ['TLDW_CONFIG_PATH'])
+data = selector.parent.parent / 'data'
+selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir = "' + str(data) + '"\n')
+selector.chmod(0o600)
+profile_root = data / 'test'
+profile_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+db = profile_root / 'tldw_chatbook_personal_context.db'
+state_path = profile_root / 'tldw_chatbook_sync_state.db'
+scope = dict(server_profile_id='server-config-1', authenticated_principal_id='user-1')
+# The restored sync state, as the old device left it (shared row, no workspace).
+repo = SyncStateRepository(state_path)
+repo.set_sync_v2_profile_state(**scope, workspace_scope=None, profile_mode='local_first',
+    device_id='old-device', dataset_id='dataset-1', dataset_cursors={'sync_v2': '41'},
+    capabilities={'supported_domains': ['notes']},
+    dry_run_metadata={'notes_organization_bootstrap_identity': 'old-client-profile'})
+repo.set_remote_pull_cursor(source_authority='server', **scope, workspace_scope=None,
+    domain='sync_v2', remote_collection='dataset-1', cursor='41')
+repo.set_personal_context_link_state(**scope, state='complete', device_id='old-device',
+    dataset_id='dataset-1', authority_id='authority-1', profile_id='profile-server',
+    integrity_key_id='key-1', key_record_id='key-record-1', purge_generation=0,
+    bootstrap_cursor='sha256:' + 'b' * 64, sync_transport_cursor='41', plan_id='plan-1',
+    rebaseline_version=1, attention_code=None)
+from tldw_chatbook.Sync_Interop.envelope_builder import SyncEnvelopeBuilder
+old = SyncEnvelopeBuilder(dataset_id='dataset-1', device_id='old-device', dataset_key=b'x' * 32)
+repo.enqueue_sync_v2_outbox_envelope(**scope, workspace_scope=None, dataset_id='dataset-1',
+    envelope=old.build_note_metadata_update(note_id='note-1', status='archived'))
+repo.close()
+root = bootstrap.default_bootstrap_root()
+startup = storage._startups.pop((os.getpid(), str(root)), None)
+if startup: startup.close()
+authority = admission_authority(root)
+authority.register('profile', (selector.parent, data))
+control = selector.parent.parent / 'operation'
+control.mkdir(mode=0o700)
+register_pending(root, 'restore', ('profile',), control, (selector,))
+with authority.maintenance(('profile',), 2) as session:
+    bind_activation(root, 'restore', selector, 'generation',
+        ('config', 'personal_context.repository', 'runtime.sync_state'), session=session)
+(root / ('pending-' + bootstrap._key('restore') + '.json')).unlink()
+published = {'repository': frozenset({'personal_context.repository', 'config'}),
+             'sync_state': frozenset({'runtime.sync_state', 'config'})}[case]
+pc._published_owners = lambda witness: published
+store = ActivationStore(control / 'activation')
+def link_state():
+    r = SyncStateRepository(state_path)
+    try: return r.get_personal_context_link_state(**scope)
+    finally: r.close()
+def profile_row():
+    r = SyncStateRepository(state_path)
+    try: return r.get_sync_v2_profile_state(**scope, workspace_scope=None)
+    finally: r.close()
+sent = []
+class BoundaryReached(Exception): pass
+def notes_sync():
+    r = SyncStateRepository(state_path)
+    server = ServerSyncService(None, client_provider=None, state_repository=r)
+    async def record(**kwargs):
+        sent.append({k: kwargs.get(k) for k in ('device_id', 'cursor', 'last_known_cursor')})
+        raise BoundaryReached()
+    server.push_v2_envelopes = record
+    server.pull_v2_envelopes = record
+    local = LocalFirstSyncService(server_service=server, state_repository=r,
+        local_store=InMemoryNotesStore(), dataset_keys={'dataset-1': b'x' * 32})
+    try:
+        asyncio.run(local.sync_once(**scope, workspace_scope=None, domains=['notes']))
+    finally:
+        r.close()
+# AC#1: each kind of restore keeps Personal Context sync off until review.
+assert not pc.sync_allowed(db)
+assert pc.restore_review(db) == pc.RESTORED_LINK_STATE
+# AC#2: the review clears the restored link, then approves only the repository.
+pc.approve_restore_review(db)
+assert link_state() is None
+assert store.allowed('generation', 'personal_context.repository')
+assert not store.allowed('generation', 'config')
+assert not store.allowed('generation', 'runtime.sync_state')
+assert pc.restore_review(db) == pc.SYNC_IDENTITY_PENDING and not pc.sync_allowed(db)
+# AC#3: Notes and Chat sync is still refused, before any request.
+try:
+    notes_sync()
+except PermissionError as error:
+    assert str(error) == 'sync_activation_required'
+else:
+    raise AssertionError('Notes and Chat sync resumed after the Personal Context review')
+assert not sent
+# AC#9: one step, counts first; a stale count refuses and changes nothing.
+# Through Backup & Restore's service, which finds the profile's sync state.
+from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+service = RecoveryService(selector.parent.parent / 'recovery-control')
+assert service._sync_state_path() == state_path
+counts = service.sync_identity_review()
+assert counts == sync_recovery.sync_identity_review(state_path)
+assert counts == {'device_ids': 1, 'datasets': 1, 'pull_cursors': 1, 'remote_heads': 0,
+                  'personal_context_links': 0, 'pending_outbox': 1,
+                  'prepare_results': 1}, counts
+try:
+    service.approve_sync_identity({**counts, 'pending_outbox': 0})
+except ValueError as error:
+    assert str(error) == sync_recovery.SYNC_IDENTITY_CHANGED
+else:
+    raise AssertionError('changed counts were approved')
+assert profile_row()['device_id'] == 'old-device'
+assert not store.allowed('generation', 'runtime.sync_state')
+service.approve_sync_identity(counts)
+assert service.sync_identity_review() is None
+service.close()
+assert store.allowed('generation', 'config') and store.allowed('generation', 'runtime.sync_state')
+assert sync_recovery.sync_identity_review(state_path) is None
+row = profile_row()
+assert (row['device_id'], row['dataset_id'], row['dataset_cursors']) == (None, None, {})
+assert row['dry_run_metadata'] == {}
+assert sync_recovery._identity_counts(state_path) == dict.fromkeys(counts, 0)
+assert pc.sync_allowed(db) and pc.restore_review(db) is None
+# AC#4: a fresh first link binds the device the server issues; no conflict.
+from Tests.Sync_Interop.test_personal_context_first_link import (
+    FakeFirstLinkSync, FakeProfileService, FakeServerSync, FakeWrappingProvider)
+from tldw_chatbook.Personal_Context.link_key_custody import InMemoryPersonalContextLinkKeyCustodian
+from tldw_chatbook.Personal_Context.link_service import PersonalContextLinkService
+r = SyncStateRepository(state_path)
+link = PersonalContextLinkService(personal_context_service=FakeProfileService(),
+    server_sync_service=FakeServerSync(), state_repository=r,
+    wrapping_key_provider=FakeWrappingProvider(),
+    key_custodian=InMemoryPersonalContextLinkKeyCustodian(),
+    first_link_sync=FakeFirstLinkSync(), display_name='Laptop', **scope)
+asyncio.run(link.plan())
+r.close()
+row = profile_row()
+assert (row['device_id'], row['dataset_id']) == ('device-1', 'dataset-1'), row
+assert link_state()['device_id'] == 'device-1'
+# AC#5/#6: Notes and Chat run on the newly issued device: no old id, cursor or outbox.
+try:
+    notes_sync()
+except BoundaryReached:
+    pass
+assert sent == [{'device_id': 'device-1', 'cursor': None, 'last_known_cursor': None}], sent
+# Review r14pccB: the old Notes organization client profile id never goes out.
+from tldw_chatbook.Sync_Interop.sync_state import NOTES_ORGANIZATION_DOMAINS
+required = ['notes.note', 'chat.conversation', *NOTES_ORGANIZATION_DOMAINS]
+bootstrap_sent = []
+class OrgClient:
+    async def get_sync_v2_profile(self, device_id):
+        return {'capabilities': {'domains': required,
+                'supported_adapter_versions': {d: [1] for d in required}}, 'dataset': None}
+    async def bootstrap_sync_v2_profile(self, request):
+        bootstrap_sent.append((request.device_id, request.client_profile_id))
+        raise BoundaryReached()
+class OrgProvider:
+    def build_client(self):
+        return OrgClient()
+r = SyncStateRepository(state_path)
+org = ServerSyncService(None, client_provider=OrgProvider(), state_repository=r)
+try:
+    asyncio.run(org.bootstrap_notes_organization_profile(
+        display_name='Laptop', workspace_scope=None, **scope))
+except BoundaryReached:
+    pass
+r.close()
+assert len(bootstrap_sent) == 1, bootstrap_sent
+assert bootstrap_sent[0][0] == 'device-1'
+assert bootstrap_sent[0][1] not in (None, 'old-client-profile'), bootstrap_sent
+assert not blocked_attempts()
+print('retired and reopened')
+"""
+
+
+@pytest.mark.parametrize("case", ["repository", "sync_state"])
+def test_restored_link_and_sync_identity_are_cleared_before_review_approves(
+    tmp_path, case
+):
+    """TASK-40139 AC#1-#6, #9, for a restore that published the repository and
+    for an automation-only one that published only ``runtime.sync_state``."""
+    _run(tmp_path, case, "unused", script=_RELINK_SCRIPT)

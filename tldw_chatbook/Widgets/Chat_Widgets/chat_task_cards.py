@@ -4,8 +4,9 @@ from textual.app import ComposeResult
 from textual.containers import Container, Vertical
 from textual.css.query import NoMatches
 from textual.message import Message
+from textual.widgets import Static
+
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
-from tldw_chatbook.Widgets.Chat_Widgets.chat_resume_panel import ChatResumePanel
 from tldw_chatbook.Widgets.Chat_Widgets.skill_install_confirm_card import (
     SkillInstallConfirmCard,
 )
@@ -15,6 +16,33 @@ from tldw_chatbook.Widgets.Chat_Widgets.skill_script_confirm_card import (
 from tldw_chatbook.Widgets.Chat_Widgets.watchlists_operation_card import (
     WatchlistsOperationCard,
 )
+
+
+# Folded in from chat_resume_panel.py (its only importer) to shed one module
+# from the _ui_ready census (ADR-097) for app_services (ADR-250).
+class ChatResumePanel(Container):
+    """Inline resume summary that keeps the current task visible in chat."""
+
+    def compose(self) -> ComposeResult:
+        yield Static("Current task", id="resume-title")
+        yield Static("", id="resume-summary")
+        yield Static("", id="resume-last-step")
+        yield Static("", id="resume-diff-summary")
+        yield Static("", id="resume-next-action")
+
+    def on_mount(self) -> None:
+        self.display = False
+
+    def set_resume_state(self, task_state) -> None:
+        """Update the panel with the latest task summary."""
+        self.display = task_state.has_resume_content()
+        if not task_state.has_resume_content():
+            return
+
+        self.query_one("#resume-summary", Static).update(task_state.summary)
+        self.query_one("#resume-last-step", Static).update(task_state.last_step)
+        self.query_one("#resume-diff-summary", Static).update(task_state.diff_summary)
+        self.query_one("#resume-next-action", Static).update(task_state.next_action)
 
 
 class ChatTaskCards(Container):
@@ -35,7 +63,9 @@ class ChatTaskCards(Container):
         needs no import of the lazily-loaded card module (ADR-097).
         """
 
-        def __init__(self, answers: list[dict[str, Any]], request_id: str | None) -> None:
+        def __init__(
+            self, answers: list[dict[str, Any]], request_id: str | None
+        ) -> None:
             """Carry the answers and the round id they resolve.
 
             Args:
@@ -45,7 +75,6 @@ class ChatTaskCards(Container):
             super().__init__()
             self.answers = answers
             self.request_id = request_id
-
 
     class ChatCreateDecided(Message):
         """The chat-create card's decision (class hosted HERE so the
@@ -186,9 +215,17 @@ class ChatTaskCards(Container):
             that card mounts lazily on first use (ADR-097).
         """
         yield ("pending_approval", self._set_approval)
-        yield ("pending_skill_install", self.query_one(SkillInstallConfirmCard).set_install)
-        yield ("pending_skill_script", self.query_one(SkillScriptConfirmCard).set_script)
-        chat_create_card = self._chat_create_card(create=bool(task_state.pending_chat_create))
+        yield (
+            "pending_skill_install",
+            self.query_one(SkillInstallConfirmCard).set_install,
+        )
+        yield (
+            "pending_skill_script",
+            self.query_one(SkillScriptConfirmCard).set_script,
+        )
+        chat_create_card = self._chat_create_card(
+            create=bool(task_state.pending_chat_create)
+        )
         if chat_create_card is not None:
             yield ("pending_chat_create", chat_create_card.set_payload)
         # Generated lazily so the question card is created (mounted) only
@@ -226,10 +263,13 @@ class ChatTaskCards(Container):
             # `ConsoleChatController.resolve_pending_approval`.
             round_id=approval.get("round_id"),
             phase=str(approval.get("phase") or "approval"),
-            # ADR-090 (task 5): the payload-carried advisory summary -- the
+            # ADR-332 (task 5): the payload-carried advisory summary -- the
             # slot starts None and is filled by the advisory summarizer;
             # payload carriage means any remount re-renders it.
             summary=approval.get("summary"),
+            view=approval.get("view"),
+            presentation_revision=approval.get("presentation_revision"),
+            presentation_state=approval.get("presentation_state"),
         )
 
     @staticmethod
@@ -241,8 +281,7 @@ class ChatTaskCards(Container):
         """Reconcile receipt cards without retaining tool payloads."""
         wanted = set(operation_ids)
         current = {
-            card.operation_id: card
-            for card in container.query(WatchlistsOperationCard)
+            card.operation_id: card for card in container.query(WatchlistsOperationCard)
         }
         for operation_id, card in current.items():
             if operation_id not in wanted:
@@ -251,8 +290,6 @@ class ChatTaskCards(Container):
             row = operation_rows.get(operation_id, {"id": operation_id})
             card = current.get(operation_id)
             if card is None:
-                container.mount(
-                    WatchlistsOperationCard(operation_id, operation=row)
-                )
+                container.mount(WatchlistsOperationCard(operation_id, operation=row))
             else:
                 card.set_operation(row)

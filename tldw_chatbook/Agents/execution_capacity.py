@@ -9,11 +9,16 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from contextvars import ContextVar
+from contextvars import ContextVar, copy_context
 from dataclasses import dataclass
-from threading import Lock
+from threading import Event, Lock, Thread, current_thread
 from typing import Literal
 from uuid import uuid4
+
+from tldw_chatbook.state import (
+    _current_owner,
+    current_execution_owner as current_execution_owner,
+)
 
 from loguru import logger
 
@@ -22,6 +27,15 @@ from .agent_models import WorkOrigin as WorkOrigin
 
 class CapacityRefused(RuntimeError):
     """A stable, body-free admission refusal reason."""
+
+
+class CleanupUnprovenRefused(CapacityRefused):
+    """The owner's earlier tool cleanup is unproven; its run must end."""
+
+    def __init__(self, label: str, retention: UnprovenRetention | None = None) -> None:
+        super().__init__("previous_tool_cleanup_unproven")
+        self.label = label
+        self.retention = retention  # what a pre-run stop offers to release
 
 
 def _integer(value: object, default: int) -> int:
@@ -73,11 +87,13 @@ class RuntimeCapacity:
         reserved_manual_children: int = 2,
     ) -> None:
         self._lock = Lock()
+        self._tool_observers: set[Callable[[], None]] = set()
         self._read_settings = False
         self.set_tool_limits(max_tool_workers, reserved_manual_tool_workers)
         self.set_child_limits(max_child_executions, reserved_manual_children)
         self._closed = False
         self._owners: dict[str, ExecutionOwner] = {}
+        self._retained: list[UnprovenRetention] = []
 
     @classmethod
     def from_settings(cls) -> RuntimeCapacity:
@@ -93,8 +109,36 @@ class RuntimeCapacity:
         total = total if total > 0 else 8
         reserve = max(0, min(_integer(reserved_manual, 2), total))
         with self._lock:
+            previous = getattr(self, "max_tool_workers", total)
+            previous_auto = previous - getattr(
+                self, "reserved_manual_tool_workers", reserve
+            )
             self.max_tool_workers = total
             self.reserved_manual_tool_workers = reserve
+        if total > previous or total - reserve > previous_auto:
+            self._notify_tool_available()
+
+    def subscribe_tool_availability(
+        self, callback: Callable[[], None]
+    ) -> Callable[[], None]:
+        """Observe actual tool/child releases and limit increases outside the lock."""
+        with self._lock:
+            self._tool_observers.add(callback)
+
+        def unsubscribe() -> None:
+            with self._lock:
+                self._tool_observers.discard(callback)
+
+        return unsubscribe
+
+    def _notify_tool_available(self) -> None:
+        with self._lock:
+            observers = tuple(self._tool_observers)
+        for callback in observers:
+            try:
+                callback()
+            except Exception:  # noqa: BLE001 - observers cannot prevent retirement
+                logger.warning("Tool availability observer failed")
 
     def _refresh_limits(self) -> None:
         if self._read_settings:
@@ -115,8 +159,14 @@ class RuntimeCapacity:
         total = total if total > 0 else 6
         reserve = max(0, min(_integer(reserved_manual, 2), total))
         with self._lock:
+            previous = getattr(self, "max_child_executions", total)
+            previous_auto = previous - getattr(
+                self, "reserved_manual_children", reserve
+            )
             self.max_child_executions = total
             self.reserved_manual_children = reserve
+        if total > previous or total - reserve > previous_auto:
+            self._notify_tool_available()
 
     def begin_execution(
         self, *, origin: WorkOrigin, conversation_id: str, child: bool = False
@@ -143,10 +193,29 @@ class RuntimeCapacity:
             self._owners[owner.execution_id] = owner
             return owner
 
+    def _workflow_children_ready(self, count: int) -> bool:
+        """Observe an immediate native launch set; actual admission still decides."""
+        self._refresh_limits()
+        with self._lock:
+            children = tuple(owner for owner in self._owners.values() if owner.child)
+            automatic = sum(owner.origin is WorkOrigin.AUTOMATIC for owner in children)
+            return (
+                not self._closed
+                and count > 0
+                and len(children) + count <= self.max_child_executions
+                and automatic + count
+                <= self.max_child_executions - self.reserved_manual_children
+            )
+
     def close(self) -> None:
         """Close admission before shutdown drains existing operations."""
         with self._lock:
             self._closed = True
+
+    def retained(self) -> tuple[UnprovenRetention, ...]:
+        """Return unproven cleanups whose resources are still held."""
+        with self._lock:
+            return tuple(self._retained)
 
     def snapshot(self) -> CapacitySnapshot:
         """Return detached metadata, including terminal owners still stopping."""
@@ -188,14 +257,32 @@ class RuntimeCapacity:
             )
 
 
-_current_owner: ContextVar[ExecutionOwner | None] = ContextVar(
-    "agent_execution_owner", default=None
-)
+_current_ordinary_tree = ContextVar("ordinary_console_tree", default=None)
 
 
-def current_execution_owner() -> ExecutionOwner | None:
-    """Return this run thread's owner (explicitly bound again in children)."""
-    return _current_owner.get()
+def current_ordinary_tree(controller=None):
+    tree = _current_ordinary_tree.get()
+    if tree is not None and (controller is None or tree.controller is controller):
+        return tree
+    return None
+
+
+def set_current_ordinary_tree(tree):
+    """Publish or clear the ordinary tree in the originating execution context."""
+    _current_ordinary_tree.set(tree)
+
+
+@contextmanager
+def bind_ordinary_tree(tree):
+    token = _current_ordinary_tree.set(tree)
+    try:
+        if tree is None:
+            yield
+        else:
+            with tree.owner.activate():
+                yield
+    finally:
+        _current_ordinary_tree.reset(token)
 
 
 class ExecutionOwner:
@@ -219,6 +306,12 @@ class ExecutionOwner:
         self._drain_callbacks: list[Callable[[bool], None]] = []
         self._cleanup_unproven = False
         self._drain_outcome: bool | None = None
+
+    @property
+    def is_admitted(self) -> bool:
+        """Report native membership until physical retirement, granting no authority."""
+        with self.capacity._lock:
+            return self.capacity._owners.get(self.execution_id) is self
 
     @contextmanager
     def activate(self) -> Iterator[None]:
@@ -255,7 +348,13 @@ class ExecutionOwner:
             if self._root_finished:
                 raise CapacityRefused("execution_finished")
             if kind == "tool":
-                if any(op.kind == "tool" and op._stopping for op in self._operations):
+                stopping = [
+                    op for op in self._operations if op.kind == "tool" and op._stopping
+                ]
+                for op in stopping:
+                    if op.retention is not None:  # TASK-40716: end the run
+                        raise CleanupUnprovenRefused(op.retention.label, op.retention)
+                if stopping:
                     raise CapacityRefused("previous_tool_still_running")
                 tools = [
                     op
@@ -279,6 +378,8 @@ class ExecutionOwner:
             self._root_finished = True
             callbacks, outcome = self._prune_if_finished()
         self._invoke_callbacks(callbacks, outcome)
+        if self.child and outcome is True:
+            self.capacity._notify_tool_available()
 
     def on_drained(self, callback: Callable[[bool], None]) -> None:
         """Invoke callback once physical ownership drains, outside the lock."""
@@ -290,6 +391,23 @@ class ExecutionOwner:
                 return
             outcome = self._drain_outcome
         self._invoke_callbacks((callback,), outcome)
+
+    def drain_state(self) -> Literal["proven", "unproven", "live"]:
+        """Whether this owner drained, can never drain proven, or may still return.
+
+        ``unproven`` covers an unproven drain and an owner whose remaining
+        operations are all retained unproven cleanups (TASK-40716).
+        """
+        with self.capacity._lock:
+            if self._drain_outcome is not None:
+                return "proven" if self._drain_outcome else "unproven"
+            if (
+                self._cleanup_unproven
+                and self._root_finished
+                and all(op.retention is not None for op in self._operations)
+            ):
+                return "unproven"
+            return "live"
 
     def mark_cleanup_unproven(self) -> None:
         """Make the eventual drain outcome uncertain without releasing capacity."""
@@ -325,6 +443,143 @@ class ExecutionOwner:
         return (), None
 
 
+class UnprovenRetention:
+    """One operation whose cleanup could not be proven (ADR-134, TASK-40716).
+
+    Its resource, scopes, storage leases and activity claim stay held until
+    restart (no proof path exists yet) and are never reused. Its run ends at once.
+    ``abandon`` returns only the tool-worker slot. Disposal stops waiting for it.
+    """
+
+    def __init__(self, operation: OwnedOperation, label: str) -> None:
+        self.operation = operation
+        self.label = label
+        self.abandoned = False
+        self._proven = Event()
+
+    @property
+    def run_id(self) -> str | None:
+        return self.operation.owner.run_id
+
+    @property
+    def proven(self) -> bool:
+        return self._proven.is_set()
+
+    def hold(self) -> None:
+        """Keep this worker's original scopes until restart or ``prove()``.
+
+        Callers hold on a daemon worker, so process exit ends the wait and a
+        held custody never delays exit. Custody is already entered here, so a
+        joined worker is reported and still holds: unwinding would release a
+        resource that may be live.
+        """
+        thread = current_thread()
+        if not thread.daemon:
+            logger.error(
+                "Unproven cleanup of {} is held on a joined thread; exit may wait",
+                self.label,
+            )
+        with _custody_lock:
+            _custody_threads.add(thread)
+        try:
+            self._proven.wait()
+        finally:
+            with _custody_lock:
+                _custody_threads.discard(thread)
+
+    def prove(self) -> None:
+        """Record a late cleanup proof; the held scopes then unwind normally."""
+        capacity = self.operation.owner.capacity
+        with capacity._lock:
+            if self in capacity._retained:
+                capacity._retained.remove(self)
+        self._proven.set()
+
+    def abandon(self) -> bool:
+        """Return the tool-worker slot; the resource stays held (ADR-155)."""
+        with self.operation.owner.capacity._lock:
+            if self.abandoned or self.proven:
+                return False
+            self.abandoned = True
+        self.operation.finish()
+        return True
+
+
+def cleanup_unproven_result(tool_name: str):
+    """End the run: this call's cleanup is unproven and its resources stay held."""
+    from .agent_models import RunTerminationReason, ToolResult
+
+    return ToolResult(
+        ok=False,
+        error=(
+            f"the cleanup of {tool_name} could not be proven, so its workspace "
+            "and storage stay held until you restart the app"
+        ),
+        dispatch_state="uncertain",
+        termination_reason=RunTerminationReason.CLEANUP_UNPROVEN,
+    )
+
+
+_custody_lock = Lock()
+_custody_threads: set[Thread] = set()
+
+
+def holds_unproven_custody(thread: Thread) -> bool:
+    """Whether ``thread`` is a worker holding an unproven cleanup's scopes."""
+    with _custody_lock:
+        return thread in _custody_threads
+
+
+def run_on_custody_thread(function, operation_of, poll_seconds: float = 0.1):
+    """Run ``function`` on a daemon worker so an unproven cleanup can hold it.
+
+    Returns its result, or raises ``CleanupUnprovenRefused`` as soon as the
+    operation from ``operation_of()`` is retained, leaving the daemon worker
+    holding the original scopes. The calling (pool) thread never holds.
+    """
+    box: dict = {}
+
+    def target() -> None:
+        try:
+            box["result"] = function()
+        except BaseException as error:  # noqa: BLE001 -- re-raised on the caller
+            box["error"] = error
+
+    worker = Thread(target=copy_context().run, args=(target,), daemon=True)
+    worker.start()
+    while worker.is_alive():
+        operation = operation_of()
+        retention = getattr(operation, "retention", None)
+        if retention is not None:
+            raise CleanupUnprovenRefused(retention.label, retention)
+        worker.join(poll_seconds)
+    if "error" in box:
+        raise box["error"]
+    return box.get("result")
+
+
+def join_unless_retained(thread: Thread, poll_seconds: float = 0.1) -> bool:
+    """Join ``thread`` unless it holds unproven custody; True when it returned."""
+    while thread.is_alive():
+        if holds_unproven_custody(thread):
+            return False
+        thread.join(poll_seconds)
+    return True
+
+
+def wait_retired_unless_retained(calls, poll_seconds: float = 0.1) -> None:
+    """Wait for each call's ``retired`` event, except a retained unproven one.
+
+    Disposal records a retained call and stops waiting for it (TASK-40716).
+    """
+    for call in calls:
+        while not call.retired.wait(poll_seconds):
+            operation = getattr(call, "operation", None)
+            if operation is not None and operation.retention is not None:
+                logger.warning("Disposal leaves an unproven cleanup held until exit")
+                break
+
+
 class OwnedOperation:
     """Release only from the worker/driver finally or a failed start."""
 
@@ -332,13 +587,50 @@ class OwnedOperation:
         self.owner = owner
         self.kind = kind
         self._stopping = False
+        self.retention: UnprovenRetention | None = None
 
     def mark_stopping(self) -> None:
         with self.owner.capacity._lock:
             self._stopping = True
 
+    def retain_unproven(self, label: str) -> UnprovenRetention:
+        """Keep this operation's resource held because its cleanup is unproven.
+
+        The operation stays stopping and keeps its tool-worker slot until an
+        explicit ``abandon`` or restart. The owner's drain is unproven.
+        """
+        capacity = self.owner.capacity
+        with capacity._lock:
+            self._stopping = True
+            if self.owner._drain_outcome is None:
+                self.owner._cleanup_unproven = True
+            if self.retention is None:
+                self.retention = UnprovenRetention(self, label)
+                capacity._retained.append(self.retention)
+            return self.retention
+
     def finish(self) -> None:
         with self.owner.capacity._lock:
+            released = self.kind == "tool" and self in self.owner._operations
             self.owner._operations.discard(self)
             callbacks, outcome = self.owner._prune_if_finished()
         self.owner._invoke_callbacks(callbacks, outcome)
+        if released or self.owner.child and outcome is True:
+            self.owner.capacity._notify_tool_available()
+
+
+def require_workflow_operation(operation: object) -> None:
+    """Require the native workflow operation and its original capacity owner."""
+    if not isinstance(operation, OwnedOperation):
+        raise PermissionError("native workflow operation required")
+    require_workflow_capacity(operation.owner.capacity, operation.owner)
+
+
+def require_workflow_capacity(capacity: object, owner: object = None) -> None:
+    """Require native capacity and, when present, its original execution owner."""
+    if (
+        not isinstance(capacity, RuntimeCapacity)
+        or owner is not None
+        and (not isinstance(owner, ExecutionOwner) or owner.capacity is not capacity)
+    ):
+        raise PermissionError("native workflow capacity required")

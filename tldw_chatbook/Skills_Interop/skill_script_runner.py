@@ -119,6 +119,8 @@ class ScriptRunResult:
     #: reaches the model, and a script's artifact is not trust-reviewed.
     output_dir: str | None = None
     output_files: tuple[dict, ...] = field(default=())
+    #: Runtime-owned lookup key, populated after the typed goal observation.
+    goal_evidence_id: str | None = None
 
 
 class SandboxUnsupportedError(RuntimeError):
@@ -413,6 +415,10 @@ def run_script_subprocess(
         raise SandboxUnsupportedError(_SANDBOX_UNSUPPORTED_MESSAGE)
     if not target_argv or not isinstance(target_argv[0], str) or not target_argv[0]:
         raise ValueError("target_argv must start with a non-empty executable path")
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Agents.workflow_task_scope import check_current_task_call
+
+    check_current_task_call(ToolCall("run_skill_script", {}))
 
     warnings: list[str] = []
     if not memory_limit_enforced():

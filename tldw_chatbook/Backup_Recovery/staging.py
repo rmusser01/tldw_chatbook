@@ -76,13 +76,14 @@ def _config_targets(data, profile, config_target, doc, plan, owners, *, derive=F
     from tldw_chatbook.MCP.recovery import _Store
     from tldw_chatbook.Model_Artifacts.recovery import _Artifacts, managed_artifact_root
     from tldw_chatbook.Persona_Visual.recovery import _Assets
+    from tldw_chatbook.Plugins.backup import _Plugins
     from tldw_chatbook.runtime_policy.recovery import _SourceState
     from tldw_chatbook.Subscriptions.recovery import _BriefingAudio
     from tldw_chatbook.Widgets.Tamagotchi.recovery import _ConfiguredPets
     from tldw_chatbook.Workspaces.recovery import _ChangeTracking
 
     from .config_adapter import _Definition, _Diagnostics, _Generated
-    from .profile_paths import DATABASE_PATHS, database_path, user_data_dir
+    from .profile_paths import DATABASE_PATHS, database_path, lexical_path, user_data_dir
     from .rag_inventory import _Definitions as _RAGDefinitions
     from .rag_inventory import _Projections
     from .recovered_media import _RecoveredAdapter
@@ -215,6 +216,14 @@ def _config_targets(data, profile, config_target, doc, plan, owners, *, derive=F
                 and selected[payload.logical_id] != expected / relative
             ):
                 raise ValueError("owner_relocation_unverified:generation.assets")
+        elif type(owner) is _Plugins:
+            # TASK-40132: the registry and the authenticated plugin authority
+            # bind absolute plugin-root paths, so plugins restore only onto the
+            # profile they came from until a relocation design exists.
+            selector = str(lexical_path(config_target))
+            if hashlib.sha256(selector.encode()).hexdigest()[:24] != profile:
+                raise ValueError("owner_relocation_unverified:" + payload.owner_id)
+            expected = owner._definition_path(configured)
         elif isinstance(owner, _Definition):
             expected = owner._definition_path(configured)
         elif type(owner) is _Artifacts:
@@ -535,6 +544,14 @@ def stage_restore(
     if isolated_profiles and plan.mode != "isolated":
         raise ValueError("isolated_plan_required")
     doc = _document(archive)
+    from tldw_chatbook.Personal_Context.recovery import unacknowledged_locks
+
+    if unacknowledged_locks(plan):
+        # TASK-40136: a restore that leaves Personal Context locked is
+        # acknowledged before anything is written.
+        from .capture import CaptureReviewRequired
+
+        raise CaptureReviewRequired(unacknowledged_locks(plan))
     if plan.retained_configs and session is None:
         raise ValueError("retained_config_native_session_required")
     if plan.local_snapshot is not None:
@@ -798,6 +815,18 @@ def stage_restore(
                     )
                 if issues:
                     raise ValueError(issues[0])
+                if (
+                    role == "sqlite"
+                    and payload.owner_id == "db.chachanotes.primary"
+                    and plan.local_snapshot is None
+                ):
+                    # This loop contains selected archive payloads only. Retained
+                    # local owners and exact rollback snapshots bypass this route.
+                    from tldw_chatbook.DB.recovery_response_rules import (
+                        prepare_imported_candidate,
+                    )
+
+                    prepare_imported_candidate(candidate, cancel)
                 if payload.owner_id == "config" and plan.local_snapshot is None:
                     import tomllib
 
@@ -895,6 +924,7 @@ def stage_restore(
                     )
                 if issues:
                     raise ValueError(issues[0])
+            _stamp_personal_context(doc, plan, selected, extracted, stage)
         validated = {
             key: reader._hash(path, cancel)
             for key, path in extracted.items()
@@ -1237,3 +1267,65 @@ def stage_restore(
                         if not path.is_symlink():
                             os.chmod(path, 0o700, follow_symlinks=False)
                 shutil.rmtree(root)
+
+
+def _stamp_personal_context(doc, plan, selected, extracted, stage):
+    """TASK-40135: point each restored Personal Context copy at its key or marker.
+
+    The keyring entry itself is written just before publication (replacement).
+    A later rollback changes a copy only when its own account is gone (TASK-41122).
+    """
+    from tldw_chatbook.Personal_Context.recovery import (
+        recovery_adapters,
+        restore_account,
+        stamp_restored_key,
+    )
+
+    from .credentials import _material, _read
+
+    isolated = plan.mode == "isolated"
+    material = stage / "credential-recovery.json"
+    if isolated:
+        # Validated by the isolated scope plan above, then set aside: an
+        # isolated copy only needs to know the archive had a key (TASK-40136).
+        material = stage / "payload" / "credential-recovery.json"
+    records = (
+        {
+            record["file"]: record["value"]
+            for record in (
+                json.loads(_read(material))["records"] if isolated else _material(stage)
+            )
+            if record["kind"] == "personal_context" and record["status"] == "captured"
+        }
+        if material.exists()
+        else {}
+    )
+    (owner,) = recovery_adapters()
+    for payload in doc.files:
+        if (
+            payload.logical_id not in selected
+            or payload.owner_id != "personal_context.repository"
+        ):
+            continue
+        key = payload.logical_id
+        stamp_restored_key(
+            extracted[key],
+            record_value=records.get(payload.payload),
+            target=selected[key],
+            logical_id=key,
+            planned=next(
+                (
+                    issue
+                    for issue in plan.issues
+                    if issue.startswith("personal_context_restore_")
+                    and issue.endswith(":" + key)
+                ),
+                None,
+            ),
+            account=restore_account(stage, key),
+            isolated=isolated,
+            rollback=plan.local_snapshot is not None,
+        )
+        issues = owner.validate(extracted[key])
+        if issues:
+            raise ValueError(issues[0])

@@ -59,4 +59,7 @@ Import once now runs from **Add from files…** to the receipt on the keyboard a
 **Trade-off.** Imperative focus from the picker callback was tried first and does not hold: every canvas-scoped Notes sync captures a focus identity and replays it after recomposing, so the replay wins. The role/fallback repair is the seam that mechanism already reads. Recorded in `backlog/docs/lessons-textual.md`.
 
 **Files.** `Third_Party/textual_fspicker/file_open.py`, `css/components/_dialogs.tcss` (+ regenerated bundle), `UI/Screens/library_screen.py`, `UI/Library_Modules/library_notes_controller.py`, `Tests/UI/test_library_notes_w4_import_keyboard.py` (new), `Tests/UI/test_picker_path_field.py`, `Docs/User_Guide/library/notes.md`.
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/library/notes.md`: The lasting-sync chooser's and the sync-roots list's own `‹ Notes` buttons are pinned in `Tests/UI/test_library_notes_w4_import_keyboard.py`, not walked. Captures `wave4-caps/import-kbd/import-10` … `import-26`.
 <!-- SECTION:NOTES:END -->

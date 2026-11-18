@@ -1,0 +1,1 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0" failures="0" skipped="0" tests="1" time="38.136" timestamp="2026-10-21T22:57:47.817708-07:00" hostname="DESKTOP-BISU2HE"><testcase classname="Tests.Workspaces.test_project_index_service" name="test_real_app_shutdown_without_console_drains_index_writer" time="37.958" /></testsuite></testsuites>

@@ -1,0 +1,33 @@
+{
+  "captured_utc": "2026-11-05T06:26:04.545476+00:00",
+  "old_index_sha256": "4e63cf9d39247bb9173c42ea6d905371795f1e76b9dbfdc87fd7f70fcc123c74",
+  "current_index_sha256": "5ab935c47631d2fd20ac05e913c53307a32e4dc9a1f8c148636926bab240241a",
+  "source_records": 134,
+  "unique_readable_bodies": 107,
+  "readable_body_bytes": 2515937,
+  "old111_raw_objects_lookups_and_metadata_exact": true,
+  "all134_full_sources_dual_lookup_identities_verified": true,
+  "bundles": [
+    {
+      "name": "final-correction-evidence",
+      "entries": 45,
+      "zip_sha256": "7344ac68d0050f973f02df4fceb8fd5e2a29905dcb75f4db1796219fba104820",
+      "bytes": 3469999,
+      "exact_uncompressed_sources_and_manifest_verified": true,
+      "independent_deterministic_rebuild_identical": true
+    },
+    {
+      "name": "provenance-history",
+      "entries": 182,
+      "zip_sha256": "6df38a23c474440005d5995d4cda35caf4650531b5912905fcc53b00868f84a6",
+      "bytes": 10037132,
+      "exact_uncompressed_sources_and_manifest_verified": true,
+      "independent_deterministic_rebuild_identical": true
+    }
+  ],
+  "all195_retained_mappings_verified": true,
+  "scoped_review_full_read_and_frozen": true,
+  "scoped_review_sha256": "89efdf9c44c505ad309a0c9577b0e8b110efe42d654b72526cb2d546aaf8bf29",
+  "scoped_review_bytes": 16561,
+  "scope": "independent completed archival bytes/determinism and complete review read; no native/test rerun; old gaps/M1 retained; final census/metadata closure pending"
+}

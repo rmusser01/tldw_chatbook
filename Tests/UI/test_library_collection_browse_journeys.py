@@ -101,7 +101,12 @@ async def test_clear_restores_results_and_valid_sort_within_scope(
         assert {item.title for item in engine.state.page.items} == {"Alpha", "Beta"}
         await _focus(screen, host, pilot, "#library-collections-filters-clear", "Clear")
         await _activate(screen, host, pilot, "#library-collections-sort", "Sort")
-        assert engine.state.applied_scope.sort == "saved_asc"
+        # The sort handler awaits its page load; one pause need not outlast it.
+        await _wait_for_condition(
+            pilot,
+            lambda: engine.state.applied_scope.sort == "saved_asc",
+            message=lambda: f"Sort applied {engine.state.applied_scope.sort!r}",
+        )
 
 
 @pytest.mark.asyncio

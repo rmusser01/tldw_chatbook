@@ -1,0 +1,7 @@
+...........................................                              [100%]
+============================= slowest 25 durations =============================
+1.50s call     Tests/Backup_Recovery/test_prompt_mixin_restore.py::test_historical_candidate_migrates_without_touching_source[81]
+1.10s call     Tests/Backup_Recovery/test_prompt_mixin_restore.py::test_recovery_candidate_retains_capture_off_attempt
+
+(23 durations < 1s hidden.)
+43 passed in 17.24s

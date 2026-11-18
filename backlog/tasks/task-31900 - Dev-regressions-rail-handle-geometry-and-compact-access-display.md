@@ -4,6 +4,7 @@ title: >-
   Dev regressions: vertical rail-handle geometry and compact-access rail display
 status: To Do
 assignee: []
+updated_date: '2026-11-02 21:52'
 created_date: '2026-09-06 09:00'
 labels: [console, tests, regression]
 priority: medium
@@ -45,6 +46,10 @@ branch's. They fall in two groups:
   agent_status_class` -- `TypeError: Widget.__init__() got an unexpected
   keyword argument 'agent_fleet_section_state'`. A test harness passing a
   kwarg the widget no longer accepts: dev-side API drift, unrelated to CSS.
+
+UPDATE 2026-11-02: the compact-access half (the two `rail.display is False`
+failures) is owned by TASK-38643, which traced it to `pilot.click` landing on
+the blocking first-run setup modal. This task keeps its other items.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

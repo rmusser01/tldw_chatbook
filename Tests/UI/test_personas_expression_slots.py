@@ -56,16 +56,30 @@ from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
 from Tests.UI.test_personas_dictionaries import PersonasTestApp, patch_character_paging
 
 
+pytestmark = pytest.mark.bootstrap_profile
+
 @pytest.fixture
 def expr_db(tmp_path):
     db = CharactersRAGDB(tmp_path / "personas_char_expression.db", "test-client")
     yield db
     db.close_connection()
+    # The mounted app has drained; retire native handles opened by its workers.
+    registry = db._connection_quiescence
+    token = registry.begin_quiescence(timeout_seconds=1.0)
+    try:
+        registry.close_registered(token)
+        assert registry.connection_count() == 0
+    finally:
+        registry.end_quiescence(token)
 
 
 async def _select_character(pilot, char_id):
     await pilot.pause()
-    await pilot.click(f"#personas-library-row-character-{char_id}")
+    from Tests.UI.roleplay_frame_harness import select_roleplay_item
+
+    await select_roleplay_item(
+        pilot, pilot.app.screen, f"character:{char_id}", via="click"
+    )
     await pilot.pause()
     await pilot.app.workers.wait_for_complete()
     await pilot.pause()
@@ -95,12 +109,12 @@ async def personas_editor_with_saved_character(mock_app_instance, monkeypatch, e
         "version": 1,
     }
     monkeypatch.setattr(
-        character_handler_module, "fetch_all_characters", lambda: [dict(record)]
+        character_handler_module, "fetch_all_characters", lambda _db: [dict(record)]
     )
     monkeypatch.setattr(
         character_handler_module,
         "fetch_character_by_id",
-        lambda character_id: (
+        lambda _db, character_id: (
             dict(record) if str(character_id) == str(char_id) else None
         ),
     )
@@ -186,12 +200,12 @@ async def personas_editor_with_bound_pack(mock_app_instance, monkeypatch, expr_d
         "version": 1,
     }
     monkeypatch.setattr(
-        character_handler_module, "fetch_all_characters", lambda: [dict(record)]
+        character_handler_module, "fetch_all_characters", lambda _db: [dict(record)]
     )
     monkeypatch.setattr(
         character_handler_module,
         "fetch_character_by_id",
-        lambda character_id: (
+        lambda _db, character_id: (
             dict(record) if str(character_id) == str(char_id) else None
         ),
     )

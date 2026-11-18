@@ -13,6 +13,7 @@ here is `git add -A -- <selected>` then `git commit -m <msg> -- <selected>`
 EXACTLY the selected paths and leave an unrelated pre-staged index entry
 staged and uncommitted.
 """
+
 import subprocess
 from pathlib import Path
 
@@ -77,9 +78,7 @@ def test_run_active_refuses_before_touching(repo):
 
 def test_new_branch_created_then_committed(repo):
     (repo / "a.txt").write_text("x\n")
-    result = commit_selected(
-        repo, ["a.txt"], "m", "feat/xyz", run_active=lambda: False
-    )
+    result = commit_selected(repo, ["a.txt"], "m", "feat/xyz", run_active=lambda: False)
     assert result.short_sha
     assert _git(repo, "symbolic-ref", "--short", "HEAD") == "feat/xyz"
     # The commit landed on the NEW branch, not main.
@@ -88,9 +87,7 @@ def test_new_branch_created_then_committed(repo):
 
 def test_bad_branch_name_refused_preflight(repo):
     (repo / "a.txt").write_text("x\n")
-    result = commit_selected(
-        repo, ["a.txt"], "m", "-bad", run_active=lambda: False
-    )
+    result = commit_selected(repo, ["a.txt"], "m", "-bad", run_active=lambda: False)
     assert result.short_sha is None
     assert result.outcomes[0].step == "validate-branch" and not result.outcomes[0].ok
     # nothing staged, no commit happened, still on main
@@ -104,9 +101,7 @@ def test_existing_branch_stops_before_commit(repo):
     # `checkout -b main` fails (branch already exists) -- no new commit,
     # nothing staged.
     (repo / "a.txt").write_text("x\n")
-    result = commit_selected(
-        repo, ["a.txt"], "m", "main", run_active=lambda: False
-    )
+    result = commit_selected(repo, ["a.txt"], "m", "main", run_active=lambda: False)
     assert result.short_sha is None
     failing = [o for o in result.outcomes if not o.ok]
     assert len(failing) == 1
@@ -133,9 +128,7 @@ def test_merge_in_progress_refused(repo):
     assert merge_proc.returncode != 0  # genuine conflict, not a fast-forward
     assert (repo / ".git" / "MERGE_HEAD").exists()
 
-    result = commit_selected(
-        repo, ["a.txt"], "m", None, run_active=lambda: False
-    )
+    result = commit_selected(repo, ["a.txt"], "m", None, run_active=lambda: False)
     assert result.short_sha is None
     assert result.outcomes[0].step == "in-progress-check" and not result.outcomes[0].ok
     assert "merge" in result.outcomes[0].detail
@@ -147,12 +140,12 @@ def test_dash_leading_message_commits_literally(repo):
     # spec §2 probe 5 -- `-m`'s sticky-arg consumption makes a dash-leading
     # message safe as a plain argv element (never option-injection).
     (repo / "a.txt").write_text("x\n")
-    result = commit_selected(
-        repo, ["a.txt"], "--amend", None, run_active=lambda: False
-    )
+    result = commit_selected(repo, ["a.txt"], "--amend", None, run_active=lambda: False)
     assert result.short_sha
     assert _git(repo, "log", "-1", "--format=%s") == "--amend"
-    assert _git(repo, "rev-list", "--count", "HEAD") == "2"  # a NEW commit, not an amend
+    assert (
+        _git(repo, "rev-list", "--count", "HEAD") == "2"
+    )  # a NEW commit, not an amend
 
 
 def test_deletion_only_selection_commits(repo):
@@ -239,9 +232,7 @@ def test_a_normal_path_is_unaffected_by_a_pathspec_magic_filename(repo):
     (repo / ":!nothing").write_text("hostile\n")
     (repo / "a.txt").write_text("a2\n")
 
-    result = commit_selected(
-        repo, ["a.txt"], "only a", None, run_active=lambda: False
-    )
+    result = commit_selected(repo, ["a.txt"], "only a", None, run_active=lambda: False)
 
     assert result.short_sha
     assert _git(repo, "show", "--name-only", "--format=", "HEAD").splitlines() == [

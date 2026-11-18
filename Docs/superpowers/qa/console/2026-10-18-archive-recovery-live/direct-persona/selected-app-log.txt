@@ -1,0 +1,14 @@
+Selected exact app-log lines; full startup/config body omitted.
+2026-10-18 08:35:12 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage app_version=0.2.1 attempt_id=528f55a4892e442d86551354b79586e1 component=console duration_ms=0 phase=ui_action python_version=3.12.11 sqlite_version=3.49.1 status=entered
+2026-10-18 08:35:12 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=528f55a4892e442d86551354b79586e1 component=console duration_ms=7 phase=ui_dispatch status=entered
+2026-10-18 08:35:12 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=528f55a4892e442d86551354b79586e1 component=console duration_ms=9 phase=ui_submit status=entered
+2026-10-18 08:35:12 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=528f55a4892e442d86551354b79586e1 component=console duration_ms=45 phase=controller_submit status=entered
+2026-10-18 08:35:12 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=528f55a4892e442d86551354b79586e1 component=console duration_ms=48 phase=provider_resolution status=entered
+2026-10-18 08:35:12 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=528f55a4892e442d86551354b79586e1 component=console duration_ms=51 phase=ui_submit status=accepted
+2026-10-18 08:35:12 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=528f55a4892e442d86551354b79586e1 component=console duration_ms=64 phase=ui_dispatch status=sent
+2026-10-18 08:35:12 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=528f55a4892e442d86551354b79586e1 component=console duration_ms=64 phase=ui_action status=dispatched
+2026-10-18 08:35:12 [ERROR   ] tldw_chatbook.Chat.console_chat_controller:463 - Console RAG capture unavailable; reason=capture_provider_failure; draft_length=51
+2026-10-18 08:35:12 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=528f55a4892e442d86551354b79586e1 capture_enabled=true component=console duration_ms=75 phase=capture_policy status=entered
+2026-10-18 08:35:12 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=528f55a4892e442d86551354b79586e1 component=console duration_ms=78 phase=durable_commit status=entered
+2026-10-18 08:35:12 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=528f55a4892e442d86551354b79586e1 component=console duration_ms=136 phase=durable_commit status=succeeded
+2026-10-18 08:35:12 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=528f55a4892e442d86551354b79586e1 component=console duration_ms=138 phase=controller_submit status=blocked

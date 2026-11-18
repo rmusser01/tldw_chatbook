@@ -17,7 +17,6 @@ from .ccp_messages import (
     PromptMessage,
     DictionaryMessage,
     SidebarMessage,
-    ViewChangeMessage,
 )
 
 from .ccp_character_handler import CCPCharacterHandler
@@ -64,7 +63,6 @@ __all__ = [
     "PromptMessage",
     "DictionaryMessage",
     "SidebarMessage",
-    "ViewChangeMessage",
     # Handlers
     "CCPCharacterHandler",
     "CCPPersonaHandler",

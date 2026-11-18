@@ -1,0 +1,145 @@
+from pathlib import Path
+p=Path('tldw_chatbook/DB/automatic_work.py');s=p.read_text();n=s.index('    def mark_chat_start_review_required(')
+s=s[:n]+'''    def _confirm_chat_start_absent(self, attempt_id: str, *, owner_id: str) -> bool:
+        """Confirm exact absence only after a successful current-owner transaction."""
+        absent = False
+        with self.transaction() as conn:
+            owner = conn.execute(
+                "SELECT owner_id FROM automatic_work_runtime_owner WHERE singleton=1"
+            ).fetchone()
+            if owner is not None and owner["owner_id"] == owner_id:
+                absent = conn.execute(
+                    "SELECT 1 FROM automatic_chat_start_attempts WHERE id=?",
+                    (attempt_id,),
+                ).fetchone() is None
+        # Commit and connection-policy restoration must both have succeeded.
+        return absent
+
+'''+s[n:];p.write_text(s)
+p=Path('tldw_chatbook/Chat/console_chat_start.py');s=p.read_text();n=s.index('    async def _run(')
+s=s[:n]+'''    @staticmethod
+    def _restrict_cleanup(item: AgentChatStartAuthorization) -> None:
+        """Retain uncertain admission without letting registration skip custody."""
+        try:
+            item.ledger._restrict_chat_start(
+                item.request.attempt_id,
+                owner_id=item.runtime_owner_id,
+                chain_id=item.context.chain_id if item.context is not None else None,
+            )
+        except BaseException as exc:
+            logger.warning(
+                "Chat start failed (phase=restriction, exception_type={})",
+                type(exc).__name__,
+            )
+
+'''+s[n:]
+old='''                ledger._restrict_chat_start(
+                    request.attempt_id,
+                    owner_id=item.runtime_owner_id,
+                    chain_id=item.context.chain_id
+                    if item.context is not None
+                    else None,
+                )'''
+assert s.count(old)==2
+s=s.replace(old,'                self._restrict_cleanup(item)')
+a=s.index('            except BaseException as exc:\n                self._restrict_cleanup(item)');b=s.index('            try:\n                await self._drain_owned(',a)
+s=s[:a]+'''            except BaseException as exc:
+                logger.warning(
+                    "Chat start failed (phase=settlement, exception_type={})",
+                    type(exc).__name__,
+                )
+                status, reason = (
+                    HANDOFF_LAUNCH_REVIEW_REQUIRED,
+                    "settlement_unconfirmed",
+                )
+                absent = False
+                if not item.accepted and not item.receipted and item.context is None:
+                    try:
+                        absent = await self._drain_owned(
+                            asyncio.create_task(
+                                run_owned_db_call(
+                                    item.database,
+                                    ledger._confirm_chat_start_absent,
+                                    request.attempt_id,
+                                    owner_id=item.runtime_owner_id,
+                                )
+                            )
+                        )
+                        if absent:
+                            ledger._clear_chat_start_restriction(
+                                request.attempt_id, owner_id=item.runtime_owner_id
+                            )
+                    except BaseException as absence_error:
+                        absent = False
+                        logger.warning(
+                            "Chat start failed (phase=absence, exception_type={})",
+                            type(absence_error).__name__,
+                        )
+                if absent:
+                    status, reason = HANDOFF_LAUNCH_NOT_STARTED, "start_failed"
+                else:
+                    self._restrict_cleanup(item)
+'''+s[b:]
+# Retain the original publication and fallback within a final cleanup guarantee.
+a=s.index('            try:\n                await self._drain_owned(',a)
+b=s.index('            # Release only this preparation.',a)
+resolve=s[a:b]
+rest='''            finally:
+                try:
+                    # A manual winner may already own a different preparation.
+                    preparation = controller.store.preparation_for_session(request.session_id)
+                    if (
+                        not item.accepted
+                        and controller.store is item.store
+                        and preparation is not None
+                        and preparation.preparation_id == item.preparation_id
+                    ):
+                        controller._abandon_preparation(preparation.preparation_id)
+                except BaseException as exc:
+                    logger.warning(
+                        "Chat start failed (phase=abandonment, exception_type={})",
+                        type(exc).__name__,
+                    )
+                finally:
+                    try:
+                        if (
+                            not item.accepted
+                            and controller.store is item.store
+                            and item.validating_state is not None
+                            and controller.run_state_for(request.session_id)
+                            is item.validating_state
+                        ):
+                            controller._set_run_state(
+                                ConsoleRunState(ConsoleRunStatus.IDLE),
+                                session_id=request.session_id,
+                            )
+                    except BaseException as exc:
+                        logger.warning(
+                            "Chat start failed (phase=run_state, exception_type={})",
+                            type(exc).__name__,
+                        )
+                    finally:
+                        try:
+                            controller._agent_wake_turn_sessions.discard(request.session_id)
+                            if self._active.get(request.session_id) is item:
+                                self._active.pop(request.session_id, None)
+                        finally:
+                            item.capacity_owner.release_automatic_primary(
+                                request.session_id, item.token
+                            )
+'''
+c=s.index('\n    async def accept(',b)
+s=s[:a]+resolve+rest+s[c:];p.write_text(s)
+p=Path('tldw_chatbook/Chat/console_chat_fork.py');s=p.read_text();s=s.replace('''    """Read the canonical visible text and selected variant identity."""''','''    """Read the canonical visible text and selected variant identity.
+
+    Args:
+        message: Console message whose visible content and variant are selected.
+
+    Returns:
+        The visible text and selected variant ID, or None for the ID when the
+        message has no variants.
+
+    Raises:
+        ValueError: Content is not a string, the current variant is unavailable,
+            or its nonempty string ID or matching string content is invalid.
+    """''',1);p.write_text(s)

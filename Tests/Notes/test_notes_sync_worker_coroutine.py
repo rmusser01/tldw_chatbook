@@ -123,9 +123,7 @@ async def test_cancelling_the_awaiting_task_never_interrupts_the_coroutine() -> 
 def test_executor_module_has_no_asyncio_run_call_sites() -> None:
     """Ratchet: the retired per-call asyncio.run pattern must not return."""
 
-    source = Path(inspect.getsourcefile(executor_module)).read_text(
-        encoding="utf-8"
-    )
+    source = Path(inspect.getsourcefile(executor_module)).read_text(encoding="utf-8")
     tree = ast.parse(source)
     offenders = [
         node.lineno

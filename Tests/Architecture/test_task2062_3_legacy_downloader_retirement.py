@@ -210,14 +210,25 @@ def test_remote_acquisition_and_hugging_face_inference_owners_remain() -> None:
     assert hasattr(remote_view, "RemoteView")
     assert hasattr(remote_adapter, "HuggingFaceRemoteAdapter")
     assert hasattr(llm_api, "chat_with_huggingface")
-    assert hasattr(summarization, "summarize_with_huggingface")
+    # TASK-34895: the per-provider summarize_with_* functions are gone; HF
+    # inference now rides the shared chat dispatch (spec-keyed).
+    assert hasattr(summarization, "_summarize_via_chat_api")
+    assert "huggingface" in summarization._SUMMARIZER_CHAT_SPECS
 
 
 def test_model_download_dir_is_only_config_and_installed_legacy_scan_wiring() -> None:
     """Constrain model_download_dir to config and the Installed scan seam."""
+    # config.py's mention moved to Config_Files/default_config.toml (TASK-36945.1);
+    # the TOML default is pinned by the next test.
     assert set(_production_python_with("model_download_dir")) == {
-        "tldw_chatbook/config.py",
         "tldw_chatbook/UI/LLM_Management_Window.py",
+        # TASK-38989 review: Backup & Recovery name the key only to classify
+        # it as an external user location (inventory "external.models",
+        # config-location keys, detached-layout skip); none reads or writes
+        # the directory (b5251e9a6e, e350634a8a).
+        "tldw_chatbook/Backup_Recovery/config_adapter.py",
+        "tldw_chatbook/Backup_Recovery/detached_layout.py",
+        "tldw_chatbook/Backup_Recovery/inventory.py",
     }
 
 
@@ -226,7 +237,9 @@ def test_default_llm_management_config_only_keeps_installed_legacy_scan_root() -
     assert DEFAULT_CONFIG_FROM_TOML["llm_management"] == {
         "model_download_dir": "~/Downloads/tldw_models"
     }
-    config_source = (PRODUCTION_ROOT / "config.py").read_text(encoding="utf-8")
+    config_source = (PRODUCTION_ROOT / "Config_Files" / "default_config.toml").read_text(
+        encoding="utf-8"
+    )
     assert (
         'model_download_dir = "~/Downloads/tldw_models"'
         "  # Legacy read-only scan root for Installed models"

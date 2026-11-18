@@ -1,0 +1,45 @@
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                             │ Conversation | Describe a lantern scene.                                                                              │
+                  Context ◂  │   Describe a lantern…  ✕    New tab     Temporary                                                                     │
+   Terminal                  │                                                                                                                       │
+ ──────────────────────────  │                                                                                                                       │
+ Workspaces             ▸    │                                                                                                                       │
+ ──────────────────────────  │                                                                                                                       │
+ Conversations          ▾    │                                                                                                                       │
+     Archive this chat       │                                                                                                                       │
+      Archived chats         │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+     Search all chats…       │   User                                                                                                                │
+   Describe a lantern        │   Describe a lantern scene.                                                                                           │
+   scene.                    │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+                             │  ▊ Assistant                                                                                                          │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │  ▊                                                                                                                    │
+  ▊  Filter      ▎           │  ▊  (mock reply) You said: "Use at most three sentences.                                                              │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │  ▊                                                                                                                    │
+                             │  ▊  Describe a scene as literal SVG text. Keep {{scene}} unchanged.                                                   │
+   New conversation          │  ▊                                                                                                                    │
+  Chats                 ▾    │  ▊  Describe a lantern scene.". Staying in character as You are a capable assistant with optional tools. Answer       │◂ Inspect
+    Today                    │  ▊  dire. The wind shifts, a lantern flickers, and the story moves forward one beat.                                  │
+   Describe a lanter…  💬    │  ▊                                                                                                                    │
+                             │  ▊                                                                                                                    │
+ ──────────────────────────  │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+ Character · No chats   ▸    │   User                                                                                                                │
+ ──────────────────────────  │   A queued second scene.                                                                                              │
+ Model                  ▸    │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+ ──────────────────────────  │  ▊ Assistant                                                                                                          │
+ Agent                  ▸    │  ▊                                                                                                                    │
+ ──────────────────────────  │  ▊  (mock reply) You said: "Use at most three sentences.                                                              │
+ Details                ▸    │  ▊                                                                                                                    │
+                             │  ▊  Describe a scene as literal SVG text. Keep {{scene}} unchanged.                                                   │
+                             │  ▊                                                                                                                    │
+                             │  ▊  A queued second scene.". Staying in character as You are a capable assistant with optional tools. Answer dire.    │
+                             │  ▊  The wind shifts, a lantern flickers, and the story moves forward one beat.                                        │
+                             │  ▊                                                                                                                    │
+                             │  ▊                                                                                                                    │
+                             │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Provider: OpenAI · Model: gpt-4.1-mini · System Prompt: off · Assistant: General · Sources: 0 · Tools: 5 ready · Approvals: 0 pending · Context 0% · Curre◀ ▶
+
+█  Composer ▾  Menu   Ask, command, or paste task...                                 Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Ctrl+P · Ctrl+Q

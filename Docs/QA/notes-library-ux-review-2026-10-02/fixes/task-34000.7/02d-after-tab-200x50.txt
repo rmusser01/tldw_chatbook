@@ -1,0 +1,50 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌─────────────────────────────────────┐  N  ┌─────────────────────────────────────────────────────────────────────────────────────────────────┐  N  Select a note to edit it here.                   │
+│ │ Navigation                          │  a  │ Library notes · Ready · Next: Create a note or add from files.                                  │  o                                                   │
+│ │     Import…                         │  v  │ Notes (122)                                                                                     │  t                                                   │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎ │     │ These notes live in the Library's own database — for notes that live in a folder on disk,       │  e                                                   │
+│ │ ▊ Search Library…              ▎▊x▎ │     │ switch to Folder files. To copy or keep a folder synced, choose Add from files.                 │  s                                                   │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎ │     │                                                                                                 │                                                      │
+│ │                                     │     │ Filter                                                                                          │                                                      │
+│ │ ─────────────────────────────────── │     │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │                                                      │
+│ │ Browse                          ▾   │     │ ▊ Filter notes… (Enter)                                                                       ▎ │                                                      │
+│ │    Media (23) — your files          │     │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │                                                      │
+│ │    Conversations (0)                │     │                                                                                                 │                                                      │
+│ │  ▸ Notes (122)                      │     │    New     Sort: Newest     Select                                                              │                                                      │
+│ │    Prompts (0) — reuse              │     │    Add from files…     Export                                                                   │                                                      │
+│ │    Skills (1) — AI add-ons          │     │ Folders & placement                                                                             │                                                      │
+│ │    Collections (0)                  │<--- │    New folder     Rename     Move     Remove                                                    │                                                      │
+│ │    Search / RAG — find all          │     │                                                                                                 │                                                      │
+│ │ ─────────────────────────────────── │     │                                                                                                 │                                                      │
+│ │ Artifacts                       ▾   │     │  ▾ Agent_Lessons                                                                                │                                                      │
+│ │    All artifacts                    │     │ █  Lesson 12: Stale CLAUDE.md · 2m                                                              │                                                      │
+│ │    Chatbooks                        │     │    Lesson 11: One socket per probe · 2m                                                         │                                                      │
+│ │    Reports                          │     │    Lesson 10: Mutation-test every claim · 2m                                                    │<---                                                  │
+│ │ ─────────────────────────────────── │     │    Lesson 09: Capture the plan, not the index · 2m                                              │                                                      │
+│ │ Create                          ▾   │     │    Lesson 08: Census floors are one-way · 2m                                                    │                                                      │
+│ │    New note                         │     │    Lesson 07: Never arm a zero-delay timer · 2m                                                 │                                                      │
+│ │    New prompt                       │     │    Lesson 06: Tail-append conflicts · 2m                                                        │                                                      │
+│ │    New skill                        │     │    Lesson 05: Measure before optimising · 2m                                                    │                                                      │
+│ │ ─────────────────────────────────── │     │    Lesson 04: A no-op replace is a false scare · 2m                                             │                                                      │
+│ │ Study                           ▾   │<--- │    Lesson 03: Ask which half you did not touch · 2m                                             │                                                      │
+│ │    Study decks (0)                  │     │    Lesson 02: Read the plan before the diff · 2m                                                │                                                      │
+│ │    Flashcards due: 0                │     │    Lesson 01: Verify with the real thing · 2m                                                   │                                                      │
+│ │    Quizzes (0)                      │     │  ▸ Journal                                                                                      │                                                      │
+│ │ ─────────────────────────────────── │     │  ▸ Meetings                                                                                     │                                                      │
+│ │ Import / Export                 ▾   │     │  ▸ Projects                                                                                     │                                                      │
+│ │    Import…                          │     │  ▸ Recipes                                                                                      │                                                      │
+│ │    Export                           │     │  ▸ Research                                                                                     │                                                      │
+│ │ ─────────────────────────────────── │     │  ▸ Study                                                                                        │                                                      │
+│ │ Details                         ▸   │     │  ▾ Unfiled                                                                                    ▆ │                                                      │
+│ │                                     │     │    Quotes · 2m                                                                                  │                                                      │
+│ │                                     │     │    Scratch · 2m                                                                                 │                                                      │
+│ │                                     │     │    Untitled · 2m                                                                                │                                                      │
+│ │                                     │     │    A very long note title that keeps going so we can test how the tree, the editor header an…   │                                                      │
+│ └─────────────────────────────────────┘     └─────────────────────────────────────────────────────────────────────────────────────────────────┘                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  n new note | / find note | g go to folder | esc focus rail | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

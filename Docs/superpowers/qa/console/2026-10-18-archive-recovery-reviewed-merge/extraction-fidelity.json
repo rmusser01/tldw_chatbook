@@ -1,0 +1,27 @@
+[
+  {
+    "function": "_is_current_user_text_transform",
+    "execution_body_equal": true,
+    "live_controller_reads_normalized": false
+  },
+  {
+    "function": "_reseal_archive_followup_trace_request",
+    "execution_body_equal": true,
+    "live_controller_reads_normalized": true
+  },
+  {
+    "function": "approval_was_unanswered",
+    "execution_body_equal": true,
+    "live_controller_reads_normalized": false
+  },
+  {
+    "function": "console_view_hooks",
+    "execution_body_equal": true,
+    "live_controller_reads_normalized": false
+  },
+  {
+    "function": "_snap_to_line_bounds",
+    "execution_body_equal": true,
+    "live_controller_reads_normalized": false
+  }
+]

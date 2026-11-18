@@ -10,6 +10,7 @@ import pytest
 from textual.containers import Horizontal
 from textual.widgets import Button
 
+from Tests.Backup_Recovery.config_test_support import select_config_source
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from Tests.UI.test_library_shell import (
@@ -1354,6 +1355,7 @@ async def test_failed_settings_reconciliation_does_not_project_cached_guess(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_persisted_shared_library_read_honors_real_legacy_config(
     monkeypatch, tmp_path
 ):
@@ -1362,26 +1364,27 @@ async def test_persisted_shared_library_read_honors_real_legacy_config(
         "[library.media_reader]\nlibrary_open = false\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
-
-    physical_value = await LibraryScreen._read_library_reader_persisted_preference(
-        object(), "library.reader", "library_open"
-    )
+    with monkeypatch.context() as selection:
+        select_config_source(selection, config_path, vars(library_screen_module))
+        physical_value = await LibraryScreen._read_library_reader_persisted_preference(
+            object(), "library.reader", "library_open"
+        )
 
     assert physical_value is False
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_persisted_items_read_uses_default_when_key_is_absent(
     monkeypatch, tmp_path
 ):
     config_path = tmp_path / "config.toml"
     config_path.write_text("", encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
-
-    physical_value = await LibraryScreen._read_library_reader_persisted_preference(
-        object(), "library.media_reader", "items_open"
-    )
+    with monkeypatch.context() as selection:
+        select_config_source(selection, config_path, vars(library_screen_module))
+        physical_value = await LibraryScreen._read_library_reader_persisted_preference(
+            object(), "library.media_reader", "items_open"
+        )
 
     assert physical_value is True
 

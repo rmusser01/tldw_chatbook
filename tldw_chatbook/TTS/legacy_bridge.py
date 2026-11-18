@@ -156,6 +156,8 @@ def _first_mapping_value(
     configuration: Mapping[str, Any],
     locations: tuple[tuple[str, str], ...],
 ) -> Any:
+    from tldw_chatbook.config import is_encrypted_config_value
+
     for section, key in locations:
         values = configuration.get(section)
         if not isinstance(values, Mapping):
@@ -168,7 +170,9 @@ def _first_mapping_value(
             values = current
         if isinstance(values, Mapping):
             value = values.get(key)
-            if value:
+            # TASK-34100.4 review (TE-3): a value still `enc:` reads as
+            # absent, so it never short-circuits the next source.
+            if value and not is_encrypted_config_value(value):
                 return value
     return None
 

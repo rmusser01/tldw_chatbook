@@ -1,0 +1,36 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control ac… Speak replies   ▌   Hands-free   ▌     Ready · not tested
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                             │ Conversation | Chat 1                                                         │
+                  Context ◂  │         Chat 1         ✕    New tab     Temporary                             │
+   Terminal                  │                                                                               │
+ ──────────────────────────  │                                                                               │
+ Workspaces             ▸    │                                                                               │
+ ──────────────────────────  │                                                                               │
+ Conversations          ▾    │                                                                               │
+     Archive this chat       │                                                                               │
+      Archived chats         │                                                                               │
+     Search all chats…       │                                                                               │
+   Chat 1                    │                                                                               │◂ Inspect
+                           ▁ │                                                                               │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │                                                                               │
+  ▊  Filter      ▎           │                                                                               │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │                                                                               │
+                             │                                                                               │
+  1 more conversation —      │                                                                               │
+  search with Ctrl+K         │  ───────────────────────────────────────────────────────────────────────────  │
+   New conversation          │   System                                                                      │
+  Chats                 ▾    │   Console send blocked: Library search has no available evidence. Review      │
+ ▼ Character · Model · +2    │   source authority before sending.                                            │
+                             │  ───────────────────────────────────────────────────────────────────────────  │ 1 staged
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Staged for next send · 1 source                                                                             Un-stage
+ Library Search/RAG retrieval — Library Search/RAG
+ Status ▾   Library · Auto off · Agent blocked     Provider: OpenAI     Model: gpt-4.1-mini     System Prompt: off
+
+█  Composer ▾  Menu  What action items came out of my advisor meeting?▌                  Send | $       Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+P · Ctrl+Q

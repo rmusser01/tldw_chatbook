@@ -32,7 +32,9 @@ def connection_spy(monkeypatch):
     return opened
 
 
-def test_repeated_reads_open_no_new_connections(request, tmp_path: Path, connection_spy):
+def test_repeated_reads_open_no_new_connections(
+    request, tmp_path: Path, connection_spy
+):
     db = AgentRunsDB(tmp_path / "agent_runs.sqlite", client_id="client-1")
     request.addfinalizer(db.close)
     db.create_run(conversation_id="conv-1", agent_kind="primary")  # warm-up
@@ -67,9 +69,7 @@ def test_failed_transaction_rolls_back_and_connection_stays_usable(
     assert runs[run_id]["status"] == "running"
     # ...and the held connection keeps working for writes afterwards.
     second = db.create_run(conversation_id="conv-1", agent_kind="primary")
-    assert second in {
-        r["id"] for r in db.list_runs(conversation_id="conv-1")
-    }
+    assert second in {r["id"] for r in db.list_runs(conversation_id="conv-1")}
 
 
 def test_each_thread_gets_its_own_connection(request, tmp_path: Path):
@@ -97,6 +97,4 @@ def test_each_thread_gets_its_own_connection(request, tmp_path: Path):
         t.join()
 
     assert not errors, f"cross-thread use failed: {errors}"
-    assert seen["t0"] is not seen["t1"], (
-        "two threads shared one sqlite connection"
-    )
+    assert seen["t0"] is not seen["t1"], "two threads shared one sqlite connection"

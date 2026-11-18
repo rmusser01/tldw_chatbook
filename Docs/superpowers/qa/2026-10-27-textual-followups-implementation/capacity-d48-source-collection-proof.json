@@ -1,0 +1,29 @@
+{
+  "base": "d48cc17cf5de05f6b5097c59d4a62d0cc6f881ec",
+  "production_tests_workflows_unchanged": true,
+  "checker_ast_identical_except_increased_floor": true,
+  "changed_source_files": [
+    "scripts/check_ui_pr_gate_census.py",
+    "scripts/ui_pr_gate_census.txt"
+  ],
+  "collected_cases": 46,
+  "collection_runtime_cases": 0,
+  "collection_qualification": "Collect-only: no runtime pass claimed. Exact full IDs retained, including whitespace. Seven original selectors represented; six prefix selectors decompose, computed revert remains whole.",
+  "collection_receipt_sha256": "676bbdd3db4a531c6a830d6bcdb8a70dbf4dee515c81fe4fd92254389438f418",
+  "collection_log_sha256": "2ca722ff33ed3477fffb2f59ece8e1023eb6f29c6bb3f219a3b9ac00019208f2",
+  "preliminary_contract_run": {
+    "cases": 175,
+    "passed": 172,
+    "failed": 3,
+    "qualification": "Two historical-comment regex failures corrected by retaining original comments; computed parametrize stays whole. No test/checker behavior relaxed. Not claimed green."
+  },
+  "final_contract_run": {
+    "label": "capacity-d48-contract02",
+    "cases": 175,
+    "failures": 0,
+    "errors": 0,
+    "skips": 0,
+    "seconds": 35.31,
+    "actual_xml_sha256": "0384ee86fdddbf055b50135aed8693048e9599abf9bb294b2f026851b39f0342"
+  }
+}

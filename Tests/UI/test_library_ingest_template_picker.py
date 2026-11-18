@@ -78,7 +78,9 @@ class _PickerHost(ConsolidatedCSSApp):
 
 
 def _local_state() -> LibraryIngestCanvasState:
-    return build_library_ingest_state((), form=LibraryIngestFormState(path="/tmp/x.txt"))
+    return build_library_ingest_state(
+        (), form=LibraryIngestFormState(path="/tmp/x.txt")
+    )
 
 
 def _server_state() -> LibraryIngestCanvasState:
@@ -237,7 +239,11 @@ async def test_picker_offers_auto_beside_none():
         select = pilot.app.query_one(f"#{PICKER_ID}", Select)
         options = await _wait_for_picker_options(pilot, 3)
 
-    assert [value for _label, value in options] == [NONE_VALUE, AUTO_VALUE, "tiny-words"]
+    assert [value for _label, value in options] == [
+        NONE_VALUE,
+        AUTO_VALUE,
+        "tiny-words",
+    ]
     # The label is plain "Auto" (no markup, no suffix).
     labels = {value: label for label, value in options}
     assert Content.from_markup(labels[AUTO_VALUE]).plain == "Auto"

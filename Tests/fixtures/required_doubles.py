@@ -156,7 +156,9 @@ def install_uncalled_double_audit() -> bool:
         candidate = name if value is ... else value
         if is_exploding_double(candidate):
             label = getattr(target, "__name__", str(target))
-            _AUDITED.append((f"{label}.{name}" if value is not ... else label, candidate))
+            _AUDITED.append(
+                (f"{label}.{name}" if value is not ... else label, candidate)
+            )
         if value is ...:
             return original(self, target, name, raising=raising)
         return original(self, target, name, value, raising=raising)

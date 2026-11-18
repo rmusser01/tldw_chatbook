@@ -1,0 +1,20 @@
+{
+  "utc": "2026-10-25T23:45:59.264152+00:00",
+  "markdown_links_checked": 70,
+  "new_tasks": 3,
+  "unchecked_criteria_each": 4,
+  "existing_owner_criteria_unchanged": true,
+  "older_task_references_only": true,
+  "probe_ast_files": 6,
+  "source_blobs_verified": 31,
+  "product_files_changed": 0,
+  "ruff": "E9,F63,F7,F82 and format checks passed",
+  "backlog_checks": "5764 files: no duplicate ids, Windows-compatible paths, valid frontmatter and owned-section markers",
+  "qualified_cases": 9,
+  "intended_study_failures": 1,
+  "child_errors": 0,
+  "child_skips": 0,
+  "full_suite_run": false,
+  "published_text_bytes": "Canonical LF; executed probe ASTs unchanged and normalized source hashes match.",
+  "final_id_check": "310 branch/ref OIDs: no claims; exactly this worktree owns the three new task files; all30openPRheads unchanged."
+}

@@ -1,0 +1,218 @@
+FFFFFFFFF                                                                [100%]
+=================================== FAILURES ===================================
+_______ test_promotion_persists_sparse_context_policy_inside_the_bundle ________
+Tests/Chat/test_console_chat_store_atomic_promotion.py:439: in test_promotion_persists_sparse_context_policy_inside_the_bundle
+    conversation_id = store.promote_ephemeral_session(session.id)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_chat_store.py:314: in transitioned
+    return method(self, session_id, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_chat_store.py:18963: in promote_ephemeral_session
+    return self._promote_ephemeral_session_atomically(
+tldw_chatbook/Chat/console_chat_store.py:19301: in _promote_ephemeral_session_atomically
+    self._flush_context_policy_on_first_persist(session)
+Tests/Chat/test_console_chat_store_atomic_promotion.py:434: in <lambda>
+    lambda *_args, **_kwargs: (_ for _ in ()).throw(
+Tests/Chat/test_console_chat_store_atomic_promotion.py:434: in <genexpr>
+    lambda *_args, **_kwargs: (_ for _ in ()).throw(
+E   AssertionError: postcommit context-policy write
+_____________ test_next_send_after_failed_transformed_call[error] ______________
+Tests/Chat/test_console_trace_current_turn_transforms.py:279: in test_next_send_after_failed_transformed_call
+    assert following.accepted and following.provider_started, (
+E   AssertionError: (ConsoleSubmitResult(accepted=True, should_clear_draft=True, visible_copy='Trace capture could not start. Retry, Send ...led_draft_revision=None, blocker=<ConsoleSubmitBlocker.TRACE_CALL: 'trace_call'>), ['completed_tool_turn_unavailable'])
+E   assert (True and False)
+E    +  where True = ConsoleSubmitResult(accepted=True, should_clear_draft=True, visible_copy='Trace capture could not start. Retry, Send w...started=False, queue_notice='', cancelled_draft_revision=None, blocker=<ConsoleSubmitBlocker.TRACE_CALL: 'trace_call'>).accepted
+E    +  and   False = ConsoleSubmitResult(accepted=True, should_clear_draft=True, visible_copy='Trace capture could not start. Retry, Send w...started=False, queue_notice='', cancelled_draft_revision=None, blocker=<ConsoleSubmitBlocker.TRACE_CALL: 'trace_call'>).provider_started
+____________ test_next_send_after_failed_transformed_call[stopped] _____________
+Tests/Chat/test_console_trace_current_turn_transforms.py:268: in test_next_send_after_failed_transformed_call
+    assert (
+E   AssertionError: assert 'error' == 'stopped'
+E     
+E     - stopped
+E     + error
+__ test_regenerate_stream_failure_retains_failed_sibling_and_restores_anchor ___
+Tests/Chat/test_console_regenerate_branching.py:168: in test_regenerate_stream_failure_retains_failed_sibling_and_restores_anchor
+    assert store.active_leaf(session.id) == a1.id
+E   AssertionError: assert 'abac2fc0-564...-0133bbe4cfbd' == 'c69655c7-d12...-d6a760bfef71'
+E     
+E     - c69655c7-d121-439e-ba44-d6a760bfef71
+E     + abac2fc0-564e-41f4-be72-0133bbe4cfbd
+_ test_regenerate_mid_conversation_failure_restores_selected_anchor_not_former_tail _
+Tests/Chat/test_console_regenerate_branching.py:195: in test_regenerate_mid_conversation_failure_restores_selected_anchor_not_former_tail
+    assert store.active_path_message_ids(session.id) == [u1.id, a1.id]
+E   AssertionError: assert ['d0963398-0c...80bba70c5933'] == ['d0963398-0c...3b243bcdfda9']
+E     
+E     Left contains one more item: '4f185e06-e27c-4360-928a-80bba70c5933'
+E     Use -v to get more diff
+_______ test_regenerate_persists_new_sibling_when_store_has_persistence ________
+tldw_chatbook/Chat/console_chat_controller.py:26143: in _run_direct_provider_reply
+    completed = self.store.mark_message_complete(assistant_message_id)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_chat_store.py:16642: in mark_message_complete
+    return self._mark_message_complete(message_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_chat_store.py:16951: in _mark_message_complete
+    self._persist_existing_terminal(message, terminal_outcome="complete")
+tldw_chatbook/Chat/console_chat_store.py:4159: in _persist_existing_terminal
+    self._persist_terminal_generation(
+tldw_chatbook/Chat/console_chat_store.py:17891: in _persist_terminal_generation
+    and self.persist_selected_generation(
+tldw_chatbook/Chat/console_chat_store.py:20555: in persist_selected_generation
+    return self._run_commit_aware_generation_mutation(
+tldw_chatbook/Chat/console_chat_store.py:16359: in _run_commit_aware_generation_mutation
+    result = mutate()
+             ^^^^^^^^
+tldw_chatbook/Chat/console_chat_store.py:20557: in <lambda>
+    lambda: self._persist_selected_generation(
+tldw_chatbook/Chat/console_chat_store.py:20724: in _persist_selected_generation
+    durably_committed, committed_version = self._persist_generation_variant(
+tldw_chatbook/Chat/console_chat_store.py:17586: in _persist_generation_variant
+    raise RuntimeError("Generation projection persistence is unavailable.")
+E   RuntimeError: Generation projection persistence is unavailable.
+
+During handling of the above exception, another exception occurred:
+Tests/Chat/test_console_regenerate_branching.py:264: in test_regenerate_persists_new_sibling_when_store_has_persistence
+    result = await controller.regenerate_message(a1.id)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_chat_controller.py:3322: in admitted
+    return await function(self, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_chat_controller.py:18909: in regenerate_message
+    result = await self._stream_assistant_response(
+tldw_chatbook/Chat/console_chat_controller.py:3494: in wrapped
+    return await check(method)(self, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/response_rules/generation.py:23: in wrapped
+    return await method(controller, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_chat_controller.py:3505: in wrapped
+    return await method(self, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_chat_controller.py:24446: in _stream_assistant_response
+    return await self._stream_assistant_response_inner(
+tldw_chatbook/Chat/console_chat_controller.py:24904: in _stream_assistant_response_inner
+    return await self._run_direct_provider_reply(
+tldw_chatbook/Chat/console_chat_controller.py:26247: in _run_direct_provider_reply
+    self.store.mark_message_failed(assistant_message_id)
+tldw_chatbook/Chat/console_chat_store.py:17165: in mark_message_failed
+    return self._mark_message_failed(message_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_chat_store.py:17220: in _mark_message_failed
+    self._persist_existing_terminal(message, terminal_outcome="failed")
+tldw_chatbook/Chat/console_chat_store.py:4159: in _persist_existing_terminal
+    self._persist_terminal_generation(
+tldw_chatbook/Chat/console_chat_store.py:17891: in _persist_terminal_generation
+    and self.persist_selected_generation(
+tldw_chatbook/Chat/console_chat_store.py:20555: in persist_selected_generation
+    return self._run_commit_aware_generation_mutation(
+tldw_chatbook/Chat/console_chat_store.py:16359: in _run_commit_aware_generation_mutation
+    result = mutate()
+             ^^^^^^^^
+tldw_chatbook/Chat/console_chat_store.py:20557: in <lambda>
+    lambda: self._persist_selected_generation(
+tldw_chatbook/Chat/console_chat_store.py:20724: in _persist_selected_generation
+    durably_committed, committed_version = self._persist_generation_variant(
+tldw_chatbook/Chat/console_chat_store.py:17586: in _persist_generation_variant
+    raise RuntimeError("Generation projection persistence is unavailable.")
+E   RuntimeError: Generation projection persistence is unavailable.
+__________ test_edit_and_resend_forks_user_sibling_and_streams_reply ___________
+tldw_chatbook/Chat/console_chat_controller.py:26143: in _run_direct_provider_reply
+    completed = self.store.mark_message_complete(assistant_message_id)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_chat_store.py:16642: in mark_message_complete
+    return self._mark_message_complete(message_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_chat_store.py:16951: in _mark_message_complete
+    self._persist_existing_terminal(message, terminal_outcome="complete")
+tldw_chatbook/Chat/console_chat_store.py:4159: in _persist_existing_terminal
+    self._persist_terminal_generation(
+tldw_chatbook/Chat/console_chat_store.py:17891: in _persist_terminal_generation
+    and self.persist_selected_generation(
+tldw_chatbook/Chat/console_chat_store.py:20555: in persist_selected_generation
+    return self._run_commit_aware_generation_mutation(
+tldw_chatbook/Chat/console_chat_store.py:16359: in _run_commit_aware_generation_mutation
+    result = mutate()
+             ^^^^^^^^
+tldw_chatbook/Chat/console_chat_store.py:20557: in <lambda>
+    lambda: self._persist_selected_generation(
+tldw_chatbook/Chat/console_chat_store.py:20724: in _persist_selected_generation
+    durably_committed, committed_version = self._persist_generation_variant(
+tldw_chatbook/Chat/console_chat_store.py:17586: in _persist_generation_variant
+    raise RuntimeError("Generation projection persistence is unavailable.")
+E   RuntimeError: Generation projection persistence is unavailable.
+
+During handling of the above exception, another exception occurred:
+Tests/Chat/test_console_edit_resend.py:110: in test_edit_and_resend_forks_user_sibling_and_streams_reply
+    result = await controller.edit_and_resend_message(u1.id, "edited")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_chat_controller.py:3322: in admitted
+    return await function(self, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_chat_controller.py:20031: in edit_and_resend_message
+    return await self._stream_assistant_response(
+tldw_chatbook/Chat/console_chat_controller.py:3494: in wrapped
+    return await check(method)(self, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/response_rules/generation.py:23: in wrapped
+    return await method(controller, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_chat_controller.py:3505: in wrapped
+    return await method(self, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_chat_controller.py:24446: in _stream_assistant_response
+    return await self._stream_assistant_response_inner(
+tldw_chatbook/Chat/console_chat_controller.py:24904: in _stream_assistant_response_inner
+    return await self._run_direct_provider_reply(
+tldw_chatbook/Chat/console_chat_controller.py:26247: in _run_direct_provider_reply
+    self.store.mark_message_failed(assistant_message_id)
+tldw_chatbook/Chat/console_chat_store.py:17165: in mark_message_failed
+    return self._mark_message_failed(message_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_chat_store.py:17220: in _mark_message_failed
+    self._persist_existing_terminal(message, terminal_outcome="failed")
+tldw_chatbook/Chat/console_chat_store.py:4159: in _persist_existing_terminal
+    self._persist_terminal_generation(
+tldw_chatbook/Chat/console_chat_store.py:17891: in _persist_terminal_generation
+    and self.persist_selected_generation(
+tldw_chatbook/Chat/console_chat_store.py:20555: in persist_selected_generation
+    return self._run_commit_aware_generation_mutation(
+tldw_chatbook/Chat/console_chat_store.py:16359: in _run_commit_aware_generation_mutation
+    result = mutate()
+             ^^^^^^^^
+tldw_chatbook/Chat/console_chat_store.py:20557: in <lambda>
+    lambda: self._persist_selected_generation(
+tldw_chatbook/Chat/console_chat_store.py:20724: in _persist_selected_generation
+    durably_committed, committed_version = self._persist_generation_variant(
+tldw_chatbook/Chat/console_chat_store.py:17586: in _persist_generation_variant
+    raise RuntimeError("Generation projection persistence is unavailable.")
+E   RuntimeError: Generation projection persistence is unavailable.
+__________ test_edit_and_resend_skill_refusal_leaves_no_pending_node ___________
+Tests/Chat/test_console_edit_resend.py:302: in test_edit_and_resend_skill_refusal_leaves_no_pending_node
+    result = await controller.edit_and_resend_message(u1.id, "edited")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_chat_controller.py:3322: in admitted
+    return await function(self, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_chat_controller.py:19971: in edit_and_resend_message
+    ) = await self._apply_skill_substitution(provider_messages, turn_context)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: test_edit_and_resend_skill_refusal_leaves_no_pending_node.<locals>._refuse() takes 1 positional argument but 2 were given
+_______________ test_edit_and_resend_carries_anchor_attachments ________________
+Tests/Chat/test_console_edit_resend.py:367: in test_edit_and_resend_carries_anchor_attachments
+    assert result.accepted is True
+E   assert False is True
+E    +  where False = ConsoleSubmitResult(accepted=False, should_clear_draft=False, visible_copy="Console send blocked: vision-model can't a..._epoch=None, preparation_id=None, provider_started=False, queue_notice='', cancelled_draft_revision=None, blocker=None).accepted
+============================= slowest 25 durations =============================
+
+(25 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_console_chat_store_atomic_promotion.py::test_promotion_persists_sparse_context_policy_inside_the_bundle
+FAILED Tests/Chat/test_console_trace_current_turn_transforms.py::test_next_send_after_failed_transformed_call[error]
+FAILED Tests/Chat/test_console_trace_current_turn_transforms.py::test_next_send_after_failed_transformed_call[stopped]
+FAILED Tests/Chat/test_console_regenerate_branching.py::test_regenerate_stream_failure_retains_failed_sibling_and_restores_anchor
+FAILED Tests/Chat/test_console_regenerate_branching.py::test_regenerate_mid_conversation_failure_restores_selected_anchor_not_former_tail
+FAILED Tests/Chat/test_console_regenerate_branching.py::test_regenerate_persists_new_sibling_when_store_has_persistence
+FAILED Tests/Chat/test_console_edit_resend.py::test_edit_and_resend_forks_user_sibling_and_streams_reply
+FAILED Tests/Chat/test_console_edit_resend.py::test_edit_and_resend_skill_refusal_leaves_no_pending_node
+FAILED Tests/Chat/test_console_edit_resend.py::test_edit_and_resend_carries_anchor_attachments
+9 failed in 6.99s

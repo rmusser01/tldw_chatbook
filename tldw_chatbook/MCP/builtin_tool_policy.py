@@ -50,9 +50,12 @@ def standalone_character_write_refusal(name: str) -> dict[str, str] | None:
     if state == "ask":
         return {
             "error_code": "permission_required",
-            "error": "An operator must allow this tool in MCP Permissions before an external client can write character cards.",
+            "error": (
+                "An operator must allow this tool in Settings ▸ Tools & MCP ▸ "
+                "Permissions before an external client can write character cards."
+            ),
         }
     return {
         "error_code": "permission_denied",
-        "error": "This tool is disabled in MCP Permissions.",
+        "error": "This tool is disabled in Settings ▸ Tools & MCP ▸ Permissions.",
     }

@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/fix_native.py", line 26, in <module>
+    pos=s.index(needle,s.index('    def request_mcp_approvals('))
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: substring not found

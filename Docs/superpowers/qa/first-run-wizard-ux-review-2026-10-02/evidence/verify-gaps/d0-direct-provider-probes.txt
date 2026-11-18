@@ -1,0 +1,19 @@
+# Direct provider probes (keys read from files, never printed) 2026-10-03T00:40:55.281747
+
+## /models with a BOGUS key -> status (200 = listing does not authenticate, so the wizard's 'key will be checked' is vacuous)
+  openrouter   200
+  huggingface  200
+  nvidia       200
+  novita       200
+  together     401
+  groq         401
+  deepseek     401
+  mistral      401
+  moonshot     401
+
+## OpenRouter key file: /api/v1/key -> 401 API key expired.
+
+## Gemini models.list -> 200 61 models; gemini-2.5-flash listed: True
+## Gemini generateContent gemini-2.5-flash -> 404 This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.8-flash for the latest features and improvements. We recommend you to use the Int
+## Moonshot kimi-k3 -> 200 message keys: ['content', 'reasoning_content', 'role'] content: 'ok' reasoning_content chars: 176
+## Moonshot kimi-k2.6 -> 200 message keys: ['content', 'reasoning_content', 'role'] content: 'ok' reasoning_content chars: 229

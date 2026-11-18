@@ -275,9 +275,7 @@ class ResearchSourceReadinessCoordinator:
                     and readiness.catalog_item_id != operation.canonical_item_id
                 )
             ):
-                raise SourceIdentityMismatchError(
-                    "readiness source identity mismatch"
-                )
+                raise SourceIdentityMismatchError("readiness source identity mismatch")
         except SourceIdentityMismatchError:
             return operation
         except Exception:
@@ -334,7 +332,9 @@ class ResearchSourceReadinessCoordinator:
         from tldw_chatbook.DB.base_db import operation_owned_connection
 
         def list_in_worker():
-            with operation_owned_connection(getattr(self._operation_store, "_db", None)):
+            with operation_owned_connection(
+                getattr(self._operation_store, "_db", None)
+            ):
                 return self._operation_store.list_readiness_actionable(limit=limit)
 
         operations = await asyncio.to_thread(list_in_worker)

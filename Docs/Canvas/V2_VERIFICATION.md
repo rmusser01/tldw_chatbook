@@ -502,7 +502,7 @@ raw Canvas/baseline logs are preserved with the Task 7 evidence.
 TASK-32160 Task7b defers pure TTS profile-repository construction through the
 existing app-owned first-use method. The configured path is still captured at
 app construction, concurrent callers share one owner/open task, and close latches
-even before first use. ADR-028 clarifies construction timing; ADR-097 budgets and
+even before first use. ADR-294 clarifies construction timing; ADR-097 budgets and
 ADR-125 native SQLite admission/finalization remain unchanged.
 
 The initial cut reached 963/972 at UI readiness but shifted the same 16 modules

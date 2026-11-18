@@ -1,0 +1,91 @@
+{
+  "reviewed_at_utc": "2026-11-03T03:38:02.211233+00:00",
+  "review_type": "Read-only root gates and documentation addendum; no runtime or test execution by reviewer.",
+  "diagnostic_head": "97a53c67aefeb64fab42eca1592dc2cf7d6bff46",
+  "root_gate_inventory": {
+    "path": "/private/tmp/mixins-97a-final/artifact-inventory.json",
+    "sha256": "415413c223fb53dbde2bbd340acffa0b528533ee42e5f0422c31459429ec3c77",
+    "verified_artifacts": 15
+  },
+  "root_gate_report": {
+    "path": "/private/tmp/mixins-97a-final/root-gates-report.json",
+    "sha256": "1eac8e4f842e59d6c816ca27ae5ffba7a78ca8e555778f8574009a208afc2761"
+  },
+  "source_review_hashes_unchanged": true,
+  "freeze_checks": {
+    "captured_paths": 3456,
+    "all_before_after_fields_match": true,
+    "all_current_captured_file_hashes_match": true,
+    "observer_current_hash_matches": true,
+    "current_product_diff_matches": true,
+    "guard_metadata_diff_empty": true
+  },
+  "observed_results": {
+    "published_diagnostic_head": "97a53c67aefeb64fab42eca1592dc2cf7d6bff46",
+    "static": "209 passed in19.39s",
+    "preflights": "4 passed; worker,markup537,diagnostics728owners16sinks,census1337",
+    "startup": "5 passed,3 inherited headroom warnings in29.23s",
+    "ui_ready_modules": 1031,
+    "preimport_modules": 554,
+    "preimport_loc": 426171,
+    "preimport_loc_limit": 426199,
+    "preimport_headroom": 28,
+    "largest_route": "library",
+    "largest_route_loc": 132480,
+    "warmup_modules": 93,
+    "guard_metadata_unchanged": {
+      "Tests/Architecture/test_module_size_ratchet.py": true,
+      "Tests/Performance": true,
+      "scripts/ui_pr_gate_census.txt": true,
+      "scripts/check_ui_pr_gate_census.py": true,
+      ".github/workflows/derived-artifacts.yml": true
+    },
+    "source_freeze_proof": {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "/private/tmp/mixins-pr3346-frozen-final-five/probe.py",
+        "pr3346-archive-final"
+      ],
+      "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+      "exit_code": 0,
+      "seconds": 30.556,
+      "source_path_count": 3456,
+      "checks": {
+        "head": true,
+        "cwd": true,
+        "path_roots": true,
+        "paths": true,
+        "manifest_sha256": true,
+        "product_diff_sha256": true,
+        "observing_driver_sha256": true
+      },
+      "observer_unchanged": true
+    },
+    "qualification": "Separate overlapping cohorts; no full suite or future hosted success claimed."
+  },
+  "documentation": [
+    {
+      "path": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Docs/Architecture/console.md",
+      "bytes": 69385,
+      "sha256": "d439f22c4070e3044697b259b2efba57f1d858af6f83bc1c54e35b847838f509"
+    },
+    {
+      "path": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/backlog/docs/lessons-testing-evidence.md",
+      "bytes": 1665592,
+      "sha256": "c775bc705969876fe4dbfa6a1583184560b3e7518e6fdd5f46ee5d7f740ea7e1"
+    },
+    {
+      "path": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-97a/summary.md",
+      "bytes": 5101,
+      "sha256": "66a448bce67979e37667bcc5fa67bcdd999b026bd09df05ac96a1778e99a1133"
+    }
+  ],
+  "documentation_diff_sha256": "ea176562bdfc02d5fb618d6565d159f8748489a16b5961c350808b263074dce5",
+  "findings": {
+    "critical": [],
+    "important": [],
+    "minor": []
+  },
+  "resolved_documentation_precision": "Changed unsupported pre-existence attribution to observed fixed-button absence; native pending/retirement probes remain separately identified.",
+  "qualification": "Separate overlapping local cohorts only. No future commit, hosted CI, merge or fresh latency claim."
+}

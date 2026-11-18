@@ -40,10 +40,12 @@ class LibraryArtifactsCatalog:
         subscriptions_db: Any,
         chachanotes_db: Any,
         chatbook_service: Any = None,
+        dreams_db_getter: Any = None,
     ) -> None:
         self.subscriptions_db = subscriptions_db
         self.chachanotes_db = chachanotes_db
         self.chatbook_service = chatbook_service
+        self.dreams_db_getter = dreams_db_getter
 
     @contextmanager
     def _snapshots(self, scope: ArtifactScope) -> Iterator[list[tuple[str, object]]]:
@@ -70,6 +72,19 @@ class LibraryArtifactsCatalog:
                     source = "kept_report"
                     stack.enter_context(self.chachanotes_db.transaction())
                     owners.append((source, self.chachanotes_db))
+                if (
+                    scope.view in ("dreams", "all")
+                    and not scope.kept_only
+                    and self.dreams_db_getter
+                ):
+                    from .dreams_artifact_snapshot import dreams_artifact_snapshot
+
+                    source = "dream_story"
+                    owners.extend(
+                        stack.enter_context(
+                            dreams_artifact_snapshot(self.dreams_db_getter)
+                        )
+                    )
                 yield owners
         except ArtifactReadError:
             raise
@@ -267,6 +282,14 @@ class LibraryArtifactsCatalog:
         """Read only the selected artifact body through its existing owner."""
         if key.source == "chatbook":
             return self._read_chatbook_detail(key)
+        if key.source in ("dream_story", "dream_collection", "dream_track"):
+            with self._snapshots(ArtifactScope(view="dreams")) as owners:
+                owner = next(
+                    (owner for source, owner in owners if source == key.source), None
+                )
+                return (
+                    self._call(key.source, owner, "read_detail", key) if owner else None
+                )
         live = key.source == "live_report"
         owner = self.subscriptions_db if live else self.chachanotes_db
         if owner is None:
