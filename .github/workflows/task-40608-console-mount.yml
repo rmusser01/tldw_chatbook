@@ -16,6 +16,7 @@ on:
       - 'Tests/Tools/test_native_fs_read_physical_bounds.py'
       - 'Tests/Tools/test_workspace_tool_isolated_installation.py'
       - 'Tests/Utils/test_definition_records_current.py'
+      - 'Tests/Utils/test_windows_files.py'
 
 permissions:
   contents: read
@@ -47,6 +48,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $env:TEMP = $env:TMP = $testRoot
           $checks = @(
+            'Tests/Utils/test_windows_files.py::test_component_preserves_full_character_policy'
+            'Tests/Chat/test_console_trace_repository.py::test_request_header_candidate_scan_has_constant_select_count'
+            'Tests/Chat/test_console_trace_repository.py::test_request_header_validates_entire_candidate_before_comparing'
+            'Tests/Chat/test_console_trace_repository.py::test_request_header_explicit_previous_does_not_scan_other_candidates'
+            'Tests/Chat/test_console_trace_repository.py::test_request_header_preserves_custom_component_reader'
             'Tests/Tools/test_native_fs_read_physical_bounds.py'
             'Tests/Tools/test_native_fs_read_metadata.py'
             'Tests/Tools/test_workspace_root_pin.py'

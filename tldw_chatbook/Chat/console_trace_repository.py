@@ -14,6 +14,7 @@ import sqlite3
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from itertools import groupby
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, TypeAlias, cast
 
@@ -3193,9 +3194,39 @@ class ConsoleTraceRepository:
             )
             if previous_scalars == scalars and previous.components == normalized:
                 return previous
-            candidates: Sequence[sqlite3.Row] = ()
+            candidates = ()
+        elif (
+            self._header_components is _HEADER_COMPONENTS_READER
+            and _HEADER_COMPONENTS_READER.__code__ is _HEADER_COMPONENTS_CODE
+        ):
+            rows = cursor.execute(
+                """SELECT h.header_id, c.header_id, c.component_kind,
+                          c.ordinal, c.artifact_id
+                     FROM console_trace_request_headers AS h
+                     LEFT JOIN console_trace_header_components AS c
+                       ON c.header_id = h.header_id
+                    WHERE h.provider_name = ? AND h.model_name = ? AND h.route_identity = ?
+                      AND h.endpoint_identity = ? AND h.generation_parameters_json = ?
+                      AND h.adapter_defaults_json = ? AND h.response_format_json = ?
+                      AND h.reasoning_controls_json = ?
+                    ORDER BY h.header_id, c.component_kind, c.ordinal""",
+                scalars,
+            )
+            # Validate every component in each visited candidate, even after
+            # an early mismatch. The LEFT JOIN also retains empty headers.
+            candidates = (
+                (
+                    str(header_id),
+                    tuple(
+                        HeaderComponentRef(*row[2:])
+                        for row in components
+                        if row[1] is not None
+                    ),
+                )
+                for header_id, components in groupby(rows, key=lambda row: row[0])
+            )
         else:
-            candidates = cursor.execute(
+            rows = cursor.execute(
                 """SELECT header_id FROM console_trace_request_headers
                     WHERE provider_name = ? AND model_name = ? AND route_identity = ?
                       AND endpoint_identity = ? AND generation_parameters_json = ?
@@ -3203,9 +3234,13 @@ class ConsoleTraceRepository:
                       AND reasoning_controls_json = ? ORDER BY header_id""",
                 scalars,
             ).fetchall()
-        for row in candidates:
-            header_id = str(row[0])
-            if self._header_components(cursor, header_id) == normalized:
+            # Preserve dispatch and query order for custom component readers.
+            candidates = (
+                (str(row[0]), self._header_components(cursor, str(row[0])))
+                for row in rows
+            )
+        for header_id, stored_components in candidates:
+            if stored_components == normalized:
                 record = self._get_request_header(cursor, header_id)
                 assert record is not None
                 return record
@@ -3953,3 +3988,7 @@ class ConsoleTraceRepository:
             (call_id,),
         ).fetchone()
         return None if row is None else TraceResponseLinkRecord(*row)
+
+
+_HEADER_COMPONENTS_READER = ConsoleTraceRepository._header_components
+_HEADER_COMPONENTS_CODE = _HEADER_COMPONENTS_READER.__code__

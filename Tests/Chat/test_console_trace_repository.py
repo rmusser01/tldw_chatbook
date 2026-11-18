@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import UserDict
 from collections.abc import Mapping, MutableMapping
+from contextlib import contextmanager
 import hashlib
 import inspect
 from pathlib import Path
@@ -579,6 +580,211 @@ def test_request_header_nested_json_is_exact_and_rejects_coercing_collisions(
     assert reordered.header_id == string_key.header_id
     assert distinct.header_id != string_key.header_id
     assert count == 2
+
+
+@pytest.fixture
+def header_arguments():
+    return dict(
+        provider_name="openai",
+        model_name="gpt-test",
+        route_identity="responses",
+        endpoint_identity="public_api",
+        generation_parameters={},
+        adapter_defaults={},
+        response_format={},
+        reasoning_controls={},
+        components=(),
+    )
+
+
+@contextmanager
+def _record_selects(cursor):
+    selects: list[str] = []
+
+    def record(sql):
+        if sql.lstrip().upper().startswith("SELECT"):
+            selects.append(sql)
+
+    cursor.connection.set_trace_callback(record)
+    try:
+        yield selects
+    finally:
+        cursor.connection.set_trace_callback(None)
+
+
+@pytest.mark.parametrize("candidate_count", [0, 1, 64])
+@pytest.mark.parametrize("empty", [False, True])
+def test_request_header_candidate_scan_has_constant_select_count(
+    db: CharactersRAGDB,
+    repository: ConsoleTraceRepository,
+    candidate_count: int,
+    empty: bool,
+    header_arguments,
+) -> None:
+    with db.transaction() as cursor:
+        artifact = repository.store_sanitized_artifact(
+            cursor,
+            sanitized_bytes=b"header scan",
+            media_type="text/plain",
+            normalization_version="text-v1",
+        )
+        wanted = (
+            ()
+            if empty
+            else (HeaderComponentRef("tool_schema", 0, artifact.artifact_id),)
+        )
+        ids = [
+            f"00000000-0000-4000-8000-{index:012x}" for index in range(candidate_count)
+        ]
+        for index, header_id in enumerate(ids):
+            cursor.execute(
+                """INSERT INTO console_trace_request_headers VALUES
+                   (?, 'openai', 'gpt-test', 'responses', 'public_api',
+                    '{}', '{}', '{}', '{}', CURRENT_TIMESTAMP)""",
+                (header_id,),
+            )
+            components = (
+                wanted
+                if index == candidate_count - 1
+                else (
+                    HeaderComponentRef("tool_schema", index + 1, artifact.artifact_id),
+                )
+            )
+            cursor.executemany(
+                "INSERT INTO console_trace_header_components(header_id, component_kind, ordinal, artifact_id) VALUES (?, ?, ?, ?)",
+                [
+                    (header_id, item.component_kind, item.ordinal, item.artifact_id)
+                    for item in components
+                ],
+            )
+        with _record_selects(cursor) as selects:
+            result = repository.create_or_reuse_request_header(
+                cursor,
+                **{**header_arguments, "components": wanted},
+            )
+        assert result.components == wanted
+        if ids:
+            assert result.header_id == ids[-1]
+        assert len(selects) == 3
+
+
+@pytest.mark.parametrize("invalid_before_match", [False, True])
+@pytest.mark.parametrize("invalid_field", ["component_kind", "ordinal"])
+def test_request_header_validates_entire_candidate_before_comparing(
+    db: CharactersRAGDB,
+    repository: ConsoleTraceRepository,
+    invalid_before_match: bool,
+    invalid_field: str,
+    header_arguments,
+) -> None:
+    with db.transaction() as cursor:
+        artifact = repository.store_sanitized_artifact(
+            cursor,
+            sanitized_bytes=b"header ordering",
+            media_type="text/plain",
+            normalization_version="text-v1",
+        )
+        ids = (
+            "00000000-0000-4000-8000-000000000001",
+            "00000000-0000-4000-8000-000000000002",
+        )
+        for header_id in ids:
+            cursor.execute(
+                """INSERT INTO console_trace_request_headers VALUES
+                   (?, 'openai', 'gpt-test', 'responses', 'public_api',
+                    '{}', '{}', '{}', '{}', CURRENT_TIMESTAMP)""",
+                (header_id,),
+            )
+        invalid_id = ids[0] if invalid_before_match else ids[1]
+        # The first component already differs. The later invalid component
+        # must still be constructed, rather than short-circuiting equality.
+        cursor.executemany(
+            "INSERT INTO console_trace_header_components(header_id, component_kind, ordinal, artifact_id) VALUES (?, ?, ?, ?)",
+            [
+                (invalid_id, "aaa", 0, artifact.artifact_id),
+                (
+                    invalid_id,
+                    "zz invalid" if invalid_field == "component_kind" else "zzz",
+                    1 if invalid_field == "component_kind" else 1.5,
+                    artifact.artifact_id,
+                ),
+            ],
+        )
+        with _record_selects(cursor) as selects:
+            if invalid_before_match:
+                with pytest.raises(ValueError, match=invalid_field):
+                    repository.create_or_reuse_request_header(
+                        cursor, **header_arguments
+                    )
+            else:
+                result = repository.create_or_reuse_request_header(
+                    cursor, **header_arguments
+                )
+                assert result.header_id == ids[0]
+                assert result.components == ()
+        assert len(selects) == (1 if invalid_before_match else 3)
+
+
+def test_request_header_explicit_previous_does_not_scan_other_candidates(
+    db: CharactersRAGDB,
+    repository: ConsoleTraceRepository,
+    header_arguments,
+) -> None:
+    with db.transaction() as cursor:
+        first = repository.create_or_reuse_request_header(cursor, **header_arguments)
+        with _record_selects(cursor) as selects:
+            reused = repository.create_or_reuse_request_header(
+                cursor,
+                previous_header_id=first.header_id,
+                **header_arguments,
+            )
+        assert reused == first
+        assert len(selects) == 2
+        with pytest.raises(ValueError, match="previous_header_id"):
+            repository.create_or_reuse_request_header(
+                cursor,
+                previous_header_id=new_opaque_id(),
+                **header_arguments,
+            )
+        changed = repository.create_or_reuse_request_header(
+            cursor,
+            **{**header_arguments, "response_format": {"type": "json"}},
+        )
+        replacement = repository.create_or_reuse_request_header(
+            cursor,
+            previous_header_id=changed.header_id,
+            **header_arguments,
+        )
+        assert replacement.header_id not in {first.header_id, changed.header_id}
+
+
+@pytest.mark.parametrize("instance_override", [False, True])
+def test_request_header_preserves_custom_component_reader(
+    db: CharactersRAGDB,
+    instance_override: bool,
+    header_arguments,
+) -> None:
+    class ObservedRepository(ConsoleTraceRepository):
+        def _header_components(self, cursor, header_id):
+            observed.append(header_id)
+            return super()._header_components(cursor, header_id)
+
+    observed: list[str] = []
+    repository = ObservedRepository()
+    if instance_override:
+        repository = ConsoleTraceRepository()
+
+        def read_components(cursor, header_id):
+            observed.append(header_id)
+            return ConsoleTraceRepository._header_components(cursor, header_id)
+
+        repository._header_components = read_components
+    with db.transaction() as cursor:
+        first = repository.create_or_reuse_request_header(cursor, **header_arguments)
+        observed.clear()
+        reused = repository.create_or_reuse_request_header(cursor, **header_arguments)
+    assert reused == first
+    assert observed == [first.header_id, first.header_id]
 
 
 def test_request_header_accepts_mapping_implementations_recursively(

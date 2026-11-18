@@ -2272,22 +2272,19 @@ transaction survives. A failed or uncertain close still refuses the turn.
 
 #### Run-log availability in a mounted Agent section
 
-A full Console display read can omit the optional disk probe for the Agent
-section's log button when the requesting view has observed that mounted
-section closed for this visit, conversation and log target. The original
-rail already restricts this probe to times when it can present the button.
-The backend was probing on full refreshes even with the section closed.
-Activity in the current conversation alone leaves that section closed.
+Keep the full display's original availability probe. A closed Agent
+section cannot display its log button, but the identity of the log for
+a saved conversation depends on a fresh newest-primary-run query.
+An external database writer can change that row while the bridge's two
+live run keys stay the same. The independent history display may return
+a cached result. Neither source establishes the current durable target.
 
-An omitted observation has a distinct wire value. It cannot authorize
-opening a log or supply a cached negative result to a visible section.
-Initial mount, an unknown or changed target, explicit expansion and
-automatic expansion each require the original fresh availability read.
-Reopening a section whose observation was omitted requests it immediately.
-Ordinary full requests retain their complete result. Each probe and viewer
-open retains its existing source, session, visit, permission and physical
-retirement checks. A closed or replaced visit cannot publish its completion
-to the next view.
+In the Windows `g60f` README sample, 11 of the 15 native sampling ticks
+in log availability after first HTTP were in AgentRuns. The optional page
+reader appeared on one sampling tick, with no native file call on its
+stack. The separate request and unobserved wire value would still require
+the original target and ownership checks. The sample supplies no measured
+benefit for that protocol extension.
 
 #### Approval observers follow the checked decision publication
 

@@ -7856,10 +7856,11 @@ def _bind_user_data_dir_stamps():
             (vars(windows_files), "WindowsOS", owner),
             (vars(windows_files), "_Native", native),
             (vars(windows_files), "_AdmissionMetadataCloseError", close_error),
-            *((vars(stat), name, value) for name, value in zip(("S_IFMT", "S_IMODE"), projection)),
+            *((vars(stat), name, value) for name, value in zip(("S_IFMT", "S_IMODE"), projection, strict=True)),
             *((vars(windows_files), name, vars(windows_files)[name]) for name in (
                 "_os", "_stat", "Path", "ntpath", "contextlib", "functools",
                 "_parent", "_component", "_native", "_acl_mode", "_AdmissionMetadataHandle",
+                "_invalid_component_characters", "_INVALID_COMPONENT_CHAR",
             )),
             *((vars(owner), name, vars(owner)[name]) for name in (
                 "__getattr__", "stat", "_stat_handle", "stat_many_for_admission",
@@ -7878,6 +7879,7 @@ def _bind_user_data_dir_stamps():
         functions = (
             original_posture, owner.__getattr__, owner.stat, owner._stat_handle,
             owner.stat_many_for_admission, windows_files._component, windows_files._acl_mode,
+            windows_files._invalid_component_characters,
             native.__init__, native._user_sid, native.open_handle, native.info, native.ntfs,
             native.security, native._decode_security, native.sid_string, native.check, native.ntcheck,
             close_error.__init__, windows_files._AdmissionMetadataHandle.__init__,
@@ -8042,7 +8044,7 @@ def get_user_data_dir() -> Path:
         and walked <= set(stamped)
         and all(
             stamp is not None and not stat.S_ISLNK(stamp[2])
-            for path, stamp in zip(stamped, after)
+            for path, stamp in zip(stamped, after, strict=False)
             if path in walked
         )
     ):

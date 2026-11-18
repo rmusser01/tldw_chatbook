@@ -123,7 +123,7 @@ async def test_selected_original_enter_reaches_provider_and_durable_terminal(
                                 assert await asyncio.shield(receipt.retired) is True
                                 while composer.draft_text():
                                     await pilot.pause()
-                        except BaseException:
+                        except BaseException as error:
                             # Snapshot before App teardown can settle/cancel work.
                             # Existing receipts and server clocks only: no added
                             # tracing, callbacks, payloads, or successful-path I/O.
@@ -174,6 +174,9 @@ async def test_selected_original_enter_reaches_provider_and_durable_terminal(
                                 ],
                             }
                             encoded = json.dumps(diagnostic, sort_keys=True)
+                            # The private child forwards the traceback when its
+                            # captured stderr has fallen outside the output limit.
+                            error.add_note("Selected Enter failure state: " + encoded)
                             request.node.user_properties.append(
                                 ("selected_enter_failure_state", encoded)
                             )

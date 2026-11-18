@@ -23,6 +23,7 @@ import functools
 import ntpath
 import os as _os
 import platform
+import re
 import stat as _stat
 import struct
 from pathlib import Path
@@ -55,6 +56,7 @@ _FILE_RENAME_REPLACE_IF_EXISTS = 0x00000001
 _FILE_RENAME_POSIX_SEMANTICS = 0x00000002
 _FILE_RENAME_INFORMATION_EX = 65
 _EPOCH_100NS = 116444736000000000
+_INVALID_COMPONENT_CHAR = re.compile(r'[\x00-\x1f/\\:<>|?*"]')
 
 
 class _UnicodeString(C.Structure):
@@ -126,6 +128,15 @@ class _Overlapped(C.Structure):
     ]
 
 
+def _invalid_component_characters(name: str) -> bool:
+    if type(name) is str:
+        return _INVALID_COMPONENT_CHAR.search(name) is not None
+    # Preserve the original membership and iteration semantics of subclasses.
+    return any(char in name for char in '/\\:\x00<>|?*"') or any(
+        ord(char) < 32 for char in name
+    )
+
+
 def _component(name: str) -> str:
     """Require one unambiguous ordinary filename; reject NT namespaces and ADS."""
     # Kept explicit for Python 3.11/3.12, which lack ntpath.isreserved.
@@ -133,8 +144,7 @@ def _component(name: str) -> str:
         not isinstance(name, str)
         or not name
         or name in {".", ".."}
-        or any(char in name for char in '/\\:\x00<>|?*"')
-        or any(ord(char) < 32 for char in name)
+        or _invalid_component_characters(name)
         or name[-1] in " ."
     ):
         raise ValueError("invalid_windows_component")

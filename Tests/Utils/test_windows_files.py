@@ -28,6 +28,24 @@ def test_simple_component_is_preserved():
     assert _component("journal-123.json") == "journal-123.json"
 
 
+def test_component_preserves_full_character_policy():
+    forbidden = set('/\\:<>|?*"') | {chr(i) for i in range(32)}
+    for character in map(chr, range(256)):
+        name = f"a{character}b"
+        if character in forbidden:
+            with pytest.raises(ValueError, match="invalid_windows_component"):
+                _component(name)
+        else:
+            assert _component(name) is name
+
+    class CustomName(str):
+        def __contains__(self, character):
+            return character == ":" or super().__contains__(character)
+
+    with pytest.raises(ValueError, match="invalid_windows_component"):
+        _component(CustomName("ordinary"))
+
+
 def test_other_user_read_grant_is_not_private():
     assert _acl_mode([(0, 0, 1, "other")], "me", is_directory=False) & 0o044
 

@@ -284,15 +284,17 @@ edit fixtures. Each side must finish both journeys and pass shutdown to count.
 | Clean pair on `41a4d02006` | README baseline / candidate | Approved edit baseline / candidate | Original assertions and shutdown |
 |---|---:|---:|---|
 | 1 | 341.4389 s / 28.5447 s | 461.5773 s / 28.0529 s | Both sides passed. Candidate first HTTP arrived at 14.5345 s and 9.2941 s. |
-| 2 | Pending / 33.2691 s | Pending / 40.9775 s | Candidate passed and shut down. First HTTP arrived at 13.4365 s and 10.1955 s. Its matched baseline follows it. |
+| 2 | 340.8681 s / 33.2691 s | 486.3288 s / 40.9775 s | Both sides passed. Candidate first HTTP arrived at 13.4365 s and 10.1955 s. |
 
 The original receipt SHA-256 values for pair 1 are
 `37cd15b0121e8547b5345e68f471d22f039fdf73daa3fc7bdf8abff4ca2feb21`
 (baseline) and
 `d903b709c5bb92b4a9a911d1c1c612e0c78ce92039a95e9dde1b7d1381f0ea2e`
 (candidate). Both candidate turns exceeded five seconds.
-The pair 2 candidate receipt SHA-256 is
-`1db0f406bc3d37008b81c4b496d85bc7c090c722bba2bfc7d5326ee956373f08`.
+The pair 2 receipt SHA-256 values are
+`1db0f406bc3d37008b81c4b496d85bc7c090c722bba2bfc7d5326ee956373f08`
+(candidate) and `202134845ed03df558c2e65bcad680506c00dc6dbd310f11c5a9a59354c52c00`
+(baseline).
 
 Batch `q5` started its first clean baseline on Windows 10 at 07:59 UTC on November 18. The driver pinned candidate `a3bf91340319ad7ad60177a37a537ca46364c2e3` and configuration SHA-256 `6af37c73d99d05badc21dc5b570104a3b513414cd213af8cc9464df362f62f93`. Its order is B1/C1, C2/B2, B3/C3. The earlier q4 plan never launched. A separate native component test accepted the corrected rail Apply, then the mounted-writer test failed in its subsequent visible read. Those tests contribute no journey times.
 
@@ -913,6 +915,15 @@ created_at DESC, id DESC)` restricted to non-superseded runs produced the
 same row in 55 instructions. That index would require an AgentRuns and
 recovery-schema migration. The original README starts in a new conversation,
 so this history scan cannot explain its eleven seconds to first HTTP.
+
+Each model dispatch can also search stored trace request headers. When 64
+headers have identical scalar fields and only the last has matching
+components, the original repository issued 67 SELECTs. One ordered left
+join and the final checked header read reduced this to three SELECTs in
+the same in-memory SQLite fixture. The reader still validates each visited
+candidate's complete component list, recognizes empty headers, and chooses
+the same first exact match. Its time still depends on the number of rows it
+must inspect. The two fresh project journeys have many fewer headers.
 
 The native metadata collector also performed a linear membership search for
 each parent and child handle, then another search on close. In a Windows 10
