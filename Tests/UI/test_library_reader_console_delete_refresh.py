@@ -3,9 +3,10 @@
 TASK-33628.10, seen live during the TASK-33628.6 check: after a Console
 Delete, the Library list's message count updated but the reader beside it
 kept its earlier load ("4 of 4 messages") until the app restarted. Library
-is a reused screen, so a return visit re-reads the Conversations list; the
-reader skipped its own re-read because a message delete, undo or edit never
-changes the conversation's version, the only thing the reader compared.
+is a reused screen: a bare return lands on its landing (TASK-41500), and
+reopening Conversations re-reads the list. The reader skipped its own re-read
+because a message delete, undo or edit never changes the conversation's
+version, the only thing the reader compared.
 
 Each case drives the production app (``TldwCli``): the real Library and
 Console screens, the real router (Library is suspended and resumed, never
@@ -272,8 +273,20 @@ def _live_message_ids(db: CharactersRAGDB, cid: str) -> list[str]:
 
 
 async def _return_to_library(app: Any, pilot: Any, library: Any) -> None:
+    """Come back to Library, then reopen Conversations from its landing.
+
+    TASK-41500: a bare Library return lands on the landing, so the reader is
+    reached again the way a user reaches it, through the rail row.
+    """
     await app.handle_screen_navigation(NavigateToScreen("library"))
-    await _wait_until(pilot, lambda: app.screen is library)
+    await _wait_until(
+        pilot,
+        lambda: (
+            app.screen is library
+            and bool(library.query("#library-row-browse-conversations"))
+        ),
+    )
+    library.query_one("#library-row-browse-conversations", Button).press()
 
 
 @pytest.mark.asyncio

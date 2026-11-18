@@ -518,7 +518,9 @@ class HomeScreen(BaseAppScreen):
 
     def _sync_home_triage_after_refresh(self, *, cache_ready: bool = False) -> None:
         """Keep hidden completion pending until visible, warmed presentation."""
-        if not self.is_mounted:
+        # TASK-41702: shutdown's exit fence detaches every node before Textual
+        # empties the stack, so a late completion must not read app.screen.
+        if not self.is_mounted or not self.is_attached:
             return
         if self.app.screen is not self:
             self._home_pending_refresh_sync = True
@@ -600,7 +602,9 @@ class HomeScreen(BaseAppScreen):
 
     async def _build_home_content_snapshot(self) -> HomeContentSnapshot | None:
         """Assemble the T190 content snapshot from real seams, degrading quietly."""
-        if self.is_mounted and self.app.screen is not self:
+        # TASK-41702: past the app's exit fence (shutdown) the stack may be
+        # empty; every stack read here, and after each await, checks first.
+        if self.is_mounted and (not self.is_attached or self.app.screen is not self):
             return None
         console_ready, check_failed = await asyncio.to_thread(
             self._home_console_model_state, background_credentials=False
@@ -643,7 +647,7 @@ class HomeScreen(BaseAppScreen):
             include_keywords=False,
         )
 
-        if self.is_mounted and self.app.screen is not self:
+        if self.is_mounted and (not self.is_attached or self.app.screen is not self):
             return None
         merged = _home_content_records(notes_result, conversations_result, media_result)
         resume_kind, resume_id, resume_title, resume_updated_at = (
@@ -684,7 +688,7 @@ class HomeScreen(BaseAppScreen):
         """
         # Never cancel an issued native read. Once it has retired, hidden Home
         # needs no further queries; the next visit starts its ordinary refresh.
-        if self.is_mounted and self.app.screen is not self:
+        if self.is_mounted and (not self.is_attached or self.app.screen is not self):
             return None
         if not callable(callable_obj):
             return None

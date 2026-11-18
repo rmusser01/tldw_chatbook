@@ -219,7 +219,10 @@ _BUDGETS: dict[str, int] = {
     # admission-veto branch says the honest generic ("Couldn't leave this
     # screen yet; try again in a moment.") -- no admission hook speaks on
     # its own.
-    "tldw_chatbook/app_navigation.py": 1208,
+    # 2026-11-18, TASK-41500 (owner rule 2026-10-04, measured): 1208 -> 1219
+    # (+11) -- a reused screen with no route context gets its landing through
+    # ``apply_generic_reentry``, since reuse skips ``restore_state``.
+    "tldw_chatbook/app_navigation.py": 1219,
     # TASK-33011: the command-palette providers moved verbatim out of app.py;
     # governed there, so governed here.
     # PR #3361, 2026-11-07 (owner size waiver, 2026-11-02 audit TASK-38580..38613):

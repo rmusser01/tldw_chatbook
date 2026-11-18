@@ -23,6 +23,9 @@ Study. This page is the orientation tour; the details live on these pages:
 
 - Press **Ctrl+3** from anywhere, or click **⌃3 Library** in the nav bar.
 - **Ctrl+P** → "Tab Navigation: Switch to Library" in the command palette.
+- Coming back this way always opens the Library landing, even if you left
+  from Search / RAG or another canvas; your Search / RAG draft is kept. A
+  deep link (below) opens its own canvas instead.
 - **Ctrl+6** opens **All artifacts**. The Artifacts rail also has Chatbooks and Reports; Reports defaults to All reports with an explicit Kept filter. An empty Reports view offers **Set up a daily brief…**, which discloses the recurring watchlist, feeds, cadence and billed provider · model and asks you to confirm before creating anything.
 - Old destination names still find it: the six retired screens —
   **notes**, **prompts**, **skills**, **ingest**, **research**, and

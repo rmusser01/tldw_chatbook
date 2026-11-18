@@ -903,7 +903,10 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-04, same rule): 2051 -> 2056 (+5). The locked-Console "staged"
     # notice is read before the opener but sent only after it succeeds, so
     # a refused stage no longer shows "staged" beside "could not take it".
-    "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py": 2056,
+    # 2026-11-18, TASK-41500 (owner decision 2026-10-04, same rule): 2056 ->
+    # 2061 (+5). The scope recovery block mounts nothing once the app's exit
+    # fence has detached its container (the boot-with-search MountError).
+    "tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py": 2061,
     "tldw_chatbook/UI/Library_Modules/library_skill_import_controller.py": 805,
     # 2026-09-25, TASK-32954 (built-in skills): +3 lines threading the
     # Library-only `include_disabled_builtins` flag through the browse read so

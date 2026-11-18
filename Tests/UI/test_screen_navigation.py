@@ -4909,6 +4909,66 @@ async def test_boot_with_search_default_tab_lands_on_library_rag_canvas():
 
 
 @pytest.mark.asyncio
+async def test_scope_recovery_mirror_mounts_nothing_once_the_app_is_exiting():
+    """TASK-41500: the boot-with-search node above failed 3 of 3 at teardown.
+
+    The scope recovery mirror removes the old block and then mounts the new
+    one, and the removal yields. ``TldwCli._shutdown`` and ``App.exit`` set
+    the app's ``_exit`` fence first, and Textual refuses every mount after
+    it with ``MountError`` (its "before ... is mounted" wording names the
+    container, which was mounted). Here the fence lands in that window.
+    """
+    from textual.widget import MountError
+
+    app = _build_test_app(configured_default="search")
+
+    async with app.run_test(size=(170, 48)) as pilot:
+
+        def settled() -> bool:
+            if type(app.screen).__name__ != "LibraryScreen":
+                return False
+            scope = app.screen.query("#library-rag-source-scope")
+            return bool(
+                scope
+                and scope.first().is_mounted
+                and app.screen.query("#library-rag-scope-recovery")
+                and not app.screen._rag_search_state.panel_refresh_lock.locked()
+            )
+
+        # The boot runs a 7 s animated splash first; wait it out on its own.
+        await _wait_for_initial_screen(pilot)
+        assert await _settle(pilot, settled, timeout=30), (
+            "the Search canvas never showed its recovery"
+        )
+        screen = app.screen
+        recovery = screen.query_one("#library-rag-scope-recovery")
+        real_remove = recovery.remove
+        held = asyncio.Event()
+        release = asyncio.Event()
+
+        async def held_remove():
+            held.set()
+            await release.wait()
+            await real_remove()
+
+        recovery.remove = held_remove
+        mirror = asyncio.create_task(screen._mirror_library_rag_scope_recovery())
+        error = None
+        try:
+            await asyncio.wait_for(held.wait(), timeout=15)
+            app._exit = True
+            release.set()
+            try:
+                await mirror
+            except MountError as exc:
+                error = exc
+        finally:
+            app._exit = False
+            release.set()
+        assert error is None, f"the mirror mounted after the exit fence: {error}"
+
+
+@pytest.mark.asyncio
 async def test_boot_with_prompts_default_tab_lands_on_library_with_prompts_row_selected():
     """Sibling of ``test_boot_with_search_default_tab_lands_on_library_rag_canvas``
     proving the boot-time fix is generic across
@@ -5797,12 +5857,15 @@ async def _settle(pilot, predicate, *, timeout: float = 15.0) -> bool:
 # states the destination. GENERIC entries (bare ``NavigateToScreen("library")``
 # with no nav-context -- the nav-bar tab button's and the "Switch to
 # Library" palette command's own shape) land ONE canonical surface: the
-# hub on a first visit, or the last-visited canvas on a revisit
-# (restore-over-reset -- a workbench should not lose your place). These
-# three pilot round trips pin that contract directly against the real
-# navigation orchestration (``TldwCli.handle_screen_navigation`` /
-# ``ScreenStateStore`` / ``LibraryScreen.save_state``/``restore_state``/
-# ``apply_navigation_context``) rather than re-deriving it, matching
+# landing, on a first visit and on every revisit. A qualifying previous
+# scope is offered by the landing's Continue, not reopened; drafts such as
+# the RAG query are kept. The route is reusable, so a revisit resumes the installed
+# instance and takes the landing through ``apply_generic_reentry``
+# (TASK-41500) instead of ``restore_state``. These pilot round trips pin
+# that contract directly against the real navigation orchestration
+# (``TldwCli.handle_screen_navigation`` / ``LibraryScreen.save_state`` /
+# ``apply_generic_reentry`` / ``apply_navigation_context``) rather than
+# re-deriving it, matching
 # ``test_rapid_tab_switch_storm_leaves_no_zombie_widgets``'s real-screen
 # harness pattern above.
 async def _wait_for_initial_screen(pilot) -> None:
@@ -5941,6 +6004,163 @@ async def test_generic_reentry_returns_to_library_landing():
 
         assert type(app.screen).__name__ == "LibraryScreen"
         assert app.screen._library_selected_row_id == ""
+
+
+@pytest.mark.asyncio
+async def test_reused_library_reentry_shows_the_landing_and_keeps_its_live_state():
+    """TASK-41500 AC#4: what Library's screen reuse keeps on a generic return.
+
+    7992124e8d (TASK-31521) made the route reusable for speed, so a return
+    resumes the installed instance and skips ``restore_state``. The landing
+    must still be on screen, not only the row id reset. What reuse keeps on
+    purpose is the instance itself and its live state, here the RAG draft.
+    Keyboard focus must not stay on the removed Search canvas: it lands on a
+    live widget in the focus chain, as on a fresh landing (the nav bar).
+    """
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH
+
+    app = _build_test_app()
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await _wait_for_initial_screen(pilot)
+        await app.handle_screen_navigation(NavigateToScreen("search"))
+        library = app.screen
+        assert library._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
+        library._rag_search_state.query = "roadmap notes"
+        assert await _settle(pilot, lambda: bool(library.query("#library-rag-query-input")))
+        library.query_one("#library-rag-query-input", Input).focus()
+        await pilot.pause()
+
+        await app.handle_screen_navigation(NavigateToScreen("home"))
+        await app.handle_screen_navigation(NavigateToScreen("library"))
+
+        assert app.screen is library
+        assert library._library_selected_row_id == ""
+        assert library.query("#library-landing-canvas")
+        assert not library.query("#library-search-rag-panel")
+        assert library._rag_search_state.query == "roadmap notes"
+
+        def focus_is_live() -> bool:
+            focused = library.focused
+            return bool(
+                focused is not None
+                and focused.is_attached
+                and not focused._pruning
+                and focused in library.focus_chain
+            )
+
+        assert await _settle(pilot, focus_is_live), (
+            f"focus after the return is not on a live widget: {library.focused!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_late_completions_after_the_exit_fence_skip_the_empty_stack():
+    """TASK-41702: work that lands during shutdown must not read ``app.screen``.
+
+    Home and Library are reused, so a suspended screen's workers and
+    refreshes outlive the switch away. Shutdown sets the app's ``_exit``
+    fence first (``TldwCli._shutdown``, ``App.exit``), and Textual's
+    ``_close_all`` then empties the screen stack. These readers raised
+    ``ScreenStackError: No screens on stack`` there:
+    - Home's content snapshot worker, at the builder's first check, at its
+      check after the seam-call awaits, and in each seam call;
+    - Home's triage refresh sink, which must also paint nothing;
+    - Library's footer eligibility, which ``LibraryScreen.refresh`` reaches
+      when a pruned child refreshes its parent.
+    Each runs in the window without yielding, and the window is closed
+    again before anything else can run.
+    """
+    from textual.app import ScreenStackError
+
+    app = _build_test_app()
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await _wait_for_initial_screen(pilot)
+        await app.handle_screen_navigation(NavigateToScreen("home"))
+        home = app.screen
+        assert type(home).__name__ == "HomeScreen"
+
+        stack = app._screen_stack
+        saved: list = []
+        errors: list = []
+
+        def enter_window() -> None:
+            if app._exit:
+                return
+            saved[:] = stack
+            app._exit = True
+            stack.clear()
+
+        def leave_window() -> None:
+            if app._exit:
+                stack.extend(saved)
+                app._exit = False
+
+        def step(name, coroutine) -> None:
+            enter_window()
+            try:
+                coroutine.send(None)
+            except StopIteration:
+                pass
+            except ScreenStackError as exc:
+                errors.append((name, exc))
+            finally:
+                leave_window()
+                coroutine.close()
+
+        step("home builder start", home._build_home_content_snapshot())
+        step("home seam call", home._home_content_seam_call(lambda: 1))
+
+        # The builder's second read runs after its awaits, so this probe
+        # enters the window from inside its own (non-yielding) seam calls.
+        probe = None
+        probe_seam_calls: list[str] = []
+
+        async def seam_entering_window(callable_obj, **kwargs):
+            if asyncio.current_task() is probe:
+                probe_seam_calls.append("seam")
+                enter_window()
+            return None
+
+        async def build_after_awaits() -> None:
+            try:
+                await home._build_home_content_snapshot()
+            except ScreenStackError as exc:
+                errors.append(("home builder after awaits", exc))
+            finally:
+                leave_window()
+
+        home._home_content_seam_call = seam_entering_window
+        try:
+            probe = asyncio.create_task(build_after_awaits())
+            await probe
+        finally:
+            del home._home_content_seam_call
+        assert probe_seam_calls, "the builder never reached its seam calls"
+
+        await app.handle_screen_navigation(NavigateToScreen("library"))
+        library = app.screen
+        assert type(library).__name__ == "LibraryScreen"
+        paints: list[str] = []
+        home._sync_home_triage = lambda: paints.append("paint")
+        pending = home._home_pending_refresh_sync
+
+        enter_window()
+        try:
+            for name, late_call in (
+                ("home triage", home._sync_home_triage_after_refresh),
+                ("library footer", library._library_emergency_return_eligibility),
+            ):
+                try:
+                    late_call()
+                except ScreenStackError as exc:
+                    errors.append((name, exc))
+        finally:
+            leave_window()
+        assert errors == [], f"a late completion read the emptied stack: {errors!r}"
+        assert paints == []
+        assert home._home_pending_refresh_sync is pending
 
 
 @pytest.mark.asyncio

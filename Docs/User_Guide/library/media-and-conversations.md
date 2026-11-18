@@ -386,8 +386,9 @@ Library rail: press Notes (or any other rail row) and come back, and the
 Reader shows the same item on the same tab at the same place, with its Items
 row still marked `loaded` — only **‹ Back** (or Escape, in the narrower
 layouts where it leaves the Reader) returns you to the list. Leaving Library
-for another destination and coming back reopens that item too, or shows its
-Retry state if it was deleted meanwhile. Missing analysis
+for another destination and coming back lands on the Library landing; the
+item reopens when you open Media again (its rail row, or **Continue**), or
+shows its Retry state if it was deleted meanwhile. Missing analysis
 or highlights produces an item-specific empty state; it does not silently
 switch modes. Leaving **Read** for another mode and returning drops you back
 at the same place in the text —
@@ -597,7 +598,7 @@ conversation into a pane headed **"Conversation reader"** with:
   sender and age (`user · 27m`).
 
 **The reader stays in step with Console.** Each time the Conversations list
-reads again — when you come back to Library from Console, page, or filter —
+reads again — when you reopen Conversations after Console, page, or filter —
 the open conversation's saved transcript is checked. If messages were deleted
 (or brought back with Undo), edited, or added in Console since the reader
 loaded it, the reader reloads it in place, so its message count matches the

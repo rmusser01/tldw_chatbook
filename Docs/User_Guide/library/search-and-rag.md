@@ -337,8 +337,8 @@ Set one in Settings ▸ Providers & Models."** and offers **"Open Settings ▸
 Providers"**. Tab to the button and press Enter to open that Settings category.
 The credential-specific environment/config remedy remains in the log.
 
-Return to Library with **Ctrl+3** and reopen **Search / RAG** if the Library
-landing page is shown. Your query, mode and source choices are retained; both
+Return to Library with **Ctrl+3**, which opens the Library landing, and reopen
+**Search / RAG**. Your query, mode and source choices are retained; both
 query fields show the same draft. Run and the recovery action refresh to reflect
 current provider readiness, without repeating a search or generating an answer.
 
