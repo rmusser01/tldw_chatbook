@@ -870,13 +870,13 @@ jobs:
     # one hung test's report room under the cap (~15.4 + 3.3 of 20).
     # TASK-35834 (2026-10-20) introduced thirteen shards: its measured replay
     # plus 110s setup and 15% variance projected <=1000s below the 1020s target.
-    # Current UI lane: 38 shards (TASK-39144, owner decision relayed
-    # 2026-11-15: "38 shards, 19 at once". 36 came from the owner decision of
-    # 2026-11-07 ("36 shards, 18 at once"); round 14's 111 tail entries put the
-    # census at about 493 worst-case pytest min, a 13.7-min floor a shard at
-    # 36, so no re-deal of 36 kept every job 5 min under the cap).
-    # At most 19 UI jobs run at once, so the 38 still run in two waves; one
-    # more peak runner than at 18, and no timeout grows.
+    # Current UI lane: 42 shards (TASK-39144, owner decision 2026-11-16: "42
+    # shards, 21 at once (Recommended)". 38 came from the owner decision of
+    # 2026-11-15 ("38 shards, 19 at once"); round 15's 97 new entries put the
+    # census at about 520 worst-case pytest min, a 13.67-min floor a shard at
+    # 38, so no re-deal of 38 kept every job 5 min under the cap).
+    # At most 21 UI jobs run at once, so the 42 still run in two waves; two
+    # more peak runners than at 19, and no timeout grows.
     # Complete duration rows let replay charge function selectors by node.
     name: UI Fast Lane
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
@@ -885,9 +885,9 @@ jobs:
     strategy:
       # Report every shard, so one red shard does not hide another.
       fail-fast: false
-      max-parallel: 19
+      max-parallel: 21
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42]
 
     steps:
       - uses: actions/checkout@v4
@@ -1846,9 +1846,9 @@ jobs:
     # with setup at CI's measured 1.0x-of-local upper bound: 6 min under the
     # cap. All 14 run locally with these commands (7 at once, load 33-49)
     # took 5.1-8.0 pytest min a shard. Seven at once, so a dev push borrows
-    # half the runners a PR's UI lane does; the run takes two waves. A newer
-    # push to dev cancels it (the workflow's concurrency rule), like every
-    # push run.
+    # a third of the runners a PR's UI lane does; the run takes two waves. A
+    # newer push to dev cancels it (the workflow's concurrency rule), like
+    # every push run.
     #
     # Same minimal dependency set, serial pytest and flags as ui-fast-lane;
     # the file's module bootstrap_profile marker is its isolation (TASK-39141).

@@ -4,7 +4,7 @@ title: "Six UI Fast Lane shards already run 15.0-16.9 min of their 20 min cap, s
 status: In Progress
 assignee: ['@claude']
 created_date: 2026-11-07 02:28
-updated_date: '2026-11-15 06:20'
+updated_date: '2026-11-17 21:12'
 labels:
 - follow-up
 - ci
@@ -224,3 +224,62 @@ Per shard (minutes, slowest finished job; runs as above):
 - **No margin left.** At 38 the floor (12.97) is the target, so the next tail entries need another shard-count decision; the census header says so.
 - **Checks** (run.sh, 2026-11-15). Census checker: OK, 2145 entries, floor 2145. `Tests/CI` at `-n 4`: 1640 passed, 1 skipped (load 44-48); its shard-count statements pin derives 38 shards, 50 eligible test jobs, 31 runners and 32 with perf-guard from the workflow. Size ratchets (module, screen, Library modules), serial: 282 passed. Preflight passed.
 
+**Round-15 closeout (2026-11-17, the round-15 stack on dev 5e3c8b2bd4, top 212f015a91): 42 shards, 21 at once.**
+- **Owner decision (2026-11-16):** "42 shards, 21 at once (Recommended)".
+- **Change.** `ui-fast-lane`'s matrix goes from 38 to 42 shards, and `max-parallel` from 19 to 21. The same statements as Part D follow:
+  - the workflow comment;
+  - the census header;
+  - the checker's `Current UI lane` line;
+  - the replay's usage lines;
+  - the two `Tests/CI` matrix pins;
+  - ADR-103, with a dated amendment.
+
+  The library-shell push lane's comment now says it borrows a third of the UI lane's runners (7 of 21), not half.
+- **ADR-103 counts.** They are derived from the workflow the way `Tests/CI/test_ui_lane_shard_count_statements.py::_counts` does.
+  - The aggregate's `needs` holds 12 non-preflight jobs: the UI lane plus 11 others. Console P0 adds 2 extra profiles.
+  - That gives 42 + 11 + 2 = **55 eligible test jobs**, and min(42, 21) + 11 + 2 = **34 concurrent test runners**, **35** with perf-guard's one job.
+  - Dev 5e3c8b2bd4 itself was at 51 / 32 / 33 before this change; TASK-41217's `plugins-recovery-ui` (2af759be6c) is a dev job.
+- **Weights.** Read-only `gh` over the 33 latest PR runs whose 38 UI shards all finished (success or failure) and whose jobs GitHub served: 2026-11-15 18:54Z (43749365761) to 2026-11-17 09:38Z (44057405523).
+  - Runners: 27 GitHub-hosted, 4 self-hosted (43749365761, 44008003165, 44017381806, 44057405523), and 2 with one self-hosted job each (43918311026, 43932909359).
+  - 27 failed shard logs were left out, so 1227 shard logs. Each entry is charged at its slowest run.
+  - 43898439593 returned HTTP 502 on every attempt and is not in the set. 44017381806 also returned 502 at first; it was added once GitHub served it (37 success, 1 failure).
+- **Charges.** The 97 entries present at 212f015a91 and absent at dev 5e3c8b2bd4: 96 tail entries plus TASK-41130's in-place rename. 2024.6 s in all (33.7 min). Dev's own two entries (TASK-41218's node, TASK-41248's file) are priced by the CI logs: 1.6 s and 2.7 s.
+  - From each task's own notes:
+    - TASK-41130's renamed node: 51.9.
+    - TASK-41125: 24.3.
+    - TASK-41139: 42.3, and its visit file 86.2 (43.3 + 42.9).
+    - TASK-41102: 54.9, then 57.1, 42.5, 57.8 and 71.2. The conversation node takes its later run (54.9 s at load 72-92) in place of 71.2.
+    - TASK-41126: 46.3 and 14.3. The 46.3 s is the post-fix-round serial time in its notes, replacing 65.6; the round's ledger records it too.
+    - TASK-41304: 48.5 and 50.8. Its notes record call time only, with no setup or teardown, so these stay call time.
+    - TASK-41136: 5.4, 0.1, 0.1, 0.3, then nine nodes at 20.0-63.2.
+    - TASK-41138: its per-entry table. Later measurements replace three entries: late voice 12.2 (10.0 + 2.2), real Console [False] 98.6 and [True] 102.1 (the top of each range). The cold-home node takes 36.6, its fix-round-2 re-measurement, in place of 35.0-99.5.
+  - TASK-41127 / TASK-41303's 48 entries.
+    - Their notes give per-entry times from two serial lane-flag processes: the 36 earlier entries at load 7-35, and the 12 later ones from the 733.6 s all-48 run at load 71-55.
+    - The round's ledger records the later rev2 re-measurement (load 47-63) only as totals: 312.7 s for the 36, 242.0 s for the 12. Each group's per-entry times are scaled to those totals: 274.3 s to 312.7 s, and 214.8 s to 242.0 s.
+    - The 733.6 s run is not used per entry for the 36 earlier entries, because it recorded no per-entry times for them, only the run's total. Its 12 per-entry times serve only as that group's proportions, and rev2 supersedes the run itself.
+  - **Literal history** (`test_library_prompt_mixins.py::test_literal_history_restore_keeps_kind_definition_and_guards`) is charged **140 s**, not its scaled 101.6 s (review r15co-rev1, M1).
+    - TASK-41127's notes say to charge per-process times on a loaded host, giving 140 s for mixins at load 63-105. The reviewer's lane-flag run at load about 85 timed it at 202.7 s.
+    - The per-process rule is applied only here. This entry is long enough that a process's start-up is a small share of its 140 s. For the other entries, the notes' 6-63 s per-process times are mostly that start-up, which a CI shard pays once, not per entry.
+- **Replay** (`scripts/ui_lane_shard_replay.py`, through run.sh).
+  - The census carries 519.6 worst-case pytest min: a 13.67 floor at 38, 12.99 at 40 and 12.37 at 42.
+  - As listed it replays at 8.91-17.00 at 38 and 8.08-19.74 at 42.
+  - `--shards 42 --rebalance 13.0 --write` took 19 swaps with the first charges, then 1 more after review r15co-rev1's re-charge. A single run from the base would not take that path; the head deal is kept. Together they moved 39 entries, 5 of them round 15's.
+  - Every shard now replays at **11.66-12.80 pytest min**, against a floor of 12.37.
+  - The entry set is unchanged (2243, floor 2243).
+- **Projected job time.** Model check on dev 5e3c8b2bd4's census (2147 entries at 38, replayed from the same logs at 8.15-14.63).
+  - The measured slowest job per shard ran a median 1.73 min above its replay on GitHub-hosted runners (0.12 to 2.46, over 1100 jobs).
+  - It ran 0.47 min below on self-hosted ones (-1.58 to 1.43, over 154 jobs).
+  - So the 42-shard deal projects at most about 14.5 min a job at the median on GitHub-hosted runners (15.3 at the high end) and about 12.3 on self-hosted ones.
+- **Calibration of local charges** (reviews r15co-rev1 and r15co-rev2, recorded only). Each round-14 entry is priced as the replay prices it (`entry_seconds`), on dev's census, where all 111 still exist.
+  - Round 14's 111 charges, 2174.8 s local and loaded, took 867.3 s of CI worst case over these runs: CI is **0.40x** of the local charges.
+  - Per entry, CI over local: p90 2.33x and max 6.6x (a 0.3 s entry).
+  - For the 63 entries of 5 s or more: p90 1.27x and max 1.67x. The maximum is `test_console_controller_wiring.py::test_composer_accessor_is_late_bound`, 5.5 s local against 9.2 s CI.
+  - Reproduced with the reviewer's `v2-calib.py`. Over 32 runs it gives 866.3 s, the same ratios.
+  - Fix round 1 recorded 908.8 s, 0.42x, p90 1.35x and max 2.41x. That figure summed node durations directly, which double-counts the two whole-file round-14 entries (`test_workspace_archive_async_completion.py`, `test_workspace_archive_review_regressions.py`): their file time plus their nodes' phase rows, about 41.5 s more. Those two entries alone produced the 2.41x maximum.
+  - The 2.6x quiet-host rule and the margin statement are unchanged.
+- **The 38-shard deal in CI** (context for AC#1, not its evidence). Over the same runs:
+  - GitHub-hosted jobs' slowest per shard was 10.03-15.83 min; 11 shards passed 15 min at least once (shard 34 in 4 runs, 29 in 3).
+  - Self-hosted jobs peaked at 14.62 (44017381806).
+- **AC#1 stays open.** It needs 12 PR runs after this change, which only exist after the merge.
+- **Margin.** At 42 the floor is 12.37, about 0.63 pytest min a shard, so about 26 min of new entries fit before the next shard-count decision. The census header says so.
+- **Checks** (run.sh, 2026-11-17, after reviews r15co-rev1 and r15co-rev2). Census checker: OK, 2243 entries, floor 2243 (same entry set, no duplicates). `Tests/CI` at `-n 4`: 1661 passed, 1 skipped (load 67-79); its shard-count statements pin derives 42 shards, 55 eligible test jobs, 34 runners and 35 with perf-guard from the workflow. Size ratchets (module, screen, Library modules), serial: 283 passed. Preflight passed. Ruff gate passed.

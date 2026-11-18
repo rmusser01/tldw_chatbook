@@ -12,6 +12,7 @@ priority: medium
 references:
 - Tests/UI/test_library_collections_actions.py
 - Tests/UI/test_screen_navigation.py
+- Tests/Library/test_library_ingest_runner.py
 dependencies:
 - TASK-41127
 - TASK-41126
@@ -26,6 +27,7 @@ Each of these waits one `pilot.pause()` after `Button.press` (or after a flag) a
 - libtests: existing census nodes flaky at load about 100: `test_navigation_keypress_during_splash_is_safely_ignored`, `test_boot_with_mcp_default_tab_lands_on_settings_tools_hub`;
 - endpoint fix r1: `test_actual_handler_review_wake_waits_for_pinned_capacity_and_finishes` failed 2 of 2 at load 65-110 but 4 of 4 passed at load 8-40 (timing, unproven);
 - `Tests/Workspaces/test_native_confirmed_undo.py` fails at base and head on different nodes each run ("timed out waiting for ..." and `'after\n' == 'before\n'`); TASK-40716 only notes it.
+- closeout final checks (2026-11-17, load about 40): `Tests/Library/test_library_ingest_runner.py::test_explicit_parakeet_directory_is_snapshotted_before_dispatch` failed once in the serial recovered-suites step; it waits one `pilot.pause()` after `submit_library_ingest_job` and then asserts the executor was called. It passed alone and in two whole-file runs at load 32-46, and no round-15 change touches the ingest runner or its tests.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
