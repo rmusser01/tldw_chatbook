@@ -34,6 +34,26 @@ def _observe(code, event, callback):
         monitoring.free_tool_id(slot)
 
 
+@contextmanager
+def _record_admissions():
+    from tldw_chatbook.Backup_Recovery import storage_admission
+    from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+
+    origins = {
+        storage_admission._repository_operation.__wrapped__.__code__: "repository operation",
+        connect_private_sqlite.__code__: "native connection",
+    }
+    acquisitions = []
+
+    def record(frame):
+        while frame is not None and frame.f_code not in origins:
+            frame = frame.f_back
+        acquisitions.append(origins[frame.f_code] if frame is not None else "unexpected")
+
+    with _observe(storage_admission._acquire_storage.__code__, sys.monitoring.events.PY_START, record):
+        yield acquisitions
+
+
 @private_profile_test
 @pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("borrowed", [False, True])
@@ -41,7 +61,6 @@ def _observe(code, event, callback):
 def test_trace_checkpoint_one_admission_retains_policy_and_native_ownership(
     tmp_path, request, borrowed, fail,
 ):
-    from tldw_chatbook.Backup_Recovery import storage_admission
     from tldw_chatbook.Backup_Recovery.participants import core_operation_active
     from tldw_chatbook.Chat.console_trace_service import (
         trace_critical_write_checkpoint_policy,
@@ -55,7 +74,7 @@ def test_trace_checkpoint_one_admission_retains_policy_and_native_ownership(
         connection.execute("PRAGMA wal_autocheckpoint=37")
     else:
         database.close_connection()
-    acquisitions, retiring = [], []
+    retiring = []
     entered = None
 
     def retiring_handle(frame):
@@ -69,11 +88,7 @@ def test_trace_checkpoint_one_admission_retains_policy_and_native_ownership(
 
     try:
         with (
-            _observe(
-                storage_admission._acquire_storage.__code__,
-                sys.monitoring.events.PY_START,
-                lambda _frame: acquisitions.append(True),
-            ),
+            _record_admissions() as acquisitions,
             _observe(
                 CharactersRAGDB._close_connection_handle.__code__,
                 sys.monitoring.events.PY_START,
@@ -92,7 +107,9 @@ def test_trace_checkpoint_one_admission_retains_policy_and_native_ownership(
                     if fail:
                         raise ValueError("original trace write failed")
 
-        assert len(acquisitions) == 1
+        assert acquisitions == (
+            ["repository operation"] if borrowed else ["repository operation", "native connection"]
+        )
         assert not core_operation_active(database)
         assert entered is not None
         if borrowed:
@@ -115,14 +132,13 @@ def test_trace_checkpoint_one_admission_retains_policy_and_native_ownership(
 
 @private_profile_test
 @pytest.mark.bootstrap_profile
-def test_original_trace_dispatch_and_response_use_separate_single_admissions(
+def test_original_trace_dispatch_and_response_own_separate_operations_and_connections(
     tmp_path, request,
 ):
     from Tests.Chat.test_console_trace_call_lifecycle import (
         _identity,
         _unavailable_request,
     )
-    from tldw_chatbook.Backup_Recovery import storage_admission
     from tldw_chatbook.Chat.console_trace_models import TraceCallState
     from tldw_chatbook.Chat.console_trace_repository import ConsoleTraceRepository
     from tldw_chatbook.Chat.console_trace_service import (
@@ -143,19 +159,14 @@ def test_original_trace_dispatch_and_response_use_separate_single_admissions(
         )
         boundary.reserve()
         database.close_connection()
-        acquisitions = []
-        with _observe(
-            storage_admission._acquire_storage.__code__,
-            sys.monitoring.events.PY_START,
-            lambda _frame: acquisitions.append(True),
-        ):
+        with _record_admissions() as acquisitions:
             started = boundary.mark_dispatch_started(bundle, provenance)
             assert started.state is TraceCallState.DISPATCH_STARTED
-            assert len(acquisitions) == 1
+            assert acquisitions == ["repository operation", "native connection"]
             assert database.registered_connection_count() == 0
             acquisitions.clear()
             assert boundary.mark_response_started() is True
-            assert len(acquisitions) == 1
+            assert acquisitions == ["repository operation", "native connection"]
             assert database.registered_connection_count() == 0
         with database.transaction() as cursor:
             durable = repository.get_call(cursor, started.call_id)

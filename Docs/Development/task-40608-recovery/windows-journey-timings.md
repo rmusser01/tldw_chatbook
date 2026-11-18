@@ -193,7 +193,8 @@ Batch `q5` started its first clean baseline on Windows 10 at 07:59 UTC on Novemb
 
 | Batch | Pair | README baseline / candidate | Approved edit baseline / candidate | State |
 |---|---|---|---|---|
-| `q8` | 1–3 | — / — | — / — | Started baseline `q81b1` at 09:58 UTC November 18 after both journeys passed in the separate instrumented run below. Frozen candidate `33470fe57d`; batch configuration SHA-256 `176e09ef967e1c4bbd5d74f2ccf5af15c36f7d40282d9184d9596eef5cde8b35`. |
+| `q8` | 1 | 295.3187 s / 25.4222 s | 405.5752 s / 36.0400 s to persisted reply only | Baseline passed. The candidate verified README, then timed out painting the edit reply after all six edit requests. Zero eligible pairs. |
+| `q8` | 2–3 | — / — | — / — | The driver stopped. Frozen candidate `33470fe57d`, configuration SHA-256 `176e09ef967e1c4bbd5d74f2ccf5af15c36f7d40282d9184d9596eef5cde8b35`. |
 | `q7` | 1 | 259.5920 s / 24.0326 s | 386.9812 s / — | Baseline `q71b1` passed both original journeys. On `e761c372a4`, candidate `q71c1` passed the README assertions, then returned from Settings with source revision 2 while the visible projection still held revision 1. The controller getter refused it. The edit never reached Send. |
 | `q7` | 2–3 | — / — | — / — | The driver stopped at the first failed candidate. No complete pair or median. Configuration SHA-256 `ecf4fbe02dff4a8615d550a34d57650e2161c552bd664036bc5379682f5e4d96`. The preceding q6 configuration was prepared before the edit-worker fix and never launched. |
 | `q5` | 1 | 284.7760 s / — | 374.3431 s / — | Baseline `q51b1` passed both journeys. Candidate `q51c1` timed out after 300 s waiting for the workspace name field. Shutdown also failed to confirm retirement. Neither Send ran. Batch stopped with no completed pair. |
@@ -677,3 +678,34 @@ assigned to the 38.0666-second interval.
 The original Windows receipts are in `q81b1` and `q81c1`. Their SHA-256
 digests are `290567b597776e6d89970cc1b5c8617dc4f4f73613eacefec3041f26f1173bf2`
 and `c4fb2aaf95dc6bf201f04898b8ece884fc99de04ce4971b5485f00cdbf32948f`.
+
+## Completed instrumented Windows journeys g47d
+
+On the same frozen candidate, both actual journeys passed the original
+assertions and shutdown. README took 30.7793 s adjusted and edit took
+33.1092 s adjusted. First HTTP arrived at 15.2031 s and 10.9445 s.
+Call-site verification itself consumed 2.531 s in the parent and 2.753 s
+in the backend across the run. These observations do not qualify a pair.
+
+```mermaid
+flowchart LR
+    A["fs_edit approval published"] -->|"0.235 s"| B["UI received"]
+    B -->|"0.483 s"| C["Controls ready"]
+    C -->|"0.030 s"| D["Eligible button cells delivered"]
+    D -->|"0.686 s"| E["Fixture observes approval"]
+    E -->|"0.366 s"| F["Once clicked"]
+    F -->|"0.103 s"| G["Backend request settled"]
+    H["Local provider invokes fs_edit"] -->|"1.466 s"| I["Invocation returns"]
+```
+
+The edit invocation included a 0.259 s checked precondition, 0.748 s in the
+workspace executor and a 0.158 s post-worker path check. Request construction
+took 0.286 s inside the executor. The approval round lasted 1.903 s before
+invocation. The diagram shows the measured display stages within that round.
+Only the original fixture's measured approval waits were subtracted from
+the benchmark. Its total edit wait was 1.6148 s across three approvals.
+
+The eleven model calls totaled 11.830 s across both journeys, including
+0.313 s in HTTP requests. All five approvals delivered button-region cells
+before the click. The region observer cannot verify the exact painted label.
+Receipts are in `original-journey-33470fmodelg47b/replay-runs/g47d`.
