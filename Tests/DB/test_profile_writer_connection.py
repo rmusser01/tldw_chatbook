@@ -17,6 +17,46 @@ import pytest
 pytestmark = pytest.mark.skipif(os.name != "nt", reason="Windows writer lifecycle")
 
 
+def test_opener_refuses_replacement_between_committed_receipt_and_local_binding(monkeypatch, tmp_path):
+    from tldw_chatbook import config
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+    from tldw_chatbook.DB import profile_writer as writer
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.DB.profile_writer_selection import writer_file_identity
+    from tldw_chatbook.Utils.platform_files import os as files
+
+    profile = config.get_user_data_dir()
+    path = profile / "agent_runs.db"
+    original = writer._exchange
+    observed = []
+
+    def replace_after_open(*args, **kwargs):
+        receipt = original(*args, **kwargs)
+        if args[1] == "call" and args[2]["operation"] == "agent_runs.open":
+            observed.append(tuple(receipt["database"]))
+            writer.drain_profile_writer(profile)
+            replacement = tmp_path / "replacement.sqlite"
+            with closing(sqlite3.connect(path)) as source, closing(sqlite3.connect(replacement)) as target:
+                source.backup(target)
+            files.chmod(replacement, 0o600)
+            os.replace(replacement, path)
+        return receipt
+
+    try:
+        with monkeypatch.context() as changes:
+            changes.setattr(writer, "_exchange", replace_after_open)
+            with pytest.raises(RecoveryRequired, match="database_changed"):
+                AgentRunsDB(path, reconcile_on_init=False)
+        current = AgentRunsDB(path, reconcile_on_init=False)
+        try:
+            assert observed and current._writer_file != observed[0]
+            assert current._writer_file == writer_file_identity(path)
+        finally:
+            current.close()
+    finally:
+        writer.drain_profile_writer(profile)
+
+
 def _wait_file(path, process, timeout=12):
     deadline = time.monotonic() + timeout
     while not path.exists() and process.poll() is None and time.monotonic() < deadline:

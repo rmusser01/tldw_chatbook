@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import math
 import sqlite3
+import sys
 import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
@@ -31,7 +32,8 @@ from tldw_chatbook.Agents.automatic_work_budget import (
     RuntimeRecoveryResult,
 )
 from tldw_chatbook.Agents.code_review_models import ReviewBoundaryReceipt
-from .profile_writer_agent_work import writer_work_store
+from .profile_writer_agent_sources import local_ledger_transaction, register_agent_grant_sources
+from .profile_writer_agent_work import granted_connection, writer_work_store
 
 if TYPE_CHECKING:
     from tldw_chatbook.Agents.workflow_models import (
@@ -58,7 +60,22 @@ def _identity(value: str) -> str:
     return value
 
 
-@writer_work_store("ledger", "create_chain", "pause", "release", "settle", "attach_run")
+def _native_step(grant, operation, *args):
+    """A failed native call can report an error after SQLite has applied it."""
+    try:
+        return operation(*args)
+    except BaseException:
+        if grant is not None:
+            grant.uncertain()
+        raise
+
+
+@register_agent_grant_sources
+@writer_work_store(
+    "ledger", "create_chain", "pause", "release", "settle", "attach_run",
+    "abort_chat_start", "complete_chat_start", "_confirm_chat_start_absent",
+    "_mark_chat_start_review", "_abort_attempt_rows", "_complete_wake_rows",
+)
 class AutomaticWorkLedger:
     """Chain allowance and admission state owned by one run database."""
 
@@ -229,43 +246,61 @@ class AutomaticWorkLedger:
         ):
             raise AutomaticWorkRefused("settlement_unconfirmed")
 
-    @contextmanager
     def transaction(self, *, _native=None) -> Iterator[sqlite3.Connection]:
         """Commit an execution fence durably; restore policy on every exit.
 
         Nested transactions are rejected before changing the connection. Catch
         BaseException too: cancellation must never leave a fence half-open.
         """
+        custody = local_ledger_transaction(self, sys._getframe(1)) if _native is None else None
+        return self._transaction(custody, _native=_native)
+
+    @contextmanager
+    def _transaction(self, custody, *, _native=None):
+        if custody is not None:
+            with granted_connection(self._db, custody) as (conn, grant), self._full_transaction(conn, grant=grant):
+                yield conn
+            return
         with (
             self._db.connection()
             if _native is None
             else nullcontext(self._workflow_fence_connection(_native))
-        ) as conn:
-            if conn.in_transaction:
-                raise RuntimeError("automatic work transaction cannot be nested")
-            previous = int(conn.execute("PRAGMA synchronous").fetchone()[0])
-            conn.execute("PRAGMA synchronous=FULL")
-            try:
-                conn.execute("BEGIN IMMEDIATE")
-                try:
-                    yield conn
-                    if _native is not None:
-                        self._workflow_fence_connection(_native)
-                    conn.commit()
-                except BaseException:
-                    conn.rollback()
-                    raise
-            finally:
-                # The value comes only from SQLite's bounded pragma enum.
-                conn.execute(f"PRAGMA synchronous={previous}")
+        ) as conn, self._full_transaction(
+            conn, _native=_native, grant=getattr(_native, "writer_grant", None)
+        ):
+            yield conn
 
     @contextmanager
+    def _full_transaction(self, conn, *, _native=None, grant=None):
+        if conn.in_transaction:
+            raise RuntimeError("automatic work transaction cannot be nested")
+        previous = int(conn.execute("PRAGMA synchronous").fetchone()[0])
+        _native_step(grant, conn.execute, "PRAGMA synchronous=FULL")
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                yield conn
+                if _native is not None:
+                    self._workflow_fence_connection(_native)
+                _native_step(grant, conn.commit)
+            except BaseException:
+                _native_step(grant, conn.rollback)
+                raise
+        finally:
+            # The value comes only from SQLite's bounded pragma enum.
+            _native_step(grant, conn.execute, f"PRAGMA synchronous={previous}")
+
     def _admission_transaction(
         self, chain_id: str, *, _native=None
     ) -> Iterator[sqlite3.Connection]:
         """Roll back refused work, retaining clock observations and its pause."""
+        custody = local_ledger_transaction(self, sys._getframe(1)) if _native is None else None
+        return self._admission_scope(chain_id, _native=_native, custody=custody)
+
+    @contextmanager
+    def _admission_scope(self, chain_id, *, _native, custody):
         refusal = None
-        with self.transaction(_native=_native) as conn:
+        with self.transaction(_native=_native) if custody is None else self._transaction(custody) as conn:
             conn.execute("SAVEPOINT automatic_admission")
             try:
                 yield conn
@@ -1227,6 +1262,12 @@ class AutomaticWorkLedger:
             ValueError: The attempt is unknown or belongs to another owner.
             sqlite3.Error: Durable settlement could not be confirmed.
         """
+        if not self._mark_chat_start_review(attempt_id, owner_id=owner_id):
+            return False
+        self._clear_chat_start_restriction(attempt_id, owner_id=owner_id)
+        return True
+
+    def _mark_chat_start_review(self, attempt_id: str, *, owner_id: str) -> bool:
         with self.transaction() as conn:
             self._check_runtime_owner(conn, owner_id)
             attempt = self._chat_start_attempt(conn, attempt_id, owner_id)
@@ -1241,7 +1282,6 @@ class AutomaticWorkLedger:
                 "UPDATE automatic_work_chains SET status='review_required', pause_reason='interrupted_work' WHERE id=?",
                 (root,),
             )
-        self._clear_chat_start_restriction(attempt_id, owner_id=owner_id)
         return True
 
     def complete_chat_start(self, attempt_id: str, *, owner_id: str) -> bool:
@@ -1661,6 +1701,17 @@ class AutomaticWorkLedger:
 
     def _abort_attempt(self, attempt_id: str, *, owner_id: str, kind: str) -> bool:
         """Release a proven pre-acceptance refusal; accepted work never refunds."""
+        if not self._abort_attempt_rows(attempt_id, owner_id=owner_id, kind=kind):
+            return False
+        with self._progress_claim_lock:
+            for message_id, _ in self._temporary_progress_attempts.get(attempt_id, ()):
+                self._temporary_progress_claims.pop(message_id, None)
+        self._transition_review_boundary(attempt_id, owner_id, "released")
+        return True
+
+    def _abort_attempt_rows(
+        self, attempt_id: str, *, owner_id: str, kind: Literal["fleet_wake", "goal_iteration"]
+    ) -> bool:
         with self.transaction() as conn:
             attempt = self._attempt(conn, attempt_id, owner_id, kind)
             if attempt["state"] != "prepared":
@@ -1693,14 +1744,16 @@ class AutomaticWorkLedger:
                     "UPDATE goal_iterations SET status='aborted', revision=revision+1 WHERE attempt_id=?",
                     (attempt_id,),
                 )
-        with self._progress_claim_lock:
-            for message_id, _ in self._temporary_progress_attempts.get(attempt_id, ()):
-                self._temporary_progress_claims.pop(message_id, None)
-        self._transition_review_boundary(attempt_id, owner_id, "released")
         return True
 
     def complete_wake(self, attempt_id: str, *, owner_id: str) -> bool:
         """Atomically stamp the exact accepted batch without re-executing it."""
+        if not self._complete_wake_rows(attempt_id, owner_id=owner_id):
+            return False
+        self._transition_review_boundary(attempt_id, owner_id, "completed")
+        return True
+
+    def _complete_wake_rows(self, attempt_id: str, *, owner_id: str) -> bool:
         from .AgentRuns_DB import _now_iso
 
         with self.transaction() as conn:
@@ -1715,7 +1768,6 @@ class AutomaticWorkLedger:
                 "UPDATE automatic_wake_attempts SET state='completed', completed_at=? WHERE id=?",
                 (self._wall_clock(), attempt_id),
             )
-        self._transition_review_boundary(attempt_id, owner_id, "completed")
         return True
 
     def _recover_clean_workflow_boundaries(self, conn, current_owner_id):

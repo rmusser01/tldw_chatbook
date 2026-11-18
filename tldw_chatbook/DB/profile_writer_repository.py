@@ -65,7 +65,7 @@ class AgentRunsWriterDatabase:
 
     def idle_lease(self):
         """Positively identify this one native borrower and its creating thread."""
-        from .private_sqlite import _ordinary_connections
+        from .private_sqlite import _ordinary_connections, _validated_owner_policy
 
         if self.failed:
             raise ProfileWriterOutcomeUnknown("AgentRuns retirement is uncertain")
@@ -76,6 +76,9 @@ class AgentRunsWriterDatabase:
             or self.database._thread_local.conn is not self.connection
             or _ordinary_connections.get(self.connection) is not self.lease
             or participant.connections.get(self.connection) is not self.lease
+            or self.lease.resource_policy is not _validated_owner_policy("db.base")
+            or self.lease.resource_path != self.database.db_path
+            or self.lease.resource_participant is not participant
             or self.lease.resource_thread is not threading.current_thread()
             or self.lease.resource_close_failed
             or sqlite3.Connection.in_transaction.__get__(self.connection)):

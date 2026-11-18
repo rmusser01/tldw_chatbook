@@ -2378,10 +2378,12 @@ retired the same SQLite resource. The same original warm step, two app
 instances, backup and restore, file replacement and shutdown qualify this
 change before the end-to-end comparison.
 
-Two execution-authorizing transactions also consult state in their caller.
+Three execution-authorizing operations also consult state in their caller.
 Workflow phase control verifies the registered native connection immediately
-before commit. Goal checkpointing consults workspace and verifier authority
-held by the active executor. Moving just those checks across an RPC would
+before commit. A workflow child launch verifies the same fence and the original
+task and worktree claims before committing the launch. Goal checkpointing
+consults workspace and verifier authority held by the active executor. Moving
+just those checks across an RPC would
 split their atomic transaction. For these named operations the writer can
 reserve the physical database for the original caller. The grant covers
 its entire transaction, including restoration of synchronous mode and the
@@ -2391,3 +2393,19 @@ exclude other mutations through rollback, commit or positively established
 process death. Unknown outcomes cannot be replayed. Backup must drain this
 custody as it drains work executed on the writer thread. Other serializable
 operations use named domain commands executed by the writer.
+
+The [AgentRuns writer inventory](../../Docs/Architecture/agent-runtime.md#windows-agentruns-writers)
+identifies the original transactions whose check uses a process-local clock,
+pending-start record, or live workflow fence. Their named grants use the same
+exclusive database custody. The original executor releases the database at its
+existing transaction boundary.
+
+On Windows, the writer may recognize a configuration file the runtime has
+already read under its configuration fence. The original private reader must
+observe the same file identity, size, write time and change time on its open
+handle before and after parsing. Reuse requires that exact published cache
+object and a matching fresh named file observation. Replacing the file,
+including with identical bytes and write time, requires another guarded load.
+The original README exposed the failure when its rail save published a new
+configuration and writer admission reloaded it a second time. That second load
+revoked the runtime's configuration source immediately after turn acceptance.

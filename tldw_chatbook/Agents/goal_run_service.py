@@ -21,10 +21,12 @@ from tldw_chatbook.Chat.chat_persistence_service import (
     GoalConversationConflict,
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.DB.profile_writer_agent_sources import register_agent_grant_sources
 
 from .goal_storage_lifetime import goal_storage_operation, owned_goal_storage
 
 
+@register_agent_grant_sources
 class GoalRunService:
     """Own saved lifecycle; execution admission remains the shared ledger’s fence."""
 

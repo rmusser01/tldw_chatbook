@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
 from tldw_chatbook.app_services import read_raw_cli_runtime
+from tldw_chatbook.DB.profile_writer_agent_sources import register_agent_grant_sources
 from .agent_models import RUN_DONE
 from .goal_iteration import capture_manifest, digest, verifier_digest
 from .goal_storage_lifetime import goal_storage_operation, owned_goal_storage
@@ -397,6 +398,7 @@ class _TaskEvidence:
                 owner.mark_cleanup_unproven()
 
 
+@register_agent_grant_sources
 class WorkflowRunService:
     """History is passive; only original native custody can publish a checkpoint."""
 

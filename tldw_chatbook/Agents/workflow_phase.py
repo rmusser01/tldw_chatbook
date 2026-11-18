@@ -49,6 +49,7 @@ class _WorkflowFence:
     thread: object
     operation: str
     key: object
+    writer_grant: object = field(default=None, compare=False, repr=False)
 
 
 def workflow_fence_connection(fence, ledger):
@@ -189,6 +190,8 @@ class WorkflowPhaseAuthorization:
     @contextmanager
     def _fence(self, operation, *, _launch=None, _control=None):
         from tldw_chatbook.Agents.activation import execution
+        from tldw_chatbook.DB.profile_writer_agent_work import granted_connection
+        from tldw_chatbook.DB.profile_writer_grant import local_agent_transaction
 
         if operation not in {"child_commit", "control"}:
             raise AutomaticWorkRefused("workflow_native_fence_operation_changed")
@@ -237,9 +240,15 @@ class WorkflowPhaseAuthorization:
         limits = AutomaticWorkLimits.from_settings("workflow_phase")
         if before != workflow_policy_identity():
             raise AutomaticWorkRefused("workflow_policy_source_changed")
-        with execution(self._ledger), self._ledger._db.connection() as conn:
+        # Both fences recheck the installed phase, policy, thread and this native
+        # connection at commit. Child launch also requires the physical worktree
+        # claim held by the originating execution owner.
+        db = self._ledger._db
+        kind = "workflow.child_commit" if operation == "child_commit" else "workflow.phase_control"
+        custody = local_agent_transaction(db, kind)
+        with granted_connection(db, custody, execution=execution(self._ledger)) as (conn, grant):
             fence = _WorkflowFence(
-                self, conn, limits, before, threading.current_thread(), operation, _KEY
+                self, conn, limits, before, threading.current_thread(), operation, _KEY, grant
             )
             with self._control_lock:
                 if self._active_fence is not None:
@@ -639,3 +648,10 @@ def require_returned_planning(prepared, service, error: BaseException) -> None:
     returned = prepared.planning_recovery_return()
     if returned.error is not error:
         raise ValueError("workflow_planning_return_required")
+
+
+_PROFILE_FENCE_SOURCE = (
+    WorkflowPhaseAuthorization._fence,
+    WorkflowPhaseAuthorization._fence.__wrapped__,
+    WorkflowPhaseAuthorization._fence.__wrapped__.__code__,
+)

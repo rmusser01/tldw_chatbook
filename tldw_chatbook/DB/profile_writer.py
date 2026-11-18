@@ -265,7 +265,25 @@ def call_profile_writer(profile: Path, operation: str, arguments: dict):
     Raises:
         ProfileWriterOutcomeUnknown: Delivery/commit or physical retirement is uncertain.
     """
+    if operation == "agent_runs.open":
+        return open_profile_agent_runs(profile, arguments)[0]
     return call_bound_profile_writer(None, profile, operation, arguments)
+
+
+def open_profile_agent_runs(profile: Path, arguments: dict) -> tuple[bool, tuple[int, int]]:
+    """Bind the opener to the file the writer actually checked and initialized."""
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+    from .profile_writer_selection import writer_file_identity
+
+    receipt = call_bound_profile_writer(None, profile, "agent_runs.open", arguments)
+    if (type(receipt) is not dict or set(receipt) != {"capability", "database"}
+        or type(receipt["capability"]) is not bool or type(receipt["database"]) is not list
+        or len(receipt["database"]) != 2 or any(type(n) is not int for n in receipt["database"])):
+        raise ProfileWriterOutcomeUnknown("invalid AgentRuns opening receipt")
+    identity = tuple(receipt["database"])
+    if identity != writer_file_identity(Path(profile) / "agent_runs.db"):
+        raise RecoveryRequired("profile_writer_database_changed")
+    return receipt["capability"], identity
 
 
 def call_bound_profile_writer(database, profile: Path, operation: str, arguments: dict):
@@ -304,9 +322,13 @@ def call_bound_profile_writer(database, profile: Path, operation: str, arguments
         identity = None
     if database is not None:
         installed = repository_participant(database)
+        if participant == "db.chachanotes.primary":
+            expected = database._local.profile_writer_file_identity
+        else:
+            expected = database._writer_file
         if (installed.path != target or installed.owner_id != participant or installed.read_only
             or (core is not None and core.participant is not installed)
-            or identity is None or database._writer_file != identity):
+            or identity is None or expected != identity):
             raise RecoveryRequired("profile_writer_database_changed")
     if proof is not None:
         with storage._lock:
@@ -326,7 +348,8 @@ def _require_retired(startup, idle=None) -> None:
         leases = startups | ({idle} if idle is not None else set())
         keys = {lease._key for lease in leases if lease._key is not None}
         if (
-            set(storage._startups.values()) != startups or storage._live_leases != leases
+            (idle is not None and (startup is None or idle._key is None or idle._key != startup._key))
+            or set(storage._startups.values()) != startups or storage._live_leases != leases
             or storage._holds.keys() != keys or storage._pending_acquisitions or storage._operations
             or storage._raw_operations or raw._states or storage._retiring_holds
             or any(hold.count != sum(lease._key == hold.key for lease in leases)
@@ -423,7 +446,7 @@ def _command(profile, facts, payload, previous_stamp, enrollment):
     ):
         return "error", encode_profile_writer_error(ValueError("invalid writer command"))
     try:
-        with enrollment.command(profile):
+        with enrollment.command(profile), ExitStack() as order:
             from tldw_chatbook import config
 
             operation = payload["operation"]
@@ -440,6 +463,10 @@ def _command(profile, facts, payload, previous_stamp, enrollment):
                 elif (type(expected) is not list or len(expected) != 2
                       or any(type(item) is not int for item in expected) or tuple(expected) != current):
                     raise RecoveryRequired("profile_writer_database_changed")
+                if owner == "db.agent_runs":
+                    from .profile_writer_grant import reserve_agent_file
+
+                    order.enter_context(reserve_agent_file(current))
             else:
                 if _selection(profile)[1] != facts:
                     raise RecoveryRequired("profile_writer_selection_changed")
@@ -472,6 +499,10 @@ def _command(profile, facts, payload, previous_stamp, enrollment):
                     enrollment.created[owner] = after
                 elif current != after:
                     raise ProfileWriterOutcomeUnknown("database changed during mutation")
+                if operation == "agent_runs.open" and status == "ok":
+                    if after is None:
+                        raise ProfileWriterOutcomeUnknown("AgentRuns opening identity unavailable")
+                    result = {"capability": result, "database": list(after)}
             return status, result
     except RecoveryRequired as error:
         return "recovery", str(error)
@@ -619,6 +650,16 @@ def _serve(profile: Path) -> int:
                         _winapi.CloseHandle(hosts.pop(payload)[1])
                         stop = not hosts
                     data = stop
+                elif intent == "grant" and type(facts) is list and facts[:4] == original[:4]:
+                    from .profile_writer_grant import serve_grant
+
+                    try:
+                        serve_grant(profile, facts, payload, request["id"], handle, enrollment)
+                    except ProfileWriterOutcomeUnknown:
+                        # An uncertain physical close must keep the election
+                        # and all native custody until the process dies.
+                        os._exit(1)
+                    continue
                 elif intent == "call" and type(facts) is list and facts[:4] == original[:4]:
                     try:
                         status, data = enrollment.executor.submit(

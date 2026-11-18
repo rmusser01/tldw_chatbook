@@ -127,11 +127,16 @@ def client(name: str) -> Iterator[int]:
         _winapi.CloseHandle(handle)
 
 
-def server_process(handle: int) -> int:
-    """Pin the actual process behind a connected endpoint for drained shutdown."""
+def server_pid(handle: int) -> int:
+    """Return the original server process of this connected kernel pipe."""
     pid = W.ULONG()
     _native().check(_server_pid(handle, C.byref(pid)))
-    return _winapi.OpenProcess(_winapi.SYNCHRONIZE, False, pid.value)
+    return pid.value
+
+
+def server_process(handle: int) -> int:
+    """Pin the actual process behind a connected endpoint for drained shutdown."""
+    return _winapi.OpenProcess(_winapi.SYNCHRONIZE, False, server_pid(handle))
 
 
 def client_pid(handle: int) -> int:

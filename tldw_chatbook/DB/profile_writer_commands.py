@@ -236,6 +236,8 @@ def _error_types():
         MixinSnapshotUnavailableError,
         MixinSourceChangedError,
     )
+    from tldw_chatbook.Chat.console_trace_repository import TraceIdentityConflict
+    from tldw_chatbook.Chat.console_trace_settlement import _SettlementConflict
     from tldw_chatbook.Chat.library_preparation import LibraryPreparationValidationError
     from tldw_chatbook.Notes.note_folder_models import FolderCapabilityError, FolderCollisionError, FolderConflictError, FolderValidationError, NotesOrganizationRepositoryError
     from tldw_chatbook.Notes.note_import_executor import (
@@ -262,6 +264,8 @@ def _error_types():
         sqlite3.DatabaseError,
         RecoveryRequired,
         CitationPersistenceUnavailable,
+        _SettlementConflict,
+        TraceIdentityConflict,
         AgentStepConflictError,
         ConsoleActivityReceiptsUnavailable,
         CharactersRAGDBError,
@@ -336,6 +340,11 @@ def decode_profile_writer_error(data: dict) -> Exception:
             raise invalid
         return kind(data["workflow_id"])
     if data.keys() != {"type", "message"}:
+        raise invalid
+    if data["type"] == "_SettlementConflict" and message not in {
+        "settlement_outcome_conflict", "settlement_integrity_conflict",
+        "settlement_usage_conflict", "settlement_response_conflict",
+    }:
         raise invalid
     if data["type"] in {"ImportTargetRetryableError", "ImportTargetConflictError", "ImportTargetPermanentError", "ImportTargetInternalError"}:
         if message != kind.message:

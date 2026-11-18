@@ -6,6 +6,7 @@ import json
 import sqlite3
 import sys
 import time
+from contextlib import ExitStack, contextmanager
 from dataclasses import replace
 from functools import wraps
 from types import FunctionType, MappingProxyType
@@ -13,6 +14,24 @@ from types import FunctionType, MappingProxyType
 
 _STORES = {}
 _COMMANDS = {}
+
+
+@contextmanager
+def granted_connection(database, grant_scope, *, execution=None):
+    """Retire the bound native handle after its original operation scopes exit."""
+    with grant_scope as grant:
+        bound = None
+        try:
+            with ExitStack() as original:
+                if execution is not None:
+                    original.enter_context(execution)
+                connection = original.enter_context(database.connection())
+                grant.bind(connection)
+                bound = connection
+                yield connection, grant
+        finally:
+            if bound is not None:
+                grant.retire(bound)
 
 
 def _mapping(value):
@@ -69,7 +88,7 @@ def _client_database(kind, owner):
 
 
 def _routed(kind, name, method):
-    operation = f"agent_runs.work.{kind}.{name}"
+    operation = f"agent_runs.work.{kind}.{name.lstrip('_')}"
     _COMMANDS[operation] = kind, method
     if sys.platform != "win32":
         return method
@@ -87,14 +106,20 @@ def _routed(kind, name, method):
         signature, request, result_type = _run_contract(method)
         values = dict(signature.bind(owner, *args, **kwargs).arguments)
         del values["self"]
+        if kind == "workflow" and name == "baseline_change_window":
+            values["roots"] = tuple(str(root) for root in values["roots"])
+        if kind == "workflow" and name == "publish_change_window":
+            values["records"] = tuple(values["records"])
         if kind == "ledger" and name == "create_chain" and values.get("limits") is None:
             from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkLimits
 
             values["limits"] = AutomaticWorkLimits.from_settings()
         if kind == "goal" and name == "set_provisioning":
             values["snapshot"] = _snapshot_maps(values["snapshot"], dict)
-        if kind != "worktree" and (
-            kind == "goal" or kind == "workflow" and name not in ("record_attempt", "record_retirement", "reserve_result") or kind == "ledger" and name == "settle"
+        if (
+            kind == "goal" and name != "clear_wait" or kind == "workflow" and name in {
+                "create", "save_plan", "set_status", "publish_result", "remove_payloads", "save_decision"
+            } or kind == "ledger" and name == "settle"
         ) and db.automatic_work._workflow_accounting_validators is not None:
             # A snapshot with live clock evidence may invoke the originating
             # runtime's registered proof. Retain that transaction on its owner.

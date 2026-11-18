@@ -364,21 +364,12 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         super().__init__(db_path, client_id, initialize_schema=self._writer_profile is None)
         if self._writer_profile is not None:
             from tldw_chatbook.Backup_Recovery.participants import core_access
-            from .profile_writer import call_profile_writer
-            from .profile_writer_selection import writer_file_identity
+            from .profile_writer import open_profile_agent_runs
 
             core_access(self)
-            capability = call_profile_writer(
-                self._writer_profile, "agent_runs.open", {"reconcile": reconcile_on_init}
+            self.receipt_capability_available, self._writer_file = open_profile_agent_runs(
+                self._writer_profile, {"reconcile": reconcile_on_init}
             )
-            if type(capability) is not bool:
-                raise ValueError("Invalid AgentRuns open receipt")
-            self.receipt_capability_available = capability
-            self._writer_file = writer_file_identity(self.db_path)
-            if self._writer_file is None:
-                from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
-
-                raise RecoveryRequired("profile_writer_database_changed")
         # After super().__init__: the agent_runs table exists (base_db ran
         # _initialize_schema) and self.is_memory_db is set. Reconcile once per
         # file per process so a crash mid-run doesn't leave a 'running' row

@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from tldw_chatbook.Agents.activation import execution, owned_goal_storage
 from tldw_chatbook.Agents.execution_capacity import WorkOrigin
 from tldw_chatbook.Agents.run_context import bind_workflow_preparation
+from tldw_chatbook.DB.profile_writer_agent_sources import register_planning_abort
 from tldw_chatbook.Agents.workflow_task_scope import (
     prepare_workflow_task,
     require_workflow_hooks_idle,
@@ -3388,6 +3389,7 @@ from tldw_chatbook.Agents.workflow_task_scope import (
 _STORAGE_PATH_CLASS = type(_StoragePath())
 
 
+@register_planning_abort
 def _abort_workflow_planning(ledger, original, *, _prepared) -> bool:
     """Abort only the original returned, unaccepted planning invocation."""
     from tldw_chatbook.Agents.workflow_models import WorkflowPhaseAttempt

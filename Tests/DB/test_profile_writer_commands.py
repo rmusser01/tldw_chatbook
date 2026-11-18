@@ -25,6 +25,8 @@ def test_domain_errors_round_trip_with_conflict_identity():
         MixinSnapshotUnavailableError,
         MixinSourceChangedError,
     )
+    from tldw_chatbook.Chat.console_trace_repository import TraceIdentityConflict
+    from tldw_chatbook.Chat.console_trace_settlement import _SettlementConflict
     from tldw_chatbook.Chat.library_preparation import LibraryPreparationValidationError
     from tldw_chatbook.DB.ChaChaNotes_DB import ConflictError
     from tldw_chatbook.Notes.note_folder_models import FolderCapabilityError, FolderCollisionError, FolderConflictError, FolderValidationError, NotesOrganizationRepositoryError
@@ -33,6 +35,9 @@ def test_domain_errors_round_trip_with_conflict_identity():
     errors = (
         AgentStepConflictError("step already recorded"),
         KeyError("unknown run"),
+        KeyError("call_id"),
+        _SettlementConflict("settlement_usage_conflict"),
+        TraceIdentityConflict("call_binding"),
         sqlite3.IntegrityError("duplicate"),
         RecoveryRequired("maintenance_in_progress"),
         CitationPersistenceUnavailable("canonical_write_refused"),
@@ -55,6 +60,8 @@ def test_domain_errors_round_trip_with_conflict_identity():
         assert decoded.args == error.args
         assert str(decoded) == str(error)
         assert vars(decoded) == vars(error)
+    with pytest.raises(ValueError, match="Invalid profile writer error"):
+        commands.decode_profile_writer_error({"type": "_SettlementConflict", "message": "foreign"})
 
 
 def test_agent_commands_are_closed_before_open(monkeypatch, tmp_path):

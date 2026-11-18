@@ -6,6 +6,7 @@ import hashlib
 import json
 import sqlite3
 import time
+from contextlib import ExitStack
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
@@ -19,12 +20,14 @@ from tldw_chatbook.Agents.goal_models import (
     IterationReport,
 )
 from tldw_chatbook.DB.automatic_work import _identity
+from .profile_writer_agent_sources import register_agent_grant_sources
 from .profile_writer_agent_work import writer_work_store
 
 if TYPE_CHECKING:
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
+@register_agent_grant_sources
 @writer_work_store("goal", "create", "control", "settle_control", "set_provisioning", "remove_payloads")
 class GoalRunsStore:
     """Typed launch owner; no dispatch or cross-store transactions."""
@@ -286,7 +289,19 @@ class GoalRunsStore:
         fingerprint = hashlib.sha256(
             json.dumps(result_payload, sort_keys=True, default=str).encode()
         ).hexdigest()
-        with self.db.automatic_work.transaction() as conn:
+        with ExitStack() as scope:
+            ledger = self.db.automatic_work
+            if getattr(self.db, "_writer_profile", None) is None:
+                conn = scope.enter_context(ledger.transaction())
+            else:
+                # Goal evidence is refreshed from the executor's pinned workspace.
+                # Keep those reads and the matching attempt in one FULL transaction.
+                from .profile_writer_agent_work import granted_connection
+                from .profile_writer_grant import local_agent_transaction
+
+                custody = local_agent_transaction(self.db, "goal.checkpoint")
+                conn, grant = scope.enter_context(granted_connection(self.db, custody))
+                scope.enter_context(ledger._full_transaction(conn, grant=grant))
             row = conn.execute(
                 "SELECT * FROM goal_runs WHERE id=?", (result.goal_id,)
             ).fetchone()
@@ -671,3 +686,6 @@ class GoalRunsStore:
             ),
             accounting=self.db.automatic_work._snapshot(conn, row["chain_id"]),
         )
+
+
+_PROFILE_CHECKPOINT_SOURCE = GoalRunsStore.checkpoint, GoalRunsStore.checkpoint.__code__

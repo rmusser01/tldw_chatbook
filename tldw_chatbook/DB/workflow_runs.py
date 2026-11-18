@@ -5,8 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
-from typing import TYPE_CHECKING, get_args
+from typing import TYPE_CHECKING, Any, get_args
 from uuid import uuid4
 
 from pydantic import TypeAdapter
@@ -26,6 +27,7 @@ from tldw_chatbook.Agents.workflow_models import (
     WorkflowTaskAttempt,
     WorkflowTaskResult,
 )
+from .profile_writer_agent_sources import register_agent_grant_sources
 from .profile_writer_agent_work import writer_work_store
 
 _identity = TypeAdapter(Identity).validate_python
@@ -56,9 +58,11 @@ class _WindowUnpublished:
     error: BaseException
 
 
+@register_agent_grant_sources
 @writer_work_store(
     "workflow", "create", "save_plan", "set_status", "record_attempt", "record_retirement",
-    "reserve_result", "publish_result", "remove_payloads",
+    "reserve_result", "publish_result", "remove_payloads", "save_decision",
+    "baseline_change_window", "unused_change_window", "publish_change_window",
 )
 class WorkflowRunsStore:
     """Storage only: construction and reads never recover, admit or dispatch work."""
@@ -750,7 +754,7 @@ class WorkflowRunsStore:
                 (authorization.claim.id, window_id),
             )
 
-    def baseline_change_window(self, window_id, roots, disposition):
+    def baseline_change_window(self, window_id: str, roots: tuple[str, ...], disposition: str) -> None:
         """Publish actual B disposition; B alone never settles an effects window."""
         payload = self._window_roots(roots)
         if disposition not in {"completed", "disclosed_failure", "unresolved"}:
@@ -765,7 +769,7 @@ class WorkflowRunsStore:
             ):
                 raise ValueError("workflow_window_baseline_conflict")
 
-    def unused_change_window(self, window_id):
+    def unused_change_window(self, window_id: str) -> None:
         """Close a conclusively returned B with no actually committed member."""
         with self.db.automatic_work.transaction() as conn:
             if (
@@ -778,7 +782,9 @@ class WorkflowRunsStore:
             ):
                 raise ValueError("workflow_window_not_unused")
 
-    def publish_change_window(self, window_id, *, run_id, records, kind):
+    def publish_change_window(
+        self, window_id: str, *, run_id: str, records: Sequence[Mapping[str, Any]], kind: str
+    ) -> None:
         """Atomically publish native E rows, one ref representation and disposition."""
         records = tuple(records)
         if len(records) > 64:

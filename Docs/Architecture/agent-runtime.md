@@ -493,6 +493,42 @@ acknowledges the immutable review marker without changing already closed/removed
 history. Known and unknown accounting share this idempotent path; live native work
 still refuses review, and removed payloads are not reopened.
 
+### Windows AgentRuns writers
+
+For the canonical private `agent_runs.db`, app instances submit named AgentRuns,
+agent-definition, worktree, Goal and Workflow mutations to the elected profile
+writer. It checks the selected profile and physical database before executing
+the original repository transaction. A committed mutation whose reply is lost
+has an unknown outcome. The original caller must inspect the durable state
+before another action. Each live Console run also holds its own process-lifetime
+presence record so a writer restart can distinguish an idle turn from an orphan.
+
+Some FULL-synchronous transactions depend on an object that exists only in the
+executing app. The elected writer parks its own AgentRuns connection and grants
+the originating process exclusive access to the same physical database for that
+transaction. The stock entry points in `DB/profile_writer_agent_sources.py`
+identify the allowed cases.
+
+| Transaction | Evidence checked in the originating process |
+| --- | --- |
+| Goal checkpoint and result review | The accepted iteration, the freshest manifests from its pinned workspace, and its matching stored attempt share one SQLite snapshot. |
+| Workflow phase control and child launch commit | The accepted phase, current control decision or physical worktree claim, active execution owner, thread, policy and SQLite connection are checked before commit. |
+| Automatic-work admission and recovery | Reserve, check, admit and commit read the runtime's pending-start restrictions and monotonic-clock identity. Wake, Goal and Workflow preparation and acceptance also consult original review, progress or provider guards. Recovery snapshots the actual pending entries and clears only those entries after its FULL commit. |
+| Workflow interval settlement, task binding and planning return | The original dispatch, drain, cancellation or planning proof must agree with the recorded phase, task and interval. The same rule applies to workflow quality review and recovery closure while claims might still be live. |
+| Store mutations that return a live accounting snapshot | The original coordinator can have installed a clock validator that reads the active native SQLite transaction. Those branches use the original validator against that connection. |
+
+A grant starts at the bounded SQLite operation and ends after commit or rollback,
+restoration of the previous synchronous policy and retirement of the original
+operation. An independently owned pre-existing handle may remain idle. A new
+handle must close on its acquiring thread. An unconfirmed COMMIT, ROLLBACK,
+policy change or native retirement retains the guard while the process lives.
+Windows releases the file guard when the process exits. Provider calls, user
+approval, streaming, tools and review waits run outside these grants.
+
+In-memory stores, explicit independent database paths and custom repositories
+retain their original access behavior. Direct SQLite clients and explicit
+custom transaction callbacks do not participate in the profile-writer protocol.
+
 ### Ordinary Console coordination
 
 `console_ordinary_tree.py` retains the originating native owner and file footprint
