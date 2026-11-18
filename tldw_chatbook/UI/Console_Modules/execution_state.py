@@ -23,6 +23,10 @@ from ..Screens.chat_screen import ChatScreen, _workspace_build_scope
 from .execution_projection import _definition, _require_methods, _require_sources
 
 _CLIENT_METHODS = (("require_view", _definition(ConsoleExecutionClient.require_view)),)
+_PASSIVE_FAILURE_METHODS = tuple(
+    (name, _definition(getattr(ConsoleExecutionClient, name)))
+    for name in ("read_projection", "_read_projection_locked", "require_passive_projection_failure")
+)
 _WARNING_METHOD = (
     (
         "_console_model_capability_warning",
@@ -464,6 +468,8 @@ async def refresh_selected_view(screen: ChatScreen, *, checkpoint: str | None = 
             if client._source_revision == source and _defer_selected_refresh(screen, client, visit):
                 return False
             raise
+        if refreshed:
+            screen._console_passive_projection_failure = None
         return refreshed
     finally:
         screen._console_selected_refresh_count -= 1
@@ -812,9 +818,9 @@ async def _publish_resumed_source(screen, client, visit, operation):
             screen._console_resuming_source = None
 
 
-async def reconcile_selected_view(screen: ChatScreen) -> None:
+async def reconcile_selected_view(screen: ChatScreen, *, passive: bool = False) -> None:
     """Join the real remote visit and publish its original mounted values."""
-    from ...Chat.console_execution_process import ConsoleChannelLost
+    from ...Chat.console_execution_process import ConsoleChannelLost, ConsoleRemoteFailure
 
     if getattr(screen, "_console_process_content_failed", False):
         return
@@ -866,6 +872,29 @@ async def reconcile_selected_view(screen: ChatScreen) -> None:
                 0.25, lambda: refresh_selected_when_due(screen),
             )
             screen._record_ui_timer_created("console-credential-poll")
+    except ConsoleRemoteFailure as error:
+        if not passive or action is not None or client._source_revision != source:
+            raise
+        _require_sources()
+        _require_methods(client, _PASSIVE_FAILURE_METHODS)
+        if selected_client(screen) is not client:
+            raise
+        client.require_passive_projection_failure(error, screen, visit)
+        row = client.projection_view.session(client.projection_view.active_session_id)
+        scope = (client, visit, source, row.id, row.incarnation_id)
+        previous = getattr(screen, "_console_passive_projection_failure", None)
+        # A traceback retains the failed read's entire projection and receipt.
+        # The UI needs only the scope and the safe, fixed diagnostic values.
+        screen._console_passive_projection_failure = (*scope, error.code, error.stage)
+        screen._console_process_surface_reconciled = False
+        client._readiness_deadline = 0.0
+        if previous is None or previous[:5] != scope:
+            from loguru import logger
+
+            logger.warning(
+                "Console passive display refresh refused (code={}, stage={}); will retry",
+                error.code, error.stage,
+            )
     except ConsoleChannelLost:
         if client._source_revision != source or not _defer_selected_refresh(screen, client, visit):
             raise
@@ -977,7 +1006,7 @@ def refresh_selected_when_due(screen: ChatScreen) -> None:
     if client is None or (not resumed and time.monotonic() < client._readiness_deadline):
         return
     screen._console_attach_reconcile_worker = screen.run_worker(
-        partial(reconcile_selected_view, screen),
+        partial(reconcile_selected_view, screen, passive=True),
         group="console-attach-reconciliation", exclusive=False,
     )
 

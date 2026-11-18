@@ -48,6 +48,7 @@ class ConsoleRemoteFailure(RuntimeError):
     def __init__(self, code: str, stage: str) -> None:
         self.code = code
         self.stage = stage
+        self._retired_projection = None
         super().__init__(f"Console operation failed: {code} ({stage})")
 
 
@@ -874,6 +875,43 @@ class ConsoleExecutionClient:
         if not task.cancelled():
             task.exception()
 
+    def require_passive_projection_failure(
+        self, error: ConsoleRemoteFailure, view: Any, visit: int,
+    ) -> None:
+        """Qualify a failed observer without accepting its display or authority."""
+        captured = getattr(error, "_retired_projection", None)
+        if type(error) is not ConsoleRemoteFailure or captured is None:
+            raise error
+        owner, receipt, old_view, old_visit, attachment, app, binding, published, frame = captured
+        source, session_id, incarnation_id = binding
+        if (
+            owner is not self or type(receipt) is not ConsoleProcessReceipt
+            or receipt.operation != "ReadProjection"
+            or error.code != "command_failed" or error.stage != "applied"
+            or any(not item.done() or item.cancelled()
+                   for item in (receipt.received, receipt.applied, receipt.retired))
+            or receipt.received.exception() is not None
+            or receipt.applied.exception() is not error
+            or receipt.retired.exception() is not None or receipt.retired.result() is not True
+            or (receipt.identity.profile_epoch, receipt.identity.service_epoch)
+               != (self.profile_epoch, self.service_epoch)
+            or (receipt.identity.source_revision, receipt.identity.session_id,
+                receipt.identity.incarnation_id) != binding
+            or receipt.identity.sequence <= self._projection_sequence
+            or view is None or old_view is not view or old_visit != visit
+            or self._view is not view or self._visit != visit
+            or self._attachment_id != attachment or self._source_revision != source
+            or self._view_preparation is not None or self._app is not app
+            or getattr(app, "console_execution_client", None) is not self
+            or getattr(app, "console_runtime", None) is not None
+            or self._channel_error is not None or self._disposed or self._shutdown_task is not None
+            or published is None or self.projection_view is not published
+            or self._projection is not frame or published.active_session_id != session_id
+            or published.session(session_id).incarnation_id != incarnation_id
+        ):
+            raise error
+        self.require_view(view, visit)
+
     async def _read_projection_locked(
         self, session_id: str, incarnation_id: str, *, _preparation=None,
         _checkpoint: str | None = None, _run_history=None, _inspector_refresh: str | None = None,
@@ -1058,6 +1096,18 @@ class ConsoleExecutionClient:
                         # visibility before a shown project timer exists. Only
                         # the backend's typed old-token refusal proves displacement.
                         raise ConsoleDisplaySuperseded("Console display checkpoint was superseded") from failure
+            if (
+                type(failure) is ConsoleRemoteFailure
+                and failure.code == "command_failed" and failure.stage == "applied"
+                and not admission_refused
+                and _checkpoint is None and _preparation is None
+                and _run_history is None and _inspector_refresh is None
+            ):
+                # Keep the exact refusal for every caller. Only the passive UI
+                # worker may handle it after rechecking this original receipt.
+                failure._retired_projection = (
+                    self, receipt, view, visit, attachment, app, binding, published, previous,
+                )
             raise failure
         if (
             self._channel_error is not None

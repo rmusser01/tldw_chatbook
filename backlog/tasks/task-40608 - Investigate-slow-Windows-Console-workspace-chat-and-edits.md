@@ -163,6 +163,8 @@ Both `g27` and `g28` reached the expected persisted README reply after five actu
 
 The third guarded Windows batch used candidate `997b3339ff`. Its baseline passed at 312.6208 s for README and 392.7283 s for edit. The candidate persisted the expected README reply at 30.027 s adjusted, but its verification code never appeared in the row. The fixture stopped before edit Send. The transcript now checks for the mounted answer body before reusing a row. Both Windows interruption regressions passed. A separate baseline with approval tracing completed at 303.0486 s and 412.4056 s. The [timing tracker](../../Docs/Development/task-40608-recovery/windows-journey-timings.md) contains the per-tool costs, observed button updates and pair eligibility.
 
+The original guarded q8 baseline passed at 295.3187 seconds for README and 405.5752 seconds for edit. Candidate `33470fe57d` verified README at 25.4222 seconds. The edit reply persisted at 36.0400 seconds and then missed the original 600-second painted-row deadline. The driver recorded zero eligible pairs. The [Windows timing tracker](../../Docs/Development/task-40608-recovery/windows-journey-timings.md#clean-windows-pair-attempt-q8) records raw times and receipt hashes. AC5 remains open.
+
 <!-- SECTION:NOTES:END -->
 
 Measured follow-up under the same [ADR-126 bounded configuration-read amendment](../decisions/126-complete-local-backup-and-recovery.md#task-40608--bounded-sensitive-database-path-configuration-reads): qualify the original sensitive container-reader cohort, then group its admissions without changing readers, overrides or refusal checks. The measured 0.218-second component is separate from the unresolved planning delay; final three-pair acceptance remains open.
