@@ -374,7 +374,9 @@ def endpoint_refusal(
     registry, agent routing and ``chat_with_llama`` all decide with this, so
     none accepts a value the save refuses. TASK-41131: so do the shared local
     transport, KoboldCpp's send and the hosted engine, for every
-    ``chat_api_call`` caller. The reason never names any part of the value.
+    ``chat_api_call`` caller; TASK-41522: and the first-party cloud adapters
+    and the strict hosted transport. The reason never names any part of the
+    value.
 
     Args:
         provider: Provider key; one the contract cannot name (``local-llm``)

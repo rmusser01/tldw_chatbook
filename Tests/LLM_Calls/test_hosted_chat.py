@@ -1114,8 +1114,13 @@ def test_transport_config_repr_hides_api_key() -> None:
 
 
 def test_owned_json_post_maps_invalid_base_url_to_redacted_transport_error() -> None:
-    """Map malformed bases to a redacted public transport error."""
-    base_url = "https://user:RAW-URL-CANARY@example.com/v1"
+    """Map malformed bases to a redacted public transport error.
+
+    TASK-41522: a base the endpoint contract refuses (user info, as this
+    test first used) is refused before this mapping, with the contract's
+    reason; one only the transport refuses (a ``/models`` route) maps here.
+    """
+    base_url = "https://example.com/RAW-URL-CANARY/v1/models"
 
     with pytest.raises(ChatProviderError) as exc_info:
         owned_json_post(

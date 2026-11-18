@@ -55,6 +55,7 @@ from tldw_chatbook.Provider_Contract import (
     ChatConfigurationError,
 )
 from tldw_chatbook.Chat.console_provider_endpoints import builtin_provider_endpoint
+from tldw_chatbook.LLM_Calls.LLM_API_Calls_Local import _refuse_a_refused_endpoint
 from tldw_chatbook.Provider_Contract.provider_continuation import ProviderContinuationCheckpoint
 from tldw_chatbook.config import (
     get_cli_setting,
@@ -807,11 +808,13 @@ def chat_with_openai(
         )
 
     api_path = "/responses" if use_responses_api else "/chat/completions"
-    api_url = (
+    openai_base = (
         api_base_url
         or openai_config.get("api_base_url")
         or builtin_provider_endpoint("openai", openai_config)
-    ).rstrip("/") + api_path
+    )
+    _refuse_a_refused_endpoint("OpenAI", openai_base, "openai", "openai")  # TASK-41522
+    api_url = openai_base.rstrip("/") + api_path
 
     start_time = time.time()
     log_counter(
@@ -1945,11 +1948,13 @@ def chat_with_anthropic(
             else _EXTENDED_CACHE_TTL_BETA
         )
 
-    api_url = (
+    anthropic_base = (
         api_base_url
         or anthropic_config.get("api_base_url")
         or builtin_provider_endpoint("anthropic", anthropic_config)
-    ).rstrip("/") + "/messages"
+    )
+    _refuse_a_refused_endpoint("Anthropic", anthropic_base, "anthropic", "anthropic")
+    api_url = anthropic_base.rstrip("/") + "/messages"
     if not is_sensitive_llm_request():
         # task-2116: see the OpenAI branch above for why this is gated.
         # task-2117 Qodo round: allowlisted summary -- "system" carries the
@@ -2813,7 +2818,9 @@ def chat_with_cohere(
         api_base_url
         or cohere_config.get("api_base_url")
         or builtin_provider_endpoint("cohere", cohere_config)
-    ).rstrip("/")
+    )
+    _refuse_a_refused_endpoint("Cohere", api_base_url, "cohere", "cohere")
+    api_base_url = api_base_url.rstrip("/")
     # task-267: migrated v1 /chat -> v2 /chat. v1's flat parameter_definitions
     # cannot express nested JSON Schema (MCP tools inexpressible), tool_results
     # lived outside the history model, and there were no call ids. v2 is
@@ -3829,7 +3836,9 @@ def chat_with_google(
         api_base_url
         or google_config.get("api_base_url")
         or builtin_provider_endpoint("google", google_config)
-    ).rstrip("/")
+    )
+    _refuse_a_refused_endpoint("Google", google_api_base, "google", "google")
+    google_api_base = google_api_base.rstrip("/")
     api_url = f"{google_api_base}/models/{current_model}{stream_suffix}"
     headers = {"x-goog-api-key": final_api_key, "Content-Type": "application/json"}
     if not is_sensitive_llm_request():
@@ -4466,6 +4475,7 @@ def chat_with_huggingface(
             ),
             default=builtin_provider_endpoint("huggingface", hf_config) or "",
         ).rstrip("/")
+        _refuse_a_refused_endpoint("Hugging Face", router_base, "huggingface", "huggingface")
         chat_path = _optional_config_string(
             hf_config.get("api_chat_path"), "v1/chat/completions"
         ).lstrip("/")
@@ -4502,6 +4512,9 @@ def chat_with_huggingface(
             # If api_base_url is configured, use it directly and append the chat_completions_path.
             # The model is expected to be in the payload.
             # If the endpoint needs the model_id in the path, configured_api_base_url should include it fully.
+            _refuse_a_refused_endpoint(
+                "Hugging Face", configured_api_base, "huggingface", "huggingface"
+            )
             router_chat_url = _huggingface_router_chat_url(configured_api_base)
             if router_chat_url:
                 api_url = router_chat_url

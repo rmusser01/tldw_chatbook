@@ -1137,6 +1137,10 @@ def chat_with_qwencloud(
     final_base = normalize_qwencloud_base_url(
         api_base_url if api_base_url is not None else configured_base
     )
+    from tldw_chatbook.LLM_Calls.LLM_API_Calls_Local import _refuse_a_refused_endpoint
+
+    # TASK-41522: the base it sends to; a pasted ``/v1/responses`` is not one.
+    _refuse_a_refused_endpoint("QwenCloud", final_base, "qwencloud", "qwencloud")
     final_api_key = resolve_qwencloud_api_key(
         api_key, provider_settings=provider_settings
     )

@@ -195,6 +195,7 @@ The upstream contracts and client-only qualification scope are recorded in
 3. Only OpenAI Responses stream events are translated to chat SSE; other providers' streams pass through in their own shape.
 4. The `provider_name` parameter exists only for local handlers (`PROVIDERS_WITH_PROVIDER_NAME`).
 5. Endpoint labels in logs/metrics are redacted and cardinality-bounded — never log raw endpoint strings with credentials.
+6. Every handler checks the base URL it is about to use, pinned or from its own table, with `Provider_Contract/provider_endpoint_contract.endpoint_refusal` before any request: the local and custom adapters and the engine (TASK-41131), and the first-party cloud adapters (TASK-41522; the strict ones through `hosted_chat.owned_json_post`). A refusal is a status-less `ChatConfigurationError` naming the adapter and the contract's reason ("Groq API URL: …"; the engine says "API base URL"). Moonshot, Z.ai and QwenCloud normalise their base first, so they still refuse a malformed one (query, fragment, user info, zone id) with their own copy; QwenCloud's check reads the normalised base, so a pasted `/v1/responses` endpoint keeps working.
 
 ## Related docs
 

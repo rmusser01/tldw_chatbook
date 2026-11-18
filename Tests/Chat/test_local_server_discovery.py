@@ -4223,6 +4223,201 @@ def test_every_engine_preset_still_resolves_its_shipped_base():
     assert relaxed.base_url == "https://api.deepinfra.com/v1/openai"
 
 
+# --- TASK-41522: first-party cloud adapters ----------------------------------
+
+#: Each first-party cloud dispatch name, the table and key its adapter reads
+#: its base from when the call pins none, and the rest of that table.
+#: OpenAI overlays ``[api_settings.openai]``; Anthropic and HuggingFace read
+#: ``load_settings``' legacy tables.
+_CLOUD_OWN_ENDPOINTS = (
+    ("openai", ("api_settings", "openai"), "api_base_url", {}),
+    ("anthropic", ("anthropic_api",), "api_base_url", {}),
+    ("cohere", ("api_settings", "cohere"), "api_base_url", {}),
+    ("google", ("api_settings", "google"), "api_base_url", {}),
+    ("huggingface", ("huggingface_api",), "api_base_url", {}),
+    ("huggingface", ("huggingface_api",), "router_base_url", {"use_router_url_format": "true"}),
+    ("groq", ("api_settings", "groq"), "api_base_url", {}),
+    ("openrouter", ("api_settings", "openrouter"), "api_base_url", {}),
+    ("deepseek", ("api_settings", "deepseek"), "api_base_url", {}),
+    ("mistral", ("api_settings", "mistral"), "api_base_url", {}),
+    ("mistralai", ("api_settings", "mistral"), "api_base_url", {}),
+    ("moonshot", ("api_settings", "moonshot"), "api_base_url", {}),
+    ("zai", ("api_settings", "zai"), "api_base_url", {}),
+    ("qwencloud", ("api_settings", "qwencloud"), "api_base_url", {}),
+)
+_CLOUD_IDS = [f"{entry[0]}-{entry[2]}" for entry in _CLOUD_OWN_ENDPOINTS]
+#: The name each refusal shows and the provider key it carries.
+_CLOUD_REFUSAL_NAMES = {
+    "openai": ("OpenAI", "openai"),
+    "anthropic": ("Anthropic", "anthropic"),
+    "cohere": ("Cohere", "cohere"),
+    "google": ("Google", "google"),
+    "huggingface": ("Hugging Face", "huggingface"),
+    "groq": ("Groq", "groq"),
+    "openrouter": ("OpenRouter", "openrouter"),
+    "deepseek": ("DeepSeek", "deepseek"),
+    "mistral": ("Mistral", "mistral"),
+    "mistralai": ("Mistral", "mistral"),
+    "moonshot": ("Moonshot", "moonshot"),
+    "zai": ("Z.ai", "zai"),
+    "qwencloud": ("QwenCloud", "qwencloud"),
+}
+#: Moonshot, Z.ai and QwenCloud normalise their base before sending (the
+#: first two in the resolver their readiness shares; QwenCloud's check reads
+#: the normalised base, so a pasted ``/v1/responses`` keeps working), so
+#: these shapes were already refused there, with their own copy.
+_RESOLVER_REFUSALS = {
+    "moonshot": "Moonshot API base URL is invalid.",
+    "zai": "Z.ai API base URL is invalid.",
+    "qwencloud": "QwenCloud API base URL ",
+}
+_RESOLVER_REFUSED_SHAPES = frozenset({"fragment", "query", "user-info", "zone-id"})
+
+
+def _cloud_world(monkeypatch, config):
+    """The first-party cloud adapters read ``config``; every request they
+    send lands in the list returned, answered 400, and none reaches a socket."""
+    import requests
+
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls as cloud_calls
+    from tldw_chatbook.LLM_Calls import (
+        deepseek,
+        groq,
+        hosted_chat,
+        mistral,
+        moonshot,
+        openrouter,
+        provider_sessions,
+        qwencloud,
+        zai,
+    )
+
+    snapshot = SimpleNamespace(values=config)
+    for module in (cloud_calls, groq, openrouter, deepseek, mistral, moonshot, zai, qwencloud):
+        monkeypatch.setattr(module, "get_runtime_config_snapshot", lambda: snapshot)
+    monkeypatch.setattr(cloud_calls, "load_settings", lambda *a, **k: config)
+    for module, factory in (
+        (cloud_calls, "create_default_session"),
+        (cloud_calls, "create_owned_default_session"),
+        (cloud_calls, "create_pooled_default_session"),
+        (hosted_chat, "create_pooled_default_session"),
+        (qwencloud, "create_pooled_default_session"),
+    ):
+        monkeypatch.setattr(module, factory, lambda **_kw: requests.Session())
+    monkeypatch.setattr(provider_sessions, "get_session", lambda _key, factory: factory())
+    sent: list[str] = []
+
+    def send(_session, request, **_kwargs):
+        sent.append(request.url)
+        response = requests.Response()
+        response.status_code = 400
+        response._content = b'{"error": {"message": "stub"}}'
+        response._content_consumed = True
+        response.headers["Content-Type"] = "application/json"
+        response.url = request.url
+        response.request = request
+        return response
+
+    monkeypatch.setattr(requests.Session, "send", send)
+    return sent
+
+
+def _cloud_config(table, key, extra, value):
+    config: dict = {}
+    node = config
+    for part in table:
+        node = node.setdefault(part, {})
+    node.update(extra)
+    node[key] = value
+    return config
+
+
+@pytest.mark.parametrize(("dispatch", "table", "key", "extra"), _CLOUD_OWN_ENDPOINTS, ids=_CLOUD_IDS)
+def test_a_cloud_adapter_never_reaches_a_base_url_the_contract_refuses(
+    dispatch, table, key, extra, monkeypatch
+):
+    """TASK-41522: the first-party cloud adapters sent to a base-URL override
+    in their own table (or pinned) without the endpoint contract, so every
+    non-Console caller reached ``127.1``, ``0x7f.1`` or a user-info host. Each
+    now refuses it before any request, with the contract's reason."""
+    from tldw_chatbook.Provider_Contract import ChatConfigurationError
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import endpoint_refusal
+
+    for shape, pinned in itertools.product(sorted(_DISPATCH_REFUSED_BASES), (False, True)):
+        endpoint = _with_path("vllm", _DISPATCH_REFUSED_BASES[shape])
+        stored = _with_path("vllm", _SAFE_LOOPBACK) if pinned else endpoint
+        sent = _cloud_world(monkeypatch, _cloud_config(table, key, extra, stored))
+
+        try:
+            _dispatch(dispatch, api_base_url=endpoint if pinned else None)
+        except Exception as exc:  # the assertions below say which
+            caught = exc
+        else:
+            caught = None
+
+        assert sent == [], (shape, pinned)
+        assert isinstance(caught, ChatConfigurationError), (shape, pinned, repr(caught))
+        if dispatch in _RESOLVER_REFUSALS and shape in _RESOLVER_REFUSED_SHAPES:
+            assert str(caught).startswith(_RESOLVER_REFUSALS[dispatch]), (shape, pinned)
+            continue
+        name, provider = _CLOUD_REFUSAL_NAMES[dispatch]
+        reason = endpoint_refusal(dispatch, endpoint)
+        assert reason and str(caught) == f"{name} API URL: {reason}", (shape, pinned, str(caught))
+        assert caught.status_code is None
+        assert caught.provider == provider, (shape, caught.provider)
+        assert not [part for part in _ECHO_PARTS if part in str(caught)], shape
+
+
+#: TASK-41522 keeps-working checks: where each cloud adapter posts, unpinned,
+#: with the shipped config and with an accepted override in its own table
+#: (``http://gpu-box.lan:8000/v1``), before and after the contract check.
+_CLOUD_POSTS = {
+    "openai-api_base_url": "https://api.openai.com/v1/chat/completions",
+    "anthropic-api_base_url": "https://api.anthropic.com/v1/messages",
+    "cohere-api_base_url": "https://api.cohere.com/v2/chat",
+    "google-api_base_url": "https://generativelanguage.googleapis.com/v1beta/models/m:generateContent",
+    "huggingface-api_base_url": "https://api-inference.huggingface.co/v1/chat/completions",
+    "huggingface-router_base_url": "https://router.huggingface.co/v1/chat/completions",
+    "groq-api_base_url": "https://api.groq.com/openai/v1/chat/completions",
+    "openrouter-api_base_url": "https://openrouter.ai/api/v1/chat/completions",
+    "deepseek-api_base_url": "https://api.deepseek.com/chat/completions",
+    "mistral-api_base_url": "https://api.mistral.ai/v1/chat/completions",
+    "mistralai-api_base_url": "https://api.mistral.ai/v1/chat/completions",
+    "moonshot-api_base_url": "https://api.moonshot.ai/v1/chat/completions",
+    "zai-api_base_url": "https://api.z.ai/api/paas/v4/chat/completions",
+    "qwencloud-api_base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/responses",
+}
+_GPU_BOX_ROUTES = {
+    "anthropic-api_base_url": "/messages",
+    "cohere-api_base_url": "/v2/chat",
+    "google-api_base_url": "/models/m:generateContent",
+    "huggingface-router_base_url": "/models/m/v1/chat/completions",
+    "qwencloud-api_base_url": "/responses",
+}
+
+
+def test_a_cloud_adapter_still_posts_where_it_did(monkeypatch):
+    """TASK-41522: the check refuses only what the contract refuses; each
+    cloud adapter's shipped base and an accepted override still post."""
+    from tldw_chatbook.Provider_Contract import ChatBadRequestError
+
+    for (dispatch, table, key, extra), case in zip(_CLOUD_OWN_ENDPOINTS, _CLOUD_IDS):
+        override = "http://gpu-box.lan:8000/v1"
+        for config, posted in (
+            (_merged(_cloud_config(table, "model", extra, "m")), _CLOUD_POSTS[case]),
+            (
+                _cloud_config(table, key, extra, override),
+                override + _GPU_BOX_ROUTES.get(case, "/chat/completions"),
+            ),
+        ):
+            sent = _cloud_world(monkeypatch, config)
+
+            with pytest.raises(ChatBadRequestError):  # the stub answers 400
+                _dispatch(dispatch)
+
+            assert sent == [posted], case
+
+
 def test_the_shared_local_transport_keeps_its_recovery_wrapper():
     """Review r15ep-rev1 M-1: inserting the refusal helper between
     ``@_provider_recovery.unqualified`` and the transport moved the decorator
