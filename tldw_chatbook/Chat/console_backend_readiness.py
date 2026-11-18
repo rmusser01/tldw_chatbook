@@ -44,6 +44,7 @@ class ConsoleBackendReadinessChanged(RuntimeError):
 
 _CHANGE_TYPE = ConsoleBackendReadinessChanged
 _CHANGE_INIT = _definition(ConsoleBackendReadinessChanged.__init__)
+_SETTINGS_TYPE = settings_source.ConsoleSessionSettings
 
 
 class ConsoleBackendReadiness:
@@ -257,6 +258,41 @@ class ConsoleBackendReadiness:
             bridge._setup_started_at.get(conversation_id),
         )
 
+    def _display_inputs_current(self, session, settings, key, agent_key, owners, source) -> bool:
+        """Separate changed resident display facts from replaced read authority."""
+        current_settings = session.settings
+        self._current(session, current_settings, source.identity.source_revision, source)
+        bridge = agent_key[0]
+        database, primary_keys, primary_runs, setup, binding, generation = owners
+        if (
+            self.backend.runtime.agent_bridge is not bridge
+            or bridge._db is not database
+            or self.backend.runtime._agent_runs_db is not database
+            or bridge._live_primary_keys is not primary_keys
+            or bridge._live_primary_runs is not primary_runs
+            or bridge._setup_started_at is not setup
+            or session.conversation_binding_revision != binding
+            or type(current_settings) is not _SETTINGS_TYPE
+        ):
+            raise RuntimeError("Console readiness display owner changed")
+        current_key = self._key(session, current_settings, source.identity.source_revision)
+        # Configuration, evidence and endpoint authority still invalidate the
+        # source. Only the same slot's revisioned settings may be reread.
+        if any(current_key[index] != key[index] for index in (0, 1, 4, 5, 6)):
+            raise RuntimeError("Console readiness native selection changed")
+        if (
+            current_settings is not settings or current_key[3] != key[3]
+        ) and not (
+            current_key[3] > key[3] or session.generation_settings_revision > generation
+        ):
+            raise RuntimeError("Console readiness settings publication changed")
+        current_agent = self._agent_key(session)
+        # First persistence keeps the original live slot. Explicit rebinding to
+        # another conversation is a different authority, not display drift.
+        if agent_key[1] and current_agent[1] != agent_key[1]:
+            raise RuntimeError("Console readiness conversation binding changed")
+        return current_key == key and current_agent == agent_key
+
     def agent_projection(self, session):
         """Build original resident rail values beside the settled history read."""
         from .console_execution_agent_rail_values import (
@@ -450,6 +486,12 @@ class ConsoleBackendReadiness:
             # Rebind a changed key before taking the existing fresh-read path.
             key = self._key(session, settings, identity.source_revision)
             agent_key = self._agent_key(session)
+            bridge = agent_key[0]
+            agent_owners = (
+                bridge._db, bridge._live_primary_keys, bridge._live_primary_runs,
+                bridge._setup_started_at, session.conversation_binding_revision,
+                session.generation_settings_revision,
+            )
             current_context_key = self._context_key(session)
             context_inputs = self._capture_context(session)
             _context_owners = (
@@ -462,15 +504,14 @@ class ConsoleBackendReadiness:
                 raise RuntimeError("Console context capture changed")
 
         context_changed = ConsoleBackendReadinessChanged(
-            self, (source, session, settings, key, agent_key, retry_visibility),
+            self, (source, session, settings, key, agent_key, retry_visibility, agent_owners),
         )
 
         def current() -> None:
-            self._current(session, settings, identity.source_revision, source)
-            if self._context_key(session) != current_context_key:
+            if not self._display_inputs_current(
+                session, settings, key, agent_key, agent_owners, source,
+            ) or self._context_key(session) != current_context_key:
                 raise context_changed
-            if self._agent_key(session) != agent_key:
-                raise RuntimeError("Console Agent selection changed")
 
         # A display/draft revision changes calculation inputs, not the native
         # config/model/history facts. Reuse only a successfully retired read
@@ -764,14 +805,14 @@ class ConsoleBackendReadiness:
             or getattr_static(_CHANGE_TYPE, "__init__", None) is not _CHANGE_INIT[0]
             or not _definition_current(_CHANGE_INIT)
             or type(error) is not _CHANGE_TYPE or error.owner is not self
-            or type(error.scope) is not tuple or len(error.scope) != 6
+            or type(error.scope) is not tuple or len(error.scope) != 7
             or type(error._retirement) is not tuple or len(error._retirement) != 5
             or error._retirement[0] is not error or error._retirement[1] is not self
         ):
             raise RuntimeError("Console readiness invalidation proof changed")
-        source, session, settings, key, agent_key, visibility = error.scope
+        source, session, settings, key, agent_key, visibility, agent_owners = error.scope
         _error, _owner, effect, history_key, observations = error._retirement
-        self._current(session, settings, source.identity.source_revision, source)
+        self._display_inputs_current(session, settings, key, agent_key, agent_owners, source)
         association, lifecycle, current, attachment, checkpoint, active = visibility
         presentation = backend.presentation
         presentation.require_association(association)
@@ -784,8 +825,7 @@ class ConsoleBackendReadiness:
             or not effect.completed.done() or effect.completed.cancelled()
             or effect.completed.result() is not True or effect.physically_retired is not True
             or any(item.read.creator is not self or not item.confirmed() for item in observations)
-            or key != self._key(session, settings, source.identity.source_revision)
-            or agent_key != self._agent_key(session) or history_key != self._history_key()
+            or history_key != self._history_key()
             or presentation.view_lifecycle is not lifecycle or lifecycle._current is not current
             or presentation.parent_attachment != attachment
             or backend.store.active_session_id != active

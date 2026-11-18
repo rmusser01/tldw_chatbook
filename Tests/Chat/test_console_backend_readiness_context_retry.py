@@ -1,6 +1,7 @@
 """Retry only an actual readiness read's positively settled display drift."""
 
 import asyncio
+import copy
 import sys
 import threading
 from dataclasses import replace
@@ -14,7 +15,11 @@ from Tests.private_profile import private_profile_test
 @private_profile_test
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "change", ["once", "continuous", "source", "hidden", "uncertain"]
+    "change", [
+        "once", "continuous", "source", "hidden", "uncertain",
+        "agent_once", "agent_continuous", "persisted", "settings",
+        "bridge", "binding", "settings_unrevisioned", "agent_uncertain",
+    ]
 )
 async def test_readiness_context_retry_requires_original_settlement(request, change):
     from Tests.Chat.test_console_control_trace import _observe
@@ -36,6 +41,8 @@ async def test_readiness_context_retry_requires_original_settlement(request, cha
     )
     from tldw_chatbook.Chat.console_execution_retirement import _ReadResources
     from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+    from tldw_chatbook.Chat.console_agent_bridge import AgentLiveSnapshot
+    from tldw_chatbook.DB.base_db import run_owned_db_call
 
     path, directory, *_ = _settled_profile()
     profile = open_console_backend_profile(
@@ -46,6 +53,7 @@ async def test_readiness_context_retry_requires_original_settlement(request, cha
         profile, profile_epoch="profile", service_epoch="context-retry"
     )
     original_sources = None
+    original_bridge = None
     effects, reads, full_reads = [], [], []
     changed = 0
     initial_at = None
@@ -74,7 +82,9 @@ async def test_readiness_context_retry_requires_original_settlement(request, cha
 
     def config_entry(frame):
         nonlocal changed
-        if frame.f_back.f_code is not read_code or (changed and change != "continuous"):
+        if frame.f_back.f_code is not read_code or (
+            changed and change not in {"continuous", "agent_continuous"}
+        ):
             return
         settled = threading.Event()
         errors = []
@@ -82,7 +92,29 @@ async def test_readiness_context_retry_requires_original_settlement(request, cha
         def mutate():
             nonlocal changed
             try:
-                backend.store._bump_display_projection_revision(session.id)
+                if change in {"agent_once", "agent_continuous", "agent_uncertain"}:
+                    original_bridge.begin_setup_phase(conversation_id)
+                    if change != "agent_continuous":
+                        original_bridge._publish_live(
+                            conversation_id, run_id, AgentLiveSnapshot(status="running"),
+                            primary=True,
+                        )
+                elif change == "persisted":
+                    backend.store.publish_first_persisted_conversation(session.id, conversation_id)
+                elif change == "settings":
+                    backend.store.replace_session_settings(
+                        session.id, replace(session.settings, temperature=0.5),
+                    )
+                elif change == "settings_unrevisioned":
+                    session.settings = replace(session.settings, temperature=0.5)
+                elif change == "bridge":
+                    successor = copy.copy(original_bridge)
+                    backend.runtime._agent_bridge = successor
+                    backend.controller._agent_bridge = successor
+                elif change == "binding":
+                    backend.store.rebind_persisted_conversation(session.id, other_conversation_id)
+                else:
+                    backend.store._bump_display_projection_revision(session.id)
                 changed += 1
                 if change == "source":
                     backend.domain.sources = replace(original_sources)
@@ -103,7 +135,7 @@ async def test_readiness_context_retry_requires_original_settlement(request, cha
     def negative_observation(frame):
         observation = frame.f_locals["self"]
         if (
-            change == "uncertain"
+            change in {"uncertain", "agent_uncertain"}
             and observation.read.creator is backend.presentation.readiness
         ):
             # Preserve the original negative receipt path; never substitute a
@@ -113,6 +145,7 @@ async def test_readiness_context_retry_requires_original_settlement(request, cha
     try:
         backend.start()
         original_sources = backend.domain.sources
+        original_bridge = backend.runtime.agent_bridge
         session = backend.store.create_session(
             title="Readiness context",
             assistant_kind="generic",
@@ -121,6 +154,24 @@ async def test_readiness_context_retry_requires_original_settlement(request, cha
             ),
         )
         readiness = backend.presentation.readiness
+        if change in {"agent_once", "agent_continuous", "agent_uncertain", "persisted", "binding"}:
+            database = profile.storage.chachanotes
+            conversation_id = await run_owned_db_call(
+                database, database.add_conversation, {"title": "Readiness publication"},
+            )
+            assert conversation_id
+            if change != "persisted":
+                backend.store.publish_first_persisted_conversation(session.id, conversation_id)
+            if change == "binding":
+                other_conversation_id = await run_owned_db_call(
+                    database, database.add_conversation, {"title": "Other readiness publication"},
+                )
+                assert other_conversation_id
+            if change in {"agent_once", "agent_uncertain"}:
+                runs = backend.runtime._agent_runs_db
+                run_id = await run_owned_db_call(
+                    runs, runs.create_run, conversation_id=conversation_id, agent_kind="primary",
+                )
         initial_at = readiness.at
         with (
             _observe(read_code, sys.monitoring.events.PY_START, read_entry),
@@ -161,12 +212,14 @@ async def test_readiness_context_retry_requires_original_settlement(request, cha
                     {},
                 )
             )
-            if change == "once":
+            if change in {"once", "agent_once", "persisted", "settings"}:
                 await asyncio.shield(receipt.applied)
                 assert readiness.context_key == readiness._context_key(session)
+                assert readiness.agent_key == readiness._agent_key(session)
+                assert readiness.key == readiness._key(session, session.settings, backend.controls.source_revision)
                 assert readiness._context_facts is not None
                 assert len(reads) == 2
-            elif change == "continuous":
+            elif change in {"continuous", "agent_continuous"}:
                 with pytest.raises(ConsoleBackendReadinessChanged) as caught:
                     await asyncio.shield(receipt.applied)
                 assert readiness.require_retired_context_change(caught.value) is True
@@ -178,7 +231,7 @@ async def test_readiness_context_retry_requires_original_settlement(request, cha
                 assert type(caught.value) is not ConsoleBackendReadinessChanged
                 assert len(reads) == 1
                 assert readiness.at == initial_at and readiness._context_facts is None
-            if change == "uncertain":
+            if change in {"uncertain", "agent_uncertain"}:
                 assert await asyncio.shield(receipt.retired) is False
                 assert effects[-1].completed.result() is False
                 assert not backend.controls._intake_open
@@ -190,9 +243,12 @@ async def test_readiness_context_retry_requires_original_settlement(request, cha
     finally:
         if original_sources is not None:
             backend.domain.sources = original_sources
+        if original_bridge is not None:
+            backend.runtime._agent_bridge = original_bridge
+            backend.controller._agent_bridge = original_bridge
         # A deliberately uncertain original effect must remain negative; close
         # still performs its original physical cleanup and must not certify it.
-        if change == "uncertain" and effects and effects[-1].completed.done():
+        if change in {"uncertain", "agent_uncertain"} and effects and effects[-1].completed.done():
             with pytest.raises(RuntimeError):
                 await backend.aclose()
         else:
