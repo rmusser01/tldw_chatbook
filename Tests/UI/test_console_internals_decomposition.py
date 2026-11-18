@@ -82,6 +82,11 @@ class StagedContextHarness(ConsolidatedCSSApp):
         yield ConsoleStagedContextTray(self.state, id="console-staged-context-tray")
 
 
+# TASK-41633: the mounted Console tests here read the collection-time config;
+# the per-test sandbox refused it (RecoveryRequired: raw_source_selection_changed).
+pytestmark = pytest.mark.bootstrap_profile
+
+
 GATE15_EVIDENCE = Path(
     "Docs/superpowers/qa/product-maturity/phase-3/"
     "2026-05-07-gate-1-5-console-internals-decomposition.md"
@@ -243,8 +248,10 @@ async def _run_manual_library_search(console, pilot, query: str) -> None:
 
 
 async def _wait_for_production_chat_screen(
-    app, pilot, *, timeout: float = 10.0
+    app, pilot, *, timeout: float = 30.0
 ) -> ChatScreen:
+    # TASK-41633: the full app's start-up passed 10 s at load 70-90 here, and
+    # the screen settled shortly after; the poll returns once it is laid out.
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         screen = app.screen
@@ -320,69 +327,77 @@ def _assert_single_style_span(
 
 
 def test_console_session_surface_uses_flex_height_not_full_percent_height():
-    for stylesheet in (
-        Path("tldw_chatbook/css/tldw_cli_modular.tcss"),
-        Path("tldw_chatbook/css/components/_agentic_terminal.tcss"),
+    # 2aab79b0fd (TASK-24451) moved these rules out of _agentic_terminal.tcss
+    # into the Console feature sheets, and bc1c716e43 (ADR-161) replaced their
+    # literals with design tokens ($ds-height-fill is 1fr, $ds-size-0 is 0).
+    for css in (
+        _repo_text(Path("tldw_chatbook/css/tldw_cli_modular.tcss")),
+        _repo_text(Path("tldw_chatbook/css/features/_console.tcss"))
+        + _repo_text(Path("tldw_chatbook/css/features/_console_panels.tcss")),
     ):
-        css = _repo_text(stylesheet)
-
         assert "#console-session-surface,\n#console-chat-tabs" not in css
-        assert "#console-session-surface {\n    height: 1fr;" in css
+        assert "#console-session-surface {\n    height: $ds-height-fill;" in css
         assert (
             "#console-session-surface {\n"
-            "    padding: 0;\n"
-            "    margin: 0;\n"
+            "    padding: $ds-space-0;\n"
+            "    margin: $ds-space-0;\n"
             "    border: none;"
         ) in css
         assert (
             "#console-transcript-title,\n"
             ".console-transcript-title {\n"
-            "    height: 1;\n"
-            "    min-height: 1;\n"
-            "    max-height: 1;\n"
-            "    margin: 0;\n"
+            "    height: $ds-size-1;\n"
+            "    min-height: $ds-size-1;\n"
+            "    max-height: $ds-size-1;\n"
+            "    margin: $ds-space-0;\n"
             "    background: $ds-surface-panel;\n"
             "    color: $ds-text-muted;"
         ) in css
         assert (
             "#console-native-tab-strip,\n"
             ".console-session-tab-strip {\n"
-            "    height: 1;\n"
-            "    min-height: 1;\n"
-            "    max-height: 1;\n"
-            "    margin: 0;"
+            "    height: $ds-size-1;\n"
+            "    min-height: $ds-size-1;\n"
+            "    max-height: $ds-size-1;\n"
+            "    margin: $ds-space-0;"
         ) in css
         assert (
             ".console-left-rail-section.console-settings-summary {\n"
-            "    margin: 0 0 1 0;\n"
-            "    padding: 0 1;\n"
+            "    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;\n"
+            "    padding: $ds-space-0 $ds-space-1;\n"
             "    border: none;"
         ) in css
         assert (
-            "#console-staged-context-tray {\n    height: auto;\n    min-height: 0;\n}"
+            "#console-staged-context-tray {\n"
+            "    height: auto;\n"
+            "    min-height: $ds-size-0;\n}"
         ) in css
         assert (
-            "#console-workspace-context {\n    height: auto;\n    min-height: 0;"
+            "#console-workspace-context {\n"
+            "    height: auto;\n"
+            "    min-height: $ds-size-0;"
         ) in css
         assert (
-            ".console-transcript-action-guide {\n    height: auto;\n    min-height: 1;"
+            ".console-transcript-action-guide {\n"
+            "    height: auto;\n"
+            "    min-height: $ds-size-1;"
         ) in css
         assert (
             "#console-left-rail-body {\n"
-            "    width: 100%;\n"
-            "    min-width: 0;\n"
-            "    height: 1fr;\n"
-            "    min-height: 0;"
+            "    width: $ds-width-full;\n"
+            "    min-width: $ds-size-0;\n"
+            "    height: $ds-height-fill;\n"
+            "    min-height: $ds-size-0;"
         ) in css
         assert "    overflow-y: auto;" in css
         assert (
             "#console-inspector-rail-body {\n"
-            "    width: 100%;\n"
-            "    min-width: 0;\n"
-            "    height: 1fr;\n"
-            "    min-height: 0;"
+            "    width: $ds-width-full;\n"
+            "    min-width: $ds-size-0;\n"
+            "    height: $ds-height-fill;\n"
+            "    min-height: $ds-size-0;"
         ) in css
-        assert ("#console-composer-actions {\n    width: 45;") in css
+        assert "#console-composer-actions {\n    width: $ds-size-45;" in css
 
 
 @pytest.mark.asyncio
@@ -471,7 +486,9 @@ async def test_console_gate15_keeps_existing_chat_send_control_reachable():
         text = _visible_text(console)
         assert "Send" in text
         assert "Stop" in text
-        assert "Attach" in text
+        # 14273c1f17 (TASK-32325) renamed the control bar's "Attach context",
+        # which opens the context rail, to say so.
+        assert "Context rail" in text
         # "Save" left the always-visible chrome entirely (user request
         # 2026-08-01): Save Chatbook's surviving surfaces are the composer's
         # ☰ menu and the Inspector's Artifacts row, both asserted below.
@@ -3327,7 +3344,8 @@ async def test_console_empty_staged_context_shows_guidance_and_count():
         guidance = console.query_one("#console-staged-context-empty", Static)
         guidance_plain = str(guidance.renderable)
 
-        assert str(count.renderable) == "0"
+        # 77b773f7e6 (TASK-32329): an empty tray counts "none", not "0".
+        assert str(count.renderable) == "none"
         assert "Stage sources from Library" in guidance_plain
 
 
@@ -3627,7 +3645,6 @@ def test_console_rag_source_status_unchanged_with_a_pending_launch():
     ) == ("staged from Library Search/RAG")
 
 
-@pytest.mark.bootstrap_profile
 def test_console_rag_source_status_remembers_the_last_send_when_nothing_is_staged():
     """D1b: the Inspector gains the strip's one-send memory."""
     app = _build_test_app()
@@ -3656,7 +3673,6 @@ def test_console_rag_source_status_genuinely_empty_reads_not_staged():
     ) == ("not staged")
 
 
-@pytest.mark.bootstrap_profile
 def test_console_inspector_sources_row_remembers_the_last_send():
     """D1b end-to-end: the Inspector's "Retrieval" row (TASK-24610 renamed
     it from "Sources"; and the run recipe
@@ -3674,7 +3690,6 @@ def test_console_inspector_sources_row_remembers_the_last_send():
     assert "attached to the last message · 5 sources" in rows_by_label["Run recipe"].value
 
 
-@pytest.mark.bootstrap_profile
 def test_console_strip_never_repeats_the_receipt_the_inspector_keeps():
     """TASK-33620.7: after a send releases its staged launch the strip is
     hidden -- it describes only the NEXT send, and the reply itself says
@@ -3874,7 +3889,6 @@ def _build_bound_mcp_test_app():
     return app
 
 
-@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_run_inspector_shows_mcp_tools_ready_row():
     app = _build_bound_mcp_test_app()
@@ -3896,7 +3910,6 @@ async def test_console_run_inspector_shows_mcp_tools_ready_row():
         )
 
 
-@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_run_inspector_shows_mcp_not_connected_row():
     """Finding I2: the blocked "not connected" row must win even when
@@ -3919,7 +3932,6 @@ async def test_console_run_inspector_shows_mcp_not_connected_row():
         )
 
 
-@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_run_inspector_omits_mcp_row_by_default():
     """No `console_mcp_tool_count` seam wired -- e.g. no `unified_mcp_service`
@@ -3935,7 +3947,6 @@ async def test_console_run_inspector_omits_mcp_row_by_default():
         assert not list(console.query("#console-inspector-mcp"))
 
 
-@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_run_inspector_mcp_row_reflects_real_compose_mcp_provider():
     """P5 review fix: the three tests above only prove the render logic
@@ -3973,7 +3984,6 @@ async def test_console_run_inspector_mcp_row_reflects_real_compose_mcp_provider(
         )
 
 
-@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_run_inspector_mcp_row_shows_blocked_when_stale_server_has_tools():
     """Finding I2, RED per the review: build the state from a REAL
@@ -4235,12 +4245,13 @@ def test_console_evidence_display_state_sanitizes_markup_fields():
             *(row.text for row in state.reference_rows),
         ]
     )
-    assert "<script>" not in rendered
-    assert "<b>" not in rendered
-    assert "[bold]" in rendered
-    assert "[red]" in rendered
-    assert "&lt;script&gt;" in rendered
-    assert "&lt;b&gt;credential&lt;/b&gt;" in rendered
+    # a2faa20c96 (TASK-32802.4): every sink renders these rows literally
+    # (``markup=False`` or a plain ``Text``), so the text is no longer
+    # HTML-entity-escaped; escaping had shown "R&amp;D" to the user.
+    assert "Incident [red]Review[/red] <script>" in rendered
+    assert "Expired <b>credential</b> caused [bold]the incident[/bold]." in rendered
+    assert "Workspace <b>A</b>" in rendered
+    assert "&lt;" not in rendered
 
 
 def test_console_evidence_authority_rows_preserve_blocked_status():

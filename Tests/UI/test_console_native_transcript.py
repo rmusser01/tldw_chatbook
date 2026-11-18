@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.events import Click
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -68,6 +69,10 @@ from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleTranscript,
     ConsoleTranscriptMessage,
 )
+
+# TASK-41633: mounted Console tests here read the collection-time config;
+# the per-test sandbox refused it (RecoveryRequired: raw_source_selection_changed).
+pytestmark = pytest.mark.bootstrap_profile
 
 
 def test_unit_span_grouping_is_built_once_per_message_ingest(monkeypatch) -> None:
@@ -2704,9 +2709,9 @@ async def test_console_transcript_click_action_row_background_preserves_selectio
         # Route a container-background click without stale screen coordinates.
         action_row = app.query_one("#console-message-actions-m2")
         transcript = app.query_one(ConsoleTranscript)
-        await transcript.on_click(
-            SimpleNamespace(control=action_row, stop=lambda: None)
-        )
+        # 95ca4bf47b: the transcript's input fence reads the event's sender
+        # and time, so this is a real Click rather than a stand-in.
+        await transcript.on_click(Click(action_row, 0, 0, 0, 0, 1, False, False, False))
         await pilot.pause()
 
         assert "More…" in _visible_text(app)
@@ -4302,8 +4307,10 @@ def test_console_transcript_empty_state_is_centered_in_stylesheets():
     """
     from pathlib import Path
 
+    # 2aab79b0fd (TASK-24451) moved the Console rules out of
+    # _agentic_terminal.tcss into the Console feature sheet.
     for css_path in (
-        Path("tldw_chatbook/css/components/_agentic_terminal.tcss"),
+        Path("tldw_chatbook/css/features/_console.tcss"),
         Path("tldw_chatbook/css/tldw_cli_modular.tcss"),
     ):
         css = css_path.read_text(encoding="utf-8")
@@ -4385,7 +4392,6 @@ def test_chat_screen_fingerprint_tracks_tool_lifecycle_without_body_changes():
 
 
 @pytest.mark.asyncio
-@pytest.mark.bootstrap_profile
 async def test_mounted_console_refreshes_tool_status_after_assistant_preamble():
     from tldw_chatbook.Agents.agent_models import AgentStep
     from tldw_chatbook.Chat.console_tool_activity import ConsoleToolActivity

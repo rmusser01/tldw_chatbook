@@ -63,6 +63,11 @@ from tldw_chatbook.Workspaces.change_review_consent import SkippedReviewRoot
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 
 
+# TASK-41633: the bridge tests here read the collection-time config;
+# the per-test sandbox refused it (RecoveryRequired: raw_source_selection_changed).
+pytestmark = pytest.mark.bootstrap_profile
+
+
 @pytest.fixture()
 def root(tmp_path) -> Path:
     r = tmp_path / "root"

@@ -139,6 +139,10 @@ from tldw_chatbook.Widgets.Console.console_system_prompt_modal import (
     TEXT_AREA_ID as SYSTEM_PROMPT_TEXT_AREA_ID,
 )
 
+# TASK-41633: the mounted Console tests here read the collection-time config;
+# the per-test sandbox refused it (RecoveryRequired: raw_source_selection_changed).
+pytestmark = pytest.mark.bootstrap_profile
+
 #: TASK-35578: what a listing that found models adds after its count.
 _LISTED_NOTE = listed_pick_note(settings_key=" (F4)")
 
@@ -10728,7 +10732,6 @@ async def test_console_settings_modal_cancel_keeps_original_summary() -> None:
 
 # The real ChatScreen/store goes through config-participant admission, which the
 # per-test sandbox refuses (RecoveryRequired); keep the collection-time profile.
-@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_settings_modal_save_disabled_during_active_run() -> None:
     app = _build_test_app()
@@ -14519,7 +14522,6 @@ def _unsaved_endpoint_modal(app: "ModalHarness", **kwargs) -> ConsoleSettingsMod
     )
 
 
-@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_settings_context_view_says_where_to_save_an_unsaved_endpoint() -> None:
     """TASK-33006.22: with an unsaved endpoint the Context view hid Apply and
@@ -14552,7 +14554,6 @@ async def test_console_settings_context_view_says_where_to_save_an_unsaved_endpo
         assert reason.display is False
 
 
-@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("focus_context", [False, True], ids=["model", "context"])
 @pytest.mark.asyncio
 async def test_console_settings_default_recovery_adds_no_unsaved_endpoint_reason(
@@ -14618,7 +14619,6 @@ async def test_console_settings_modal_active_run_reason_precedes_endpoint_recove
         ) == "Available when the current run finishes."
 
 
-@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("opened", ["model", "context", "suspended"])
 @pytest.mark.asyncio
 async def test_console_settings_mount_builds_default_readiness_once(
@@ -14677,7 +14677,6 @@ async def test_console_settings_mount_builds_default_readiness_once(
             assert modal.query_one("#console-settings-save-default", Button).display
 
 
-@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_settings_subscription_change_builds_default_readiness_once() -> None:
     """TASK-33006.21: a changed subscription snapshot builds default readiness once.
