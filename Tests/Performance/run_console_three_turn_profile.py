@@ -5398,6 +5398,7 @@ async def run_scripted_mounted_sample(
         _visible_text,
     )
     from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
+    from tldw_chatbook.config import get_user_data_dir
     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
     from tldw_chatbook.Chat.console_project_instructions import (
         ProjectInstructionControlState,
@@ -5504,7 +5505,7 @@ async def run_scripted_mounted_sample(
             raise AssertionError(f"unexpected provider call {call}")
 
     gateway = ScriptedGateway()
-    app = _build_test_app()
+    app = _build_test_app(user_data_dir=get_user_data_dir())
     old_consent = getattr(app, "change_review_consent_service", None)
     if old_consent is not None:
         old_consent.shutdown(timeout=1.0)
@@ -5514,7 +5515,9 @@ async def run_scripted_mounted_sample(
     app.local_workspace_db = runtime.database
     app.workspace_registry_service = runtime.registry
     app.change_review_consent_service = runtime.consent_service
-    app.unified_mcp_service = runtime.control_plane
+    app.unified_mcp_service.set_tool_state(
+        runtime.hub.server_key, runtime.hub.name, "allow", tool=runtime.hub
+    )
     app.app_config["chat_defaults"] = {
         "provider": "llama_cpp",
         "model": "scripted-model",

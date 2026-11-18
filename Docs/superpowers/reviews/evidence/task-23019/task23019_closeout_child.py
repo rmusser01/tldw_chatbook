@@ -561,6 +561,11 @@ def _runtime_authority(
     files = {_REAL_OS_REALPATH(sys.executable), _REAL_OS_REALPATH(os.devnull)}
     if os.name == "posix":
         files.add(_REAL_OS_REALPATH("/proc/stat"))
+    if sys.platform == "linux":
+        files.update(
+            _REAL_OS_REALPATH(_PROCESS_PROC_ROOT + "/" + name)
+            for name in ("stat", "limits")
+        )
     locale = _REAL_OS_REALPATH(
         locale_root or os.path.join(sys.base_prefix, "share", "locale")
     )
@@ -667,7 +672,17 @@ def _install_boundary(checkout: str, scratch: str) -> None:
     if hasattr(os, "O_NOFOLLOW"):
         open_flags |= os.O_NOFOLLOW
     _ATTEMPT_FD = _REAL_OS_OPEN(attempts_path, open_flags, 0o600)
-    _READ_ROOTS, _READ_FILES = _runtime_authority(checkout_root, _SCRATCH)
+    runtime_paths = tuple(sys.path[1:])
+    vendor_source = _REAL_OS_REALPATH(
+        os.path.join(checkout_root, "packages", "tldw_profile_core", "src")
+    )
+    if not _under(vendor_source, checkout_root):
+        _contain(FILESYSTEM_READ_DENIED)
+    sys.path.insert(1, vendor_source)
+    # Vendored discovery uses checkout authority, never a new runtime read root.
+    _READ_ROOTS, _READ_FILES = _runtime_authority(
+        checkout_root, _SCRATCH, configured_paths=runtime_paths
+    )
     _METADATA_ONLY_PATHS = _runtime_metadata_ancestors(_SCRATCH)
     _STAT_ONLY_PATHS = (
         frozenset(
