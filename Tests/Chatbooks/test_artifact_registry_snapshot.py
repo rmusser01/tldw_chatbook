@@ -3,6 +3,7 @@
 import json
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
@@ -53,21 +54,37 @@ async def test_snapshot_reads_the_complete_registry_once_before_bounded_windows(
 
     monkeypatch.setattr(service, "_load_registry", counting_load)
     snapshot = service.artifact_read_snapshot()
+    from tldw_chatbook.Chatbooks import artifact_registry_snapshot as registry_snapshot
+
+    revision_inputs = []
+    sha256 = registry_snapshot.hashlib.sha256
+
+    def count_revision(payload):
+        revision_inputs.append(json.loads(payload)["name"])
+        return sha256(payload)
+
+    monkeypatch.setattr(
+        registry_snapshot, "hashlib", SimpleNamespace(sha256=count_revision)
+    )
     scope = ArtifactScope(view="chatbooks")
     first = snapshot.read_artifact_window(
         scope, boundary=None, direction="after", limit=20
     )
     assert first.total == 1005
     assert [row.key.native_id for row in first.items] == list(range(1005, 985, -1))
+    assert revision_inputs == [row.title for row in first.items]
     assert (
         snapshot.get_artifact_summary(scope, ArtifactKey("chatbook", 1)).title
         == "Pack 0000"
     )
+    assert revision_inputs[-1] == "Pack 0000" and len(revision_inputs) == 21
     last = snapshot.read_artifact_window(
         scope, boundary=None, direction="before", limit=20
     )
     assert [row.key.native_id for row in last.items] == list(range(20, 0, -1))
     assert last.before_boundary == 1005
+    assert snapshot.get_artifact_summary(scope, last.items[-1].key) == last.items[-1]
+    assert len(revision_inputs) <= 42
     assert loads == 1
     assert len(tuple(snapshot.iter_records())) == 1005
     assert loads == 1

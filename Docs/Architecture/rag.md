@@ -74,6 +74,9 @@ Protected-file checks use the lightweight `RAG_Search/state_paths.py` accessors;
 
 - `RAG_Search/simplified/` owns the engine; `RAG_Search/chunking_service.py` is the only door into `Chunking/`; `DB/RAG_Indexing_DB.py` owns incremental bookkeeping, not vectors.
 - `ingestion_indexing.py` is the **only** constructor of the shared service (two-lock + generation design so a frozen UI can never hold the fast lock during a build).
+- Media backfill and active-ID reconciliation share ascending primary-key
+  pagination. Each page resumes after the last visited row, including a row
+  that doesn't produce an index entry. Active and trash filters apply on every page.
 - The Library service owns the four-seam keyword path and UI recovery states; answer generation deliberately lives outside it as a pure seam with an injected `chat` callable.
 - `RAG_Search/simplified/search_service.py` exposes MCP-facing search that falls back to keyword FTS when the RAG runtime is unavailable (fallback rows carry `score: None`, never a fabricated 1.0).
 

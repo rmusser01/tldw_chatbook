@@ -5,6 +5,7 @@ import inspect
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime, timezone
+from functools import partial
 from typing import Any
 
 from loguru import logger
@@ -618,17 +619,43 @@ class HomeScreen(BaseAppScreen):
             getattr(self.app_instance, "notes_user_id", None) or "default_user"
         )
 
-        note_count_result = await self._home_content_seam_call(
-            getattr(notes_service, "count_notes", None),
-            scope="local_note",
-            user_id=notes_user_id,
+        from tldw_chatbook.Notes.notes_scope_service import (
+            library_notes_snapshot_reader,
         )
-        notes_result = await self._home_content_seam_call(
-            getattr(notes_service, "list_notes", None),
-            scope="local_note",
-            limit=_HOME_CONTENT_FETCH_LIMIT,
-            user_id=notes_user_id,
+
+        count_notes = getattr(notes_service, "count_notes", None)
+        list_notes = getattr(notes_service, "list_notes", None)
+        native_notes = library_notes_snapshot_reader(
+            list_notes, count_notes, getattr(self.app_instance, "chachanotes_db", None)
         )
+        note_scope = {"scope": "local_note", "user_id": notes_user_id}
+        notes_result = None
+        if native_notes is not None:
+            from tldw_chatbook.Backup_Recovery.participants import (
+                run_finite_local_worker,
+            )
+            from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import (
+                await_finite_read,
+            )
+
+            notes_result = await await_finite_read(
+                self._home_content_seam_call(
+                    partial(run_finite_local_worker, native_notes),
+                    limit=_HOME_CONTENT_FETCH_LIMIT,
+                    offset=0,
+                    **note_scope,
+                )
+            )
+        if notes_result is None:
+            note_count_result = await self._home_content_seam_call(
+                count_notes, **note_scope
+            )
+            if native_notes is None:
+                notes_result = await self._home_content_seam_call(
+                    list_notes, limit=_HOME_CONTENT_FETCH_LIMIT, **note_scope
+                )
+        else:
+            note_count_result = notes_result["total"]
         conversations_result = await self._home_content_seam_call(
             getattr(conversation_service, "list_conversations", None),
             mode="local",

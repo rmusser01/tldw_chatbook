@@ -1602,42 +1602,38 @@ def uninstall_media_ingest_hook() -> None:
 # =============================================================================
 
 
-def _iter_media_entries(media_db: Any, page_size: int) -> Iterator[IndexEntry]:
-    """Yield IndexEntry items for all active media, paginated."""
-    offset = 0
-    while True:
-        cursor = media_db.execute_query(
-            "SELECT id, uuid, title, type, content, last_modified "
-            "FROM Media WHERE deleted = 0 AND is_trash = 0 ORDER BY id LIMIT ? OFFSET ?",
-            (page_size, offset),
-        )
-        rows = [dict(row) for row in cursor.fetchall()]
-        if not rows:
-            return
-        for row in rows:
-            entry = media_index_entry(row)
-            if entry is not None:
-                yield entry
+def _media_backfill_pages(
+    media_db: Any, columns: str, page_size: int
+) -> Iterator[list[Any]]:
+    """Seek by the last visited media primary key, including skipped rows."""
+    query = f"SELECT {columns} FROM Media WHERE deleted = 0 AND is_trash = 0"
+    order = " ORDER BY id LIMIT ?"
+    rows = media_db.execute_query(query + order, (page_size,)).fetchall()
+    while rows:
+        yield rows
         if len(rows) < page_size:
             return
-        offset += page_size
+        rows = media_db.execute_query(
+            query + " AND id > ?" + order, (rows[-1]["id"], page_size)
+        ).fetchall()
+
+
+def _iter_media_entries(media_db: Any, page_size: int) -> Iterator[IndexEntry]:
+    """Yield IndexEntry items for all active media, paginated."""
+    columns = "id, uuid, title, type, content, last_modified"
+    for rows in _media_backfill_pages(media_db, columns, page_size):
+        for row in rows:
+            entry = media_index_entry(dict(row))
+            if entry is not None:
+                yield entry
 
 
 def _active_media_ids(media_db: Any, page_size: int) -> set[str]:
     """Return active media IDs for durable projection reconciliation."""
     active: set[str] = set()
-    offset = 0
-    while True:
-        cursor = media_db.execute_query(
-            "SELECT id FROM Media WHERE deleted = 0 AND is_trash = 0 "
-            "ORDER BY id LIMIT ? OFFSET ?",
-            (page_size, offset),
-        )
-        rows = cursor.fetchall()
+    for rows in _media_backfill_pages(media_db, "id", page_size):
         active.update(str(row["id"]) for row in rows)
-        if len(rows) < page_size:
-            return active
-        offset += page_size
+    return active
 
 
 async def reconcile_media_index(

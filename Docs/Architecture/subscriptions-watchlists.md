@@ -33,6 +33,12 @@ Three producers write `local_watchlist_runs`: scheduled checks (the handler rout
 
 Item search uses FTS5 only when the `_docsize` shadow coverage probe says the index is complete; on `sqlite3.OperationalError` (missing table or FTS5 compiled out) it falls back to AND-of-terms / OR-across-columns LIKE with escaped wildcards — "the search box must never raise into the reader". One search mode is pinned per page so counts, high-water marks, and rows agree. Delete triggers are membership-guarded so pre-migration rows get indexed on next update instead of raising "malformed"; a startup backfill worker tops the index up.
 
+The Reader captures the initial count and high-water together and selects page
+IDs before projecting preview text. A global chronological first page can use
+the existing date index because its read transaction has already pinned the
+same WAL snapshot. Explicit high-water and continuation requests apply their
+saved bounds to the page selection.
+
 ## Reader detail work
 
 Article activation admits an exclusive screen-owned worker in the wc_item_detail

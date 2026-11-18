@@ -630,6 +630,12 @@ ADR-052 (memory and compaction policy), ADR-314 (indefinite approval waits), ADR
 6. Approved Quit cancels the exact cache/flat browser workers before cleanup yields; the existing manager still drains their finite native reads. New read admission checks the same App's permanent shutdown flag as well as runtime disposal, because runtime detachment can precede the end of screen cleanup. Ordinary no-runtime/custom routes remain available before that terminal flag.
 
 
+During a plain streaming update in the same session, unchanged message
+identities and roles let the transcript reuse its causal spans and visible
+window while adopting the new message models. Tool or thinking activity,
+selection handoff, a hydrating window, and stream termination use normal
+reconciliation.
+
 ### Learned response rules (ADR232)
 
 The app-owned `ConsoleRuntime.ensure_response_rules` lazily binds the shared rule repository, helper pool, queue and controller on first native generation or manager access. `set_chat_controller` installs the lazy factory even for non-screen assembly. `response_rules/generation.py` holds successful completion until required lifecycle settlement and assessment; app shutdown drains retained preparation, transport and finite SQLite callbacks before retiring their owners. `response_rules/chat_state.py` stores native source fences and body-free tool evidence through `ConsoleChatStore` facades. `console_tool_result_observation.py` composes the existing Watchlists receipt observer with definitive rule facts.

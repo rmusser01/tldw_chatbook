@@ -751,7 +751,7 @@ _BUDGETS: dict[str, int] = {
     # Raised for TASK-40716 unproven-cleanup retention, 2026-11-14: 8534 ->
     # 8556 (+22, exact), the Release tool slot row (row kind, two protected
     # click classes, setter, row plan, lazy widget hook).
-    "tldw_chatbook/Widgets/Console/console_transcript.py": 8556,
+    "tldw_chatbook/Widgets/Console/console_transcript.py": 8554,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
     # the control-height rules to app CSS, .4/.5/.8 spent part of that.
     # TASK-33006.1 lowers it to 7,516: the Model view's field rows, Source

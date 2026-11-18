@@ -569,3 +569,69 @@ on both arms. Those failures and warnings are retained.
 
 The 130-entry private receipt manifest has SHA-256
 `2d89f81f355d40d1a1c1a3cda97142393d3fe4f7d92dd30521898c4052a5eb4b`.
+
+## Five measured efficiency fixes
+
+TASK-41798 through TASK-41802 compare installed paths with source frozen at
+`793355712b57b44dff056fa0cf3bf829629ebbf5`. Baseline and candidate execution
+order alternated on the same 18-CPU host. SQLite was 3.49.1. These medians
+measure the named code paths using disposable fixtures.
+
+| Path and fixture | Baseline | Candidate | Work changed |
+| --- | ---: | ---: | --- |
+| Home content snapshot, 40 file-backed notes, nine pairs | 80.9 ms | 42.4 ms | Two guarded Notes preparations became one. Complete snapshots were equal. |
+| Watchlists first All page, 100,000 items, nine pairs | 240.0 ms | 13.9 ms | Select page IDs first using the existing date index. VM work fell from about 6.80M to 1.54M instructions. |
+| Watchlists Unread and FTS controls, 100,000 items, nine pairs each | 12.3 / 285.2 ms | 5.4 / 97.9 ms | First and continuation pages were equal in all three scopes, including the projected previews and cursors. |
+| RAG active-media ID sweep, 100,000 rows, five pairs | 6,167.9 ms | 72.8 ms | Seek from the last visited key. The active ID sets were equal. |
+| Console streaming ingest, 10,000 messages, 25 pairs | 18.17 ms CPU | 1.77 ms CPU | Reuse causal spans and the current window after checking ordered message identity. |
+| Chatbook first 20 summaries, 10,000 records, 16 pairs | 46.61 ms CPU | 3.02 ms CPU | Rank metadata, then hash only the selected rows. Counts, ordering, revisions and exact lookup matched. |
+
+The RAG medians at 2,000 and 20,000 rows were 3.0 to 1.2 ms and 225.4 to
+11.6 ms. The Console still checks the incoming ordered IDs. Chatbook still
+reads the request's registry inventory. The timings above exclude embedding,
+renderer paint, and network calls.
+
+### Cold Home in the macOS Terminal harness
+
+Only Home source differed between arms. Every run used the same sealed
+10-note, 11-media, 10,000-conversation fixture at 120×50 with the bundled
+tokenizer. The endpoint was the first terminal flush containing fixture
+content after the exact populated counts reached the Home snapshot. Each
+navigation retained its 13-second observation and ordinary Quit.
+
+| Run order | One-minute host load, start → end | Ctrl+1 to populated frame | Home snapshot | Gaps over 50 ms | Worst gap |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 1 baseline | 9.50 → 7.92 | 447.8 ms | 291.0 ms | 1 | 117.1 ms |
+| 1 candidate | 7.92 → 6.63 | 344.3 ms | 209.8 ms | 0 | 39.6 ms |
+| 2 candidate | 6.34 → 6.48 | 334.0 ms | 207.4 ms | 1 | 92.9 ms |
+| 2 baseline | 6.48 → 6.93 | 478.5 ms | 312.3 ms | 0 | 44.4 ms |
+| 3 baseline | 6.94 → 7.08 | 527.2 ms | 354.8 ms | 1 | 131.4 ms |
+| 3 candidate | 8.92 → 9.32 | 415.6 ms | 265.9 ms | 1 | 51.6 ms |
+
+Home improved in all three pairs. Its median populated-frame time fell from
+478.5 to 344.3 ms, or 28%. Both arms recorded two gaps over 50 ms. The worst
+gap fell from 131.4 to 92.9 ms. All six runs quit normally with zero retained
+fixture database descriptors, network denials or protected-profile violations.
+The 50 ms loop and 100 ms busy-paint limits are unchanged. The full
+12-journey qualification and fresh hosted checks remain open.
+
+### Correctness and retirement
+
+The focused runs covered 60 Chatbook/Library artifact cases, 118 Watchlists
+database cases, 58 Reader and native Subscriptions cases, 71 Console
+transcript, thinking and Stop cases, and six RAG backfill cases. The Home
+demand tests covered the successful native read, the failed preview fallback
+and the hidden-screen checks. The mounted Home seam check and 22 projection
+recovery controls also passed. These case counts have some overlap.
+
+The ordinary per-test profile reproduced existing
+`raw_source_selection_changed` refusals on the frozen Console and RAG
+controls. The affected cases passed with the repository's bootstrap profile.
+The browser-link assertion also failed on frozen source because the browser
+open runs on a worker. The corrected test awaits the worker before checking
+allowed and rejected schemes and passes on both sources.
+
+The module ratchets passed with the Console transcript pin lowered to 8,554
+lines. Ruff formatting passed on touched regions and diagnostics matched the
+frozen source. The 99-entry private receipt manifest has SHA-256
+`0c81c9969b77dcb494b1ca463bd2c53056fe08e339411f350f2d832e3d511d5d`.

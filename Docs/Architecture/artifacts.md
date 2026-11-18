@@ -27,6 +27,10 @@ A "Daily Report" **is** a briefing: `Subscriptions/daily_reports_view.py` is a t
 3. Watchlists artifacts pane lists the same briefings per watchlist; Keep writes the denormalized copies.
 4. Home surfaces the newest chatbook artifact as an active-work row with console/open-details handoffs.
 
+The request-owned Chatbook snapshot ranks matching metadata by lightweight
+order keys. It constructs summaries and their revision digests for the
+requested window or exact selected record.
+
 ## Governing decisions
 
 ADR-172 (`172-library-artifacts-browse-and-navigation.md` — note: its written status line says "implementation pending", but the route alias, Library sections, and catalog are demonstrably implemented; the ADR lags the code), ADR-323 (`323-daily-reports-surface-and-demo-seeding.md`), ADR-123 (artifact share web export), ADR-015 (Artifacts was the fifth destination pre-172), ADR-322 (no second universal artifact DB). Specs: `2026-08-01-kept-briefings-design.md`, `2026-08-29-daily-reports-demo-design.md` (under `Docs/superpowers/specs/`).
