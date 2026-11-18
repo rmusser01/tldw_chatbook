@@ -698,7 +698,9 @@ def test_propagation_follows_imports_not_names():
 # TASK-36943.3 (2026-11-03): three comment-only ADR renumberings (146->343,
 # 147->344, 090->332) re-pinned on purpose.
 # TASK-39147: pin the seven commented native workflow settings.
-_TEMPLATE_SHA256 = "ad3b71654cb68a64e3a32fc58328aa7d9341556b64f78429432c1e91c90cdcd7"
+# TASK-41145 (owner decision 2026-11-16): MLX-LM ships host and port, not an
+# unused api_url.
+_TEMPLATE_SHA256 = "3d4886ffbc173e93045fc448b48bdfa503eeee51992e3972e01570d5a9b62283"
 _TEMPLATE_RELATIVE = "tldw_chatbook/Config_Files/default_config.toml"
 
 

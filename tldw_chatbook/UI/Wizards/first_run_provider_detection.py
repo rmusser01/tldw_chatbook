@@ -372,6 +372,7 @@ class ProviderDetectionStep(SetupStep):
         an empty field reads neutral. A disabled 'Test connection' says what
         enables it (review provider-15).
         """
+        from tldw_chatbook.Chat.provider_setup_persistence import host_port_refusal
         from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
             resolve_provider_endpoint,
         )
@@ -389,7 +390,9 @@ class ProviderDetectionStep(SetupStep):
         if resolution is None:
             resolution = resolve_provider_endpoint(provider_key, endpoint)
         parts: list[str] = []
-        native_refusal = koboldcpp_route_refusal(provider_key, resolution.chat_url)
+        native_refusal = koboldcpp_route_refusal(
+            provider_key, resolution.chat_url
+        ) or host_port_refusal(provider_key, endpoint)
         invalid = bool(endpoint.strip()) and (
             resolution.chat_url is None or bool(native_refusal)
         )
@@ -414,6 +417,7 @@ class ProviderDetectionStep(SetupStep):
 
     def _invalid_draft_refusal(self) -> str:
         """Commit's refusal when the draft won't resolve: name the field."""
+        from tldw_chatbook.Chat.provider_setup_persistence import host_port_refusal
         from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
             resolve_provider_endpoint,
         )
@@ -427,6 +431,7 @@ class ProviderDetectionStep(SetupStep):
         resolution = resolve_provider_endpoint(key, endpoint)
         if connection.display and (
             refusal := koboldcpp_route_refusal(key, resolution.chat_url)
+            or host_port_refusal(key, endpoint)
         ):
             return refusal
         if connection.display and resolution.errors:

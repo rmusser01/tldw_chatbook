@@ -889,11 +889,17 @@ class ProvidersModelsPanel(SettingsCategoryPanel):
         delete_keys: dict[str, list[str]] = {}
         if connection_dirty:
             # Only a save that writes the endpoint refuses (review r8e-rev1).
-            from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
-                koboldcpp_route_refusal,
+            from tldw_chatbook.Chat.console_provider_endpoints import (
+                endpoint_to_save_unedited,
+            )
+            from tldw_chatbook.Chat.provider_setup_persistence import (
+                typed_endpoint_refusal,
             )
 
-            if refusal := koboldcpp_route_refusal(provider_key, endpoint):
+            if not endpoint_dirty:
+                endpoint = endpoint_to_save_unedited(provider_key, endpoint)
+
+            if refusal := typed_endpoint_refusal(provider_key, endpoint):
                 screen._provider_save_result = refusal
                 screen._set_static_text(
                     "#settings-provider-save-result", screen._provider_save_result
@@ -1050,6 +1056,13 @@ class ProvidersModelsPanel(SettingsCategoryPanel):
                 section_values,
                 normalized_delete_keys,
             )
+            from tldw_chatbook.Chat.console_provider_endpoints import (
+                reapply_legacy_custom_2_bridge,
+            )
+
+            # TASK-41145 (review r15ep-rev3 I-1): the live view reads as a
+            # fresh load of the saved file would.
+            reapply_legacy_custom_2_bridge(screen._app_config_update_target())
             join.applied(screen, provider)
             if (
                 next_model_capabilities is not None
@@ -1379,3 +1392,61 @@ CATEGORY_PANELS: dict[SettingsCategoryId, SettingsCategoryPanel] = {
     SettingsCategoryId.PROVIDERS_MODELS: PROVIDERS_MODELS_PANEL,
     SettingsCategoryId.SPEECH_TTS: SpeechTTSCategoryPanel(),
 }
+
+
+def provider_endpoint_value(screen: SettingsScreen, provider: str) -> str:
+    """The endpoint the Providers card's Endpoint field shows for ``provider``.
+
+    MLX-LM's is its ``host`` and ``port`` as ``http://<host>:<port>/v1``
+    (TASK-41145, owner decision 2026-11-16); a saved ``api_url`` is ignored,
+    as its adapter ignores it.
+
+    Args:
+        screen: The Settings screen.
+        provider: The provider the card is on.
+
+    Returns:
+        The endpoint, or "" when none is configured.
+    """
+    from ..Screens.settings_screen import PROVIDER_ENDPOINT_KEYS, provider_config_key
+    from ...Chat.provider_setup_persistence import (
+        MLX_HOST_PORT_PROVIDER_KEYS,
+        mlx_saved_endpoint,
+    )
+
+    provider_config = screen._provider_config(provider)
+    if provider_config_key(provider) in MLX_HOST_PORT_PROVIDER_KEYS:
+        return mlx_saved_endpoint(provider_config)
+    endpoint_key = screen._provider_endpoint_setting_key(provider)
+    value = provider_config.get(endpoint_key)
+    if value is None:
+        for key in PROVIDER_ENDPOINT_KEYS:
+            value = provider_config.get(key)
+            if value is not None:
+                break
+    return str(value or "").strip()
+
+
+def provider_endpoint_row(screen: SettingsScreen, provider: str) -> str:
+    """The "Endpoint key: ..." line naming where ``provider``'s endpoint is saved.
+
+    Args:
+        screen: The Settings screen.
+        provider: The provider the card is on.
+
+    Returns:
+        The line; MLX-LM's names its ``host`` and ``port`` (TASK-41145).
+    """
+    from ..Screens.settings_screen import provider_config_key
+    from ...Chat.provider_setup_persistence import MLX_HOST_PORT_PROVIDER_KEYS
+
+    registry = screen._provider_registry_endpoint(provider)
+    if registry is not None:
+        return f"Endpoint key: {registry[0]}"
+    provider_key = provider_config_key(provider)
+    if not provider_key:
+        return "Endpoint key: provider required"
+    if provider_key in MLX_HOST_PORT_PROVIDER_KEYS:
+        return f"Endpoint key: api_settings.{provider_key}.host and .port"
+    endpoint_key = screen._provider_endpoint_setting_key(provider)
+    return f"Endpoint key: api_settings.{provider_key}.{endpoint_key}"

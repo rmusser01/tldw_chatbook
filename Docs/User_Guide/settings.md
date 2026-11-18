@@ -382,6 +382,28 @@ server, choose Custom instead." The Endpoint row's help says the same while the
 field holds such an address, as you type it and before **s**, as first-run
 setup does.
 
+MLX-LM is reached at `http://<host>:<port>/v1`, built from
+`[api_settings.local_mlx_lm]` `host` and `port` (127.0.0.1 and 8080 when
+unset), so its Endpoint field shows that address and **s** saves the host and
+port. It refuses what a host and port cannot hold, before anything is written
+and in the row's help as you type: an `https://` address ("MLX-LM is saved as
+a host and port and reached over http://, so an https:// address cannot be
+saved for it."), a path other than `/v1` (such as `/v1/chat/completions`), and
+user information. An `api_url` saved for MLX-LM by an earlier version was
+never used by its chats and is still ignored: the field shows the host and
+port (`http://127.0.0.1:8080/v1` until you set them) until you enter the
+address again.
+
+Custom 2 (Custom OpenAI API 2) sends to the Endpoint saved for it,
+`[api_settings.custom_2] api_url`, and falls back to the older
+`[API] custom_openai2_api_ip`. A config that sets that older key to its own
+address keeps sending there, and the Endpoint field shows it, while the saved
+Endpoint is empty or still the shipped `http://localhost:5678/v1/chat/completions`;
+once you enter and save a different Endpoint for Custom 2, that one is used. A
+save that leaves the Endpoint as shown (a new model, key or env var) keeps the
+saved Endpoint as it was, so the older key is still read. Nothing rewrites the
+file for this.
+
 The vLLM, TabbyAPI, Aphrodite, Custom and Custom 2 saved lists start empty and
 fill through **Discover models**. A config file written by an older version
 may still hold their sample IDs (`vllm-model-z`, `tabby-model`,
@@ -1208,7 +1230,7 @@ This page's **Custom endpoints** disclosure, under **Advanced**, manages them. E
 |---|---|
 | **Rename** | Changes the display name only — the slug (the id conversations reference) never changes. |
 | **Edit** | Rewrites **Endpoint**, **Env var**, and **Models**. Existing conversations re-resolve the URL on their next send. |
-| **Delete** | Blocked while any conversation still uses the entry: the status line names them and reveals **Detach references**, which keeps each conversation's current endpoint as conversation-only and then deletes the entry. Switching those conversations' provider first also unblocks it. Detach is refused, and nothing changes, when any conversation would keep an endpoint its new provider refuses (the entry's URL, or the conversation's own). For an OpenAI-compatible base only a named endpoint accepts (such as `/v1/openai`), the status line says those conversations would lose their endpoint and the entry keeps working, so switch their provider first. For an entry URL that both readings refuse (such as one with a query), it says to fix it with **Edit**, or switch those conversations' provider, then delete the entry. When the entry's URL is not one of the refused URLs (every refused one is a conversation's own endpoint), Edit cannot help, so it says to switch those conversations to another provider, then delete the entry. |
+| **Delete** | Blocked while any conversation still uses the entry: the status line names them and reveals **Detach references**, which keeps each conversation's current endpoint as conversation-only and then deletes the entry. Switching those conversations' provider first also unblocks it. Detach is refused, and nothing changes, when any conversation would keep an endpoint its new provider refuses (the entry's URL, or the conversation's own). For an OpenAI-compatible base only a named endpoint accepts (such as `/v1/openai`), the status line says those conversations would lose their endpoint and the entry keeps working, so switch their provider first. For an entry URL that both readings refuse (such as one with a query), it says to fix it with **Edit**, or switch those conversations' provider, then delete the entry. When the entry's URL is not one of the refused URLs (every refused one is a conversation's own endpoint), Edit cannot help, so it says to switch those conversations to another provider, then delete the entry. An entry whose family Chatbook does not know (one written by hand in `config.toml`) has no provider to move conversations to, so Detach is refused with that reason; switch those conversations to another provider, then delete it. |
 
 An entry can also be your saved default provider. Settings then names it by
 its display name, and its readiness is the family's readiness plus the

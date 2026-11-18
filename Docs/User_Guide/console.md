@@ -779,6 +779,8 @@ For KoboldCpp, **Save endpoint & use model** saves only its native
 `/api/v1/generate` address: a bare root or an OpenAI path such as `/v1` is
 refused with "KoboldCpp needs its native /api/v1/generate address. For an
 OpenAI-compatible server, choose Custom instead." and nothing is written.
+For MLX-LM it saves the address's host and port, and refuses an `https://`
+address, a path other than `/v1` or user information, writing nothing.
 For every provider it writes only an address **s** in Settings would accept,
 in the form **s** writes it. For one **s** refuses, such as an address with a
 query (`?api_key=…`), a fragment or an ambiguous path, it shows the reason

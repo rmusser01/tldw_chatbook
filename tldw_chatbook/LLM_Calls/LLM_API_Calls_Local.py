@@ -108,6 +108,37 @@ def _extract_text_from_message_content(
     return "\n".join(text_parts).strip()
 
 
+def _refuse_a_refused_endpoint(
+    display_name: str, endpoint: object, contract_key: str = "custom", provider: str | None = None
+) -> None:
+    """Refuse an endpoint the provider endpoint contract refuses (TASK-41131).
+
+    Console checks the endpoint it sends to; every other ``chat_api_call``
+    caller reached an adapter that read its own table unchecked. Each local
+    and custom adapter calls this on the URL it is about to use, whatever
+    the caller pinned or the config held, before any session or request.
+
+    Args:
+        display_name: The adapter's name, for the message.
+        endpoint: The URL the adapter is about to use.
+        contract_key: The contract's reading; "custom" is the generic one,
+            which every OpenAI-compatible local adapter shares.
+        provider: The error's provider; ``display_name`` when None.
+
+    Raises:
+        ChatConfigurationError: Status-less (nothing was sent), with the
+            contract's reason, which names no part of the value.
+    """
+    from ..Provider_Contract.provider_endpoint_contract import endpoint_refusal
+
+    if refusal := endpoint_refusal(contract_key, endpoint):
+        raise ChatConfigurationError(
+            provider=provider or display_name,
+            message=f"{display_name} API URL: {refusal}",
+            status_code=None,
+        )
+
+
 # Most local LLMs with OpenAI-compatible endpoints (like LM Studio, Jan.ai, many Ollama setups)
 # can use a generic handler.
 @_provider_recovery.unqualified
@@ -141,11 +172,13 @@ def _chat_with_openai_compatible_local_server(
     thinking_budget_tokens: Optional[int] = None,
     thinking_wire_key: Optional[str] = None,
     provider_name: str = "Local OpenAI-Compatible Server",
+    provider_key: str | None = None,
     timeout: int = 120,
     api_retries: int = 1,
     api_retry_delay: int = 1,
     chat_template_kwargs: dict[str, Any] | None = None,
 ):
+    _refuse_a_refused_endpoint(provider_name, api_base_url, provider=provider_key)
     start_time = time.time()
     logged_api_base = safe_llm_url_host(api_base_url)
     logging.debug(
@@ -764,6 +797,7 @@ def chat_with_local_llm(
         chat_template_kwargs=chat_template_kwargs,
         # Same pre-existing dict-.capitalize() crash as chat_with_custom_openai.
         provider_name="Local-LLM",
+        provider_key="local-llm",
         timeout=timeout,
         api_retries=api_retries,
         api_retry_delay=api_retry_delay,
@@ -896,18 +930,15 @@ def chat_with_llama(
             ),
             status_code=None,
         )
-    from ..Provider_Contract.provider_endpoint_contract import endpoint_refusal
-
-    if refusal := endpoint_refusal("llama_cpp", api_base_url):
-        # TASK-40300: the normalizer no longer drops a query or fragment into
-        # an accepted URL, so the endpoint contract refuses such a value here
-        # (and a zone id, ``-bad.corp``, ``127.1`` or an IDN) with its own
-        # reason, which names no part of the value.
-        raise ChatConfigurationError(
-            provider=llama_cpp_config_key_in_api_settings,
-            message=f"{provider_display_name} API URL: {refusal}",
-            status_code=None,
-        )
+    # TASK-40300: the normalizer no longer drops a query or fragment into an
+    # accepted URL, so the endpoint contract refuses such a value here (and a
+    # zone id, ``-bad.corp``, ``127.1`` or an IDN) with its own reason.
+    _refuse_a_refused_endpoint(
+        provider_display_name,
+        api_base_url,
+        "llama_cpp",
+        provider=llama_cpp_config_key_in_api_settings,
+    )
     if api_key_resolved or api_key:
         current_api_key = api_key
     elif record and record.key in {"strata", "polystrata"}:
@@ -1021,6 +1052,7 @@ def chat_with_llama(
         thinking_budget_tokens=thinking_budget_tokens,
         thinking_wire_key=provider_name or "llama_cpp",
         provider_name=provider_display_name,
+        provider_key=llama_cpp_config_key_in_api_settings,
         timeout=timeout,
         api_retries=api_retries,
         api_retry_delay=api_retry_delay,
@@ -1070,6 +1102,10 @@ def chat_with_kobold(
             provider="koboldcpp",  # Consistent with the key used for cfg
             message="KoboldCpp API URL (api_url) is required and could not be determined from arguments or configuration.",
         )
+    # TASK-41131: KoboldAI's native send posts to this URL itself.
+    _refuse_a_refused_endpoint(
+        "KoboldCpp", current_api_base_url, "koboldcpp", provider="koboldcpp"
+    )
     current_api_key = api_key or resolve_provider_api_key(cfg.get("api_key"))
     current_model = model or cfg.get("model")
     if not current_model:
@@ -1488,6 +1524,7 @@ def chat_with_oobabooga(
         user_identifier=current_user_identifier,
         # tools, tool_choice, logprobs, top_logprobs might be supported by some ooba setups
         provider_name="Oobabooga (OpenAI Extension)",
+        provider_key="oobabooga",
         timeout=timeout,
         api_retries=api_retries,
         api_retry_delay=api_retry_delay,
@@ -1581,6 +1618,7 @@ def chat_with_tabbyapi(
         seed=current_seed,
         stop=current_stop,
         provider_name="TabbyAPI",
+        provider_key="tabbyapi",
         timeout=timeout,
         api_retries=api_retries,
         api_retry_delay=api_retry_delay,
@@ -1772,6 +1810,7 @@ def chat_with_vllm(
         thinking_budget_tokens=thinking_budget_tokens,
         thinking_wire_key=provider_name or "vllm",
         provider_name="vLLM",
+        provider_key=vllm_config_key,
         timeout=timeout,
         api_retries=api_retries,
         api_retry_delay=api_retry_delay,
@@ -1896,6 +1935,7 @@ def chat_with_aphrodite(
         logprobs=current_logprobs,
         user_identifier=current_user_identifier,
         provider_name="Aphrodite Engine",
+        provider_key="aphrodite",
         timeout=timeout,
         api_retries=api_retries,
         api_retry_delay=api_retry_delay,
@@ -2108,6 +2148,7 @@ def chat_with_ollama(
         # logprobs, top_logprobs not in Ollama's map, pass if supported
         # tools, tool_choice not in Ollama's map, pass if supported by Ollama's OpenAI endpoint
         provider_name="Ollama",  # For logging within _chat_with_openai_compatible_local_server
+        provider_key=ollama_config_key,
         timeout=timeout,
         api_retries=api_retries,
         api_retry_delay=api_retry_delay,
@@ -2299,6 +2340,7 @@ def chat_with_custom_openai(
         # AttributeError on EVERY call, making this provider unusable
         # (pre-existing; surfaced by the task-243 native-tools live gate).
         provider_name="Custom OpenAI",
+        provider_key="custom-openai-api",
         timeout=timeout,
         api_retries=api_retries,
         api_retry_delay=api_retry_delay,
@@ -2367,11 +2409,23 @@ def chat_with_custom_openai_2(
     loaded_config_data = load_settings()
     cfg_section = "custom_openai_api_2"
     cfg = loaded_config_data.get(cfg_section, {})
+    # TASK-41145 (owner decision 2026-11-16): the slot's endpoint is where
+    # Settings, first-run setup and Make default write it. The fallback is the
+    # legacy ``[API] custom_openai2_api_ip``, which ``load_settings`` exposes
+    # as ``custom_openai_api_2.api_ip`` (an explicit one is also carried into
+    # the slot's api_url when that is unset: config's merge, ruling 2026-11-17).
+    api_settings = loaded_config_data.get("api_settings")
+    slot = api_settings.get("custom_2") if isinstance(api_settings, dict) else None
+    slot_url = slot.get("api_url") if isinstance(slot, dict) else None
 
-    api_base_url = api_base_url or cfg.get("api_ip")
+    api_base_url = api_base_url or slot_url or cfg.get("api_ip")
     if not api_base_url:
         raise ChatConfigurationError(
-            provider=cfg_section, message=f"{cfg_section} API URL (api_ip) required."
+            provider=cfg_section,
+            message=(
+                "Custom OpenAI API 2 API URL is required: set "
+                "[api_settings.custom_2] api_url."
+            ),
         )
 
     current_api_key = (
@@ -2486,7 +2540,8 @@ def chat_with_custom_openai_2(
         reasoning_effort=reasoning_effort,
         thinking_budget_tokens=thinking_budget_tokens,
         thinking_wire_key="custom-openai-api-2",
-        provider_name=cfg_section.capitalize(),
+        provider_name="Custom OpenAI API 2",
+        provider_key="custom-openai-api-2",
         timeout=timeout,
         api_retries=api_retries,
         api_retry_delay=api_retry_delay,
@@ -2646,7 +2701,8 @@ def chat_with_mlx_lm(
         reasoning_effort=reasoning_effort,
         thinking_budget_tokens=thinking_budget_tokens,
         thinking_wire_key=provider_name or "local_mlx_lm",
-        provider_name=provider_name,
+        provider_name=provider_display_name,
+        provider_key=mlx_config_key,
         timeout=timeout,
         api_retries=api_retries,
         api_retry_delay=api_retry_delay,

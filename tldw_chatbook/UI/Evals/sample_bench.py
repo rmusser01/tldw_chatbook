@@ -193,12 +193,30 @@ def configured_llama_cpp_url(app_config: Optional[Mapping[str, Any]]) -> Optiona
 
     Returns:
         The normalised root URL, or ``None`` if no ``llama_cpp`` endpoint
-        is configured.
+        is configured or the endpoint contract refuses it.
     """
     url = _llama_cpp_settings(app_config).get("api_url")
     if not isinstance(url, str) or not url.strip():
         return None
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+        endpoint_refusal,
+    )
+
     normalized = _normalize_llama_cpp_root(url)
+    # TASK-41131 review I-3: the bench posts through its own client, so a URL
+    # the endpoint contract refuses (127.1, user info, a query the root
+    # normalisation would drop) reads as not configured. The contract reads
+    # what the bench sends to: the root (its own /v1/completions route, which
+    # llama.cpp's chat reading calls ambiguous, is stripped), with the host,
+    # user info, query and fragment as typed.
+    parsed = urlparse(url.strip())
+    sent = (
+        urlunparse(parsed._replace(path=urlparse(normalized).path))
+        if parsed.scheme and parsed.netloc
+        else url
+    )
+    if endpoint_refusal("llama_cpp", sent):
+        return None
     return normalized or None
 
 

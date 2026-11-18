@@ -297,6 +297,8 @@ from ..Settings_Modules.category_panels import (
     CATEGORY_PANELS,
     NO_CHANGES_TO_REVERT_COPY,
     PROVIDERS_MODELS_PANEL,
+    provider_endpoint_row,
+    provider_endpoint_value,
 )
 from ..Settings_Modules.settings_config_adapter import (
     SettingsConfigAdapter,
@@ -16188,15 +16190,7 @@ class SettingsScreen(BaseAppScreen):
         return "api_url" if provider_key in API_URL_PROVIDER_KEYS else "api_base_url"
 
     def _provider_endpoint_value(self, provider: str) -> str:
-        provider_config = self._provider_config(provider)
-        endpoint_key = self._provider_endpoint_setting_key(provider)
-        value = provider_config.get(endpoint_key)
-        if value is None:
-            for key in PROVIDER_ENDPOINT_KEYS:
-                value = provider_config.get(key)
-                if value is not None:
-                    break
-        return str(value or "").strip()
+        return provider_endpoint_value(self, provider)
 
     def _provider_endpoint_placeholder(self, provider: str) -> str:
         provider_key = provider_config_key(provider)
@@ -16252,14 +16246,7 @@ class SettingsScreen(BaseAppScreen):
         return ""
 
     def _provider_endpoint_row(self, provider: str) -> str:
-        registry = self._provider_registry_endpoint(provider)
-        if registry is not None:
-            return f"Endpoint key: {registry[0]}"
-        provider_key = provider_config_key(provider)
-        if not provider_key:
-            return "Endpoint key: provider required"
-        endpoint_key = self._provider_endpoint_setting_key(provider)
-        return f"Endpoint key: api_settings.{provider_key}.{endpoint_key}"
+        return provider_endpoint_row(self, provider)
 
     @staticmethod
     def _validate_provider_endpoint(endpoint: object) -> str | None:

@@ -152,6 +152,12 @@ port that was found. The **KoboldCpp** row itself uses the native address
 ending in `/api/v1/generate`, as prefilled. For a server origin or `/v1`
 OpenAI-compatible address, choose **Custom OpenAI-compatible** instead; the
 KoboldCpp row explains this and refuses to save an incompatible route.
+The **MLX-LM** row's address is saved as a host and port
+(`http://<host>:<port>/v1`): it refuses an `https://` address, a path other
+than `/v1` and user information, saying why under the field.
+Committing setup for **Custom OpenAI API 2** saves the address its Endpoint
+field shows into `[api_settings.custom_2] api_url`, so after that the older
+`[API] custom_openai2_api_ip` is no longer read.
 
 When nothing answers, the step says which addresses it checked, offers
 **Check again**, and has a collapsed **Don't have a local server yet?** with
