@@ -1038,6 +1038,9 @@ _MUST_MASK: dict[str, tuple[str, str]] = {
     "after-spaced-ellipsis": (" ...tok" + "en=hunter2xyz", "hunter2xyz"),
     # the probe's "self.API key=" (base's \bapi matched after the dot)
     "dotted-api-key": ("cfg.API " + "key: " + _P8 + "abc", _P8 + "abc"),
+    # review r16tr-rev4: "api key" after leading hyphens, as base's \bapi read it
+    "hyphen-api-key": ("-api " + "key: hunter2xyz", "hunter2xyz"),
+    "double-hyphen-api-key": ("--api " + "key=hunter2xyz", "hunter2xyz"),
     # review r16tr-rev3 Critical 2: base64 with "=" padding below a label
     **{
         f"base64-below-{name}": (text, value)
@@ -1574,6 +1577,8 @@ _ADVERSARIAL_TEXTS = {
     # through every later ".." (47.7 s and 58.3 s at 40k).
     "dot-runs": "..a" * 40_000,
     "dot-runs-after": "a..." * 40_000,
+    # review r16tr-rev4: "api key" after leading hyphens, repeated
+    "hyphen-api-key-runs": ("-api " + "key ") * 40_000,
     "chained-simple-credential-labels-spaced": ("tok" + "en= ") * 30_000,
     "api-words": "api " * 50_000 + "key",
 }

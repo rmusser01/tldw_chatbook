@@ -572,7 +572,7 @@ CREDENTIAL_VALUE_PATTERNS = (
 
 
 #: A label: a word, ``api key`` (after any dotted name: ``self.API key``,
-#: review r16tr-rev2), or a compound name (TASK-41133), after any
+#: review r16tr-rev2), or a compound name (TASK-41133), either after any
 #: leading hyphens (``--client-secret=``, TASK-41510). It may follow a ``.``
 #: that does not end a name (``users[0].password``, ``$.token``,
 #: ``...password``; reviews r16tr-rev1, rev2); ``db.password`` is one label.
@@ -587,7 +587,7 @@ _LABEL = re.compile(
     r"""
     (?<![A-Za-z0-9_-])(?<![A-Za-z0-9_-]\.)
     (?:\\?(?P<label_quote>["']))?
-    (?P<label>(?i:(?:[A-Za-z0-9_]+[.-])*api[ ]key)|-*[A-Za-z0-9]+(?:(?:[_-]++\.?|\.)[_-]*+[A-Za-z0-9]+)*)
+    (?P<label>(?i:-*(?:[A-Za-z0-9_]+[.-])*api[ ]key)|-*[A-Za-z0-9]+(?:(?:[_-]++\.?|\.)[_-]*+[A-Za-z0-9]+)*)
     (?(label_quote)\\?(?P=label_quote))
     [^\S\r\n]*(?::|=(?!=))[^\S\r\n]*
     """,

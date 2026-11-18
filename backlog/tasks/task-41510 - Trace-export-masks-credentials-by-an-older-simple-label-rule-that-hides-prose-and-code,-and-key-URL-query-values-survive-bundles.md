@@ -4,7 +4,7 @@ title: "Trace export masks credentials by an older simple-label rule that hides 
 status: Done
 assignee:
 - '@claude'
-updated_date: 2026-11-18 05:24
+updated_date: 2026-11-18 05:39
 created_date: 2026-11-17 05:27
 labels:
 - follow-up
@@ -91,3 +91,5 @@ Simple labels are judged as compound labels are, and a URL's `?key=` value is ma
 - **Probe** (632,060 texts: 22 labels x 17 values, two base64 values included, x 26 separators, Unicode indentation below included, x 65 contexts, dot runs `a..`, `..`, `x...`, `a.b..`, the bare header words, `case`, `while not` and `if it is` included): 39,312 values masked at base are kept at head: 36,288 below an accepted code header whose subject is the label (`if`, `if not`, `if self.`, `elif`, `while`, `while not`, `class`, `match`, `case`, `with open(p) as`, `for x in`, `except KeyError as`), 3,024 below `if it is` (the accepted remainder), 0 elsewhere.
 - **Timing** (CPU s at 10k/20k/40k units, `_credential_text` / `mask_credential_labels` / logs): LF 0.19/0.38/0.76, 0.11/0.23/0.48, 0.15/0.30/0.59; CR 0.20/0.40/0.79, 0.13/0.26/0.51, 0.14/0.30/0.60; CRLF 0.19/0.40/0.80, 0.12/0.24/0.52, 0.16/0.32/0.64; mixed (CR, LF, CRLF, NBSP) 0.27/0.56/1.09, 0.17/0.35/0.69, 0.21/0.40/0.83; `..a` 0.01/0.01/0.03; `a...` 0.01/0.02/0.04. All linear; base logs on the same LF text 0.19/0.45/1.14.
 - **Runs** (load 60-112): trace set (`-n 4`) 1248 passed; log byte-identity 2,420 texts x 5 functions, 0 diffs; serial size and identity ratchets 270 passed; `ruff_gate` OK; `preflight.sh` passed.
+
+**Review r16tr-rev4 (fix round 4).** One Minor: the `api key` alternative of `_LABEL` took no leading hyphens (`-*` belonged only to the other alternative), so `-api key: hunter2xyz` and `--api key=hunter2xyz` were kept where base's `\bapi` masked them. It is now `(?i:-*(?:[A-Za-z0-9_]+[.-])*api[ ]key)` (the reviewer's fix). Rows `hyphen-api-key` and `double-hyphen-api-key` failed before the fix and pass after; adversarial `hyphen-api-key-runs` (`"-api key " * 40_000`) stays linear (0.023/0.047/0.094 s CPU at 10k/20k/40k). Runs (load 15-19): trace set (`-n 4`) 1251 passed; log byte-identity 2,430 texts x 5 functions, 0 diffs; serial size and identity ratchets 270 passed; probe unchanged (632,060 texts, 39,312 kept, all accepted code headers or `if it is`, 0 elsewhere); `preflight.sh` passed.
