@@ -21,6 +21,7 @@ from tldw_chatbook.Actor_Packs.repository import (
 from tldw_chatbook.Character_Chat.local_character_persona_service import (
     LocalCharacterPersonaService,
 )
+from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
@@ -412,7 +413,14 @@ def test_ensure_recovered_is_single_flight_across_threads(components) -> None:
 
     repository.list_persona_intents = slow
 
-    workers = [threading.Thread(target=coordinator.ensure_recovered) for _ in range(6)]
+    def recover() -> None:
+        # The app runs recovery inside the operation that owns the worker
+        # thread's ChaChaNotes handle (ensure_actor_pack_recovery); without it
+        # each thread's handle outlives the test.
+        with operation_owned_connection(repository.db):
+            coordinator.ensure_recovered()
+
+    workers = [threading.Thread(target=recover) for _ in range(6)]
     for worker in workers:
         worker.start()
     for worker in workers:
