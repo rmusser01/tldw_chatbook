@@ -89,6 +89,15 @@ Evidence (2026-11-18, base = dev d0486978dd, load 60-105):
   - `test_task_15103_review_ledger_canonical_schema_and_arithmetic` hit its 300 s pytest-timeout, in the suite and alone. With `--timeout=1800` it passed on both trees: base 291 s, head 294 s.
 - `./scripts/preflight.sh` passed (`PYTHON` set to the repo venv).
 - **Scan cost:** user CPU was 20.78 / 21.20 s on base and 20.64 / 20.69 s on head, in alternating runs. The change is not measurable.
+- **Review round (2026-11-18, three Minors, all fixed):**
+  - **Class bodies.** A class body's `for` variable is its own, so the enclosing function's `=` no longer count for it. A `global`/`nonlocal` declared in a class body is no longer attributed to the enclosing function. Class bodies now sit in the follower's scope chain and are skipped.
+  - **Docstring.** It now lists "a non-literal argument at a helper's call site" and class bodies' `=`/`global`/`nonlocal` as not followed.
+  - **New controls:**
+    - `test_a_literal_the_name_cannot_hold_is_not_counted[class-body-loop-variable|class-body-global]`; both fail on the reviewed head 8e230844a9;
+    - `test_a_literal_moved_into_a_helper_or_loop_is_still_counted[global-loop-variable]`: a `for` in a function that declares its variable `global`, inside a function with a same-named local. It fails when `_owner` treats `global` as `continue` or ignores it.
+  - Every earlier mutant is still caught, and the two class-body mutants are caught by their controls.
+  - **Real tree:** the counted-literal multiset (1803), pins, private names and record are identical to the reviewed head.
+  - The census file passes 68 of 68 serially, and preflight passed.
 - **Files:**
   - `Tests/Architecture/test_app_string_lookup_census.py`
   - `Tests/Architecture/app_lookup_census.tsv`

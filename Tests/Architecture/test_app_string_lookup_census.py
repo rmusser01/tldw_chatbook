@@ -34,18 +34,20 @@ lookup that can read it, so a dict read at eight sites counts its values eight
 times.
 
 Not followed, because TASK-41318 and TASK-41641 did not name them (follow one
-if a literal moves there): boolean expressions (``x or "y"``), parameter
-defaults, a parameter reassigned in its function, a function's returned
-parameter (the caller's argument), iterating a dict or its ``.items()``, tuple
-subscripts, ``*``/``**`` unpacking inside a literal, a comprehension used as a
-loop's iterable, a loop variable read after its loop, names imported from
-another module, class attributes, functions defined in another module, and
-bindings other than a plain ``=`` (tuple unpacking, ``with``/``except``/
-``import`` targets, ``match`` captures, walrus, augmented). A name bound only
-those ways still shadows a module-level one. A lookup whose own argument is an
-UPPER_CASE constant is not followed either: its row in the record names the
-attribute it reaches. A constant reached any other way (``x = CONST``, a dict
-holding one) is followed.
+if a literal moves there): boolean expressions (``x or "y"``), a non-literal
+argument at a helper's call site (``_optional(app, "a" if k else "b")``),
+parameter defaults, a parameter reassigned in its function, a function's
+returned parameter (the caller's argument), iterating a dict or its
+``.items()``, tuple subscripts, ``*``/``**`` unpacking inside a literal, a
+comprehension used as a loop's iterable, a loop variable read after its loop,
+names imported from another module, class attributes and class bodies (their
+``=``, and a ``global``/``nonlocal`` declared in one), functions defined in
+another module, and bindings other than a plain ``=`` (tuple unpacking,
+``with``/``except``/``import`` targets, ``match`` captures, walrus,
+augmented). A name bound only those ways still shadows a module-level one. A
+lookup whose own argument is an UPPER_CASE constant is not followed either: its
+row in the record names the attribute it reaches. A constant reached any other
+way (``x = CONST``, a dict holding one) is followed.
 
 Every lookup whose name is not a literal, and every ``setattr``/``delattr`` on
 the app whose name is not a literal (TASK-41318), is also recorded in
@@ -90,6 +92,7 @@ _SCOPES = {
     ast.ListComp,
     ast.SetComp,
     ast.DictComp,
+    ast.ClassDef,
 }
 
 
@@ -213,10 +216,16 @@ class _Follower:
         self.declared: dict[tuple[int, str], type] = {}
         self.rebinders: defaultdict[str, list[ast.AST]] = defaultdict(list)
         for statement in declarations:
-            function = next((s for s in self._chain(statement) if isinstance(s, _FUNCTIONS)), None)
-            for name in statement.names if function else ():
-                self.declared[id(function), name] = type(statement)
-                self.rebinders[name].append(function)
+            # A class body's declaration is not followed (class bodies are not).
+            body = self._body(self._chain(statement))
+            for name in statement.names if isinstance(body, _FUNCTIONS) else ():
+                self.declared[id(body), name] = type(statement)
+                self.rebinders[name].append(body)
+
+    @staticmethod
+    def _body(chain: list[ast.AST]) -> ast.AST | None:
+        """The nearest function or class body in ``chain``, else None (the module)."""
+        return next((s for s in chain if isinstance(s, (*_FUNCTIONS, ast.ClassDef))), None)
 
     def _owner(self, chain: list[ast.AST], name: str) -> ast.AST:
         """The function (or the module) whose variable ``name`` is, from its enclosing scopes."""
@@ -293,13 +302,19 @@ class _Follower:
                     return []
                 if name in _bound_names(scope):
                     return self._assigned(scope, name)
+            elif type(scope) is ast.ClassDef:
+                continue  # A class body's names are not followed.
             elif (index := _unpacked(scope.target, name)) is not None:
                 # A ``for`` statement's variable is its function's (or the
                 # module's), so that variable's ``=`` reach it too (TASK-41641).
-                # A comprehension's variable is its own.
+                # A comprehension's variable is its own, and so is a class
+                # body's, whose ``=`` are not followed.
                 found = []
-                if isinstance(scope, (ast.For, ast.AsyncFor)):
-                    found = self._assigned(self._owner(chain[position + 1 :], name), name)
+                rest = chain[position + 1 :]
+                if isinstance(scope, (ast.For, ast.AsyncFor)) and not isinstance(
+                    self._body(rest), ast.ClassDef
+                ):
+                    found = self._assigned(self._owner(rest, name), name)
                 if index == -2:
                     return found
                 iterated = self.values(scope.iter, seen, helper)
@@ -653,7 +668,14 @@ _HELPERS = (
     "    def use():\n"
     "        nonlocal held\n"
     '        held = "notes_db"\n'
-    "        return getattr(app, held, None)\n"
+    "        return getattr(app, held, None)\n\n"
+    'swept = "media_db"\n\n'
+    "def sweeper(app):\n"
+    '    swept = "notes_db"\n\n'
+    "    def sweep():\n"
+    "        global swept\n"
+    '        for swept in ("media_db", "notes_db"):\n'
+    "            getattr(app, swept, None)\n"
 )
 
 
@@ -706,6 +728,7 @@ _HELPERS = (
             '        picked = "notes_db"\n        picked = "_planted_private"\n',
         ),
         _HELPERS.replace('    held = "media_db"\n', '    held = "media_db"\n    held = "_planted_private"\n'),
+        _HELPERS.replace('swept = "media_db"\n', 'swept = "media_db"\nswept = "_planted_private"\n'),
     ],
     ids=[
         "helper",
@@ -728,6 +751,7 @@ _HELPERS = (
         "global-read",
         "nonlocal-rebinding",
         "nonlocal-read",
+        "global-loop-variable",
     ],
 )
 def test_a_literal_moved_into_a_helper_or_loop_is_still_counted(
@@ -777,6 +801,10 @@ _SHADOWED = 'attr = "_planted_private"\n\n'
         'attr = "media_db"\n\ndef f(app):\n    for attr in ("_planted_private",):\n\n'
         "        def inner():\n            global attr\n            getattr(app, attr, None)\n",
         'def f(app):\n    x = "_planted_private"\n    [getattr(app, x, None) for x in ("media_db",)]\n',
+        'def f(app):\n    x = "_planted_private"\n\n    class C:\n'
+        '        for x in ("media_db",):\n            getattr(app, x, None)\n',
+        _SHADOWED + 'def f(app):\n    attr = "media_db"\n\n    class C:\n        global attr\n\n'
+        "    getattr(app, attr, None)\n",
     ],
     ids=[
         "other-function",
@@ -794,6 +822,8 @@ _SHADOWED = 'attr = "_planted_private"\n\n'
         "another-functions-global",
         "global-skips-enclosing-loop",
         "comprehension-variable-not-the-functions",
+        "class-body-loop-variable",
+        "class-body-global",
     ],
 )
 def test_a_literal_the_name_cannot_hold_is_not_counted(tmp_path: Path, source: str) -> None:
