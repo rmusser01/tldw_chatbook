@@ -1370,7 +1370,24 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: restore parked focus on, and the rail-sync docstring says when it
     #: recomposes: 38169 -> 38177 lines (measured).
     #: 2026-11-13 restack: both stacked, measured 38188 lines, 1377 methods.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38188, 1377),
+    #: 2026-11-17, TASK-41129 (coordinator follow-up): a Notes entry waits
+    #: for rows still loading (``_library_notes_entry_list_settled``), the
+    #: window's expiry lands it if nothing holds focus
+    #: (``_expire_library_list_entry_focus``), and the arm carries the
+    #: TASK-41128 empty-list target: 38188 -> 38232 lines, 1377 -> 1379
+    #: methods (measured).
+    #: 2026-11-17, TASK-41129 review r15lf-rev2: a waiting Notes entry clears
+    #: a grip landing when it arms, is not revoked by the app's own restore or
+    #: a grip reset, counts a grip as unset at expiry, and lands its fallback
+    #: only inside the focus chain: 38232 -> 38268 lines, 1379 methods.
+    #: 2026-11-17, TASK-41129 review r15lf-rev3: a click disarms a waiting
+    #: Notes entry before Textual focuses its target, only the canvas sync's
+    #: own restore landing is exempt, and every rule is limited to the
+    #: Database list (``_library_notes_database_entry``): 38268 -> 38287
+    #: lines, 1379 -> 1380 methods.
+    #: 2026-11-17, review r15lf-rev4: that Database gate is gone (it changed
+    #: nothing a user sees): 38287 -> 38282 lines, 1380 -> 1379 methods.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38282, 1379),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard
@@ -1684,3 +1701,69 @@ def test_unbound_library_screen_calls_in_tests_match_their_pin() -> None:
 )
 def test_unbound_class_call_counter_sees_each_shape(source: str, expected: int) -> None:
     assert _unbound_class_calls(source, "Probe") == expected
+
+
+# --- TASK-41129 review r15lf-rev4: the press-only contract ------------------
+# ``LibraryScreen.get_focusable_widget_at`` disarms a waiting Notes entry,
+# because Textual 8.2.8 calls it only while forwarding a MouseDown, just before
+# it focuses the click's target. A Textual that also called it for hover or a
+# tooltip would disarm the entry whenever the pointer moved; this goes red
+# first.
+
+_PRESS_ONLY_NAME = "get_focusable_widget_at"
+
+
+def _press_only_violations(textual_root: Path) -> tuple[list[str], int]:
+    """References outside ``Screen._forward_event``'s MouseDown branch.
+
+    Returns:
+        The ``file:line`` of every reference elsewhere, and how many sit in
+        that branch.
+    """
+    outside: list[str] = []
+    inside = 0
+    for path in sorted(textual_root.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        parents = {
+            child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)
+        }
+        for node in ast.walk(tree):
+            if not (
+                (isinstance(node, ast.Attribute) and node.attr == _PRESS_ONLY_NAME)
+                or (isinstance(node, ast.Name) and node.id == _PRESS_ONLY_NAME)
+                or (isinstance(node, ast.Constant) and node.value == _PRESS_ONLY_NAME)
+            ):
+                continue
+            path_up = []
+            current = node
+            while current in parents:
+                path_up.append((parents[current], current))
+                current = parents[current]
+            in_press_branch = any(
+                isinstance(parent, ast.If)
+                and child in parent.body
+                and ast.unparse(parent.test) == "isinstance(event, events.MouseDown)"
+                for parent, child in path_up
+            )
+            scopes = [p for p, _ in path_up if isinstance(p, (ast.FunctionDef, ast.ClassDef))]
+            if (
+                in_press_branch
+                and len(scopes) >= 2
+                and scopes[0].name == "_forward_event"
+                and scopes[1].name == "Screen"
+            ):
+                inside += 1
+            else:
+                outside.append(f"{path.relative_to(textual_root)}:{node.lineno}")
+    return outside, inside
+
+
+def test_textual_calls_get_focusable_widget_at_only_to_forward_a_press() -> None:
+    import textual
+
+    outside, inside = _press_only_violations(Path(textual.__file__).parent)
+    assert inside >= 1, "Screen._forward_event's MouseDown branch no longer calls it"
+    assert outside == [], (
+        f"Textual now references {_PRESS_ONLY_NAME} outside a press: {outside}; "
+        "LibraryScreen's override would disarm a waiting Notes entry on hover"
+    )

@@ -197,7 +197,10 @@ leaves it alone. This holds in Library notes and in Folder files.
   "Obsidian vaults" below). Keep a folder synced reads front matter only
   inside a vault and always keeps the block in the body.
 - **Manage sync folders** — appears when roots or migration candidates exist;
-  it shows text-explicit status and the valid action for each root.
+  it shows text-explicit status and the valid action for each root. Escape or
+  its **‹ Notes** returns to the Notes list the way leaving Add from files
+  does: no note open, focus on the first note row, or on **New** when the
+  list has no note row (no notes yet, or a kept filter that matches nothing).
 
 ### Library notes vs. Folder files vs. lasting sync
 
@@ -695,6 +698,15 @@ while one of those rows genuinely has focus — move to "‹ Notes" / "‹ Back 
 list" (the same compact-vs-wide wording as Edit/Preview/Info) and it drops,
 because Enter there goes back rather than creating anything.
 
+**Leaving the view.** Escape, the view's back control (**‹ Notes** on a wide
+terminal, **‹ Back to list** on a compact one) or the rail's **Notes** row
+returns to the Notes list with no note open — on a wide terminal the work
+area beside it reads "Select a note to edit it here." — and puts focus on the
+first note row, where opening Notes puts it, not in the filter, so the next
+letter is a list key rather than filter text. When the list has no note row
+— no notes yet ("No notes yet. Create your first note."), or a kept filter
+that matches nothing — focus goes to its **New** button instead.
+
 ### Add from files and lasting sync
 
 **Add from files…** first asks what relationship you want. Until you choose,
@@ -710,7 +722,12 @@ Each option names the difference that matters most and is easiest to miss:
 Below them, a third line points at the answer that is on neither button —
 **Folder files**, the mode of this same screen that edits the folder where it
 is and imports nothing; the strip above the canvas is where you switch to it.
-The bar below the chooser holds only **‹ Notes**. Until lasting sync is ready
+The bar below the chooser holds only **‹ Notes**. Escape or **‹ Notes** —
+from the chooser, from **Import once**, or from **Keep a folder synced**'s
+setup and review — returns to the Notes list the way leaving the New note
+view does: no note open, and focus on the first note row rather than in the
+filter, or on **New** when the list has no note row (no notes yet, or a kept
+filter that matches nothing). Until lasting sync is ready
 on the profile, the second button reads "○ Keep a folder synced" with the line
 "Keeping a folder synced isn't ready on this profile yet. Nearest valid
 action: Import once." under it.
