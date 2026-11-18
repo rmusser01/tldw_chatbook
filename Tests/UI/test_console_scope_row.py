@@ -427,6 +427,7 @@ async def test_conversation_scope_picker_projects_raw_session_title_to_one_line(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_conversation_inspector_projects_raw_title_and_workspace_to_one_line():
     app = _build_test_app()
     host = ConsoleHarness(app)
