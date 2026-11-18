@@ -44,6 +44,9 @@ async def test_plugin_workflow_preserves_owned_loopback_and_asyncio(request, tmp
             for target in node.targets
         )
     )
+    assert "Tests/Plugins/test_acquisition_diagnostics.py" in ast.literal_eval(
+        argv.value
+    )
     allowed = next(
         ast.literal_eval(node.value)
         for node in tree.body
