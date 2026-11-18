@@ -933,6 +933,63 @@ def test_navigation_completion_releases_callback_before_invocation() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("switch", ["replace", "reject", "overlay"])
+async def test_settings_transfer_ends_process_console_visit_before_mount(monkeypatch, switch):
+    """A completed turn's trailing refresh cannot own the outgoing Settings visit."""
+    from tldw_chatbook.Chat.console_execution_process import ConsoleExecutionClient
+    from tldw_chatbook.Chat.console_execution_projection_view import ConsoleProjectionView
+    from tldw_chatbook.UI.Console_Modules import execution_state
+
+    app = _build_test_app()
+    app._initial_screen_pushed = True
+    app.current_tab = "chat"
+    outgoing = SimpleNamespace(
+        screen_name="chat", app_instance=app, _console_process_visit=1,
+        _console_process_projection_view=ConsoleProjectionView(0, (), None, (), ()),
+    )
+    client = ConsoleExecutionClient(app)
+    client._view, client._visit = outgoing, 1
+    app.console_execution_client = client
+    app._screen_stacks["_default"][:] = [object(), outgoing]
+    monkeypatch.setattr(execution_state, "ChatScreen", SimpleNamespace)
+    monkeypatch.setattr(type(app), "screen", property(lambda self: self._screen_stack[-1]))
+
+    class SettingsTarget:
+        screen_name = "settings"
+
+        def __init__(self, app_instance):
+            self.app_instance = app_instance
+
+    def switch_before_textual_suspend(target):
+        if switch == "reject":
+            raise RuntimeError("target never took the stack")
+        stack = app._screen_stacks["_default"]
+        if switch == "overlay":
+            stack.append(target)
+        else:
+            stack[-1] = target
+
+        async def mount():
+            if switch == "overlay":
+                assert client._view is outgoing and client._visit == 1
+                return
+            # Textual can run the old Send refresh here, before dispatching suspend.
+            assert client._view is None and client._visit == 2
+            # The subsequently delivered original suspend cannot send a second hide.
+            execution_state.detach_selected_view(outgoing)
+            assert client._visit == 2
+
+        return mount()
+
+    monkeypatch.setattr(app, "_resolve_screen_navigation_target", lambda _: ("settings", "settings", SettingsTarget))
+    monkeypatch.setattr(app, "switch_screen", switch_before_textual_suspend)
+    message = NavigateToScreen("settings")
+    await app.handle_screen_navigation(message)
+    assert message.target_ownership_committed is (switch != "reject")
+    assert (client._view is outgoing, client._visit) == ((False, 2) if switch == "replace" else (True, 1))
+
+
+@pytest.mark.asyncio
 async def test_navigation_commit_settles_success_before_post_switch_failure(
     monkeypatch,
 ):

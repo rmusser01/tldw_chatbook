@@ -1098,11 +1098,22 @@ class NavigationMixin:
                     self._notify_navigation_failure(screen_name)
                     return False
 
-                if self._navigation_target_owns_stack(new_screen):
+                target_owned = self._navigation_target_owns_stack(new_screen)
+                if target_owned:
                     message.commit_target_ownership()
 
                 try:
-                    await switch_result
+                    try:
+                        if (
+                            target_owned
+                            and outgoing_key == TAB_CHAT
+                            and getattr(self, "console_execution_client", None) is not None
+                        ):
+                            from .UI.Console_Modules.execution_state import detach_displaced_view
+
+                            detach_displaced_view(self, current_screen, new_screen)
+                    finally:
+                        await switch_result
                 except Exception as exc:
                     if self._navigation_target_owns_stack(new_screen):
                         message.commit_target_ownership()

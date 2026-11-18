@@ -326,6 +326,23 @@ def selected_agent_rail(screen: ChatScreen):
     return client.agent_rail
 
 
+def detach_displaced_view(app, screen: ChatScreen, target) -> None:
+    """End a published visit when the routed target replaces it before suspend."""
+    client = app.console_execution_client
+    if (
+        type(screen) is ChatScreen
+        and type(client) is ConsoleExecutionClient
+        and screen.app_instance is app and client._app is app
+        and client._view is screen
+        and getattr(screen, "_console_process_visit", None) == client._visit
+        and type(getattr(screen, "_console_process_projection_view", None)) is ConsoleProjectionView
+        and not getattr(screen, "_console_process_prepare_failed", False)
+        and app.screen is target
+        and all(item is not screen for item in app.screen_stack)
+    ):
+        detach_selected_view(screen)
+
+
 def detach_selected_view(screen: ChatScreen) -> ConsoleProjectionView:
     """Revoke the actual visit before teardown awaits; retain read-only rows."""
     _require_sources()
