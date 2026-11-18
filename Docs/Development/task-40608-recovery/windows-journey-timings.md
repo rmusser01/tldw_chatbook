@@ -193,7 +193,7 @@ Batch `q5` started its first clean baseline on Windows 10 at 07:59 UTC on Novemb
 
 | Batch | Pair | README baseline / candidate | Approved edit baseline / candidate | State |
 |---|---|---|---|---|
-| `q9` | 1 | 294.9706 s / pending | 416.4471 s / pending | The baseline passed both original journeys. First HTTP arrived at 89.0301 s and 110.7063 s. Candidate `q91c1` started. |
+| `q9` | 1 | 294.9706 s / 23.2802 s | 416.4471 s / 30.0985 s | Both sides passed every original check and shutdown. Candidate first HTTP arrived at 10.4910 s and 7.9268 s (baseline 89.0301 s and 110.7063 s). Both miss five seconds. |
 | `q9` | 2–3 | Pending | Pending | Frozen candidate `72f36054ea`, configuration SHA-256 `9ee7d9a18ab6bdec4083d192d47a41d7eb2bd2006882f6fc5e2ba4be2e6a84bd`. |
 | `q8` | 1 | 295.3187 s / 25.4222 s | 405.5752 s / 36.0400 s to persisted reply only | Baseline passed. The candidate verified README, then timed out painting the edit reply after all six edit requests. Zero eligible pairs. |
 | `q8` | 2–3 | — / — | — / — | The driver stopped. Frozen candidate `33470fe57d`, configuration SHA-256 `176e09ef967e1c4bbd5d74f2ccf5af15c36f7d40282d9184d9596eef5cde8b35`. |
