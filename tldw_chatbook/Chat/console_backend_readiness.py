@@ -408,10 +408,22 @@ class ConsoleBackendReadiness:
         ):
             with backend.store._preparation_lock:
                 if self.cost.derive(session, self.value[0]):
+                    summary = self._cost_summary(session, self.context_summary)
                     self._current(session, settings, identity.source_revision, source)
-                    self.context_summary = self._cost_summary(session, self.context_summary)
-                    return self.value
+                    if (
+                        self.key == key == self._key(session, settings, identity.source_revision)
+                        and self.context_key == self._context_key(session)
+                        and self.agent_key == self._agent_key(session)
+                        and self.history_key == self._history_key()
+                        and backend.domain.sources.prompt_history._loaded
+                        and time.monotonic() - self.at < 1.0
+                    ):
+                        self.context_summary = summary
+                        return self.value
         with backend.store._preparation_lock:
+            # A display calculation cannot renew the captured native facts.
+            # Rebind a changed key before taking the existing fresh-read path.
+            key = self._key(session, settings, identity.source_revision)
             agent_key = self._agent_key(session)
             current_context_key = self._context_key(session)
             context_inputs = self._capture_context(session)

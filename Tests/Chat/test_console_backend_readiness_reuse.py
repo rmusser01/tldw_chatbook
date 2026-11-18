@@ -195,5 +195,24 @@ async def test_backend_readiness_reuses_native_facts_without_renewing_age(
             await projection()
             assert not readiness.cost.unavailable
             assert readiness.cost.facts.snapshot.total_usd == 36.0
+
+            # Even an unchanged snapshot may expire during optional cost
+            # calculation. Its old age cannot be republished or renewed.
+            prior_reads, prior_facts = len(native_reads), readiness._context_facts
+            expired = [False]
+
+            def expire_during_cost(_frame):
+                if not expired[0]:
+                    expired[0] = True
+                    clock[0] += 1.0
+
+            with _observe(
+                readiness_source.ConsoleBackendReadiness._cost_summary.__code__,
+                sys.monitoring.events.PY_RETURN, expire_during_cost,
+            ):
+                await projection()
+            assert expired[0] and len(native_reads) == prior_reads + 1
+            assert readiness._context_facts is not prior_facts
+            assert readiness.at == clock[0]
     finally:
         await backend.aclose()
