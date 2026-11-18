@@ -353,12 +353,21 @@ class ConsoleExecutionBackend:
         if type(command) is RefreshConfiguration:
             self._capture_rail_refresh(command)
         self._sequence = message.identity.sequence
-        checkpoint = self.presentation.admit_view_checkpoint(message)
+        association = self.presentation.association
+        if rail_apply:
+            # The exact retired publication above authorizes this source
+            # transition. Preserve every presentation graph check before the
+            # original Apply; no display/lifecycle token is issued for Apply.
+            self.presentation._require_association_graph(association)
+            checkpoint = None
+        else:
+            checkpoint = self.presentation.admit_view_checkpoint(message)
         try:
             receipt = self.controls.dispatch(command)
             if rail_apply:
                 receipt.applied.result()
                 self._apply_rail_profile(command.publication)
+                self.presentation.require_association(association)
         except BaseException:
             self.presentation.release_view_checkpoint(message.identity, checkpoint)
             raise

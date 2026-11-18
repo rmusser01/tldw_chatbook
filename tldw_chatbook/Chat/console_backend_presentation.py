@@ -659,6 +659,11 @@ class ConsoleBackendPresentation:
         )
 
     def require_association(self, association) -> None:
+        self._require_association_graph(association)
+        self.backend.require_sources()
+
+    def _require_association_graph(self, association) -> None:
+        """Keep the original structural checks during an issued source Apply."""
         from .console_execution_backend import ConsoleExecutionBackend
 
         backend = self.backend
@@ -676,7 +681,6 @@ class ConsoleBackendPresentation:
             or self._runtime.view is not None
         ):
             raise RecoveryRequired("console_snapshot_owner_changed")
-        backend.require_sources()
 
     def _require_display_owner(self, owner):
         from .console_domain_display import ConsoleDomainDisplayOwner

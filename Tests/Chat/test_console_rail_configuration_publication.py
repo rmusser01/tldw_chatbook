@@ -450,18 +450,14 @@ async def test_original_parent_rail_worker_publishes_to_same_contained_backend(r
         client = app.console_execution_client
         assert app.console_runtime is None and client._view is None
         original_process, original_tree = client._process, client._tree
-        # A real suspended screen retains its DOM link to the app. A
-        # never-mounted ChatScreen cannot issue a Textual thread callback.
+        # Schedule the same threaded preference worker while its real Chat
+        # owns the gesture. Textual cancels workers launched on a removed screen.
         await app.handle_screen_navigation(NavigateToScreen(TAB_CHAT))
         async with asyncio.timeout(30):
             await wait_for_selected_composer(app)
         screen = app.screen
         assert type(screen) is ChatScreen
-        await app.handle_screen_navigation(NavigateToScreen(TAB_HOME))
-        async with asyncio.timeout(30):
-            while client._view is not None:
-                await asyncio.sleep(0.01)
-        assert app.current_tab == TAB_HOME and screen.app is app
+        assert client._view is screen and screen.app is app
         original_revision = client._source_revision
         key = build_console_rail_preference_key(layout_scope="global").value
         value = serialize_console_rail_stored_preferences({"workspace_open": True})
@@ -481,8 +477,12 @@ async def test_original_parent_rail_worker_publishes_to_same_contained_backend(r
         assert client._process is original_process and client._tree is original_tree
         assert config.load_settings()["console"]["rail_state"][key] == value
 
-        # A fresh original command checks the child's newly associated source;
-        # no display read is issued while Home covers the unmounted Chat.
+        await app.handle_screen_navigation(NavigateToScreen(TAB_HOME))
+        async with asyncio.timeout(30):
+            while client._view is not None:
+                await asyncio.sleep(0.01)
+        assert app.current_tab == TAB_HOME
+        # A fresh permission command checks the same source after leaving Chat.
         receipt = client.submit("PermissionAction", {
             "operation": {"kind": "ReadPermissionSnapshot", "strict": True},
         })
