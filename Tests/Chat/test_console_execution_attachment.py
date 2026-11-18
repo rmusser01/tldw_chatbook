@@ -136,8 +136,8 @@ async def test_due_refresh_is_accepted_by_textual_async_workers(monkeypatch):
 
     calls = []
 
-    async def reconcile(screen):
-        calls.append(screen)
+    async def reconcile(screen, *, passive):
+        calls.append((screen, passive))
 
     work = []
     client = SimpleNamespace(_visit=3, _readiness_deadline=0)
@@ -156,7 +156,7 @@ async def test_due_refresh_is_accepted_by_textual_async_workers(monkeypatch):
     execution_state.refresh_selected_when_due(screen)
     assert len(work) == 1
     await Worker._run_async(SimpleNamespace(_work=work[0]))
-    assert calls == [screen]
+    assert calls == [(screen, True)]
 
 
 def test_selected_resize_waits_for_the_current_visit_publication(monkeypatch):
