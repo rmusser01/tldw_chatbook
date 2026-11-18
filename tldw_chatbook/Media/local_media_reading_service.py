@@ -506,22 +506,20 @@ class LocalMediaReadingService:
         offset: int = 0,
         library_summary: bool = False,
         match_reasons: bool = False,
+        include_total: bool = True,
         **filters: Any,
     ) -> dict[str, Any]:
         """Search media, optionally as one exact Library browse summary page.
 
         Args:
-            query: Free-text search term; ``None`` or empty lists the scope
-                unfiltered.
+            query: Free text. Empty text lists the scope unfiltered.
             limit: Page size (rows returned).
             offset: Zero-based row offset of the page.
             library_summary: When ``True``, return the Library browse's exact
                 seven-key summary rows for one page instead of full records.
-            match_reasons: Whether to run task-28008's keyword-only reason
-                probe for this page (Qodo on #2475: one extra SELECT per
-                queried summary page, so the Library browse's own fetch asks
-                for it and no other caller pays -- the "Review these"
-                enumeration loop pages the same scope and discards them).
+            match_reasons: Include the optional keyword-only reason query
+                for this Library browse summary page (TASK-28008).
+            include_total: Count all matches when the consumer needs a total.
             **filters: Column filters forwarded to ``search_media_db``
                 (``fields``, ``media_types``, ``fts_match_query``, ...);
                 ``fields`` must equal the Library browse triple for
@@ -606,6 +604,7 @@ class LocalMediaReadingService:
             **fts_match_kwargs,
             **chunking_status_kwargs,
             **library_summary_kwargs,
+            **({} if include_total else {"include_total": False}),
         )
         items = (
             list(rows)

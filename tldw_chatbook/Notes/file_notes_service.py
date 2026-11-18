@@ -469,6 +469,20 @@ class FileNotesService:
             should_cancel=should_cancel,
             on_progress=on_progress,
         )
+        replica = self._replica
+        rowids: dict[str, int | None] = {}
+        version = 0
+        if (
+            observed
+            and self._inspection_refresh_allowed
+            and type(replica) is FileNotesReplica
+        ):
+            try:
+                version, rowids = replica._scan_search_rows(
+                    self.root_key, observed.keys()
+                )
+            except Exception:
+                pass  # The existing per-file write still reports replica failures.
         for relative_path, observed_file in observed.items():
             if should_cancel is not None and should_cancel():
                 raise ScanCancelled()
@@ -479,6 +493,28 @@ class FileNotesService:
                 continue
             entries.append(_entry_from_opened(opened))
             if self._inspection_refresh_allowed:
+                rowid = rowids.get(relative_path)
+                if (
+                    replica is not None
+                    and rowid is not None
+                    and relative_path not in self._pending_replica_moves
+                ):
+                    decoded_text = _decode_for_replica(opened.raw_bytes)
+                    if decoded_text is not None:
+                        try:
+                            if replica._matches_scanned_file(
+                                self.root_key,
+                                relative_path,
+                                opened.raw_bytes,
+                                content_hash=opened.content_hash,
+                                decoded_text=decoded_text,
+                                mtime_ns=opened.mtime_ns,
+                                rowid=rowid,
+                                version=version,
+                            ):
+                                continue
+                        except Exception:
+                            pass  # Fall through to the existing repair and warning path.
                 replica_warning = self._upsert_opened(opened)
                 warning = _merge_warnings(warning, replica_warning)
         entries.extend(

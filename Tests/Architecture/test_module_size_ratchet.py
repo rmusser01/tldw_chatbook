@@ -1066,7 +1066,7 @@ _BUDGETS: dict[str, int] = {
     # dev's 9,534 plus TASK-39118's +22.
     # 2026-11-06, TASK-36948.1 (owner rule: a size ratchet raises the row with a dated
     # comment): +2, the store's @declare_store backup-participant declaration and import.
-    "tldw_chatbook/DB/Client_Media_DB_v2.py": 9558,
+    "tldw_chatbook/DB/Client_Media_DB_v2.py": 9545,
     # TASK-37270: bounded template reads moved to local_reasoning_metadata.
     # 2026-10-29, TASK-33622.6 (owner decision: raise with a dated comment):
     # 8747 -> 8763 (+16). The flat Conversations lane filters its rows and
@@ -1160,7 +1160,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-19: re-measured after rebasing onto dev a6df4d8d48 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 7008 -> 7012.
     "tldw_chatbook/UI/Console_Modules/session.py": 7012,
     "tldw_chatbook/DB/Subscriptions_DB.py": 6996,
-    "tldw_chatbook/Media/local_media_reading_service.py": 6911,
+    "tldw_chatbook/Media/local_media_reading_service.py": 6910,
     # 2026-10-31: re-measured after rebasing onto dev 198eca8b93 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 6686 -> 6701.
     # 2026-10-31: re-measured after rebasing onto dev 4d6764b132 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 6751 -> 6766.
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
