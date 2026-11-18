@@ -536,7 +536,10 @@ async def test_child_native_tool_round_completes(tmp_path, monkeypatch, capture)
     )
     why = str(vars(facts))
     child_wire = [roles for kind, roles in facts.wire if kind == "subagent"]
-    assert child_wire == [["system", "user"], ["system", "user", "assistant", "tool"]], why
+    assert child_wire == [
+        ["system", "user"],
+        ["system", "user", "assistant", "tool"],
+    ], why
     assert ("subagent", "done") in facts.runs and facts.child_errors == [], why
     assert facts.boundary_errors == [] and facts.refusals == [], why
     # The round's continuation reaches the provider, not dropped, and stays
