@@ -234,3 +234,51 @@ macOS sandbox passed with process inspection for their private children.
 Final derived-artifact, Backlog and Ruff checks passed. The SHA-256 of
 the 180-entry private receipt manifest is
 `3014644680e34feff930338a608b513afe6509cbe43ff8ed7d5d61bb5133e1a7`.
+
+## Study and Quiz snapshot experiment
+
+On the `3d909d3b4a` baseline, two identity-preserving cold traces put
+source loading at 548–582 ms. Conversations finished last in both.
+The Study decks, due flashcards and quiz counts used three separate
+SQLite preparations for the same profile database during each visit.
+
+The candidate ran the three original stock scope reads on one finite
+worker. It kept separate policy checks, kept the in-memory and custom
+routes, and retried the existing independent reads if the shared worker
+failed. The baseline regression reproduced the extra opens. An initial
+candidate collided with the screen's existing Study count field and
+failed 12 tests. After the rename, the same 12 cases passed, including
+the real file-backed counts, denied due cards and failed-worker fallback.
+
+The same sealed 120×50 macOS PTY measured key write to populated terminal
+paint, in alternating order. Source time is the wall time of the cold
+source snapshot call.
+
+| Run order | One-minute load, start → end | Cold populated paint | Warm populated paint | Cold source time |
+| --- | --- | ---: | ---: | ---: |
+| 1 baseline | 22.8 → 19.8 | 1,419 ms | 105 ms | 866 ms |
+| 1 candidate | 19.7 → 36.4 | 1,772 ms | 205 ms | 1,153 ms |
+| 2 candidate | 37.8 → 39.9 | 1,845 ms | 350 ms | 664 ms |
+| 2 baseline | 39.9 → 47.3 | 1,626 ms | 390 ms | 782 ms |
+| 3 baseline | 47.7 → 47.8 | 2,399 ms | 347 ms | 1,129 ms |
+| 3 candidate | 47.7 → 55.1 | 1,785 ms | 421 ms | 551 ms |
+
+Every measured Library visit used three Study SQLite preparations on the
+baseline and one on the candidate. Cold source time improved from 866 ms
+to 664 ms at the median. End-to-end cold paint rose from 1,626 ms to
+1,785 ms, with two slower pairs. Warm paint went from 347 ms to 350 ms.
+Cold windows had 13 then 11 gaps over 50 ms and worst gaps of 820 then
+832 ms. Warm windows had 11 then eight gaps and worst gaps of 402 then
+266 ms. All six processes kept all three 13-second windows, exited
+ordinarily, and left zero scoped SQLite descriptors.
+
+Two candidate runs spent 339 ms and 222 ms between source completion and
+the populated frame. The Notes Sync preparation worker overlapped those
+intervals for 192 ms and 136 ms, respectively. Library mount requests
+preparation when the app has yet to construct the runtime, including
+profiles where the boot evidence gate deferred construction.
+
+The candidate was removed after the paired run. The patch, initial
+failures, final controls and full recordings remain in the private
+experiment directory. The 145-entry receipt manifest has SHA-256
+`0bd591d76f817e7becf9d1f3444737909e9c46bef1301bf8f1498417ac75e32c`.
