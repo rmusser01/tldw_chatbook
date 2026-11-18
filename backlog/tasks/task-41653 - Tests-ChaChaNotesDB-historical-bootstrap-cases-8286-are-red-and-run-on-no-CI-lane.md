@@ -60,5 +60,7 @@ ADR required: no (test literal only; the schema and its version are unchanged).
 
 **Seen, not fixed (other ChaChaNotesDB reds on base, same dir, not this AC):** `test_index_census.py` (5 unpinned indexes from v81..v86, and `idx_canvas_revisions_canvas_sequence` lost its UNIQUE flag in v81->v82), `test_sargable_timestamps.py` (pins version 80), the v82/v83 portrait migration tests, and cascade-delete tests refused by "semantic mutation authorization required". These are reported to the coordinator as follow-ups.
 
-**Files.** `Tests/ChaChaNotesDB/expected_table_columns.py`.
+**Why it drifted.** The checklist in `tldw_chatbook/DB/migrations/README.md` named `VALID_TABLES` and the index census, but not this literal or the trigger census. It now has steps 7 and 8 for them.
+
+**Files.** `Tests/ChaChaNotesDB/expected_table_columns.py`, `tldw_chatbook/DB/migrations/README.md`.
 <!-- SECTION:NOTES:END -->
