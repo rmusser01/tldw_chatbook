@@ -30,6 +30,8 @@ The seam came from 05b078e1c2 (2026-10-20, TASK-34000.22). The three were alread
 - `::test_review_footer_at_last_follows_the_loaded_item_not_the_cursor` (`:1349`) raises `AttributeError: ... '_active_review_set_snapshot'`.
 - `::test_active_review_progress_exposes_the_live_index_and_total` (`:1392`) raises the same error.
 - `::test_review_set_active_reflects_the_service` (`:1296`) gets `False`, because `LibraryScreen._review_set_active` catches the same `AttributeError` and fails closed.
+
+**A fourth broken fake, owned elsewhere.** The lane PR's fix round 1 (2026-11-18) also found `Tests/UI/test_library_screen_reuse.py::test_on_screen_suspend_stops_every_timer_in_isolation` (a 3.3 retarget) red with `AttributeError: 'LibraryScreen' object has no attribute '_artifacts_navigation'`: its bypassed screen never had the attribute that 40a1b99576 (2026-09-20) made `on_screen_suspend` read. TASK-41713 (open #3621) already owns it, so it is not counted here.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

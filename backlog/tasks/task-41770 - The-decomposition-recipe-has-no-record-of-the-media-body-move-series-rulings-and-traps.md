@@ -17,7 +17,7 @@ references:
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-The earlier Library series each have an "as landed" section in `backlog/docs/library-decomposition-recipe.md` (§15, §18-§23 and §26). §22, "The media series, as landed", is wave 7's media extraction, not this series. TASK-36952.3 is the eight-slice series that moved 142 media bodies from LibraryScreen into the media controller, and it merged on 2026-11-18. The recipe does not mention it: 0 hits for 36952.
+The earlier Library series each have an "as landed" section in `backlog/docs/library-decomposition-recipe.md` (§11-§15 and §18-§23; §26 records phase C's media graduation). §22, "The media series, as landed", is wave 7's media extraction, not this series. TASK-36952.3 is the eight-slice series that moved 142 media bodies from LibraryScreen into the media controller, and it merged on 2026-11-18. The recipe does not mention it: 0 hits for 36952.
 
 Its binding rulings and the traps it found live in two places only. One is the coordinator's working ledger, outside the repository. The other is two entries in `lessons-testing-evidence.md`. The next Phase A2 series (Notes or Prompts without the screen) needs them:
 - **R1, asserts:** only the receiver may change inside an assert. The proof undoes each substitution and compares the def's AST with the base.

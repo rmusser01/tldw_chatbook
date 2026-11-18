@@ -1,6 +1,6 @@
 ---
 id: TASK-41772
-title: "43 media-series guards in Tests/UI stop at RecoveryRequired during setup, so no PR lane can run them"
+title: "63 media-series guards in Tests/UI stop at RecoveryRequired during setup, so no PR lane can run them"
 status: To Do
 created_date: 2026-11-18 16:14
 labels:
@@ -16,18 +16,25 @@ references:
 - Tests/UI/test_library_media_reader_match_nav_t22209.py
 - Tests/UI/test_library_media_reader_no_change_sync_t22208.py
 - Tests/UI/test_library_media_reader_scroller_resolution.py
+- Tests/UI/test_library_media_side_by_side.py
+- Tests/UI/test_library_media_bulk_delete_real_db.py
+- Tests/UI/test_library_entry_compose_once.py
+- Tests/UI/test_library_media_viewer_speaker_rename.py
+- Tests/UI/test_library_reader_press_scope_t22228.py
+- Tests/UI/test_library_canvas_sync_defects.py
+- Tests/UI/test_library_crit8_polish_media.py
 - scripts/ui_pr_gate_census.txt
 ---
 
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-The Phase 4 media lane PR was prepared on 2026-11-18 on dev 47a05413cb (branch `arch/p4-lanes-media`). It puts on the UI PR gate every test that the TASK-36952.3 slices retargeted or added and that passed 3 of 3. The runs used a CI-like venv and the lane's serial flags. 43 of those guards could not join: each fails in `_build_test_app()` -> `load_settings()` with `RecoveryRequired: raw_source_selection_changed`, in 3 of 3 discovery runs.
+The Phase 4 media lane PR (branch `arch/p4-lanes-media`, round 0 on dev 47a05413cb and fix round 1 on dev 908e9840aa, 2026-11-18) puts on the UI PR gate every test that the TASK-36952.3 slices retargeted or added and that passed every run. The runs used a CI-like venv and the lane's serial flags. 63 of those retargets could not join: each fails in `_build_test_app()` -> `load_settings()` with `RecoveryRequired: raw_source_selection_changed`, in every discovery run. Round 0 found 40 of them in its six files (it first said 43, counting three scroller tests no slice touched); fix round 1 found 23 more among the 32 retargets in 11 further files.
 
 They build the app under the per-test profile without the `bootstrap_profile` or `@private_profile_test` marker that every app-building census file carries. The lane PR therefore treats them as red in CI too. `lessons-testing-evidence.md` (TASK-34982) records a gated UI test failing in UI Fast Lane this way. No CI run has confirmed it for these tests: no lane runs them, and nightly last ran on 2026-09-27. Locally, the series could check them only through a temporary private-profile marker probe.
 
-The 43, by file (slice that retargeted them in brackets):
-- **`test_library_ingest_analyze_skipped.py` (3.5), all 13:**
+The 63, by file (slice that retargeted them in brackets):
+- **`test_library_ingest_analyze_skipped.py` (3.5), 13:**
   - `test_a_structural_change_during_a_no_fallback_repaint_still_repaints`
   - `test_analyze_outcome_reports_a_raised_exceptions_own_message`
   - `test_analyze_skipped_action_absent_without_a_ready_provider`
@@ -63,28 +70,53 @@ The 43, by file (slice that retargeted them in brackets):
   - `test_same_size_recompose_projects_media_stage_without_reconciliation`
   - `test_trash_return_capture_is_frozen_control_receipt_from_normal_media`
   - `test_viewer_return_capture_is_frozen_receipt_from_normal_media`
+- **`test_library_media_side_by_side.py` (3.3, 3.7), 9:**
+  - `test_compact_media_pager_receipt_and_empty_states_remain_contained`
+  - `test_compact_media_stale_and_retry_actions_remain_truthful`
+  - `test_compact_media_viewer_back_follows_single_page_clamp`
+  - `test_compact_media_viewer_back_survives_targeted_reorder`
+  - `test_full_success_bulk_delete_focuses_undo_and_enter_restores`
+  - `test_media_reader_back_keeps_a_retained_row_after_origin_removed`
+  - `test_media_resize_focus_restore_yields_to_newer_user_focus`
+  - `test_media_trash_compact_pane_priority_survives_page_and_filter_refresh`
+  - `test_receipt_dismiss_clears_the_failed_undo_copy_too`
+- **`test_library_media_bulk_delete_real_db.py` (3.2, 3.3), 6:**
+  - `test_bulk_delete_write_is_visible_to_a_fresh_reader_and_receipt_matches`
+  - `test_contended_write_never_paints_a_success_receipt`
+  - `test_long_lived_reader_connection_can_miss_the_write_the_receipt_reports`
+  - `test_rail_media_count_returns_to_the_restored_total_after_undo`
+  - `test_retry_paints_a_new_reason_every_time_the_refresh_fails`
+  - `test_rows_still_open_while_the_page_sits_behind_the_stale_gate`
+- **`test_library_media_reader_scroller_resolution.py` (3.6), 3:**
+  - `test_capture_progress_resolves_the_real_scroller_and_snapshots_its_offset`
+  - `test_mode_change_restore_lands_synchronously_on_the_laid_out_body`
+  - `test_restore_progress_resolves_the_real_scroller_and_applies_the_saved_offset`
 - **`test_library_media_reader_match_nav_t22209.py` (3.6), 2:**
   - `test_match_navigation_takes_no_document_pass_per_click`
   - `test_multi_megabyte_document_match_navigation_timings`
 - **`test_library_media_reader_no_change_sync_t22208.py` (3.6), 2:**
   - `test_image_item_traversal_wall_time_probe`
   - `test_no_change_traversal_builds_no_preview_and_copies_no_content`
-- **`test_library_media_reader_scroller_resolution.py`, all 6** (3.6 retargeted the first three):
-  - `test_capture_progress_resolves_the_real_scroller_and_snapshots_its_offset`
-  - `test_mode_change_restore_lands_synchronously_on_the_laid_out_body`
-  - `test_restore_progress_resolves_the_real_scroller_and_applies_the_saved_offset`
-  - `test_match_scroll_moves_the_visible_scroller_after_a_mode_round_trip`
-  - `test_match_scroll_resolves_the_real_scroller_and_maps_through_the_wrap_index`
-  - `test_read_analysis_read_round_trip_restores_the_rendered_scroll_offset`
+- **`test_library_entry_compose_once.py` (3.6), 2** (19 cases with the parameters):
+  - `test_automatic_entry_worker_composes_screen_once_and_routes_in_place`
+  - `test_stale_media_detail_cannot_project_after_route_switch`
+- **`test_library_media_viewer_speaker_rename.py` (3.6), 2:**
+  - `test_a_later_viewer_sync_keeps_the_new_name`
+  - `test_a_rename_for_another_item_leaves_the_loaded_detail_alone`
+- **`test_library_reader_press_scope_t22228.py` (3.7), 2:**
+  - `test_resize_off_the_media_route_does_not_resolve_the_media_layout`
+  - `test_resize_on_the_media_route_still_carries_the_focus_intent`
+- **`test_library_canvas_sync_defects.py` (3.1), 1:** `test_media_type_filter_keeps_selected_id_in_step_with_the_canvas`
+- **`test_library_crit8_polish_media.py` (3.7), 1:** `test_bulk_delete_confirm_copy_wraps_in_the_real_items_pane_floor`
 
-The same files hold more test functions that stop the same way and that no slice touched: 24 in Trash, 25 in return-settlement, 5 in t22209 and 1 in t22208.
+Round 0's files also hold test functions that stop the same way but that no slice touched: 24 in Trash, 25 in return-settlement, 5 in t22209, 1 in t22208 and 3 in scroller_resolution.
 
-`test_trash_status_fold_recaps_the_list_so_actions_stay_inside` is also listed in TASK-34000.100 (only in open PR #3423), which records it failing on its own assertion ("Long status never folded.") once it runs. The lane PR's review found about 32 more slice-retargeted tests in 11 Tests/UI files that run on no lane; any of them that stop at RecoveryRequired belong in this list.
+`test_trash_status_fold_recaps_the_list_so_actions_stay_inside` is also listed in TASK-34000.100 (only in open PR #3423), which records it failing on its own assertion ("Long status never folded.") once it runs.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Each of the 43 tests gets the profile setup it needs (a marker or a fixture) and no longer stops at RecoveryRequired during setup
+- [ ] #1 Each of the 63 tests gets the profile setup it needs (a marker or a fixture) and no longer stops at RecoveryRequired during setup
 - [ ] #2 Each of them that then passes 3 of 3 in a serial run with the UI lane's flags is in scripts/ui_pr_gate_census.txt, with the census floor raised to match and the shard budget checked
-- [ ] #3 Any of the 43 that still fails after the setup fix has its failure recorded, with its own task or fix named
+- [ ] #3 Any of the 63 that still fails after the setup fix has its failure recorded, with its own task or fix named
 <!-- AC:END -->
