@@ -2,38 +2,48 @@
 
 TASK-40608 measures from Send to the persisted reply, subtracting only the original measured disclosure and approval waits. Each of three sequential baseline/candidate pairs must preserve all original journey assertions. Every candidate README and approved edit must finish in under 5 seconds, with at least a 30% median reduction for each journey. The measurements below come from Windows 10 and the scripted loopback provider. [Task and benchmark contract](../../../backlog/tasks/task-40608%20-%20Investigate-slow-Windows-Console-workspace-chat-and-edits.md) · [Original timing observer](original-journey/task40608_trace.py)
 
-On November 18 the latest complete Windows 10 comparison (`495b3249e9`, process route) reduced median README time from **303.03 to 24.18 s** and approved edit time from **459.20 to 23.91 s**. All three pairs passed the original checks. All six candidate turns exceeded five seconds. [Pair results](#qualifying-pairs) · [Revalidated measurements and work counts](original-journey/qc-windows10-results.json)
+The latest three sequential Windows 10 pairs used the original local baseline and the opt-in process candidate at `5fd0c8cd5e`. Median README time fell **254.99 → 18.59 s (92.71%)**. Median approved edit time fell **361.64 → 20.80 s (94.25%)**. All twelve turns and shutdown checks passed. **0 of 6** candidate turns finished under five seconds. Regular startup still selects the local backend. [Verified results and original receipt hashes](original-journey/qd-windows10-results.json)
 
 ## Remaining time on the latest fully paired candidate
 
-Pair 3 on `495b3249e9` used the opt-in process backend and the original Windows 10 fixture. Each arrow below measures a different part of the same turn. Together they give **22.1459 s for README** and **23.9084 s for approved edit**. To get below five seconds requires saving more than **17.1459 s** and **18.9084 s**, respectively.
+Pair 3 took **21.5187 s** for README and **20.7955 s** for approved edit. Each arrow covers a different part of the same original turn.
 
 ```mermaid
 flowchart LR
-    RS["README Send"] -->|"9.611 s"| R1["Provider receives request 1"]
-    R1 -->|"10.444 s"| R5["Provider receives request 5"]
-    R5 -->|"2.090 s"| RD["Persisted reply"]
-    ES["Edit Send"] -->|"6.682 s"| E1["Provider receives request 1"]
-    E1 -->|"14.704 s"| E6["Provider receives request 6"]
-    E6 -->|"2.522 s"| ED["Persisted reply"]
+    RS["README Send"] -->|"8.604 s"| R1["First provider receipt"]
+    R1 -->|"10.175 s"| RL["Last provider receipt"]
+    RL -->|"2.740 s"| RD["Original reply endpoint"]
+    ES["Edit Send"] -->|"6.067 s"| E1["First provider receipt"]
+    E1 -->|"12.941 s"| EL["Last provider receipt"]
+    EL -->|"1.788 s"| ED["Original reply endpoint"]
 ```
 
-| Candidate turn | Send → first receipt | First → last receipt | Last receipt → persisted reply | Adjusted total |
+| Candidate turn | Send → first receipt | First → last receipt | Last receipt → original reply | Adjusted total |
 |---|---:|---:|---:|---:|
-| README C1 | 9.3868 s | 12.6651 s | 2.1236 s | 24.1755 s |
-| README C2 | 12.0371 s | 10.3406 s | 1.9237 s | 24.3015 s |
-| README C3 | 9.6113 s | 10.4444 s | 2.0902 s | 22.1459 s |
-| Edit C1 | 7.4541 s | 14.7869 s | 2.2961 s | 24.5370 s |
-| Edit C2 | 5.8483 s | 14.3652 s | 1.9770 s | 22.1905 s |
-| Edit C3 | 6.6822 s | 14.7044 s | 2.5218 s | 23.9084 s |
+| README C1 | 8.5456 s | 8.1075 s | 1.5059 s | 18.1591 s |
+| README C2 | 8.6046 s | 8.6086 s | 1.3737 s | 18.5869 s |
+| README C3 | 8.6036 s | 10.1754 s | 2.7398 s | 21.5187 s |
+| Edit C1 | 5.3038 s | 13.0672 s | 2.4525 s | 20.8235 s |
+| Edit C2 | 5.5517 s | 12.5610 s | 1.7897 s | 19.9024 s |
+| Edit C3 | 6.0668 s | 12.9409 s | 1.7878 s | 20.7955 s |
 
-The first README interval deducts only the original painted disclosure to click. The middle interval deducts observation to click for two README approvals or three edit approvals. The last interval has no deduction. The fixture also verified the visible reply, read-only tree, write grant, approved diff and shutdown after the timing endpoint. Across the three pairs, README ranged from **22.15–24.30 s** and edit from **22.19–24.54 s**. Whole-turn medians were **24.18 s** and **23.91 s**. Pair 3's loopback handlers took only **0.0564 / 0.0849 s** in total. [Matched baseline and candidate receipts](original-journey/qc-windows10-results.json)
+Only the original observed human disclosure and approval waits are deducted. In pair 3 the loopback handlers used 0.0187 s for all five README requests and 0.0087 s for all six edit requests. The candidate used the original `reply_seen` fallback and passed the subsequent persisted reply, painted UI, file and shutdown assertions. [Verified results and original receipt hashes](original-journey/qd-windows10-results.json)
+
+In pair 3, edit's three approved rounds together took **9.787 s** after human waits. The following boundaries use the fixture's loopback clock and actual approval observations. The intervals cover dispatch, rendering, persistence and file work.
+
+| Edit tool | Provider receipt → approval observed | Once click → next provider receipt |
+|---|---:|---:|
+| `fs_read` | 1.282 s | 1.516 s |
+| `fs_edit` | 1.438 s | 2.017 s |
+| `git_diff` | 1.804 s | 1.729 s |
+
+[Earlier paired candidate and original phase measurements](original-journey/qc-windows10-results.json)
 
 ### Ranked foreground changes to investigate
 
-1. **Reduce repeated work between provider requests, especially on edit.** In pair 3, the edit rounds containing `fs_read`, `fs_edit` and `git_diff` took **3.791, 3.629 and 4.326 s**. Together those rounds used **11.746 s**. README's `fs_list` and `fs_read` rounds used **4.002 and 3.516 s**. These are request-to-request envelopes. They include approval presentation, tool dispatch, process work, step commits and the next model request. The earlier instrumented `g47d` assigned 9.153 s to approvals, 5.991 s to tools and 5.154 s to the union of step writes and run-log appends across both turns. It left 8.544 s of inter-model time unassigned. Target the calls between `AgentService._run_one`, the scoped permission store, `WorkspaceToolExecutor.execute` and the next `ConsoleProviderGateway._stream_generic_chat`. Group adjacent verified reads only within a single admitted operation. Keep every Once decision, fresh kill-switch and path check, before/after file proof, commit-before-callback and physical worker exit. [Earlier foreground breakdown](#a-replacement-design)
+1. **Reduce repeated work between provider requests, especially on edit.** In the earlier QC pair 3, the edit rounds containing `fs_read`, `fs_edit` and `git_diff` took **3.791, 3.629 and 4.326 s**. Together those rounds used **11.746 s**. README's `fs_list` and `fs_read` rounds used **4.002 and 3.516 s**. These are request-to-request envelopes. They include approval presentation, tool dispatch, process work, step commits and the next model request. The earlier instrumented `g47d` assigned 9.153 s to approvals, 5.991 s to tools and 5.154 s to the union of step writes and run-log appends across both turns. It left 8.544 s of inter-model time unassigned. Target the calls between `AgentService._run_one`, the scoped permission store, `WorkspaceToolExecutor.execute` and the next `ConsoleProviderGateway._stream_generic_chat`. Group adjacent verified reads only within a single admitted operation. Keep every Once decision, fresh kill-switch and path check, before/after file proof, commit-before-callback and physical worker exit. [Earlier foreground breakdown](#a-replacement-design)
 2. **Shorten foreground preparation before request one on both paths.** That stretch alone exceeded five seconds in all six samples. In `g47d`, provider composition included **1.939 / 1.451 s** awaiting `prepare_project_index_for_composition`. Complete configuration capture took **1.429 / 1.305 s**. The durable commit and its parent acknowledgement took **1.227 / 0.530 s**. The edit's then-observed nested permission-process startup has since been removed. The current whole-turn comparison has no exclusive per-caller times. A fixed preparation owner can batch source reads for one selected binding and hand one result back after physical retirement. Retain the original source, registry, membership and archive checks, cancellation and ordered adoption. Starting optional index creation before an earlier prerequisite could fail would change observable state. [Preparation and ownership evidence](#cost-evidence)
-3. **Publish a committed terminal row from its backend owner.** In pair 3 the entire tail was **2.090 / 2.522 s**. In `g62reads1` the explicit terminal full-display read took **0.912 / 0.951 s**. A scoped terminal row could be displayed as soon as the accepted turn and native resources have positively retired. The original full reconciliation, acknowledgement and same-visit validation still have to run. The tail includes other work, and these two measurements used different runs. [Display measurements](#periodic-display-work-during-send)
+3. **Publish a committed terminal row from its backend owner.** In the earlier QC pair 3 the entire tail was **2.090 / 2.522 s**. In `g62reads1` the explicit terminal full-display read took **0.912 / 0.951 s**. A scoped terminal row could be displayed as soon as the accepted turn and native resources have positively retired. The original full reconciliation, acknowledgement and same-visit validation still have to run. The tail includes other work, and these two measurements used different runs. [Display measurements](#periodic-display-work-during-send)
 
 The paired receipts assign elapsed time to the arrows and tool rounds. They do not divide that time among Python execution, lock waits, the Windows scheduler, native calls or independent display work. In particular, the `g62` passive-display overlap spans **9.402 / 10.260 s** during a turn that can make foreground progress concurrently. Counting that overlap as recoverable latency would double-count time. The 2,000-row index test and the faster warm-lease component test measure separate workloads. [History query](#source-checks-during-both-completed-windows-turns)
 
@@ -120,8 +130,9 @@ Batch `qd` started on November 18 at 18:38 UTC. It compares the original local b
 |---|---:|---:|
 | 1 | 306.1657 → 18.1591 s | 430.4508 → 20.8235 s |
 | 2 | 241.9415 → 18.5869 s | 341.3939 → 19.9024 s |
+| 3 | 254.9937 → 21.5187 s | 361.6412 → 20.7955 s |
 
-Both sides of the first two pairs passed the original assertions and shutdown. The candidates took 8.55–8.60 s before the first README request and 5.30–5.55 s before the first edit request. Between the first and last HTTP receipts the two edits took 12.56–13.07 s after the original human-wait deductions. All four candidate turns exceeded five seconds. [Verified pairs, timing phases and original hashes](original-journey/qd-windows10-results.json)
+All three pairs completed in order. README candidate times ranged from 18.16–21.52 s and edit from 19.90–20.82 s. Both median reductions exceed 30%. All six candidates exceeded five seconds. [Verified results and original receipt hashes](original-journey/qd-windows10-results.json)
 
 ## Where the time goes
 
@@ -1118,6 +1129,8 @@ for example, carries its source, session incarnation, message revision and
 marker revision. Rendering that row should require neither a character database
 read nor a fresh provider-readiness projection. The existing decision-head
 reader already delivers a scoped result independently of those reads.
+
+One constraint on a replacement is that other features write the same databases. Settings writes agent definitions in AgentRuns, and Notes and Chatbook import write ChaChaNotes. Backup and recovery can replace files after active owners have drained. An exclusive database transaction held through an approval would block those writers. A prototype can isolate one durable step commit and verify that another writer can commit between steps, observers see committed data, and a new recovery intent still refuses the next write. Giving one service exclusive ownership of these stores would also require migrating those other writers and defining how restore and other application instances coordinate. [AgentRuns transaction](../../../tldw_chatbook/DB/AgentRuns_DB.py) · [Settings writer](../../../tldw_chatbook/Widgets/settings_agents_panel.py) · [Import writer](../../../tldw_chatbook/Chatbooks/chatbook_importer.py) · [Cross-process recovery checks](../../../Tests/Backup_Recovery/test_admission_evidence_reuse.py)
 
 Publish a terminal row only after the original accepted turn proves physical
 retirement. Keep policy and filesystem checks at Send, approval, access changes

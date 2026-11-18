@@ -220,6 +220,8 @@ On the selected process route, a refused pre-ACK display read could leave its re
 
 With eight mounted activity headers and two changed cells, layout-requesting updates fell from 16 to two. All 67 related Windows tests passed. The separate stock/header comparison took 20.328/21.451 seconds for README and 22.554/23.928 seconds for edit. Both runs retained all original checks. This change has a component-level benefit and supplies no end-to-end speedup. [Measurements](../../Docs/Development/task-40608-recovery/original-journey/g72-windows10-activity-headers.json)
 
+The latest three sequential Windows 10 pairs used the original local baseline and the opt-in process candidate at `5fd0c8cd5e`. Median README time fell **254.99 → 18.59 s (92.71%)**. Median approved edit time fell **361.64 → 20.80 s (94.25%)**. All twelve turns and shutdown checks passed. **0 of 6** candidate turns finished under five seconds. Regular startup still selects the local backend. [Current comparison, diagram and phase measurements](../../Docs/Development/task-40608-recovery/windows-journey-timings.md#remaining-time-on-the-latest-fully-paired-candidate)
+
 <!-- SECTION:NOTES:END -->
 
 Measured follow-up under the same [ADR-126 bounded configuration-read amendment](../decisions/126-complete-local-backup-and-recovery.md#task-40608--bounded-sensitive-database-path-configuration-reads): qualify the original sensitive container-reader cohort, then group its admissions without changing readers, overrides or refusal checks. The measured 0.218-second component is separate from the unresolved planning delay; final three-pair acceptance remains open.
