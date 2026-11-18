@@ -1,5 +1,5 @@
 name: Perf Guard
-run-name: Light CI containment diagnostic (not qualification)
+run-name: Light CI containment repair probe (not qualification)
 on:
   workflow_dispatch:
 permissions:
@@ -13,7 +13,7 @@ env:
   PYTHONUNBUFFERED: 1
 jobs:
   containment-diagnostic:
-    name: Two-node Linux containment diagnostic
+    name: Linux containment repair and refusal controls
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -35,11 +35,19 @@ jobs:
           pip install pytest-json-report
           pip install -e ".[embeddings_rag,websearch,chunker,web]"
           pip install pydub "audioop-lts; python_version >= '3.13'"
-      - name: Run the two original failing child selectors
+      - name: Run original selectors and containment controls
         run: |
           python -m pytest \
             Tests/Live/test_library_adaptive_reader_closeout.py::test_child_settles_one_real_catalogue_selector \
             Tests/Live/test_library_adaptive_reader_closeout.py::test_real_hermetic_child_runs_declared_async_curated_selector \
+            Tests/Live/test_library_adaptive_reader_closeout.py::test_child_own_mountinfo_has_no_related_or_write_authority \
+            Tests/Live/test_library_adaptive_reader_closeout.py::test_child_fdinfo_requires_current_tracked_scratch_directory \
+            Tests/Live/test_library_adaptive_reader_closeout.py::test_child_reads_linux_mount_metadata_for_tracked_scratch_directory \
+            Tests/Live/test_library_adaptive_reader_closeout.py::test_child_linux_mount_metadata_grants_no_other_access \
+            Tests/Live/test_library_adaptive_reader_closeout.py::test_child_immediately_exits_for_each_prohibited_network_api \
+            Tests/Live/test_library_adaptive_reader_closeout.py::test_child_immediately_exits_for_each_prohibited_process_api \
+            Tests/Live/test_library_adaptive_reader_closeout.py::test_child_records_and_blocks_read_from_real_profile \
+            Tests/Live/test_library_adaptive_reader_closeout.py::test_child_records_and_blocks_write_to_checkout \
             --basetemp="$RUNNER_TEMP/light-ci-containment-tests" -v --tb=short
       - name: Report only bounded containment metadata
         if: always()

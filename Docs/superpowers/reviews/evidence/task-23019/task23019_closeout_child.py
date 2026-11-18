@@ -40,6 +40,7 @@ _ENUMERATION_DIRS: frozenset[str] = frozenset()
 _OPEN_FDS: dict[int, tuple[str, bool, bool, tuple[int, int, int, tuple[str, int]]]] = {}
 _RESOLVING_PATH = threading.local()
 _OPEN_AUDIT_PATH = threading.local()
+_PROCESS_PROC_ROOT = f"/proc/{os.getpid()}"
 THREAD_BASELINE: tuple[int | None, ...] = ()
 TASK_BASELINE: tuple[object, ...] = ()
 DENIED_ROOTS: tuple[str, ...] = ()
@@ -188,10 +189,31 @@ def _resolved_at(path: object, dir_fd: object = None) -> str | None:
     return _resolved(os.path.join(opened[0], frozen))
 
 
+def _native_mount_metadata_read_allowed(path: str) -> bool:
+    """Keep Linux native mount identity within the child's scratch authority."""
+    if sys.platform != "linux" or not _SCRATCH:
+        return False
+    if path == _PROCESS_PROC_ROOT + "/mountinfo":
+        return True
+    prefix = _PROCESS_PROC_ROOT + "/fdinfo/"
+    if not path.startswith(prefix):
+        return False
+    descriptor = path.removeprefix(prefix)
+    if not descriptor.isascii() or not descriptor.isdecimal():
+        return False
+    try:
+        opened = _fd_authority(int(descriptor))
+    except ValueError:
+        return False
+    return bool(opened is not None and opened[1] and _under(opened[0], _SCRATCH))
+
+
 def _read_allowed(path: object) -> bool:
     resolved = _resolved_at(path)
     return resolved is not None and (
-        resolved in _READ_FILES or any(_under(resolved, root) for root in _READ_ROOTS)
+        resolved in _READ_FILES
+        or any(_under(resolved, root) for root in _READ_ROOTS)
+        or _native_mount_metadata_read_allowed(resolved)
     )
 
 
