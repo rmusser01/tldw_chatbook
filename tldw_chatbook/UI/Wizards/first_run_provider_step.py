@@ -719,17 +719,17 @@ class ProviderStep(provider_check.ProviderCheckStep):
         typed_value = self.query_one("#setup-provider-api-key", Input).value.strip()
         if self._clear_requested or (typed_value and source == "none"):
             settings.pop("api_key_env_var", None)
-        settings["credential_source"] = "stored" if source == "draft" else source
+            settings["credential_source"] = "none"
+        if source != "none":
+            settings["credential_source"] = "stored" if source == "draft" else source
         if source == "draft" and value is not None:
             settings["api_key"] = value
         elif source == "environment" and base.env_var:
             settings["api_key_env_var"] = base.env_var
         staged_api_settings[provider_key] = settings
-        staged_config = dict(app_config)
-        staged_config["api_settings"] = staged_api_settings
         return get_provider_readiness(
             provider_key,
-            staged_config,
+            {**app_config, "api_settings": staged_api_settings},
             environ=self._environment(),
             background_credentials=True,
         )
