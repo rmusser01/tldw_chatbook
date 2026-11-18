@@ -177,6 +177,8 @@ The contained run-history reader now executes the original scoped AgentRuns quer
 
 The original candidate-only screening run g55h passed both journeys and shutdown on `737e2a1ba8` at 28.4291 and 29.2931 seconds adjusted. The subsequent resize fix retains the latest event when display readiness expires during Inspector calculation and commits its width band after applying the layout. Changed owners, publications and visits still refuse. The separate batch must qualify a frozen revision containing this fix.
 
+The first two Windows 10 pairs on `e4fa0ea67d` passed the original README, edit, ordered approval, evidence and shutdown checks. README took 351.8018/29.5092 and 310.5606/28.5109 seconds (baseline/candidate). Edit took 407.0190/29.6705 and 440.1165/35.9651 seconds. The [timing record](../../Docs/Development/task-40608-recovery/windows-journey-timings.md#qualifying-pairs) retains the receipts and frozen configuration. The subsequent warm-repository change counts the lease under the first checked provenance lock and keeps the maintenance refusal and fresh post-count native and registry checks. Its [327 targeted Windows checks](https://github.com/rmusser01/tldw_chatbook/actions/runs/44299436337) passed. AC5 remains open.
+
 <!-- SECTION:NOTES:END -->
 
 Measured follow-up under the same [ADR-126 bounded configuration-read amendment](../decisions/126-complete-local-backup-and-recovery.md#task-40608--bounded-sensitive-database-path-configuration-reads): qualify the original sensitive container-reader cohort, then group its admissions without changing readers, overrides or refusal checks. The measured 0.218-second component is separate from the unresolved planning delay; final three-pair acceptance remains open.
