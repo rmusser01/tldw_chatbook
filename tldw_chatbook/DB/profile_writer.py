@@ -11,6 +11,7 @@ import subprocess
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, contextmanager
 from functools import lru_cache
 from pathlib import Path
@@ -36,6 +37,10 @@ _host_elects = False
 
 class ProfileWriterOutcomeUnknown(StoreMutationOutcomeUnknown):
     """The mutation may have committed. The caller must observe original state."""
+
+
+class _StaleWriterResource(RuntimeError):
+    """Refuse the unstarted command and retire a no-longer-qualified writer."""
 
 
 def in_profile_writer() -> bool:
@@ -311,19 +316,21 @@ def call_bound_profile_writer(database, profile: Path, operation: str, arguments
     }, target=endpoint)
 
 
-def _require_retired(startup) -> None:
-    """A completed command leaves exactly its revocable process enrollment, if any."""
+def _require_retired(startup, idle=None) -> None:
+    """Only the exact startup and independently owned idle SQLite lease may survive."""
     from tldw_chatbook.Backup_Recovery import raw_participants as raw
     from tldw_chatbook.Backup_Recovery import storage_admission as storage
 
     with storage._lock:
-        leases = {startup} if startup is not None else set()
-        keys = {startup._key} if startup is not None and startup._key is not None else set()
+        startups = {startup} if startup is not None else set()
+        leases = startups | ({idle} if idle is not None else set())
+        keys = {lease._key for lease in leases if lease._key is not None}
         if (
-            set(storage._startups.values()) != leases or storage._live_leases != leases
+            set(storage._startups.values()) != startups or storage._live_leases != leases
             or storage._holds.keys() != keys or storage._pending_acquisitions or storage._operations
             or storage._raw_operations or raw._states or storage._retiring_holds
-            or any(hold.count != 1 or not hold.ready.is_set() or hold.stop.is_set()
+            or any(hold.count != sum(lease._key == hold.key for lease in leases)
+                   or not hold.ready.is_set() or hold.stop.is_set()
                    or hold.error is not None or not hold.thread.is_alive() for hold in storage._holds.values())
         ):
             raise ProfileWriterOutcomeUnknown("profile writer resources did not retire")
@@ -333,9 +340,12 @@ class _WriterEnrollment:
     """A serial command and the idle maintenance observer share one startup lease."""
 
     def __init__(self):
+        from .profile_writer_repository import AgentRunsWriterDatabase
+
         self.startup = None
+        self.agent_runs = AgentRunsWriterDatabase()
         self.created = {}
-        self.lock = threading.Lock()
+        self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="profile-writer-storage")
         self.stop = threading.Event()
         self.watcher = threading.Thread(target=self._monitor, name="profile-writer-maintenance", daemon=True)
         self.watcher.start()
@@ -344,6 +354,8 @@ class _WriterEnrollment:
         global _enrollment_generation
         from tldw_chatbook.Backup_Recovery import storage_admission as storage
 
+        _require_retired(self.startup, self.agent_runs.idle_lease())
+        self.agent_runs.retire()
         _require_retired(self.startup)
         if self.startup is not None:
             storage._shutdown()
@@ -364,42 +376,37 @@ class _WriterEnrollment:
         from tldw_chatbook.Backup_Recovery.runtime_maintenance import MAINTENANCE_PROBE_INTERVAL_SECONDS
 
         while not self.stop.wait(MAINTENANCE_PROBE_INTERVAL_SECONDS):
-            with self.lock:
-                try:
-                    self._yield_if_requested()
-                except BaseException:
-                    # A failed native probe or uncertain release cannot
-                    # authorize another operation in this elected generation.
-                    os._exit(1)
+            try:
+                self.executor.submit(self._yield_if_requested).result()
+            except BaseException:
+                # Retain native leases and the election until process exit.
+                os._exit(1)
 
     @contextmanager
     def command(self, profile):
         from tldw_chatbook.Backup_Recovery import storage_admission as storage
         from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 
-        with self.lock:
-            if self._yield_if_requested():
-                raise RecoveryRequired("profile_writer_maintenance_pause")
-            try:
-                if self.startup is None:
-                    # Acquire the *current* native group, refusing a closed
-                    # maintenance gate before startup can wait behind its caller.
-                    with storage.acquire_profile_writer_storage(profile):
-                        storage.admit_startup()
-                        self.startup, = storage._startups.values()
-                yield
-            finally:
-                _require_retired(self.startup)
+        if self._yield_if_requested():
+            raise RecoveryRequired("profile_writer_maintenance_pause")
+        try:
+            if self.startup is None:
+                # Acquire the current native group, refusing a closed gate
+                # before startup can wait behind its own caller's native work.
+                self.startup = storage.admit_profile_writer_startup()
+            yield
+        finally:
+            _require_retired(self.startup, self.agent_runs.idle_lease())
 
     def drain(self):
-        with self.lock:
-            self._release()
+        self.executor.submit(self._release).result()
 
     def close(self):
         self.stop.set()
         self.watcher.join()
         try:
             self.drain()
+            self.executor.shutdown()
         except BaseException:
             os._exit(1)
 
@@ -443,16 +450,18 @@ def _command(profile, facts, payload, previous_stamp, enrollment):
                 _require_selected(profile)
             _execution.active = True
             _execution.repository = (profile, owner)
+            _execution.agent_runs = enrollment.agent_runs
             _execution.selection = (*facts[:-1], tuple(facts[-1]), _enrollment_generation)
             try:
                 result = execute_profile_writer_command(profile, payload["operation"], payload["arguments"])
                 status = "ok"
-            except (ProfileWriterOutcomeUnknown, RecoveryRequired):
+            except (ProfileWriterOutcomeUnknown, RecoveryRequired, _StaleWriterResource):
                 raise
             except Exception as error:
                 status, result = "error", encode_profile_writer_error(error)
             finally:
                 del _execution.repository
+                del _execution.agent_runs
                 del _execution.selection
                 del _execution.active
             if _selection(profile)[1] != facts:
@@ -612,9 +621,13 @@ def _serve(profile: Path) -> int:
                     data = stop
                 elif intent == "call" and type(facts) is list and facts[:4] == original[:4]:
                     try:
-                        status, data = _command(profile, facts, payload, previous_stamp, enrollment)
+                        status, data = enrollment.executor.submit(
+                            _command, profile, facts, payload, previous_stamp, enrollment,
+                        ).result()
                         if status == "ok":
                             previous_stamp = facts[-1]
+                    except _StaleWriterResource as error:
+                        status, data, fatal = "recovery", str(error), True
                     except BaseException:
                         # Retain the kernel election until the entire process
                         # exits; no successor may execute alongside an uncertain owner.

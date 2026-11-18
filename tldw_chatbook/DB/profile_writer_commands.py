@@ -139,41 +139,24 @@ def profile_run_mutation(method):
     return routed
 
 
-_last_database = None
+def agent_runs_command_database(profile: Path, *, opening: bool = False):
+    """Borrow the elected writer's checked AgentRuns resource for one command."""
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+    from .profile_writer import _execution, executing_writer_repository
 
-
-def _writer_database(path: Path, *, opening: bool):
-    """Reuse the schema-initialized repository, with no handle held between calls."""
-    global _last_database
-    from .AgentRuns_DB import AgentRunsDB
-    from .profile_writer import current_profile_writer_selection
-    from .profile_writer_selection import writer_file_identity
-
-    selection = current_profile_writer_selection()
-    if not opening and _last_database is not None:
-        database, identity, generation = _last_database
-        if (
-            database.db_path == path
-            and generation == selection
-            and writer_file_identity(path) == identity
-        ):
-            return database
-    database = AgentRunsDB(path, reconcile_on_init=False)
-    try:
-        identity = writer_file_identity(path)
-        if identity is None:
-            raise RuntimeError("AgentRuns file disappeared during initialization")
-        _last_database = database, identity, selection
-        return database
-    except BaseException:
-        database.close()
-        raise
+    if not executing_writer_repository(profile, "db.agent_runs"):
+        raise RecoveryRequired("agent_runs_writer_selection_changed")
+    return _execution.agent_runs.command(profile, _execution.selection, opening=opening)
 
 
 def execute_profile_writer_command(profile: Path, operation: str, arguments: dict):
     """Validate the complete wire request before constructing a stock repository."""
     if type(operation) is not str or type(arguments) is not dict:
         raise ValueError("Invalid profile writer command")
+    if operation.startswith("agent_runs.work."):
+        from .profile_writer_agent_work import execute_agent_work_command
+
+        return execute_agent_work_command(profile, operation, arguments)
     if operation.startswith("chacha.") or operation == "chatbook.import":
         from .profile_writer_chacha import (
             execute_profile_writer_command as execute_content,
@@ -189,7 +172,7 @@ def execute_profile_writer_command(profile: Path, operation: str, arguments: dic
     if not operation.startswith("agent_runs.") or (method is None and name != "open"):
         raise ValueError("Unknown profile writer command")
     if name == "open":
-        if arguments:
+        if set(arguments) - {"reconcile"} or type(arguments.get("reconcile", False)) is not bool:
             raise ValueError("Unexpected AgentRuns open arguments")
     else:
         _, request, result_type = _run_contract(method)
@@ -210,9 +193,17 @@ def execute_profile_writer_command(profile: Path, operation: str, arguments: dic
 
         if not arguments["run_id"] or not run_is_live(profile, arguments["run_id"]):
             raise ValueError("AgentRuns create requires a live executor")
-    database = _writer_database(profile / "agent_runs.db", opening=name == "open")
-    try:
+    with agent_runs_command_database(profile, opening=name == "open") as database:
         if name == "open":
+            if arguments.get("reconcile"):
+                try:
+                    database._reconcile_orphaned_runs(profile)
+                except (RecoveryRequired, ProfileWriterOutcomeUnknown):
+                    raise
+                except Exception as error:
+                    from loguru import logger
+
+                    logger.warning("AgentRunsDB reconcile skipped: {}", error)
             return database.receipt_capability_available
         if name == "reconcile_orphaned_runs":
             result = database._reconcile_orphaned_runs(profile)
@@ -228,20 +219,14 @@ def execute_profile_writer_command(profile: Path, operation: str, arguments: dic
             raise ProfileWriterOutcomeUnknown(
                 "AgentRuns result could not be encoded"
             ) from error
-    finally:
-        try:
-            database.close()
-        except Exception as error:
-            raise ProfileWriterOutcomeUnknown(
-                "AgentRuns connection did not retire"
-            ) from error
-        if getattr(database._thread_local, "conn", None) is not None:
-            raise ProfileWriterOutcomeUnknown("AgentRuns connection did not retire")
 
 
 @cache
 def _error_types():
+    from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+    from tldw_chatbook.Agents.workflow_models import WorkflowAlreadyExists
     from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+    from tldw_chatbook.Chat.citation_trace_repository import CitationPersistenceUnavailable
     from tldw_chatbook.Chat.console_context_policy import ContextPolicyError
     from tldw_chatbook.Chat.console_dispatch_checkpoint import (
         ConsoleDispatchCheckpointValidationError,
@@ -252,7 +237,11 @@ def _error_types():
         MixinSourceChangedError,
     )
     from tldw_chatbook.Chat.library_preparation import LibraryPreparationValidationError
-    from tldw_chatbook.Notes.note_folder_models import NotesOrganizationRepositoryError
+    from tldw_chatbook.Notes.note_folder_models import FolderCapabilityError, FolderCollisionError, FolderConflictError, FolderValidationError, NotesOrganizationRepositoryError
+    from tldw_chatbook.Notes.note_import_executor import (
+        ImportTargetRetryableError, ImportTargetConflictError,
+        ImportTargetPermanentError, ImportTargetInternalError,
+    )
     from .AgentRuns_DB import AgentStepConflictError, ConsoleActivityReceiptsUnavailable
     from .ChaChaNotes_DB import (
         CharactersRAGDBError,
@@ -266,10 +255,13 @@ def _error_types():
         TypeError,
         KeyError,
         RuntimeError,
+        AutomaticWorkRefused,
+        WorkflowAlreadyExists,
         sqlite3.IntegrityError,
         sqlite3.OperationalError,
         sqlite3.DatabaseError,
         RecoveryRequired,
+        CitationPersistenceUnavailable,
         AgentStepConflictError,
         ConsoleActivityReceiptsUnavailable,
         CharactersRAGDBError,
@@ -277,6 +269,8 @@ def _error_types():
         InputError,
         SchemaError,
         NotesOrganizationRepositoryError,
+        FolderCapabilityError, FolderCollisionError, FolderConflictError, FolderValidationError,
+        ImportTargetRetryableError, ImportTargetConflictError, ImportTargetPermanentError, ImportTargetInternalError,
         ConsoleDispatchCheckpointValidationError,
         ContextPolicyError,
         MixinPreferenceConflictError,
@@ -296,8 +290,12 @@ def encode_profile_writer_error(error: Exception) -> dict:
     data = {"type": name, "message": message[:4096]}
     if name == "ConflictError":
         data.update(entity=error.entity, entity_id=error.entity_id)
-    if name == "NotesOrganizationRepositoryError":
+    if name in {"NotesOrganizationRepositoryError", "FolderCapabilityError"}:
         data["reason_code"] = error.reason_code
+    if name == "FolderConflictError":
+        data["reason"] = error.reason
+    if name == "WorkflowAlreadyExists":
+        data["workflow_id"] = error.workflow_id
     return data
 
 
@@ -318,13 +316,29 @@ def decode_profile_writer_error(data: dict) -> Exception:
         ):
             raise invalid
         return kind(message, entity=data["entity"], entity_id=data["entity_id"])
-    if data["type"] == "NotesOrganizationRepositoryError":
+    if data["type"] in {"NotesOrganizationRepositoryError", "FolderCapabilityError"}:
         if (
             data.keys() != {"type", "message", "reason_code"}
-            or type(data["reason_code"]) is not str
+            or type(data["reason_code"]) is not str or not 1 <= len(data["reason_code"]) <= 256
         ):
             raise invalid
+        if data["type"] == "FolderCapabilityError":
+            return kind(reason_code=data["reason_code"], user_message=message)
         return kind(data["reason_code"], message)
+    if data["type"] == "FolderConflictError":
+        from tldw_chatbook.Notes.note_folder_models import FOLDER_CONFLICT_COPY
+
+        if data.keys() != {"type", "message", "reason"} or type(data["reason"]) is not str or data["reason"] not in FOLDER_CONFLICT_COPY:
+            raise invalid
+        return kind(message, reason=data["reason"])
+    if data["type"] == "WorkflowAlreadyExists":
+        if data.keys() != {"type", "message", "workflow_id"} or type(data["workflow_id"]) is not str or message != "workflow_already_exists":
+            raise invalid
+        return kind(data["workflow_id"])
     if data.keys() != {"type", "message"}:
         raise invalid
+    if data["type"] in {"ImportTargetRetryableError", "ImportTargetConflictError", "ImportTargetPermanentError", "ImportTargetInternalError"}:
+        if message != kind.message:
+            raise invalid
+        return kind()
     return kind(message)

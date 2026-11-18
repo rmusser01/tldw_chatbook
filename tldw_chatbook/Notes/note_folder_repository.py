@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 from typing import NoReturn, ParamSpec, TypeVar
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
+from tldw_chatbook.DB.profile_writer_chacha import note_folder_mutation
 from tldw_chatbook.Notes.note_folder_models import (
     FolderPlacementId,
     FolderCapabilityError,
@@ -214,6 +215,7 @@ class LocalNoteFolderRepository:
             raise TypeError("db must be a CharactersRAGDB instance")
         self.db = db
 
+    @note_folder_mutation
     @_retry_owned_contention
     def create_folder(
         self,
@@ -1417,6 +1419,7 @@ class LocalNoteFolderRepository:
             ),
         )
 
+    @note_folder_mutation
     @_retry_owned_contention
     def attach_manual(
         self,
@@ -1628,6 +1631,7 @@ class LocalNoteFolderRepository:
             ),
         )
 
+    @note_folder_mutation
     @_retry_owned_contention
     def detach_manual(
         self,
@@ -1773,6 +1777,7 @@ class LocalNoteFolderRepository:
             rows = _load_managed_folder_rows(cursor, (folder_id,))
             return bool(rows and rows[0]["owner_active"] is not None)
 
+    @note_folder_mutation
     def reconcile_managed(
         self,
         *,
@@ -1898,6 +1903,7 @@ class LocalNoteFolderRepository:
         except CharactersRAGDBError as exc:
             _raise_wrapped_repository_error(exc)
 
+    @note_folder_mutation
     @_retry_owned_contention
     def convert_owner_to_manual(
         self, *, owner_id: str, cursor: sqlite3.Cursor | None = None
@@ -1945,6 +1951,7 @@ class LocalNoteFolderRepository:
         except CharactersRAGDBError as exc:
             _raise_wrapped_repository_error(exc)
 
+    @note_folder_mutation
     @_retry_owned_contention
     def remove_owner_memberships(
         self, *, owner_id: str, cursor: sqlite3.Cursor | None = None
@@ -1984,6 +1991,7 @@ class LocalNoteFolderRepository:
         except CharactersRAGDBError as exc:
             _raise_wrapped_repository_error(exc)
 
+    @note_folder_mutation
     def mark_unknown_owners_inactive(self, *, active_owner_ids: Iterable[str]) -> int:
         """Converge restored managed-owner flags against the known owner set.
 
@@ -2074,6 +2082,7 @@ class LocalNoteFolderRepository:
             for owner, group in sorted(grouped.items())
         )
 
+    @note_folder_mutation
     @_retry_owned_contention
     def rename_folder(
         self,
@@ -2151,6 +2160,7 @@ class LocalNoteFolderRepository:
         except CharactersRAGDBError as exc:
             _raise_wrapped_repository_error(exc)
 
+    @note_folder_mutation
     @_retry_owned_contention
     def move_folder(
         self,
@@ -2238,6 +2248,7 @@ class LocalNoteFolderRepository:
         except CharactersRAGDBError as exc:
             _raise_wrapped_repository_error(exc)
 
+    @note_folder_mutation
     @_retry_owned_contention
     def soft_delete_folder(
         self,
@@ -2281,6 +2292,7 @@ class LocalNoteFolderRepository:
         except CharactersRAGDBError as exc:
             _raise_wrapped_repository_error(exc)
 
+    @note_folder_mutation
     @_retry_owned_contention
     def restore_folder(
         self,

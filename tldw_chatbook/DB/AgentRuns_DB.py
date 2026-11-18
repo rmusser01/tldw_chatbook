@@ -368,7 +368,9 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             from .profile_writer_selection import writer_file_identity
 
             core_access(self)
-            capability = call_profile_writer(self._writer_profile, "agent_runs.open", {})
+            capability = call_profile_writer(
+                self._writer_profile, "agent_runs.open", {"reconcile": reconcile_on_init}
+            )
             if type(capability) is not bool:
                 raise ValueError("Invalid AgentRuns open receipt")
             self.receipt_capability_available = capability
@@ -388,7 +390,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         # settings panel) passes reconcile_on_init=False and runs the
         # (idempotent) sweep on a worker thread, so the BEGIN IMMEDIATE
         # scan never blocks the Textual event loop.
-        if reconcile_on_init:
+        if reconcile_on_init and self._writer_profile is None:
             try:
                 self.reconcile_orphaned_runs()
             except Exception as exc:  # noqa: BLE001 — reconcile is best-effort

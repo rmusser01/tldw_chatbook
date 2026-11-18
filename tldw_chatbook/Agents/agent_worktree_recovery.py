@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..DB.agent_worktrees import AgentWorktreeRepository
+from ..DB.store_errors import StoreMutationOutcomeUnknown
 from ..Utils.input_validation import (
     WorktreeRecoveryActionInput,
     WorktreeRecoveryConfirmationInput,
@@ -601,6 +602,10 @@ def recover_agent_worktree(
             )
         operation_id = None
         return WorktreeRecoveryOutcome(action, message, result_state, commit_sha)
+    except StoreMutationOutcomeUnknown:
+        # The claim or its completion may already have committed. A second
+        # completion could overwrite the only durable evidence of the outcome.
+        return WorktreeRefusal("persistence_failed", "Worktree operation receipt unavailable; inspect the retained work before retrying.")
     except Exception as exc:  # noqa: BLE001 - all ambiguous outcomes stay protected
         code = exc.code if isinstance(exc, OperationError) else "recovery_uncertain"
         message = (

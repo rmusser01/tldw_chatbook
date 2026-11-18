@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from uuid import UUID, uuid4, uuid5
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
+from tldw_chatbook.DB.profile_writer_chacha import note_import_mutation
 from tldw_chatbook.Notes.note_folder_models import (
     FolderCapabilityError,
     FolderCollisionError,
@@ -179,6 +180,7 @@ class LocalNoteImportTarget:
     def __repr__(self) -> str:
         return "LocalNoteImportTarget(<private>)"
 
+    @note_import_mutation
     def ensure_folder(
         self,
         *,
@@ -272,6 +274,7 @@ class LocalNoteImportTarget:
             raise translated_error from None
         raise ImportTargetInternalError from None  # pragma: no cover
 
+    @note_import_mutation
     def create_note(
         self, *, note_id: str, payload: ParsedNotePayload
     ) -> LocalTargetNote:
@@ -299,6 +302,7 @@ class LocalNoteImportTarget:
             raise translated_error from None
         raise ImportTargetInternalError from None  # pragma: no cover
 
+    @note_import_mutation
     def replace_note(
         self,
         *,
@@ -362,6 +366,7 @@ class LocalNoteImportTarget:
             raise translated_error from None
         raise ImportTargetInternalError from None  # pragma: no cover
 
+    @note_import_mutation
     def sync_keywords(self, *, note_id: str, keywords: Iterable[str]) -> None:
         """Make one active note's canonical keyword links exactly match desired."""
         translated_error: ImportTargetError | ImportTargetInternalError | None = None
@@ -377,6 +382,7 @@ class LocalNoteImportTarget:
         if translated_error is not None:
             raise translated_error from None
 
+    @note_import_mutation
     def attach_membership(
         self,
         *,

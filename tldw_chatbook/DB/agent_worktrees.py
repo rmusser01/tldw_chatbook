@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from tldw_chatbook.Agents.agent_models import TERMINAL_RUN_STATUSES
+from .profile_writer_agent_work import writer_work_store
 
 if TYPE_CHECKING:
     from .AgentRuns_DB import AgentRunsDB
@@ -93,6 +94,7 @@ def _decode_identity(value: str) -> tuple[tuple[str, int, int, int], ...]:
     return tuple(tuple(component) for component in json.loads(value))
 
 
+@writer_work_store("worktree", "record_created", "mark_writer_finished", "claim", "finish_operation")
 class AgentWorktreeRepository:
     """Read and mutate worktree records through a borrowed AgentRunsDB."""
 
@@ -107,11 +109,11 @@ class AgentWorktreeRepository:
         binding_id: str,
         locator_fingerprint: str,
         repo_root: str,
-        repo_identity: tuple,
+        repo_identity: tuple[tuple[str, int, int, int], ...],
         git_common_dir: str,
-        git_common_identity: tuple,
+        git_common_identity: tuple[tuple[str, int, int, int], ...],
         child_path: str,
-        child_identity: tuple,
+        child_identity: tuple[tuple[str, int, int, int], ...],
         branch: str,
         base_sha: str,
         execution_id: str,

@@ -26,6 +26,7 @@ from tldw_chatbook.Agents.workflow_models import (
     WorkflowTaskAttempt,
     WorkflowTaskResult,
 )
+from .profile_writer_agent_work import writer_work_store
 
 _identity = TypeAdapter(Identity).validate_python
 
@@ -55,6 +56,10 @@ class _WindowUnpublished:
     error: BaseException
 
 
+@writer_work_store(
+    "workflow", "create", "save_plan", "set_status", "record_attempt", "record_retirement",
+    "reserve_result", "publish_result", "remove_payloads",
+)
 class WorkflowRunsStore:
     """Storage only: construction and reads never recover, admit or dispatch work."""
 

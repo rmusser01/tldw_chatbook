@@ -470,6 +470,7 @@ Keywords: test, sample"""
             archive.writestr("manifest.json", json.dumps(manifest.to_dict()))
 
     @pytest.mark.parametrize("operation", ["preview", "import"])
+    @pytest.mark.bootstrap_profile
     def test_archive_source_rejects_lexical_danger_before_open_without_disclosure(
         self,
         chatbook_importer,
@@ -486,24 +487,25 @@ Keywords: test, sample"""
             opened = True
             raise AssertionError("archive source open must not run")
 
-        monkeypatch.setattr(Path, "open", fail_open)
-        monkeypatch.setattr(importer_module, "logger", observed_logger)
-
-        if operation == "preview":
-            result = chatbook_importer.preview_chatbook(dangerous_path)
-            assert result == (None, "Invalid chatbook source path.")
-        else:
-            status = ImportStatus()
-            result = chatbook_importer.import_chatbook(
-                dangerous_path, import_status=status
-            )
-            assert result == (False, "Invalid chatbook source path.")
-            assert status.errors == ["Invalid chatbook source path."]
+        with monkeypatch.context() as patch:
+            patch.setattr(Path, "open", fail_open)
+            patch.setattr(importer_module, "logger", observed_logger)
+            if operation == "preview":
+                result = chatbook_importer.preview_chatbook(dangerous_path)
+                assert result == (None, "Invalid chatbook source path.")
+            else:
+                status = ImportStatus()
+                result = chatbook_importer.import_chatbook(
+                    dangerous_path, import_status=status
+                )
+                assert result == (False, "Invalid chatbook source path.")
+                assert status.errors == ["Invalid chatbook source path."]
 
         assert opened is False
         assert canary not in repr(observed_logger.method_calls)
 
     @pytest.mark.parametrize("operation", ["preview", "import"])
+    @pytest.mark.bootstrap_profile
     def test_archive_source_consumes_shared_validator_returned_path(
         self,
         chatbook_importer,
@@ -544,6 +546,7 @@ Keywords: test, sample"""
 
         assert calls == [(selected_path, False, False)]
 
+    @pytest.mark.bootstrap_profile
     def test_real_archive_source_outside_workspace_remains_accepted(
         self,
         chatbook_importer,

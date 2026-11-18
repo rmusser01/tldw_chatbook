@@ -2377,3 +2377,17 @@ operation opened 123. Much of the remaining service work reopened and
 retired the same SQLite resource. The same original warm step, two app
 instances, backup and restore, file replacement and shutdown qualify this
 change before the end-to-end comparison.
+
+Two execution-authorizing transactions also consult state in their caller.
+Workflow phase control verifies the registered native connection immediately
+before commit. Goal checkpointing consults workspace and verifier authority
+held by the active executor. Moving just those checks across an RPC would
+split their atomic transaction. For these named operations the writer can
+reserve the physical database for the original caller. The grant covers
+its entire transaction, including restoration of synchronous mode and the
+original retirement checks. Existing borrowed handles keep their independent
+ownership. The grant must bind to the actual client process and file and
+exclude other mutations through rollback, commit or positively established
+process death. Unknown outcomes cannot be replayed. Backup must drain this
+custody as it drains work executed on the writer thread. Other serializable
+operations use named domain commands executed by the writer.

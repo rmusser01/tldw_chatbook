@@ -31,6 +31,7 @@ from tldw_chatbook.Agents.automatic_work_budget import (
     RuntimeRecoveryResult,
 )
 from tldw_chatbook.Agents.code_review_models import ReviewBoundaryReceipt
+from .profile_writer_agent_work import writer_work_store
 
 if TYPE_CHECKING:
     from tldw_chatbook.Agents.workflow_models import (
@@ -57,6 +58,7 @@ def _identity(value: str) -> str:
     return value
 
 
+@writer_work_store("ledger", "create_chain", "pause", "release", "settle", "attach_run")
 class AutomaticWorkLedger:
     """Chain allowance and admission state owned by one run database."""
 

@@ -19,11 +19,13 @@ from tldw_chatbook.Agents.goal_models import (
     IterationReport,
 )
 from tldw_chatbook.DB.automatic_work import _identity
+from .profile_writer_agent_work import writer_work_store
 
 if TYPE_CHECKING:
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
+@writer_work_store("goal", "create", "control", "settle_control", "set_provisioning", "remove_payloads")
 class GoalRunsStore:
     """Typed launch owner; no dispatch or cross-store transactions."""
 

@@ -174,6 +174,12 @@ def _domain_command(kind, function):
             db = source_database(kind, owner)
             if db is None:
                 return function(owner, *args, **kwargs)
+        elif kind in ("file_import", "folder"):
+            from .profile_writer_notes import source_database
+
+            db = source_database(kind, owner)
+            if db is None:
+                return function(owner, *args, **kwargs)
         elif kind == "notes":
             from ..Notes.Notes_Library import NotesInteropService
 
@@ -211,11 +217,18 @@ def _domain_command(kind, function):
                 on_durable_commit = parameters.pop("on_durable_commit", None)
             records = value_types()
             parameters = {"call": parameters, "workspace_client_id": workspace}
+        elif kind in ("file_import", "folder"):
+            from .profile_writer_notes import prepare_iterables, value_types
+
+            prepare_iterables(kind, parameters)
+            records = value_types()
         try:
             request = _database_request(db, parameters, records)
         except _UnsupportedWriterValue:
             # An extension's transaction contribution or process-local capability
             # stays with its original owner. No request has been transmitted.
+            if kind in ("file_import", "folder"):
+                return function(owner, **parameters)
             return function(owner, *args, **kwargs)
         result = _unpack(call_profile_writer(profile, operation, request), records)
         if on_durable_commit is not None:
@@ -233,6 +246,16 @@ def chacha_mutation(function):
 def notes_mutation(function):
     """Route a complete stock Notes service operation, including its receipts."""
     return _domain_command("notes", function)
+
+
+def note_import_mutation(function):
+    """Route one reviewed effect, including its complete original transaction."""
+    return _domain_command("file_import", function)
+
+
+def note_folder_mutation(function):
+    """Route an independently owned local folder or placement mutation."""
+    return _domain_command("folder", function)
 
 
 def console_mutation(function):
@@ -346,6 +369,8 @@ def execute_profile_writer_command(profile: Path, operation: str, arguments: dic
         from ..Notes.Notes_Library import NotesInteropService
     elif operation.startswith(("chacha.console.", "chacha.dispatch.")):
         from .profile_writer_console import execute_console_operation, value_types
+    elif operation.startswith(("chacha.file_import.", "chacha.folder.")):
+        from .profile_writer_notes import execute_notes_operation, value_types
     command = _COMMANDS.get(operation)
     if command is None and operation != "chacha.initialize":
         raise ValueError("Unknown ChaChaNotes writer command.")
@@ -358,7 +383,8 @@ def execute_profile_writer_command(profile: Path, operation: str, arguments: dic
         or type(opener) is not str or len(opener) != 32 or set(opener) - set("0123456789abcdef")):
         raise ValueError("Invalid ChaChaNotes writer identity.")
     console = command is not None and command[0] in ("console", "dispatch")
-    records = value_types() if console else None
+    local_notes = command is not None and command[0] in ("file_import", "folder")
+    records = value_types() if console or local_notes else None
     parameters = _unpack(arguments["parameters"], records)
     if type(parameters) is not dict or any(parameters.get(key) is not None for key in _LOCAL_ARGUMENTS):
         raise ValueError("Invalid ChaChaNotes writer parameters.")
@@ -385,6 +411,8 @@ def execute_profile_writer_command(profile: Path, operation: str, arguments: dic
             return db._schema_initial_version
         if console:
             return _pack(execute_console_operation(kind, function, db, profile, parameters), records)
+        if local_notes:
+            return _pack(execute_notes_operation(kind, function, db, parameters), records)
         if kind == "notes":
             service = NotesInteropService(path.parent, client_id, global_db_to_use=db)
             # This command implements the original user's existing Notes DB.

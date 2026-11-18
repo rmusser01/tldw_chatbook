@@ -1988,15 +1988,6 @@ def acquire_storage(
     return _acquire_ordinary(path, related_paths=related_paths)
 
 
-def acquire_profile_writer_storage(path: Path) -> StorageLease:
-    """Admit an independent writer, refusing an already closed native gate.
-
-    Its client can be waiting inside an enrolled repository operation.
-    Maintenance needs that client to receive a refusal and physically drain.
-    """
-    return _acquire_ordinary(path, refuse_waiting_maintenance=True)
-
-
 def _acquire_ordinary(path=None, *, related_paths=(), startup=False, refuse_waiting_maintenance=False):
     attempt = _Acquisition()
     try:
@@ -2210,15 +2201,27 @@ def admit_startup() -> None:
         attempt.close()
 
 
-def _admit_startup(attempt: _Acquisition) -> None:
+def admit_profile_writer_startup() -> StorageLease:
+    """Enroll the actual writer, refusing maintenance that needs its waiting client to drain."""
+    attempt = _Acquisition()
+    try:
+        return _admit_startup(attempt, refuse_waiting_maintenance=True)
+    finally:
+        attempt.close()
+
+
+def _admit_startup(attempt: _Acquisition, *, refuse_waiting_maintenance=False) -> StorageLease:
     bootstrap.require_startup_permission()
     key = (os.getpid(), str(bootstrap.default_bootstrap_root()))
     with _lock:
         attempt.check()
         if key in _startups:
-            return
+            return _startups[key]
     try:
-        lease = _acquire_ordinary(startup=True) if os.name == "nt" else acquire_storage()
+        lease = (
+            _acquire_ordinary(startup=True, refuse_waiting_maintenance=refuse_waiting_maintenance)
+            if os.name == "nt" else acquire_storage()
+        )
     except bootstrap.RecoveryRequired as error:
         raise SystemExit("Recovery required: " + str(error)) from None
     try:
@@ -2230,6 +2233,7 @@ def _admit_startup(attempt: _Acquisition) -> None:
         raise
     if selected is not lease:
         lease.close()
+    return selected
 
 
 def _shutdown() -> None:

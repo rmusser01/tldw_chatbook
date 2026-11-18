@@ -15,6 +15,7 @@ from tldw_chatbook.DB import profile_writer_commands as commands
 
 def test_domain_errors_round_trip_with_conflict_identity():
     from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+    from tldw_chatbook.Chat.citation_trace_repository import CitationPersistenceUnavailable
     from tldw_chatbook.Chat.console_context_policy import ContextPolicyError
     from tldw_chatbook.Chat.console_dispatch_checkpoint import (
         ConsoleDispatchCheckpointValidationError,
@@ -26,15 +27,19 @@ def test_domain_errors_round_trip_with_conflict_identity():
     )
     from tldw_chatbook.Chat.library_preparation import LibraryPreparationValidationError
     from tldw_chatbook.DB.ChaChaNotes_DB import ConflictError
-    from tldw_chatbook.Notes.note_folder_models import NotesOrganizationRepositoryError
+    from tldw_chatbook.Notes.note_folder_models import FolderCapabilityError, FolderCollisionError, FolderConflictError, FolderValidationError, NotesOrganizationRepositoryError
+    from tldw_chatbook.Notes.note_import_executor import ImportTargetConflictError, ImportTargetInternalError, ImportTargetPermanentError, ImportTargetRetryableError
 
     errors = (
         AgentStepConflictError("step already recorded"),
         KeyError("unknown run"),
         sqlite3.IntegrityError("duplicate"),
         RecoveryRequired("maintenance_in_progress"),
+        CitationPersistenceUnavailable("canonical_write_refused"),
         ConflictError("stale", entity="notes", entity_id=17),
         NotesOrganizationRepositoryError("folder_changed", "Folder moved"),
+        FolderCapabilityError(reason_code="read_only", user_message="Read only folder"), FolderCollisionError("Folder exists"), FolderConflictError("Conflict", reason="unknown"), FolderValidationError("Invalid name"),
+        ImportTargetRetryableError(), ImportTargetConflictError(), ImportTargetPermanentError(), ImportTargetInternalError(),
         ConsoleDispatchCheckpointValidationError("Invalid checkpoint"),
         ContextPolicyError("Invalid policy"),
         MixinPreferenceConflictError("Preference changed"),
@@ -107,12 +112,16 @@ os._exit(7)
     assert not run_is_live(tmp_path, "paused")
 
 
-def test_stock_writer_preserves_atomic_steps_and_settings(monkeypatch, tmp_path):
+def test_stock_writer_preserves_atomic_steps_and_settings(monkeypatch, tmp_path, request):
     from Tests.Backup_Recovery.test_agent_runs_recovery_schema import legacy
     from tldw_chatbook.DB import profile_writer
+    from tldw_chatbook.DB.profile_writer_repository import AgentRunsWriterDatabase
 
     profile = tmp_path
     path = profile / "agent_runs.db"
+    owner = AgentRunsWriterDatabase()
+    request.addfinalizer(owner.retire)
+    monkeypatch.setattr(profile_writer._execution, "agent_runs", owner, raising=False)
     monkeypatch.setattr(profile_writer._execution, "active", True, raising=False)
     monkeypatch.setattr(profile_writer._execution, "selection", (), raising=False)
     monkeypatch.setattr(
