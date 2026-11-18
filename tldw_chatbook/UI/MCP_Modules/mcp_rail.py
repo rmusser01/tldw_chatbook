@@ -418,10 +418,11 @@ class MCPRail(RecomposeCaptureGuard, Vertical):
         yield source_select
         yield Static("Servers", classes="destination-section mcp-rail-heading")
         # TASK-41630: servers added here never reach Console while its MCP
-        # store is unbound; say so with the Inspector row's reason.
+        # store is unbound; say so with the Inspector row's reason, which
+        # names Console.
         if self.console_mcp_off_reason:
             yield Static(
-                f"Console: MCP off · {self.console_mcp_off_reason}",
+                self.console_mcp_off_reason,
                 id="mcp-rail-console-warning",
                 classes="mcp-status-warning",
                 markup=False,

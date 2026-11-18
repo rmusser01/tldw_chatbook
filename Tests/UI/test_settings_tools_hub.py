@@ -902,5 +902,5 @@ async def test_mcp_rail_warns_when_console_cannot_use_the_mcp_store(store):
     if store == "bound":
         assert texts == []
     else:
-        assert texts == [f"Console: MCP off · {UNBOUND_MCP_STORE_REASON}"]
+        assert texts == [UNBOUND_MCP_STORE_REASON]
         assert painted == [True]

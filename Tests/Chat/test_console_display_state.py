@@ -26,6 +26,7 @@ from tldw_chatbook.Chat.citation_evidence_models import (
     EvidenceReference,
 )
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
+from tldw_chatbook.MCP.console_snapshot import UNBOUND_MCP_STORE_REASON
 
 
 def test_console_control_state_exposes_provider_model_and_context_labels():
@@ -352,12 +353,10 @@ def test_console_inspector_state_mcp_off_reason_wins_over_counts(
     state = ConsoleInspectorState.from_values(
         mcp_tool_count=tool_count,
         mcp_not_connected_count=not_connected,
-        mcp_unavailable_reason="this profile's MCP settings file can't be used here",
+        mcp_unavailable_reason=UNBOUND_MCP_STORE_REASON,
     )
     rows_by_label = {row.label: row for row in state.rows}
-    assert rows_by_label["MCP"].value == (
-        "off · this profile's MCP settings file can't be used here"
-    )
+    assert rows_by_label["MCP"].value == f"off · {UNBOUND_MCP_STORE_REASON}"
     assert rows_by_label["MCP"].status == "blocked"
 
 

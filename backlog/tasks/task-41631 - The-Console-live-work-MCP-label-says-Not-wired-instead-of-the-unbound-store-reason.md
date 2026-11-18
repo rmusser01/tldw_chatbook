@@ -47,7 +47,15 @@ ADR required: no (display copy; same reason string and predicate as TASK-41308's
 <!-- SECTION:NOTES:BEGIN -->
 **Change.** `ConsoleLiveWorkSourceReadinessState.from_acp_runtime_status` takes `mcp_unavailable_reason` (default ""). A non-empty reason gives `MCP: Off - <reason>` (unavailable class) and wins over the counts, as `_mcp_inspector_row` does. An empty one keeps "Not wired" / "Connected". Both writers in `ChatScreen`, the card builder and the sync tick, pass `console_mcp_unavailable_reason(read_mcp_service(self.app_instance))`, the Inspector row's pure predicate. They use lazy imports and add no method. The reason string is now one module constant, `MCP/console_snapshot.UNBOUND_MCP_STORE_REASON`. The Inspector row, this row, the hub rail (TASK-41630) and the tests all read it.
 
-**Decision.** The reason wins over a non-zero count. An unbound store never publishes counts in production, because the Send drops MCP. The two surfaces therefore cannot disagree even when a test hand-publishes counts. The row is 62 characters, so it wraps at the card's 39-column width and the readiness card is one row taller while the store is unbound. That is honest copy. The geometry tests pin a bound store.
+**Decision.** The reason wins over a non-zero count. An unbound store never publishes counts in production, because the Send drops MCP. The two surfaces therefore cannot disagree even when a test hand-publishes counts. Review round: the reason was reworded once, for every surface, to "Console can't use the MCP settings file". The old "this profile's MCP settings file can't be used here" read wrong in the hub, where that file is edited, and was longer. Measured with the Inspector open, unbound vs bound:
+
+| Size | Row content width | Unbound MCP row | Card rows, bound -> unbound |
+|---|---|---|---|
+| 235x52 | 36 columns | 2 lines | 16 -> 17 |
+| 200x60 | 29 columns | 2 lines | 17 -> 18 (19 with the old copy) |
+| 160x45 | 23 columns | 3 lines | 18 -> 19 |
+
+All stay within the live-work section's 20-row cap, with no "more" hint. `test_unbound_live_work_mcp_row_fits_the_section_at_full_screen` pins the 235x52 row: 2 lines, a 17-row card, the cap of 20 and no hint. Its mutation check, a reason that wraps to 3 lines, fails it. The existing swap-geometry tests pin a bound store (commit a891153852).
 
 **Tests.**
 - `Tests/UI/test_console_live_work_handoffs.py::test_console_live_work_mcp_row_names_the_unbound_store_reason[None|0|4]`: the unit case.

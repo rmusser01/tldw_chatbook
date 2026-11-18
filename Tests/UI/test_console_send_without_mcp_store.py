@@ -39,6 +39,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 from tldw_chatbook.Backup_Recovery import mcp_source_participants, raw_participants
 from tldw_chatbook.Chat import console_configuration_preparation as preparation
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.MCP.console_snapshot import UNBOUND_MCP_STORE_REASON
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
 pytestmark = pytest.mark.bootstrap_profile
@@ -231,7 +232,7 @@ async def test_inspector_mcp_row_says_off_and_why_when_the_store_is_unbound(
     off = (
         None
         if profile == "bound"
-        else "MCP: off · this profile's MCP settings file can't be used here"
+        else f"MCP: off · {UNBOUND_MCP_STORE_REASON}"
     )
 
     async with host.run_test(size=(196, 48)) as pilot:
@@ -276,7 +277,7 @@ async def test_inspector_keeps_the_unbound_reason_when_the_kill_switch_is_on(tmp
         await _wait_for_selector(console, pilot, "#console-inspector-mcp")
         text = _mcp_row_text(console)
 
-    assert text == "MCP: off · this profile's MCP settings file can't be used here"
+    assert text == f"MCP: off · {UNBOUND_MCP_STORE_REASON}"
 
 
 @pytest.mark.asyncio
@@ -289,8 +290,6 @@ async def test_live_work_mcp_row_names_the_unbound_store_reason(
     Both writers are read: the card the builder makes, and the row the sync
     tick rewrites. A bound store keeps "Not wired".
     """
-    from tldw_chatbook.MCP.console_snapshot import UNBOUND_MCP_STORE_REASON
-
     kwargs = {}
     if profile == "no-pinned-io":
         _bind_without_pinned_io(monkeypatch)
@@ -309,6 +308,8 @@ async def test_live_work_mcp_row_names_the_unbound_store_reason(
         await _wait_for_selector(console, pilot, "#console-native-composer")
         await _wait_for_selector(console, pilot, "#console-live-work-source-mcp")
         card = console._build_console_live_work_source_readiness_card()
+        # The built card is not mounted, so its children are only readable
+        # through Textual's `_pending_children`, as six other test files do.
         built = next(
             str(child.renderable)
             for child in card._pending_children
@@ -322,3 +323,43 @@ async def test_live_work_mcp_row_names_the_unbound_store_reason(
 
     assert built == expected
     assert ticked == expected
+
+
+@pytest.mark.asyncio
+async def test_unbound_live_work_mcp_row_fits_the_section_at_full_screen(tmp_path):
+    """TASK-41631: the reason wraps the MCP row, and the card stays in its cap.
+
+    Measured with the Inspector open: the row's content is 36 columns at
+    235x52, 29 at 200x60 and 23 at 160x45. The unbound row takes 2, 2 and 3
+    lines, and the card 17, 18 and 19 rows (bound: 16, 17, 18). All stay
+    within the live-work section's 20-row cap, so no "more" hint appears.
+    """
+    app = _build_console_send_test_app(user_data_dir=tmp_path)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(235, 52)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await _open_console_inspector(console, pilot)
+        await _wait_for_selector(console, pilot, "#console-live-work-source-mcp")
+        row = console.query_one("#console-live-work-source-mcp", Static)
+        card = console.query_one("#console-live-work-source-readiness")
+        bounded = console.query_one("#console-bounded-section-live-work")
+        for _ in range(100):
+            if row.region.height == 2 and bounded.desired_content_lines == (
+                card.region.height
+            ):
+                break
+            await pilot.pause(0.05)
+        text = str(row.renderable)
+        row_lines = row.region.height
+        card_rows = card.region.height
+        demand = bounded.desired_content_lines
+        cap = bounded.max_content_lines
+        hint_shown = bounded.hint.display
+
+    assert text == f"MCP: Off - {UNBOUND_MCP_STORE_REASON}"
+    assert row_lines == 2
+    assert card_rows == demand == 17
+    assert demand <= cap == 20
+    assert hint_shown is False

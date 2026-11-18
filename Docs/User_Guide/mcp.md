@@ -31,10 +31,10 @@ organized into four modes: Servers, Tools, Permissions, and History.
   **Data & Privacy** group.
 
 When Console can't use this profile's MCP settings file
-(`local_mcp_store.json`), the rail shows "Console: MCP off · this profile's
-MCP settings file can't be used here" under **Servers**, in the same words as
-Console's MCP row. The servers you add here are still saved, but Console
-sends no MCP tools until it can use the file. Nothing shows when Console can
+(`local_mcp_store.json`), the rail shows "Console can't use the MCP settings
+file" under **Servers**, in the same words as Console's MCP row. The servers
+you add here are still saved, but Console sends no MCP tools until it can use
+the file. Nothing shows when Console can
 use it. The [MCP tools](console/agent-runs-and-tools.md#mcp-tools) section of
 the Console guide says which file Console uses and how to fix it.
 
