@@ -630,13 +630,11 @@ class LibraryNoteImportController:
         }:
             rename_input = ""
             rename_error = ""
-        self._state = set_review_page(
-            show_review(
-                begin_checking(self._state),
-                plan,
-                review_effects=effects,
-            ),
-            page_number,
+        self._state = show_review(
+            begin_checking(self._state),
+            plan,
+            review_effects=effects,
+            page_number=page_number,
         )
         self._state = replace(
             self._state,

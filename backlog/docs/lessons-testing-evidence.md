@@ -26307,3 +26307,15 @@ and keep the first run and repeat beside the instrumented comparison.
 **Incident.** TASK-33621.59 made Stop win over a durable commit that then fails. It had two halves. The controller cancelled the send and returned the restored draft revision. The runtime's turn custody (`_finish_custodied_turn`) then put the attachments back instead of shelving the turn. Both mounted Stop cases were red before the fix and green after. A mutation that removed the runtime half turned them red again, so the tests clearly needed both halves. The review then pressed the card's Retry send after a first failure, held the retried commit, pressed Stop, and let that commit fail too. Retry runs `submit_draft` from the card's own worker, not through runtime custody. The controller half ran (run "Send stopped; nothing was sent.") but the runtime half never did. The shelf offered the turn as "Not sent: Couldn't save the prepared turn." with its image, and the composer's attachments stayed empty. This contradicted an acceptance criterion that was already checked. Every test had entered through Enter, the one caller the fix was written at.
 
 **What to do.** When a fix needs a caller to act on a new field in the controller's result, list every caller that can reach that controller branch first: the composer's custody path, the card actions and the queue. Grep for the entry points (`submit_draft`, `_resume_preparation_id`, the card's `dispatch_trace_call_recovery_action` handlers). Then pin each caller with its own mounted case, or say in the task which ones are not covered.
+
+## Bind the stored SQLite sort key when seeking across pages (TASK-41799.1)
+
+**Incident.** Notes backfill rebound a converted date as a Python datetime.
+SQLite compared the rebound timestamp with the stored date-only string and
+repeated the same page. The bounded regression repeated `note-4` instead of
+advancing through the tie. The first combined targeted run timed out.
+
+**What to do.** Select the raw sort key as its own expression and keep the
+converted column for the index entry. Exercise the converter and a dense
+timestamp tie. Bound iteration in the regression so a repeated cursor fails
+with the offending IDs.

@@ -77,6 +77,9 @@ Protected-file checks use the lightweight `RAG_Search/state_paths.py` accessors;
 - Media backfill and active-ID reconciliation share ascending primary-key
   pagination. Each page resumes after the last visited row, including a row
   that doesn't produce an index entry. Active and trash filters apply on every page.
+- Native Notes backfill seeks most recent first by the stored modification
+  timestamp and rowid. The iterator closes each SQLite cursor before yielding
+  entries and advances from the last visited row even when its body is skipped.
 - The Library service owns the four-seam keyword path and UI recovery states; answer generation deliberately lives outside it as a pure seam with an injected `chat` callable.
 - `RAG_Search/simplified/search_service.py` exposes MCP-facing search that falls back to keyword FTS when the RAG runtime is unavailable (fallback rows carry `score: None`, never a fabricated 1.0).
 

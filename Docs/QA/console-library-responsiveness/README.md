@@ -705,3 +705,77 @@ for AST-identical File Notes formatting.
 
 The 243-entry private receipt manifest has SHA-256
 `8ef10034748e8475cc1d14380317f1186d43d0ea48a0d19c3c4f24e36d8c0840`.
+
+## Console streaming, RAG Notes backfill and Note Import Review
+
+TASK-41802.1, TASK-41799.1 and TASK-41804 compare with
+`51dba4b950a6791b62dd775e13d0e4fa5151fed2`. Console reads fold only messages
+with buffered text and take detached shallow copies of the ordered history.
+The existing field projection handles nonstandard message shapes. Native
+Notes backfill seeks by the raw timestamp and rowid in two indexed ranges
+and closes each cursor before yielding. Import Review keeps page boundaries
+and totals with its current immutable plan and page size. Replacement plans
+build the selected page in one pass.
+
+| Isolated control | Baseline median | Candidate median |
+| --- | ---: | ---: |
+| Console snapshot CPU at 10,000 messages | 23.332 ms | 15.238 ms |
+| SQLite enumeration of 20,000 stored Notes | 900.142 ms | 153.731 ms |
+| SQLite enumeration of 20,000 Notes with the same timestamp | 997.384 ms | 215.290 ms |
+| Import Review page selection CPU at 1,000 sources | 2.19575 ms | 0.00537 ms |
+
+Both Notes fixtures returned the same 18,598 ordered index entries and
+matching document digests in each arm. Approximate SQLite VM instructions
+fell from 9.804 million to 739,000 for mixed dates and 744,000 for the dense
+tie. These timings end at source enumeration. Page digests matched across
+forward, backward and clamped navigation in the import model.
+
+Three alternating pairs used the same 120×50 macOS PTY harness and sealed
+10,000-conversation corpus. Each fresh profile mounted 10,000 persisted
+messages in the same conversation and checked 1,000 synthetic Markdown
+sources through the native import planner. A fake streaming provider let the
+harness send, type, press Page Up and use the ordinary Stop shortcut. Import
+Review measured Return on the mounted Next button through the first page-two
+paint. Each pair matched all 25 ordered page-two paths. The full Send window
+included pre-provider preparation, streaming, and observation through nine
+seconds after Stop or the later scroll paint. Each Import Review window
+lasted 13 seconds.
+
+| Pair and arm in order | One-minute load, start → end | Snapshot CPU (ms) | Typing / Page Up / Stop paint (ms) | Review page CPU / paint (ms) | Send gaps over 50 ms / worst (ms) | Review gaps over 50 ms / worst (ms) | Busy paint (ms) |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 baseline | 55.45 → 32.44 | 25.89 | 147.2 / 97.2 / 1070.6 | 3.770 / 176.9 | 58 / 3713.0 | 1 / 110.8 | 55.5 |
+| 1 candidate | 32.33 → 24.35 | 15.79 | 60.6 / 951.8 / 1010.4 | 0.031 / 223.2 | 65 / 3784.8 | 2 / 135.8 | 61.2 |
+| 2 candidate | 23.60 → 24.12 | 18.17 | 40.4 / 99.2 / 540.6 | 0.036 / 229.5 | 57 / 3521.9 | 2 / 141.9 | 59.4 |
+| 2 baseline | 22.43 → 18.13 | 22.81 | 17.8 / 124.5 / 1122.3 | 3.518 / 233.2 | 45 / 3517.1 | 3 / 142.2 | 47.0 |
+| 3 baseline | 17.88 → 22.52 | 23.83 | 26.6 / 206.4 / 1245.9 | 58.043 / 211.8 | 47 / 3862.8 | 3 / 73.6 | 68.4 |
+| 3 candidate | 23.11 → 35.03 | 17.57 | 33.5 / 83.5 / 1373.8 | 0.029 / 310.1 | 94 / 10510.4 | 2 / 136.2 | 80.2 |
+
+Mounted snapshot CPU fell from 23.83 to 17.57 ms across the per-run medians.
+Mounted Review page calculation fell from 3.770 to 0.031 ms. Paint results
+varied by action. Median typing rose from 26.6 to 40.4 ms, Page Up fell from
+124.5 to 99.2 ms, and Stop feedback fell from 1122.3 to 1010.4 ms. Median Stop
+settlement rose from 1045.3 to 1138.7 ms. Import Review median paint rose from
+211.8 to 229.5 ms. The six busy paints met 100 ms. Send loop misses rose from
+150 to 216 with longer candidate observation windows. The longest gap in
+each run occurred before the first streamed chunk. The 10.51-second gap in
+the third candidate overlapped native trace reservation. The stage markers
+locate the gap and leave its cause open. The 50 ms loop qualification remains
+open.
+
+All six runs accepted draft input and scroll on the expected conversation,
+settled exactly one authoritative Stop, mounted page two, and quit normally
+with zero open fixture SQLite descriptors, network denials or protected
+profile violations. The private setup receipts retain a context-compaction
+hold and a timeout before provider entry. The scored fixture used a supported
+wider context for the fake provider and allowed the original preparation
+to finish. Scored windows record the entire Send and settlement.
+
+Three regressions failed on the original implementations. An initial Notes
+seek repeated a converted date and timed out. The bounded red test pinned
+the repeated ID, and the raw-key seek passes it. The final bootstrap-profile
+selection passed 108 tests, including the real recovery owner, the import
+review state and controller, and Console snapshot and stream behavior.
+Ruff added no diagnostics, and the changed ranges passed format checks.
+
+The 192-entry private receipt manifest has SHA-256
+`e168bedb864342029556ef81249026f06fc73f0be66bb23c1ca044422bda36a0`.
