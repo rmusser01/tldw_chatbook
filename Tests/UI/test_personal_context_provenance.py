@@ -1,6 +1,7 @@
 """Mounted inspection lifecycle and literal rendering, with controlled readers."""
 
 import asyncio
+import sys
 import time
 from threading import Event
 from typing import ClassVar
@@ -101,13 +102,13 @@ async def until(pilot, predicate, *, state=None, seconds: float = 30.0):
     old 5 s bound ran out at load ~85. ``state`` reports what was on screen
     when the wait ran out.
     """
+    caller = sys._getframe(1)  # the call site; a predicate may be a bound method
+    where = f"{caller.f_code.co_filename.rsplit('/', 1)[-1]}:{caller.f_lineno}"
     deadline = time.monotonic() + seconds
     while not predicate():
         if time.monotonic() >= deadline:
-            code = predicate.__code__
-            where = f"{code.co_filename.rsplit('/', 1)[-1]}:{code.co_firstlineno}"
             seen = f"; showing {state()!r}" if state is not None else ""
-            raise AssertionError(f"{where} still false after {seconds:.0f}s{seen}")
+            raise AssertionError(f"{where} still false after {seconds:g}s{seen}")
         await pilot.pause(0.01)
 
 

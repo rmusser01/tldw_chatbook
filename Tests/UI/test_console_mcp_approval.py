@@ -1604,6 +1604,14 @@ async def _await_condition(predicate, message, seconds: float = 10.0) -> None:
         await asyncio.sleep(0.02)
 
 
+def _timer_target(timer):
+    """The function a `set_timer` timer calls (its `partial(call_next, fn)`)."""
+    callback = getattr(timer, "_callback", None)
+    scheduled = getattr(callback, "args", ())
+    target = scheduled[0] if scheduled else callback
+    return getattr(target, "__func__", target)
+
+
 async def _wait_for_production_console_ready(app, pilot) -> ChatScreen:
     """Wait through startup projections until the Console is the active screen."""
     deadline = time.monotonic() + 10.0
@@ -1668,6 +1676,25 @@ async def _wait_for_production_console_ready(app, pilot) -> ChatScreen:
                         for worker in screen.workers
                     ),
                 ),
+                # TASK-41530 fix round 1: mount (and the attach's resume)
+                # schedule `_restore_console_workbench_focus`, once through
+                # `set_timer(0.2, ...)`. A restore that runs after the test
+                # focuses something outside the Console panes (an approval
+                # card) takes focus back to the composer for good.
+                (
+                    "focus restore timer pending",
+                    any(
+                        _timer_target(timer)
+                        is ChatScreen._restore_console_workbench_focus
+                        and timer._task is not None
+                        and not timer._task.done()
+                        for timer in list(screen._timers)
+                    ),
+                ),
+                (
+                    f"initial focus not on a Console pane ({app.focused!r})",
+                    screen._console_workbench_focus_id_for_widget(app.focused) is None,
+                ),
             )
             if pending
         ]
@@ -1679,15 +1706,31 @@ async def _wait_for_production_console_ready(app, pilot) -> ChatScreen:
     # ~90), so this wait has its own deadline and names what is pending.
     started = time.monotonic()
     deadline = started + 30.0
-    while unsettled() and time.monotonic() < deadline:
-        await asyncio.sleep(0.05)
-    assert not unsettled(), (
-        f"Console still unsettled {time.monotonic() - started:.1f}s into its wait: "
-        f"{unsettled()} (reconcile running="
-        f"{screen._console_attach_reconcile_running}, retries="
-        f"{screen._console_attach_reconcile_retry_count}, exhausted="
-        f"{screen._console_attach_reconcile_retry_exhausted})"
-    )
+
+    def still_unsettled() -> str:
+        return (
+            f"Console still unsettled {time.monotonic() - started:.1f}s into its "
+            f"wait: {unsettled()} (reconcile running="
+            f"{screen._console_attach_reconcile_running}, retries="
+            f"{screen._console_attach_reconcile_retry_count}, exhausted="
+            f"{screen._console_attach_reconcile_retry_exhausted})"
+        )
+
+    while True:
+        while unsettled() and time.monotonic() < deadline:
+            await asyncio.sleep(0.05)
+        assert not unsettled(), still_unsettled()
+        # A restore queued with `call_after_refresh` (the attach's resume) is
+        # in no timer: run the queue past it. What it does (a focus move can
+        # schedule a control-bar sync) is waited for on the next pass; settled
+        # means a drain that leaves nothing pending.
+        after_refresh = asyncio.Event()
+        screen.call_after_refresh(after_refresh.set)
+        await asyncio.wait_for(
+            after_refresh.wait(), timeout=max(0.1, deadline - time.monotonic())
+        )
+        if not unsettled():
+            break
 
     assert app.screen is screen
     assert screen._console_visible_draft_session_id is not None

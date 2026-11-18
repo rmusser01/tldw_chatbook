@@ -4,7 +4,7 @@ title: "Single pilot.pause after a press races the handler under load in several
 status: In Progress
 assignee:
 - '@claude'
-updated_date: '2026-11-18 07:37'
+updated_date: '2026-11-18 08:36'
 created_date: 2026-11-17 05:27
 labels:
 - follow-up
@@ -108,6 +108,8 @@ Each of these waits one `pilot.pause()` after `Button.press` (or after a flag) a
 - The eight nodes changed here were run 10x each in one command: the three Collections nodes, the two Analyze nodes, Info, the parakeet ingest node, and TASK-41530's finishing card. The first batch passed 78 of 80; both failures were TASK-41530's node, whose notes cover them. The three identical batches after it passed 80 of 80 each (load 10.7-15.0).
 - Review wake: 10 of 10 (load 14-27). Native undo: 10 whole-file runs, 330 of 330 (load 13-23).
 
+
+**Fix round 1 (review r16wt-rev1).** `_wait_for_capture_panes`'s `stale()` used `query_one` for the Items and Work panes, so a pane caught mid-recompose raised `NoMatches` while the failure message was being built. It now uses `screen.query(...)`, as `recompose_capture_panes` does, and lists a missing pane as "<selector> missing", so a missing pane still counts as not painted.
 
 **Covering runs** (`-n 4`). The render-fixes, reader-flow, ingest-runner, approval (three files), native-undo and review (three files) test files: 569 passed, 1 skipped (load 18-25). After the last edits, the ingest-runner, approval and Personal Context files: 417 passed, 1 skipped (load 28-30). The Collections characterization file: 5 passed. `Tests/Architecture/test_screen_size_ratchet.py`: 25 passed (serial). Preflight passed. Ruff reports nothing new against base in any changed file.
 

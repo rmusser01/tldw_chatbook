@@ -4,7 +4,7 @@ title: "test_production_settings_inspects_private_and_deleted_metadata[size0] fa
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-18 07:37'
+updated_date: '2026-11-18 08:36'
 created_date: 2026-11-17 05:27
 labels:
 - follow-up
@@ -54,5 +54,7 @@ Test-only. The shared provenance `until` now has a 30 s wall-clock deadline and 
 - `test_personal_context_provenance.py`, `test_personal_context_proposal_review.py` and `test_settings_personal_context.py`: 132 passed at `-n 4` (load 14-17).
 
 **Proposed follow-up (product).** The lease counts the read's own duration, so on a host where one `settings_provenance` read takes 2 s or more, Settings shows "Provenance unavailable." for as long as that lasts.
+
+**Fix round 1 (review r16wt-rev1).** `until` took its location from `predicate.__code__`, so the three callers that pass `reader.entered.is_set` would have reported `threading.py:529`. It now names its own call site (`sys._getframe(1)`). Check: a temporary test that awaited `until(pilot, Event().is_set, seconds=0.2)` got "test_personal_context_provenance.py:330 still false after 0s", the line of that call; the test was removed. The timeout now prints with `:g`, so 0.2 no longer reads as 0.
 
 **Files.** `Tests/UI/test_personal_context_provenance.py`, `Tests/UI/test_settings_personal_context.py`.

@@ -154,13 +154,19 @@ async def _wait_for_capture_panes(screen, pilot) -> None:
     controller = screen._collections_controller
 
     def stale() -> list[str]:
+        # `query`, not `query_one`: a pane caught mid-recompose is reported as
+        # missing, in the message too, instead of raising NoMatches there.
         current = controller._library_collections_capture_presentation()
-        panes = (
-            *screen.query("#library-collections-scopes"),
-            screen.query_one("#library-collections-items"),
-            screen.query_one("#library-collections-work"),
-        )
-        return [
+        required = ("#library-collections-items", "#library-collections-work")
+        missing = [
+            f"{selector} missing" for selector in required if not screen.query(selector)
+        ]
+        panes = [
+            pane
+            for selector in ("#library-collections-scopes", *required)
+            for pane in screen.query(selector)
+        ]
+        return missing + [
             pane.id
             for pane in panes
             if pane.presentation != current or getattr(pane, "_half_built", False)
