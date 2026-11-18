@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.Tools.local_tool_impls import LocalToolError, write_file
 from tldw_chatbook.Tools.workspace_tool_executor import (
     WorkspaceToolExecutionError,
@@ -146,9 +147,10 @@ def test_cas_rejects_inode_replaced_before_commit(tmp_path: Path, monkeypatch) -
     assert not list(tmp_path.glob(".chatbook-write-*.tmp"))
 
 
+@private_profile_test
 @pytest.mark.skipif(os.name != "nt", reason="native Windows locked-target replacement")
 def test_windows_cas_retains_target_lock_through_atomic_replace(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, request
 ) -> None:
     import portalocker
 

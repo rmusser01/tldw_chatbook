@@ -437,3 +437,122 @@ This is an incomplete nonqualifying diagnostic, not a measured speedup or a
 five-second result.
 
 The subsequent `g36f` replay took 72.609 s through fixture failure. The backend spent 0.8031 s in `run_received_intent` across five yields before it unwound. The observer saw no skill, consent, tool or provider span. The later backend failure receipt names `finish` awaiting the work receipt. It does not identify the original raise site. No candidate approval or file-worker interval can be compared with `fgv3b1` from this run. The original journey source digest matched the candidate copy. [Observer source bundle](original-journey/windows-preconsent-foreground-approval-v3-f0709e.zip) · [SHA-256](original-journey/windows-preconsent-foreground-approval-v3-f0709e.sha256)
+
+## Later failed candidate diagnostics: `g37e`, `g39f`, `g40`
+
+All three retained the original QA digest `448015c99604ce96754436c7dc4f784daed6241bed99062cb8d6ab6e66cbe850`
+and report `source_verified=true`. They are failed diagnostics, not completed
+pairs or five-second qualifications. `g37e` used `f0709ee4c01b0875fb9d932256043f62610e6658`;
+`g39f` and the separately instrumented `g40` both used
+`70cd5c798fea382e52bdb24b93161d4a3d9704b5`.
+
+| Run | Original fixture duration | README first POST | README reply / verified | Original adjusted README | Edit endpoint |
+|---|---:|---:|---:|---:|---|
+| `g37e` | 104.750 s | Not observed | Not observed | — | Not started |
+| `g39f` | 143.891 s | 16.4053 s | 33.9764 / 35.2395 s | 31.4954 s | Providers and two approvals; no verified reply |
+| `g40` | 115.078 s | 10.9382 s | 27.2767 / 28.1471 s | 25.7908 s | Send failed before its second durable commit or provider call |
+
+`g37e` reached painted Sending, then failed in project-instructions. Its first
+parent exception is a reconciliation worker's `ReadProjection`
+`command_refused/admission`; this receipt alone does not identify the backend
+raise. `g39f` verified README and entered the edit: its first POST was 10.0791 s
+after edit Send. The final receipt contains two file-worker failure model errors.
+Its first-chance Textual files are empty. The separately observed benign typed
+readiness invalidations are not evidence that they caused the edit failure.
+Neither run measures a successful candidate `fs_edit` execution interval.
+
+For `g40`, the edit's actual wire delivered `ReceiveTurn` terminal `turn_failed`.
+The retained state has Received and Applied complete, **Retired=false**, zero
+plans and `draft_committed=false`, while UpdateInputs retirement is true and
+the channel-failed flag is false. The backend's original `run_received_intent`
+unwound after 1.6126 s, before a second durable commit. The first uncaught parent
+exception is the original `dispatch_send:247` guard for an unproven turn outcome
+or retirement. Later ReadProjection admission refusals and Drain failure do
+not establish the initial cause. This variant had no backend failure-location
+observer, so the underlying raise is unobserved; no cleanup success is inferred.
+
+### `g40` pre-consent boundaries
+
+These are paired boundaries on the same backend clock. Nested intervals are
+explicitly identified and must not be added together. Active thread CPU excludes
+other workers and time suspended at awaits.
+
+| Original boundary | Elapsed | Active thread CPU | Observed admissions | Interpretation |
+|---|---:|---:|---:|---|
+| Send selection | 0.0755 s | 0.0156 s | 0 | Fresh selected Send capture |
+| Durable commit | 0.2851 s | 0 s | — | Separate original persistence boundary |
+| Memory preflight body | 0.0913 s | 0.0938 s | 1 | Completed original preflight |
+| Provider composition | 2.3721 s | 0.2500 s | 5 | Includes project-index preparation below |
+| Project-index preparation | 1.9005 s | 0 s | 0 on observed thread | Awaits its original checked worker; worker cost is not split here |
+| Virtual CLI composition | 0.1468 s | 0.1406 s | 2 | Separate composition boundary |
+| Native preparation, entry → first yield | 1.2179 s active wall | 1.0156 s | — | Includes plugin, plan and skill construction below |
+| Plugin construction | 0.1671 s | 0.1562 s | 2 | Nested native preparation |
+| First-request planning | 0.3576 s | 0.2969 s | 7 | Nested native preparation |
+| Skill-trust construction | 0.3879 s | 0.2969 s | 7 | Nested native preparation |
+| Agent entry → consent request | 0.3721 s | 0.2031 s | 7 | Stops before user consent wait |
+| Consent request/settlement | 0.6285 s | 0.0312 s | — | Includes waiting; not pure application preparation |
+
+The two observed skill keyring resolutions total approximately 0.0011 s; the
+secure probes are below 0.0002 s combined. Setup-end/owner-exit and trace
+maintenance waits are each below 0.0002 s. These observations do not support
+keyring or setup teardown as a multi-second optimization target. Native
+preparation's full 17.9223 s generator lifetime includes the agent/provider
+execution after its first yield and is not a preparation cost.
+
+The largest finite measured pre-consent candidate is the 1.9005 s project-index
+await inside `console_provider_composition._compose_agent_request_providers`'s preparation
+path. `console_project_index_preparation.prepare_project_index_for_composition`
+runs the original callback with physical read observers; its worker obtains the
+actual index owner, enters the registry scope and checks each admitted binding
+before accepting a compatible status. The existing span does not distinguish
+executor scheduling, cold service construction or those reads. It identifies a
+target for a narrower source-backed optimization, **not** a proven removable
+1.9005 s or permission to skip a currentness/status check. No product change was
+made from these aggregate timings.
+
+### `g40` completed README tools and approval display
+
+The two completed filesystem calls are correlated original README `fs_list`
+and `fs_read`. Acquisition durations below are clipped to their exact worker
+boundaries, excluding other display/agent threads. Request construction is
+inside the executor interval.
+
+| Call | Worker → executor | Admissions / time there | Request construction | Admissions / time there | Whole executor |
+|---|---:|---:|---:|---:|---:|
+| README `fs_list` | 0.3707 s | 2 / 0.0406 s | 0.2565 s | 4 / 0.1346 s | 0.6387 s |
+| README `fs_read` | 0.3807 s | 4 / 0.0828 s | 0.2209 s | 4 / 0.1460 s | 0.5473 s |
+
+The corresponding LOCAL `fgv3b1` pre-executor intervals were 22.0198 and
+26.7114 s, with 32 and 34 admissions. This identifies a materially different
+observed boundary, but the two nonqualifying executions are not a clean paired
+speedup measurement. The 28 call-correlated README step writes in `g40` total
+0.8538 s versus 14.909 s for the same count in that LOCAL diagnostic; nested
+trace wrappers must not be added to either total. **No candidate paired
+`fs_edit` interval exists**: `g39f` failed the file worker and `g40` never reached
+an edit tool. The LOCAL 24.0306 s pre-executor / 3.5507 s executor `fs_edit`
+figures above remain baseline-only.
+
+Backend approval request→publication took 0.0056 s and 0.0008 s. In the UI
+process, delivery→card took 0.0287 / 0.0220 s, card→ready 0.2870 / 0.2131 s,
+and ready→qualified delivered button-region cells 0.0216 / 0.0265 s. Those cells
+preceded the click by 1.0696 / 1.5154 s, with matching visit and card generations
+21 and 24. This is v3 region-delivery evidence, not exact-label paint. Backend
+publication and UI delivery clocks were not subtracted from one another.
+Original painted disclosure remained 9.3608 s after Send, with 0.4115 s of
+observed disclosure wait; original observed approval waits totaled 1.0744 s.
+
+Both UI observers closed with zero errors, source refusals, unfinished work or
+truncation. **Neither backend observer has a closing summary.** Completed paired
+spans remain usable bounded observations, but full backend coverage, final cap
+status and resource retirement cannot be certified from them. Instrumentation
+overhead is not subtracted; the difference between `g39f` and `g40` is not
+attributed to an optimization on their identical product revision.
+
+Receipts are under `original-journey-f0709eerr/replay-runs/g37e`,
+`original-journey-70cd5cf/replay-runs/g39f`, and
+`original-journey-70cd5cprof/replay-runs/g40`: original `timings.json`,
+`native-*/receipt.json`, first-exception and Send-state records. `g40` additionally
+has `tool-{foreground,approval}-backend-10264.jsonl` and the matching UI-1692
+streams. The existing numeric analyzer generated the local
+`g40-diagnostic-numeric.json`; no fixture, native workload, new tracked archive
+or qualifying release was changed for this analysis.

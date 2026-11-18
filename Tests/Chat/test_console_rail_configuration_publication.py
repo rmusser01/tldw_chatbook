@@ -235,6 +235,25 @@ async def test_exact_rail_publication_reassociates_only_after_retired_refresh(re
     def fail_reload(_frame):
         raise RuntimeError("Original configuration publication failed")
 
+    async def permission_action(operation):
+        sequence = backend._sequence + 1
+        request_id = f"rail-permission-{sequence}"
+        finished = service.accept(ConsoleWireMessage(
+            WireIdentity(
+                "rail-profile", "rail-service", sequence, request_id,
+                source_revision=backend.controls.source_revision,
+            ),
+            "command", "PermissionAction", {"operation": operation},
+        ))
+        assert finished is not None
+        _, receipt = backend.adapter._receipts[request_id]
+        await finished
+        messages = [row for row in channel.messages if row.identity.request_id == request_id]
+        assert [row.kind for row in messages] == ["received", "applied", "retired"]
+        assert messages[-1].payload["retired"] is True
+        assert await asyncio.shield(receipt.retired) is True
+        return receipt.applied.result()
+
     async def visible_projection(action):
         sequence = backend._sequence + 1
         receipt = backend.dispatch(ConsoleWireMessage(
@@ -268,7 +287,7 @@ async def test_exact_rail_publication_reassociates_only_after_retired_refresh(re
             permission_grants = permissions._grants
             permission_grant_lock = permissions._grant_lock
             permission_receipt = permissions._source_receipt
-            permission_snapshot = await permissions.read_permission_snapshot()
+            permission_snapshot = await permission_action({"kind": "ReadPermissionSnapshot", "strict": True})
             digest = profile_policy_digest(permission_snapshot.payload["profiles"]["default"])
             # Use the original producer: this test does not manufacture a grant
             # by populating the retained set or treating a display read as one.
@@ -288,7 +307,7 @@ async def test_exact_rail_publication_reassociates_only_after_retired_refresh(re
             original_full = full_reads[0]
             assert original_full.effect.completed.result() is True
             assert original_full.physically_retired
-            sequence_offset = backend._sequence
+        sequence_offset = backend._sequence
         await service.accept(command(1, "FenceSource", {
             "source": "configuration", "rail_update": {"key": key, "value": value},
         }))
@@ -430,7 +449,7 @@ async def test_exact_rail_publication_reassociates_only_after_retired_refresh(re
                 permission_reads = []
                 with _observe(LocalPermissionOperation.__enter__.__code__, sys.monitoring.events.PY_START,
                               lambda frame: permission_reads.append(frame.f_locals["self"])):
-                    current_snapshot = await permissions.read_permission_snapshot()
+                    current_snapshot = await permission_action({"kind": "ReadPermissionSnapshot", "strict": True})
                 assert current_snapshot.payload == permission_snapshot.payload
                 assert len(permission_reads) == 1
                 permission_read = permission_reads[0]
@@ -438,7 +457,9 @@ async def test_exact_rail_publication_reassociates_only_after_retired_refresh(re
                 assert permission_read.observations["acquisition"] and permission_read.observations["raw"]
                 assert permission_read.retired and permission_read.retirement_error is None
                 assert not permissions._reads and not permissions._unresolved
-                assert await permissions.list_session_approvals() == [("agent:builtin", "Calculator")]
+                assert await permission_action({"kind": "ListSessionApprovals", "profile_id": "default"}) == [
+                    ("agent:builtin", "Calculator")
+                ]
                 if outcome == "accepted":
                     with pytest.raises(ConsoleDisplayPhaseRefused):
                         original_full.require_current()
@@ -560,6 +581,7 @@ async def test_rail_save_refuses_preexisting_modal_before_any_command_or_write(o
 async def test_original_parent_rail_worker_publishes_to_same_contained_backend(request):
     """Exercise original writer, actual child replies and separate native proof."""
     import threading
+    import time
     from contextlib import ExitStack
 
     from Tests.Chat.console_execution_mount_wait import wait_for_selected_composer
@@ -677,4 +699,10 @@ async def test_original_parent_rail_worker_publishes_to_same_contained_backend(r
         await receipt.received
         await receipt.applied
         assert await receipt.retired is True
-    assert await client.shutdown() is True
+    # run_test teardown owns the original App drain. This bounded join observes
+    # that retained shutdown; it must not start a replacement cleanup owner.
+    shutdown = client._shutdown_task
+    assert shutdown is not None and app._console_runtime_shutdown_task.done()
+    assert app._console_runtime_shutdown_task.result() is None
+    assert await client.shutdown(deadline=time.monotonic() + 30) is True
+    assert client._shutdown_task is shutdown and client.physically_closed

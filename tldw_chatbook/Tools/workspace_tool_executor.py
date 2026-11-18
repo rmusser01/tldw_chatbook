@@ -159,14 +159,18 @@ def workspace_worker_environment(workspace_root: Path) -> dict[str, str]:
     return environment
 
 
-def _workspace_worker_argv() -> list[str]:
+def _workspace_worker_argv(
+    workspace_root: Path, request: WorkspaceToolRequest,
+) -> list[str]:
     """Keep the fixed worker on this installation in a no-site backend."""
     if not (sys.flags.isolated and sys.flags.no_site):
         return [sys.executable, "-I", "-m", _FIXED_WORKER_MODULE]
     # The selected Console backend uses the base interpreter with -I -S.
     # Its explicit application import root is not inherited by grandchildren.
-    # This worker's tested closure is stdlib-only, so it needs only the same
-    # code-owned package root, never the backend's other imports or workspace.
+    # The import-time closure is stdlib-only, but Windows writes lazily use
+    # the original portalocker/pywin32 lock. Retain that installation's explicit
+    # import roots, without running site, .pth files, or workspace code.
+    from importlib.machinery import PathFinder
     from importlib.util import find_spec
 
     package = Path(__file__).resolve().parent.parent
@@ -174,9 +178,46 @@ def _workspace_worker_argv() -> list[str]:
     spec = find_spec(_FIXED_WORKER_MODULE)
     if spec is None or spec.origin is None or Path(spec.origin).resolve() != worker:
         raise WorkspaceToolExecutionError("spawn_failed")
+    dependencies: list[str] = []
+    dependency_origins: dict[str, str] = {}
+    needs_lock = request.operation in {"fs_edit", "fs_patch"} or (
+        request.operation == "fs_write"
+        and request.arguments.get("expected_sha256") is not None
+        and not request.arguments.get("dry_run", False)
+    )
+    if os.name == "nt" and needs_lock:
+        lock_spec = find_spec("portalocker")
+        if lock_spec is None or lock_spec.origin is None:
+            raise WorkspaceToolExecutionError("spawn_failed")
+        installation = Path(lock_spec.origin).resolve().parent.parent
+        root, cwd = workspace_root.resolve(), Path.cwd().resolve()
+        if installation.name != "site-packages" or installation.is_relative_to(root):
+            raise WorkspaceToolExecutionError("spawn_failed")
+        # Same descendant selection as ConsoleExecutionClient._launch, narrowed
+        # to the already-selected lock installation (including win32/lib).
+        for entry in sys.path:
+            if not entry or not Path(entry).is_absolute():
+                continue
+            path = Path(entry).resolve()
+            if (path.is_relative_to(installation) and path != cwd
+                and not path.is_relative_to(root) and str(path) not in dependencies):
+                dependencies.append(str(path))
+        for name in ("portalocker", "pywintypes", "win32file", "win32con", "winerror"):
+            dependency = PathFinder.find_spec(name, dependencies)
+            if (dependency is None or dependency.origin is None
+                or not Path(dependency.origin).resolve().is_relative_to(installation)):
+                raise WorkspaceToolExecutionError("spawn_failed")
+            dependency_origins[name] = str(Path(dependency.origin).resolve())
+        if dependency_origins["portalocker"] != str(Path(lock_spec.origin).resolve()):
+            raise WorkspaceToolExecutionError("spawn_failed")
     bootstrap = (
-        "import importlib.util,runpy,sys\n"
-        f"sys.path.insert(0, {str(package.parent)!r})\n"
+        "import importlib.machinery,importlib.util,runpy,sys\n"
+        "from pathlib import Path\n"
+        f"sys.path[:0]={([str(package.parent), *dependencies])!r}\n"
+        f"for name,origin in {dependency_origins!r}.items():\n"
+        "    dependency=importlib.machinery.PathFinder.find_spec(name,sys.path)\n"
+        "    if dependency is None or dependency.origin is None or str(Path(dependency.origin).resolve()) != origin:\n"
+        "        raise RuntimeError('Fixed workspace worker dependency changed')\n"
         f"spec=importlib.util.find_spec({_FIXED_WORKER_MODULE!r})\n"
         f"if spec is None or spec.origin != {str(worker)!r}:\n"
         "    raise RuntimeError('Fixed workspace worker installation changed')\n"
@@ -340,7 +381,7 @@ class WorkspaceToolExecutor:
         cleanup_supervisor: _CleanupSupervisor | None = None
         cleanup_attempted = False
         try:
-            argv = _workspace_worker_argv()
+            argv = _workspace_worker_argv(self._workspace_root, request)
             process = subprocess.Popen(
                 argv,
                 stdin=subprocess.PIPE,
