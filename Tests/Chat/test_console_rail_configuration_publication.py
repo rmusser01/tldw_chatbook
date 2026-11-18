@@ -94,7 +94,7 @@ def _rail_comparison_note(backend, publication):
     """Report allowlisted product keys and shapes, never values or paths."""
     from copy import deepcopy
 
-    command, _profile, raw, normalized, _facts = backend._rail_refresh
+    command, _profile, raw, normalized, _facts, _permission_capture = backend._rail_refresh
     update = command.rail_update
 
     def changed(value):
@@ -197,6 +197,10 @@ async def test_exact_rail_publication_reassociates_only_after_retired_refresh(re
     from tldw_chatbook.Chat.console_domain_display import ConsoleDisplayFull
     from tldw_chatbook.Chat.console_display_phases import ConsoleDisplayPhaseRefused
     from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+    from tldw_chatbook.Backup_Recovery.mcp_source_participants import source_receipt
+    from tldw_chatbook.MCP.local_permission_operation import LocalPermissionOperation
+    from tldw_chatbook.Tool_Packs.binding import profile_policy_digest
     from tldw_chatbook.Chat.console_rail_state import (
         build_console_rail_preference_key, serialize_console_rail_stored_preferences,
     )
@@ -239,7 +243,8 @@ async def test_exact_rail_publication_reassociates_only_after_retired_refresh(re
                 session.id, session.incarnation_id, backend.controls.source_revision,
             ),
             "command", "ReadProjection",
-            {"view_checkpoint": {"attachment_id": "rail-view", "visit": 1, "action": action}},
+            {"known_display_revision": None,
+             "view_checkpoint": {"attachment_id": "rail-view", "visit": 1, "action": action}},
         ))
         try:
             with _observe(ConsoleDisplayFull.run.__code__, sys.monitoring.events.PY_START,
@@ -254,6 +259,25 @@ async def test_exact_rail_publication_reassociates_only_after_retired_refresh(re
         display = backend.runtime._execution_service.prepare_display_owner()
         producers = display.character, display.context, display.appearance
         assert display._graph_bound  # Original open_local_controls binds before any FULL.
+        if accepted:
+            permissions = backend.runtime._execution_service.ensure_permission_operations()
+            permission_service = permissions._control_plane
+            permission_store = permissions._store
+            permission_publication = permissions._publication
+            permission_path_lock = permissions._path_lock
+            permission_grants = permissions._grants
+            permission_grant_lock = permissions._grant_lock
+            permission_receipt = permissions._source_receipt
+            permission_snapshot = await permissions.read_permission_snapshot()
+            digest = profile_policy_digest(permission_snapshot.payload["profiles"]["default"])
+            # Use the original producer: this test does not manufacture a grant
+            # by populating the retained set or treating a display read as one.
+            with LocalPermissionOperation(permission_store, permissions._require_current) as grant:
+                permission_service.approve_for_session(
+                    "agent:builtin", "Calculator", expected_profile_digest=digest,
+                )
+            assert grant.retired
+            assert permission_grants == {("default", "agent:builtin", "Calculator")}
         if outcome == "accepted":
             session = backend.store.create_session(
                 title="Rail source transition", assistant_kind="generic",
@@ -380,6 +404,41 @@ async def test_exact_rail_publication_reassociates_only_after_retired_refresh(re
                 assert display.context.key is display.context.value is None
                 assert display.context.at == 0.0
                 assert display._character_reuse_checkpoint is None
+                assert backend.runtime._execution_service.ensure_permission_operations() is permissions
+                assert permissions._control_plane is backend.domain.sources.control_plane is permission_service
+                assert permissions._store is permission_service._permission_store is permission_store
+                assert permissions._publication is permission_store._permission_publication is permission_publication
+                assert permissions._path_lock is permission_store._path_lock is permission_path_lock
+                assert permissions._grants is permission_service._session_approvals is permission_grants
+                assert permissions._grant_lock is permission_service._session_approvals_lock is permission_grant_lock
+                assert permission_grants == {("default", "agent:builtin", "Calculator")}
+                current_permission_receipt = permissions._source_receipt
+                assert current_permission_receipt == source_receipt(permission_store)
+                assert current_permission_receipt != permission_receipt
+                permissions._source_receipt = permission_receipt
+                try:
+                    with pytest.raises(RecoveryRequired, match="permission_operation_source_changed"):
+                        permissions._require_current()
+                finally:
+                    permissions._source_receipt = current_permission_receipt
+                permissions._grant_lock = object()
+                try:
+                    with pytest.raises(RecoveryRequired, match="permission_operation_source_changed"):
+                        permissions._require_current()
+                finally:
+                    permissions._grant_lock = permission_grant_lock
+                permission_reads = []
+                with _observe(LocalPermissionOperation.__enter__.__code__, sys.monitoring.events.PY_START,
+                              lambda frame: permission_reads.append(frame.f_locals["self"])):
+                    current_snapshot = await permissions.read_permission_snapshot()
+                assert current_snapshot.payload == permission_snapshot.payload
+                assert len(permission_reads) == 1
+                permission_read = permission_reads[0]
+                assert permission_read.source is permission_store
+                assert permission_read.observations["acquisition"] and permission_read.observations["raw"]
+                assert permission_read.retired and permission_read.retirement_error is None
+                assert not permissions._reads and not permissions._unresolved
+                assert await permissions.list_session_approvals() == [("agent:builtin", "Calculator")]
                 if outcome == "accepted":
                     with pytest.raises(ConsoleDisplayPhaseRefused):
                         original_full.require_current()
@@ -511,7 +570,8 @@ async def test_original_parent_rail_worker_publishes_to_same_contained_backend(r
     from tldw_chatbook.Chat import console_execution_rail_preferences as rail
     from tldw_chatbook.Chat.console_execution_process import ConsoleExecutionClient
     from tldw_chatbook.Chat.console_rail_state import (
-        build_console_rail_preference_key, serialize_console_rail_stored_preferences,
+        build_console_rail_preference_key, coerce_console_rail_preferences,
+        serialize_console_rail_stored_preferences,
     )
     from tldw_chatbook.Constants import TAB_CHAT, TAB_HOME
     from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
@@ -572,9 +632,24 @@ async def test_original_parent_rail_worker_publishes_to_same_contained_backend(r
         assert client._view is screen and screen.app is app
         original_revision = client._source_revision
         key = build_console_rail_preference_key(layout_scope="global").value
-        value = serialize_console_rail_stored_preferences({"workspace_open": True})
+        prior = screen._console_rail_state_config().get(key)
+        requested_open = not coerce_console_rail_preferences(prior).workspace_open
         with _observe(rail._write_rail_preference.__code__, sys.monitoring.events.PY_START, writer_entered):
-            worker = screen._save_console_rail_preferences(key, value)
+            before = set(app.workers)
+            # The original setter updates the resident preference before its
+            # worker deliberately reads the latest value under the write lock.
+            screen._set_console_rail_preference(
+                section_updates={"workspace": requested_open}, _reconcile=False,
+            )
+            value = serialize_console_rail_stored_preferences(
+                app.app_config["console"]["rail_state"][key],
+            )
+            assert value["workspace_open"] is requested_open
+            worker, = (
+                item for item in app.workers
+                if item not in before and item.node is screen
+                and item.name == "_save_console_rail_preferences"
+            )
             await worker.wait()
         assert len(observed) == 1
         scope, = observed
@@ -583,6 +658,7 @@ async def test_original_parent_rail_worker_publishes_to_same_contained_backend(r
         assert scope.writer_retired and rail._writer_retired(scope)
         assert scope.writer_state.thread is not threading.current_thread()
         assert scope.writer_state.source is config
+        assert dict(scope.value) == value
         assert all(rail._positive(receipt) for receipt in (scope.fence, scope.refresh, scope.applied))
         assert client._source_revision == original_revision + 1 and client._intake_open
         assert getattr(client, "_rail_publication", None) is None

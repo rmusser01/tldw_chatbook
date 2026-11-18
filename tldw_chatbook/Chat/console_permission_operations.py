@@ -105,6 +105,9 @@ class ConsolePermissionOperations:
         self._require_current()
 
     def _require_current(self) -> None:
+        self._require_sources(self._source_receipt)
+
+    def _require_sources(self, expected_receipt) -> None:
         if any(not operation.retired for operation in self._unresolved):
             raise RecoveryRequired("permission_operation_unresolved")
         from tldw_chatbook.MCP import permission_store as permissions
@@ -120,7 +123,7 @@ class ConsolePermissionOperations:
             or store._path_lock is not self._path_lock
             or service._session_approvals is not self._grants
             or service._session_approvals_lock is not self._grant_lock
-            or mcp_source_participants.source_receipt(store) != self._source_receipt
+            or mcp_source_participants.source_receipt(store) != expected_receipt
             or not permissions._permission_process_definitions_current(store)
             or any(
                 name in vars(service)

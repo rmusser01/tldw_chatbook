@@ -9,6 +9,7 @@ from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from functools import wraps
 from pathlib import Path
+from typing import NamedTuple
 
 from tldw_chatbook.Utils.platform_files import os
 
@@ -80,13 +81,26 @@ def canonical_path(source):
     return profile_paths.lexical_path(profile_paths.user_data_dir(data) / kind[2])
 
 
+class _SourceReceipt(NamedTuple):
+    source: object
+    source_type: type
+    path: Path
+    binding: _Binding
+    config: object
+    installed_config: object
+    config_identity: tuple[int, str]
+    config_path: Path | None
+    profile: Path
+    selected: Path
+
+
 def source_receipt(source):
     """Return detached source/config metadata for a checked source operation."""
     bound = _BINDINGS.get(source)
     if bound is None or type(source) is not bound.source_type:
         raise bootstrap.RecoveryRequired("mcp_source_not_installed")
     config = bound.config
-    return (
+    return _SourceReceipt(
         source,
         type(source),
         Path(source.path),

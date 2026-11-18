@@ -3043,11 +3043,41 @@ class ConsoleWorkspaceController:
         return {cid: state["values"].get(cid) for cid in ids}
 
     async def _load_manual_unread_rows(self, service, state, ids) -> None:
+        client = getattr(self.app_instance, "console_execution_client", None)
+        visit = client._visit if client is not None else None
         try:
             unread = await asyncio.to_thread(service.unread_ids_for, ids)
             values = {cid: cid in unread for cid in ids}
         except Exception:  # noqa: BLE001 - contain local mark service failures
             values = dict.fromkeys(ids)
+        if client is not None:
+            from .execution_state import (
+                defer_selected_passive_render,
+                selected_rail_publication,
+            )
+
+            try:
+                while True:
+                    if (
+                        getattr(self.app_instance, "console_execution_client", None)
+                        is not client
+                        or client._view is not self._screen
+                        or client._visit != visit
+                    ):
+                        return
+                    scope = selected_rail_publication(self._screen, client)
+                    if scope is None:
+                        break
+                    # The read has finished, but the exact rail writer has
+                    # temporarily fenced its display source. Retain these
+                    # values until its ordinary visible publication settles;
+                    # never read the old projection or repeat the native read.
+                    await asyncio.shield(scope.task)
+                if defer_selected_passive_render(self._screen):
+                    return
+            finally:
+                if getattr(self, "_manual_unread_cache", None) is state:
+                    state["pending"].difference_update(ids)
         if (
             getattr(self, "_manual_unread_cache", None) is not state
             or getattr(self.app_instance, "conversation_local_marks_service", None)

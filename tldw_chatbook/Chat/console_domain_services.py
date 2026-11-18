@@ -699,11 +699,15 @@ def _definition_current(record):
         and function.__defaults__ is defaults
         and function.__kwdefaults__ is kwdefaults
         and len(function.__kwdefaults__ or {}) == len(entries)
-        and all(
-            (function.__kwdefaults__ or {}).get(key) is value for key, value in entries
+        and (
+            not entries
+            or all(
+                (function.__kwdefaults__ or {}).get(key) is value
+                for key, value in entries
+            )
         )
         and function.__closure__ is closure
-        and all(cell.cell_contents is value for cell, value in cells)
+        and (not cells or all(cell.cell_contents is value for cell, value in cells))
         and (
             vars(function).get("__wrapped__") is None
             if wrapped is None

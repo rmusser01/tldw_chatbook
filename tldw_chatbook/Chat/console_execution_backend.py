@@ -228,9 +228,13 @@ class ConsoleExecutionBackend:
             or dict(update["value"]) != serialize_console_rail_stored_preferences(update["value"])
         ):
             raise RuntimeError("Console rail fence request changed")
+        permissions = self.runtime._execution_service.ensure_permission_operations()
+        if permissions is not self.controls._permissions:
+            raise RuntimeError("Console rail permission owner changed")
         self._rail_fence = (
             command, self.profile, deepcopy(self.profile._selection_cache),
             deepcopy(self.profile.configuration), self.profile._selection_facts,
+            (permissions, permissions._source_receipt),
         )
 
     def _capture_rail_refresh(self, command) -> None:
@@ -258,7 +262,7 @@ class ConsoleExecutionBackend:
             command, *retained[1:],
         )
 
-    def _require_rail_publication(self, publication) -> None:
+    def _require_rail_publication(self, publication):
         """Accept only this fence's retired reload of its exact requested value."""
         from tldw_chatbook import config
         from .console_control_publication import ConsoleConfigurationPublication
@@ -268,7 +272,7 @@ class ConsoleExecutionBackend:
         retained = self._rail_refresh
         if retained is None or type(publication) is not ConsoleConfigurationPublication:
             raise RuntimeError("Console rail publication was not retained")
-        command, profile, prior_raw, prior_settings, prior_facts = retained
+        command, profile, prior_raw, prior_settings, prior_facts, permission_capture = retained
         self.controls._require_publication(publication)
         update = command.rail_update
         if (
@@ -298,7 +302,20 @@ class ConsoleExecutionBackend:
             if expected != current:
                 raise RuntimeError("Console rail publication contains another change")
 
-    def _apply_rail_profile(self, publication) -> None:
+        permissions, previous = permission_capture
+        if (
+            permissions is not self.controls._permissions
+            or permissions is not self.runtime._execution_service._permission_operations
+            or permissions._source_receipt is not previous
+            or previous.config_identity != profile.configuration_identity
+            or permissions._reads or permissions._unresolved
+        ):
+            raise RuntimeError("Console rail permission owner changed")
+        successor = previous._replace(config_identity=publication.config_identity)
+        permissions._require_sources(successor)
+        return successor
+
+    def _apply_rail_profile(self, publication, permission_receipt) -> None:
         """Advance the same acquired profile; its physical cleanup owner survives."""
         for name, value in (
             ("configuration", publication.sources.configuration),
@@ -307,6 +324,7 @@ class ConsoleExecutionBackend:
             ("_selection_facts", publication.selection_facts),
         ):
             object.__setattr__(self.profile, name, value)
+        self.controls._permissions._source_receipt = permission_receipt
         self._rail_refresh = None
         self._rail_fence = None
         self.require_sources()
@@ -345,7 +363,7 @@ class ConsoleExecutionBackend:
             and getattr(command.publication, "rail_update", None) is not None
         )
         if rail_apply:
-            self._require_rail_publication(command.publication)
+            permission_receipt = self._require_rail_publication(command.publication)
         else:
             self.require_sources()
         if type(command) is FenceSource and command.rail_update is not None:
@@ -366,7 +384,7 @@ class ConsoleExecutionBackend:
             receipt = self.controls.dispatch(command)
             if rail_apply:
                 receipt.applied.result()
-                self._apply_rail_profile(command.publication)
+                self._apply_rail_profile(command.publication, permission_receipt)
                 self.presentation.require_association(association)
         except BaseException:
             self.presentation.release_view_checkpoint(message.identity, checkpoint)
