@@ -3438,8 +3438,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 19,
-      "diagnostic_digest": "45c91cfa356a939e7255",
+      "call_count": 21,
+      "diagnostic_digest": "112ac2b770267f0f94e9",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Library_Modules/library_media_controller.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -3781,8 +3781,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 72,
-      "diagnostic_digest": "c70d69cab9e9308b40b5",
+      "call_count": 70,
+      "diagnostic_digest": "4fc7d35e4c1635e98106",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/library_screen.py",
       "reason": "remaining Chatbook production diagnostic owner"

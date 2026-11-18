@@ -126,14 +126,14 @@ async def test_resize_off_the_media_route_does_not_resolve_the_media_layout() ->
         assert not screen.query(".library-media-route")
 
         calls = {"count": 0}
-        original = type(screen)._sync_library_media_reader_layout_from_shell
+        original = type(screen._media_controller)._sync_library_media_reader_layout_from_shell
 
         def counting(self, *args, **kwargs):
             calls["count"] += 1
             return original(self, *args, **kwargs)
 
         with patch.object(
-            type(screen), "_sync_library_media_reader_layout_from_shell", counting
+            type(screen._media_controller), "_sync_library_media_reader_layout_from_shell", counting
         ):
             width, height = LIBRARY_TEST_SIZE
             await pilot.resize_terminal(width - 2, height)
@@ -167,7 +167,7 @@ async def test_resize_on_the_media_route_still_carries_the_focus_intent() -> Non
         assert screen.focused is not None
 
         with_intent = {"count": 0}
-        original = type(screen)._sync_library_media_reader_layout_from_shell
+        original = type(screen._media_controller)._sync_library_media_reader_layout_from_shell
 
         def counting(self, *args, **kwargs):
             if kwargs.get("focus_intent") is not None:
@@ -175,7 +175,7 @@ async def test_resize_on_the_media_route_still_carries_the_focus_intent() -> Non
             return original(self, *args, **kwargs)
 
         with patch.object(
-            type(screen), "_sync_library_media_reader_layout_from_shell", counting
+            type(screen._media_controller), "_sync_library_media_reader_layout_from_shell", counting
         ):
             width, height = LIBRARY_TEST_SIZE
             await pilot.resize_terminal(width - 6, height)

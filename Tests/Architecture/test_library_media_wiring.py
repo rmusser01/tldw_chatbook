@@ -572,6 +572,34 @@ _MEDIA_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
     "_refresh_library_media_detail",
     "_restore_library_media_loaded_progress",
     "_write_library_media_loaded_progress",
+    # TASK-36952.3.7 (2026-11-17): the return-settlement machinery, the
+    # adaptive reader layout sync and its grip focus and open-time width
+    # restore, the "‹ Library" rail return, the empty-list focus fallback, the
+    # rail-switch Reader keep, the surfaces-or-recompose seam, and the
+    # review-set exit, toggle, Undo and receipt-close actions -- 23 bodies.
+    "_arm_library_media_return_settlement",
+    "_build_library_media_rail_return",
+    "_commit_library_media_return",
+    "_focus_library_media_grip_if_current",
+    "_library_media_content_signature",
+    "_library_media_empty_list_fallback_target",
+    "_library_media_focus_target_matches_receipt",
+    "_library_media_layout_signature",
+    "_library_media_rail_return_visible",
+    "_library_media_return_candidate",
+    "_library_media_settlement_tree",
+    "_rail_switch_keeps_media_reader",
+    "_reconcile_library_media_stage_presentation",
+    "_resolve_library_media_settlement_target",
+    "_restore_library_media_reader_width_on_open",
+    "_sync_library_media_rail_return",
+    "_sync_library_media_reader_layout_from_shell",
+    "_sync_library_media_surfaces_or_recompose",
+    "action_library_media_exit_review",
+    "action_library_media_toggle_reviewed",
+    "handle_library_media_rail_return",
+    "handle_library_media_review_dismiss_receipt_close",
+    "handle_library_media_review_dismiss_undo",
 )
 
 #: The names above that are ``@staticmethod`` on ``LibraryScreen``. Their
@@ -685,6 +713,13 @@ _MEDIA_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
         "_library_media_viewer_state_cached",
         "_queue_library_media_progress_write",
         "_write_library_media_loaded_progress",
+        # TASK-36952.3.7: 6 of its 23 movers, by the same census.
+        "_commit_library_media_return",
+        "_focus_library_media_grip_if_current",
+        "_library_media_rail_return_visible",
+        "_resolve_library_media_settlement_target",
+        "_sync_library_media_rail_return",
+        "_sync_library_media_surfaces_or_recompose",
     }
 )
 
@@ -816,7 +851,7 @@ _MEDIA_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     # this controller's reach. (task-32350 also named `_local_source_counts`,
     # which TASK-36952.3.2 bound above; that method still reads it through
     # `self._screen`.)
-    # -- shared shell state this cluster also WRITES (getter + setter) (6)
+    # -- shared shell state this cluster also WRITES (getter + setter) (7)
     "_library_canvas_resync_pending",
     "_library_list_entry_focus_timer",
     "_library_notes_programmatic_focus_target",
@@ -824,10 +859,13 @@ _MEDIA_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     "_library_selected_row_id",
     # TASK-36952.3.6: `_refresh_library_media_detail` sets it
     "_library_entry_reconcile_dirty",
+    # TASK-36952.3.7: the review-set Undo and receipt-close handlers read and
+    # set it; the screen's Undo worker clears it
+    "_review_dismiss_undo_in_flight",
     # -- the 2 prior-extracted media WIRING controller instances (2)
     "_library_media_browse_controller",
     "_library_media_trash_browse_controller",
-    # -- general Library-wide shell helpers, named constructor callables (36)
+    # -- general Library-wide shell helpers, named constructor callables (41)
     "_acknowledge_library_destination_change",
     "_active_review_set_banner",
     "_apply_library_open_item_surface",
@@ -868,21 +906,18 @@ _MEDIA_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     # TASK-36952.3.6: shell helpers its movers call (34 -> 36)
     "_review_set_service",
     "_schedule_library_entry_reconcile",
+    # TASK-36952.3.7: shell helpers its movers call (36 -> 41)
+    "_library_adaptive_reader_allocation_is_current",
+    "_notify_review_set",
+    "_review_dismiss_undo_worker",
+    "_toggle_reviewed_unguarded",
+    "action_library_narrow_stage_return",
     # -- named late-binding callables for the excluded media methods a mover
     #    still calls (35; TASK-36952.3.1 moved 5 of them here: 30;
     #    TASK-36952.3.2 moved 2 more: 28; TASK-36952.3.3 moved 6 more: 22;
     #    TASK-36952.3.4 moved 5 more: 17; TASK-36952.3.5 moved 2 more: 15;
-    #    TASK-36952.3.6 moved 5 more: 10)
-    "_arm_library_media_return_settlement",
-    "_commit_library_media_return",
-    "_library_media_content_signature",
-    "_library_media_focus_target_matches_receipt",
-    "_library_media_layout_signature",
-    "_library_media_return_candidate",
-    "_library_media_settlement_tree",
-    "_reconcile_library_media_stage_presentation",
+    #    TASK-36952.3.6 moved 5 more: 10; TASK-36952.3.7 moved 9 more: 1)
     "_sanitize_media_field",
-    "_sync_library_media_reader_layout_from_shell",
 )
 
 
@@ -921,8 +956,10 @@ def test_media_cluster_method_names_are_genuinely_media_named() -> None:
     # Analyze bodies.
     # 2026-11-15, TASK-36952.3.6: 249 -> 265, the 16 detail, reading-progress,
     # speaker-rename and review-decoration bodies.
-    assert len(_MEDIA_CLUSTER_METHOD_NAMES) == 265, (
-        f"expected 265 moved names, got {len(_MEDIA_CLUSTER_METHOD_NAMES)}"
+    # 2026-11-17, TASK-36952.3.7: 265 -> 288, the 23 return-settlement,
+    # reader-layout, rail-return and review-action bodies.
+    assert len(_MEDIA_CLUSTER_METHOD_NAMES) == 288, (
+        f"expected 288 moved names, got {len(_MEDIA_CLUSTER_METHOD_NAMES)}"
     )
     assert len(set(_MEDIA_CLUSTER_METHOD_NAMES)) == len(_MEDIA_CLUSTER_METHOD_NAMES), (
         "duplicate entries in _MEDIA_CLUSTER_METHOD_NAMES"
@@ -1109,8 +1146,11 @@ def test_media_controller_binds_every_name_its_moved_bodies_use() -> None:
     # `_library_snapshot_state_generation` getter, the
     # `_library_entry_reconcile_dirty` getter and setter and two shell helpers
     # were bound (+5).
-    assert len(_MEDIA_CONTROLLER_BOUND_NAMES) == 87, (
-        f"expected 87 bound names, got {len(_MEDIA_CONTROLLER_BOUND_NAMES)}"
+    # 2026-11-17, TASK-36952.3.7: 87 -> 84. Nine pinned late-binding callbacks
+    # became moved methods (-9); five shell helpers and the
+    # `_review_dismiss_undo_in_flight` getter and setter were bound (+6).
+    assert len(_MEDIA_CONTROLLER_BOUND_NAMES) == 84, (
+        f"expected 84 bound names, got {len(_MEDIA_CONTROLLER_BOUND_NAMES)}"
     )
     assert len(set(_MEDIA_CONTROLLER_BOUND_NAMES)) == len(
         _MEDIA_CONTROLLER_BOUND_NAMES

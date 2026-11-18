@@ -381,3 +381,13 @@ a96b35d5e886ec26b7deb5e882662d308f32375b
 # moved byte-for-byte into LibraryMediaController with no token edit. Test
 # edits are receiver-only, AST-proven against the parent.
 13cb59ee120e097b4c6371a82d34064ddf0e0bea
+
+# TASK-36952.3.7, 2026-11-17 -- media body move slice 7 of 8. Twenty-three
+# LibraryScreen bodies (the return-settlement machinery, the adaptive reader
+# layout sync, its grip focus and open-time width restore, the rail return,
+# the empty-list focus fallback, the rail-switch Reader keep, the
+# surfaces-or-recompose seam, and the review-set exit, toggle, Undo and
+# receipt-close actions) moved into LibraryMediaController byte-for-byte
+# except four R2(a) tokens (self -> self._screen in the ancestors membership
+# checks). Test edits are receiver-only, AST-proven against the parent.
+5d71d07ab4e4399c57ad83dbcd88ab15f220a239

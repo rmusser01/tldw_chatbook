@@ -292,7 +292,7 @@ def test_toggle_reviewed_failure_notifies(tmp_path):
     fake._review_set_service = lambda: _Boom()
     fake._library_media_item_traversal_active = lambda: True
 
-    LibraryScreen.action_library_media_toggle_reviewed(fake)  # must not raise
+    LibraryMediaController.action_library_media_toggle_reviewed(fake)  # must not raise
 
     assert any(severity == "error" for _msg, severity in fake._notices)
 
@@ -317,7 +317,7 @@ def test_exit_review_deactivates_but_keeps_the_set(tmp_path):
     fake._library_media_item_traversal_active = lambda: True
     fake._sync_library_media_viewer_or_recompose = lambda: None
 
-    LibraryScreen.action_library_media_exit_review(fake)
+    LibraryMediaController.action_library_media_exit_review(fake)
 
     assert service.get_active_review_set() is None
     assert [rs.set_id for rs in service.list_review_sets()] == [set_id]  # not deleted
@@ -333,10 +333,10 @@ def test_toggle_reviewed_marks_and_unmarks_the_loaded_item(tmp_path):
     fake._sync_library_media_viewer_or_recompose = lambda: None
     fake._media_state.reader_session = SimpleNamespace(loaded_backing_id=10)
 
-    LibraryScreen.action_library_media_toggle_reviewed(fake)
+    LibraryMediaController.action_library_media_toggle_reviewed(fake)
     assert service.get_review_set(set_id).items[0].done is True
 
-    LibraryScreen.action_library_media_toggle_reviewed(fake)
+    LibraryMediaController.action_library_media_toggle_reviewed(fake)
     assert service.get_review_set(set_id).items[0].done is False
 
 
@@ -828,16 +828,16 @@ def test_dismiss_undo_and_receipt_close_cannot_race(tmp_path):
     )
     event = SimpleNamespace(stop=lambda: None)
 
-    LibraryScreen.handle_library_media_review_dismiss_undo(fake, event)
+    LibraryMediaController.handle_library_media_review_dismiss_undo(fake, event)
     assert fake._review_dismiss_undo_in_flight is True
 
     # A second Undo press while in flight schedules nothing (it would
     # cancel the first via the exclusive group).
-    LibraryScreen.handle_library_media_review_dismiss_undo(fake, event)
+    LibraryMediaController.handle_library_media_review_dismiss_undo(fake, event)
     assert len(scheduled) == 1
 
     # Receipt-close while in flight is refused: the receipt still stands.
-    LibraryScreen.handle_library_media_review_dismiss_receipt_close(
+    LibraryMediaController.handle_library_media_review_dismiss_receipt_close(
         fake, event
     )
     assert fake._media_state.review_dismiss_receipt == ("set-1", "X", True)

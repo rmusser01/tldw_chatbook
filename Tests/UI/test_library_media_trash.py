@@ -3566,7 +3566,7 @@ def test_trash_back_returns_to_list_and_drops_session_state():
         LibraryMediaController._exit_library_media_trash, fake
     )
     fake._library_media_return_candidate = types.MethodType(
-        LibraryScreen._library_media_return_candidate, fake
+        LibraryMediaController._library_media_return_candidate, fake
     )
     event = SimpleNamespace(stop=lambda: None)
 

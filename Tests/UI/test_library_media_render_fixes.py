@@ -3606,7 +3606,7 @@ async def test_analysed_secondary_is_bounded_at_custom_items_widths(
             custom_widths_enabled=True,
             items_width=items_width,
         )
-        screen._sync_library_media_reader_layout_from_shell()
+        screen._media_controller._sync_library_media_reader_layout_from_shell()
         await _wait_for_condition(
             pilot,
             lambda: _items_pane_width(screen) == items_width - 4,
@@ -3758,7 +3758,7 @@ async def test_keyword_reason_clips_at_the_36_cell_items_floor():
             custom_widths_enabled=True,
             items_width=36,
         )
-        screen._sync_library_media_reader_layout_from_shell()
+        screen._media_controller._sync_library_media_reader_layout_from_shell()
         await _wait_for_condition(
             pilot,
             # The canvas fills the pane's 32-cell content box (36 less its
