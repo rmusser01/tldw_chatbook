@@ -488,7 +488,8 @@ def native_persona_negatives(tmp_path_factory):
 # the fixture's five child caps (600 s each) plus this node's own child.
 @pytest.mark.timeout(3600)
 def test_native_persona_mapping_refuses_unproved_graph(native_persona_negatives, case):
-    output = _child(native_persona_negatives, _NEGATIVE, case, timeout=60)
+    # TASK-41638: fail on a hang (no CPU for 60 s), not on a slow loaded child.
+    output = _child(native_persona_negatives, _NEGATIVE, case, timeout=600, idle=60)
     assert "NATIVE_PERSONA_NEGATIVE_COMPLETE" in output
 
 

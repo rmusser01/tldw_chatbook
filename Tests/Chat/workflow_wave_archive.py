@@ -139,7 +139,8 @@ def restore_and_rebackup(original):
         env=environment,
         capture_output=True,
         text=True,
-        timeout=60,
+        # TASK-41638: a hang bound, not a speed bound; loaded children run ~3x slower.
+        timeout=180,
         check=False,
     )
     (original.parent / "wave-rebackup.log").write_text(result.stdout + result.stderr)

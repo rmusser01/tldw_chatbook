@@ -350,7 +350,8 @@ async def test_detached_cleanup_cold_child_uses_recorded_owner_only(tmp_path, re
         capture_output=True,
         text=True,
         encoding="utf-8",
-        timeout=60,
+        # TASK-41638: a hang bound, not a speed bound; loaded children run ~3x slower.
+        timeout=180,
     )
     assert result.returncode == 0, result.stderr[-6000:]
     assert json.loads(receipt.read_text(encoding="utf-8")) == {

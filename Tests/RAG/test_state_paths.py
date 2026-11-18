@@ -114,7 +114,8 @@ def test_real_protected_getter_resolves_paths_with_optional_runtime_blocked(
         capture_output=True,
         text=True,
         encoding="utf-8",
-        timeout=60,
+        # TASK-41638: a hang bound, not a speed bound; loaded children run ~3x slower.
+        timeout=180,
         check=False,
     )
     assert "REAL_PROTECTED_GETTER_ENTER" in result.stdout, result.stdout + result.stderr

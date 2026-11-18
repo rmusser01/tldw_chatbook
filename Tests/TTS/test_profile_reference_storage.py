@@ -1325,6 +1325,7 @@ def test_v3_to_v4_migration_survives_sigkill_mid_transaction(tmp_path: Path) -> 
         )
         assert marker.exists(), "child never parked inside the migration"
         os.kill(child.pid, signal.SIGKILL)
+        # TASK-41638: these 60 s waits only reap a child already SIGKILLed.
         child.wait(timeout=60)
     finally:
         if child.poll() is None:

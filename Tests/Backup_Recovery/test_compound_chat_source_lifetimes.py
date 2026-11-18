@@ -1384,7 +1384,8 @@ def _diagnostic_child(request, kind):
         },
         capture_output=True,
         text=True,
-        timeout=60,
+        # TASK-41638: a hang bound, not a speed bound; loaded children run ~3x slower.
+        timeout=180,
     )
     Path(f"/private/tmp/task10-phase10-source-only-{kind}.log").write_text(
         result.stdout + result.stderr
