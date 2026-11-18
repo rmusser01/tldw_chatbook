@@ -46,6 +46,7 @@ jobs:
             'Tests/Chat/test_console_catalog_fingerprint_owner.py'
             'Tests/Chat/test_console_execution_passive_failure.py'
             'Tests/UI/test_console_workspace_tray_mount_overlap.py'
+            'Tests/UI/test_console_decision_navigation_retirement.py'
             'Tests/Backup_Recovery/test_windows_metadata_prerequisites.py::test_admission_refuses_inconsistent_spelling_before_native_read'
             'Tests/Backup_Recovery/test_windows_metadata_prerequisites.py::test_admission_checks_shared_spelling_once_per_input_and_reads_fresh_metadata'
             'Tests/Chat/test_console_trace_checkpoint_operation.py'

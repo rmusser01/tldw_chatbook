@@ -193,7 +193,8 @@ Batch `q5` started its first clean baseline on Windows 10 at 07:59 UTC on Novemb
 
 | Batch | Pair | README baseline / candidate | Approved edit baseline / candidate | State |
 |---|---|---|---|---|
-| `q9` | 1–3 | Pending | Pending | Started `q91b1` on candidate `72f36054ea`. Configuration SHA-256 `9ee7d9a18ab6bdec4083d192d47a41d7eb2bd2006882f6fc5e2ba4be2e6a84bd`. |
+| `q9` | 1 | 294.9706 s / pending | 416.4471 s / pending | The baseline passed both original journeys. First HTTP arrived at 89.0301 s and 110.7063 s. Candidate `q91c1` started. |
+| `q9` | 2–3 | Pending | Pending | Frozen candidate `72f36054ea`, configuration SHA-256 `9ee7d9a18ab6bdec4083d192d47a41d7eb2bd2006882f6fc5e2ba4be2e6a84bd`. |
 | `q8` | 1 | 295.3187 s / 25.4222 s | 405.5752 s / 36.0400 s to persisted reply only | Baseline passed. The candidate verified README, then timed out painting the edit reply after all six edit requests. Zero eligible pairs. |
 | `q8` | 2–3 | — / — | — / — | The driver stopped. Frozen candidate `33470fe57d`, configuration SHA-256 `176e09ef967e1c4bbd5d74f2ccf5af15c36f7d40282d9184d9596eef5cde8b35`. |
 | `q7` | 1 | 259.5920 s / 24.0326 s | 386.9812 s / — | Baseline `q71b1` passed both original journeys. On `e761c372a4`, candidate `q71c1` passed the README assertions, then returned from Settings with source revision 2 while the visible projection still held revision 1. The controller getter refused it. The edit never reached Send. |
@@ -647,6 +648,10 @@ follow-up on `c99b4a9889` stops at the first previously checked full spelling
 and builds the native traversal's set of nodes the same way. Each distinct
 prefix is inserted once per observation. Full component validation, native
 opens, access checks and bottom-up identity verification still run.
+In particular, validating the complete spelling of every distinct node on one
+deep chain still visits a quadratic number of components. The change removes
+the extra ancestor enumeration during planning. It supplies no linear-time
+bound on the complete admission.
 
 Project-index status has a separate cost that depends on the number of
 entries in the *index cache*. The original `binding_bytes` walks cache
@@ -735,3 +740,21 @@ The remaining 8.544 s has no assignment in this breakdown. This spread makes
 a rewrite of the HTTP client a poor fit. A replacement should demonstrate both
 fewer native display reads per completed row and fewer admissions per durable
 operation, then meet the original end-to-end gate.
+
+Within the backend's timed receive operation, every one of the 546 observed
+storage admissions had a matching completion on its original thread. The
+following durations use the union of those intervals, so overlapping work
+would be counted only once. These observers cover selected backend callers.
+Other workers, parent-process storage and approval waits are outside their
+coverage. The timings include observation overhead.
+
+| Backend receive operation | Total | Observed admissions | Time inside them | Time outside them |
+|---|---:|---:|---:|---:|
+| README | 31.837 s | 248 | 10.550 s | 21.287 s |
+| Edit | 32.348 s | 298 | 9.384 s | 22.964 s |
+
+Each of 106 durable step writes already used one admitted transaction. On
+success its commit precedes the UI or tool-activity callback. Grouping
+successive writes across those callbacks would change what readers see when
+a later step fails. The 29 run-log appends each checked a directory and a
+segment. Counts alone cannot justify removing either check.

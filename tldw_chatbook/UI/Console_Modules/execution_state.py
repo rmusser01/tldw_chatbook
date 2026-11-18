@@ -955,6 +955,49 @@ def _decision_refresh_rendered(client, hint) -> None:
 
 
 _DECISION_WAKE_METHODS = (("call_later", _definition(ChatScreen.call_later)),)
+_DECISION_READ_METHODS = (
+    ("read_decision_head", _definition(ConsoleExecutionClient.read_decision_head)),
+)
+
+
+def _retired_decision_switched_away(screen, client, visit, captured) -> bool:
+    """Defer a completed passive read while ordinary navigation suspends Chat."""
+    from textual.screen import ModalScreen
+    from ...Constants import TAB_CHAT
+    from ..Navigation.base_app_screen import BaseAppScreen
+
+    _require_sources()
+    _require_methods(client, _CLIENT_METHODS + _DECISION_READ_METHODS)
+    source, attachment, session_id, incarnation_id, reusable = captured
+    app = screen.app_instance
+    if (
+        type(screen) is not ChatScreen or type(client) is not ConsoleExecutionClient
+        or type(reusable) is not tuple or len(reusable) != 2 or reusable[1] is not screen
+        or getattr(app, "_reusable_screen_instances", {}).get(TAB_CHAT) is not reusable
+        or client._app is not app or app.console_execution_client is not client
+        or getattr(app, "console_runtime", None) is not None
+        or client._view is not screen or client._visit != visit
+        or client._source_revision != source or client._attachment_id != attachment
+        or client._view_preparation is not None or client._project_modal is not None
+        or client._disposed or client._shutdown_task is not None or client._channel_error is not None
+        or not screen.is_attached or not screen.is_mounted or screen.app is not app
+        or getattr(screen, "_console_chat_tearing_down", False) or getattr(screen, "_closing", False)
+    ):
+        return False
+    current, stack = app.screen, app.screen_stack
+    if (
+        screen.is_current or screen in stack or not stack or current is not stack[-1]
+        or not isinstance(current, BaseAppScreen) or isinstance(current, (ChatScreen, ModalScreen))
+        or not current.is_attached or not current.is_mounted or current.app is not app
+    ):
+        return False
+    _require_selected_publication(client, source)
+    published = client.projection_view
+    if (published.active_session_id != session_id
+        or published.session(session_id).incarnation_id != incarnation_id):
+        return False
+    screen._console_process_surface_reconciled = False
+    return True
 
 
 def request_selected_decision_refresh(client, hint: tuple) -> bool:
@@ -1038,6 +1081,7 @@ def start_selected_decision_refresh(screen: ChatScreen, *, force: bool = False) 
 async def _refresh_selected_decisions(screen, client, visit: int) -> None:
     """Paint only a positively retired head; leave newer invalidations owed."""
     from ...Chat.console_execution_process import ConsoleChannelLost
+    from ...Constants import TAB_CHAT
     from .execution_decisions import pending_project_visibility, present_selected_decision
 
     source = client._source_revision
@@ -1049,7 +1093,16 @@ async def _refresh_selected_decisions(screen, client, visit: int) -> None:
         if selected_client(screen) is not client:
             raise ConsoleChannelLost("Console decision owner changed")
         row = client.projection_view.session(client.projection_view.active_session_id)
+        captured = (
+            source, client._attachment_id, row.id, row.incarnation_id,
+            getattr(screen.app_instance, "_reusable_screen_instances", {}).get(TAB_CHAT),
+        )
+        _require_methods(client, _DECISION_READ_METHODS)
         await client.read_decision_head(screen, visit, row.id, row.incarnation_id)
+        # The original method joins positive physical retirement before return.
+        # Textual may switch its stack before queued ScreenSuspend revokes visit.
+        if not screen.is_current and _retired_decision_switched_away(screen, client, visit, captured):
+            return
         if pending_project_visibility(client, screen, visit) is not None:
             return
         if _defer_selected_refresh(screen, client, visit):
