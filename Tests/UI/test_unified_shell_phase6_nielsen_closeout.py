@@ -54,7 +54,11 @@ def _phase_six_nielsen_metadata(text: str) -> dict:
 @pytest.mark.asyncio
 async def test_nielsen_closeout_replays_core_heuristic_signals_in_running_app() -> None:
     """Verify visible shell behavior maps to the closeout's heuristic evidence."""
-    app = _build_test_app()
+    from tldw_chatbook.config import get_user_data_dir
+
+    # The profile's own data folder binds the MCP store, so the live-work MCP
+    # row says "Not wired" rather than the unbound reason (TASK-41631).
+    app = _build_test_app(user_data_dir=get_user_data_dir())
     app.app_config["_first_run"] = True
     app._initial_tab_value = "chat"
 
