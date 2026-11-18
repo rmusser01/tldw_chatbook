@@ -423,6 +423,12 @@ def _mask_credential_material(value: Any, *, structural_keys: bool = False) -> t
     return value, False
 
 
+def _masked(value: Any) -> Any:
+    """A value read from a file, masked as a bundle masks it, for an error
+    message to quote (TASK-41604)."""
+    return _mask_credential_material(value)[0]
+
+
 def _has_credential_material(value: Any, *, structural_keys: bool = False) -> bool:
     """Detect unsanitized credential material in an already-governed document."""
     return _mask_credential_material(value, structural_keys=structural_keys)[1]
@@ -1511,24 +1517,24 @@ def validate_trajectory_export(payload: Any) -> dict:
     if fmt != TRAJECTORY_EXPORT_FORMAT:
         raise TrajectoryExportError(
             f"Invalid trajectory export: 'format' must be "
-            f"'{TRAJECTORY_EXPORT_FORMAT}', got {fmt!r}"
+            f"'{TRAJECTORY_EXPORT_FORMAT}', got {_masked(fmt)!r}"
         )
 
     version = payload.get("version")
     if not isinstance(version, int) or isinstance(version, bool):
         raise TrajectoryExportError(
-            f"Invalid trajectory export: 'version' must be an integer, got {version!r}"
+            f"Invalid trajectory export: 'version' must be an integer, got {_masked(version)!r}"
         )
     if version > TRAJECTORY_EXPORT_VERSION:
         raise TrajectoryExportError(
-            f"Unsupported trajectory export version {version}: this build reads "
+            f"Unsupported trajectory export version {_masked(version)}: this build reads "
             f"version {TRAJECTORY_EXPORT_VERSION}; export with an older version "
             f"or upgrade the app"
         )
     if version < TRAJECTORY_EXPORT_VERSION:
         raise TrajectoryExportError(
             f"Invalid trajectory export: 'version' must be "
-            f"{TRAJECTORY_EXPORT_VERSION}, got {version!r}"
+            f"{TRAJECTORY_EXPORT_VERSION}, got {_masked(version)!r}"
         )
 
     _require(payload, "exported_at", str, "exported_at")

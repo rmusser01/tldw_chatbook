@@ -176,6 +176,8 @@ Full output and exports as sensitive.
 Opening a shared Trace bundle made by an older version, or an older
 `tldw-trajectory` file, applies today's rules: any value they treat as a
 password or key is masked as the file loads. The file itself is not changed.
+When a file cannot be opened, the **Import failed** notice masks any value it
+quotes from the file the same way, and shows brackets in it as plain text.
 
 **Mask detected PII in traces** is optional and off by default. It applies to
 future calls at the selected scope and is irreversible for provider-only trace

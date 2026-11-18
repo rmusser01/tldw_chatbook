@@ -2127,6 +2127,126 @@ def test_malformed_v2_structures_fail_closed(mutation, message: str) -> None:
         trajectory_import.load_imported_trace(payload)
 
 
+#: TASK-41604: a credential-shaped value read from the file, in each place an
+#: import error quotes one.
+_ECHOED = "sk-" + _P8 + _P8
+
+
+def _with_echoed_event_id(payload: dict) -> dict:
+    """The bundle with its first event's id replaced by ``_ECHOED`` everywhere."""
+    event_id = payload["events"][0]["event_id"]
+    return json.loads(json.dumps(payload).replace(json.dumps(event_id), json.dumps(_ECHOED)))
+
+
+def _duplicate_decision(payload: dict) -> dict:
+    payload = _with_echoed_event_id(payload)
+    payload["manifest"]["privacy_decisions"].append(payload["manifest"]["privacy_decisions"][0])
+    return payload
+
+
+def _mismatched_provenance_state(payload: dict) -> dict:
+    payload["events"][0]["field_states"][_ECHOED] = "observed"
+    payload["events"][0]["field_provenance"][_ECHOED] = {
+        "state": "redacted",
+        "reason": "x",
+        "sensitivity": "x",
+    }
+    return payload
+
+
+def _unsupported_relationship(payload: dict) -> dict:
+    event_id = payload["events"][0]["event_id"]
+    payload["lineage"].append({"source": event_id, "target": event_id, "relationship": _ECHOED})
+    return payload
+
+
+def _set(path: tuple, value: object):
+    def mutate(payload: dict) -> dict:
+        target = payload
+        for key in path[:-1]:
+            target = target[key]
+        target[path[-1]] = value
+        return payload
+
+    return mutate
+
+
+@pytest.mark.parametrize(
+    ("mutation", "shown"),
+    [
+        (_set(("version",), _ECHOED), "'version' must be an integer, got '[credential redacted]'"),
+        (_set(("manifest", "profile"), _ECHOED), "manifest profile '[credential redacted]'"),
+        (
+            _set(("manifest", "privacy_inventory", _ECHOED), 0),
+            "'privacy_inventory' has unsupported fields: [credential redacted]",
+        ),
+        (
+            lambda p: _set(("events", 1, "event_id"), _ECHOED)(_set(("events", 0, "event_id"), _ECHOED)(p)),
+            "duplicate event_id '[credential redacted]'",
+        ),
+        (
+            _set(("events", 0, "usage", _ECHOED), 1),
+            "'events[0].usage' contains unsupported fields: [credential redacted]",
+        ),
+        (
+            _set(("events", 0, "field_provenance", _ECHOED), {}),
+            "'events[0].field_provenance.[credential redacted]' must include valid state",
+        ),
+        (
+            _mismatched_provenance_state,
+            "'events[0].field_provenance.[credential redacted].state' does not match "
+            "field_states.[credential redacted]",
+        ),
+        (
+            _set(("events", 0, "parent_event_id"), _ECHOED),
+            "dangling parent_event_id '[credential redacted]' at events[0]",
+        ),
+        (
+            _set(("manifest", "privacy_decisions", 0, "field"), _ECHOED),
+            "state does not match event field_provenance.[credential redacted]",
+        ),
+        (
+            _duplicate_decision,
+            "privacy_decisions: duplicate ('[credential redacted]', 'event_id')",
+        ),
+        (_unsupported_relationship, "unsupported relationship '[credential redacted]'"),
+        (
+            lambda _p: {"format": _ECHOED},
+            "'format' must be 'tldw-trajectory', got '[credential redacted]'",
+        ),
+        (
+            lambda _p: {"format": "tldw-trajectory", "version": _ECHOED},
+            "'version' must be an integer, got '[credential redacted]'",
+        ),
+    ],
+    ids=(
+        "version",
+        "profile",
+        "privacy-inventory-key",
+        "duplicate-event-id",
+        "usage-key",
+        "field-provenance-key",
+        "field-provenance-state",
+        "dangling-reference",
+        "decision-field",
+        "decision-duplicate",
+        "lineage-relationship",
+        "v1-format",
+        "v1-version",
+    ),
+)
+def test_an_import_error_never_shows_a_credential_from_the_file(mutation, shown: str) -> None:
+    """TASK-41604: an import error quotes a value from the file only masked
+    by the export's credential rules, for v2 bundles and v1 files alike."""
+    payload = mutation(_build(_snapshot()))
+
+    with pytest.raises(trajectory_import.TrajectoryImportError) as raised:
+        trajectory_import.load_imported_trace(payload)
+
+    assert shown in str(raised.value)
+    assert _P8 not in str(raised.value)
+
+
 def test_resigned_lineage_must_exactly_match_event_reference_fields() -> None:
     first = _record(event_id="event-1")
     second = _record(event_id="event-2", seq=2, parent_event_id="event-1")
