@@ -447,13 +447,15 @@ from textual.widgets import Input,Button,Select
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Backup_Recovery import recovery_restart
 from tldw_chatbook.Utils import terminal_utils
+# F9 opens Kanban since 04233174e6; open Settings by its own shortcut (TASK-41116).
+from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_SHORTCUTS
 (home/'probe-mapping.json').write_text(json.dumps({'mapping':{key:str(path) for key,path in mapping.items()},'name':name,'package':str(installed),'test_root':os.environ['TLDW_TEST_ROOT']}))
 original_run=TldwCli.run
 async def drive(pilot):
  app=pilot.app
  async with asyncio.timeout(90 if sys.platform=='win32' else 20):
   while not app._ui_ready:await asyncio.sleep(.03)
- await pilot.press('f9');await pilot.pause()
+ await pilot.press(SHELL_DESTINATION_SHORTCUTS['settings']);await pilot.pause()
  app.screen.query_one('#settings-backup-restore',Button).focus();await pilot.press('enter');await pilot.pause()
  await pilot.click('#backup-open-inspect')
  screen=app.screen

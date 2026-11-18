@@ -1086,6 +1086,9 @@ MINIMUM_FILES = 2145
 MINIMUM_FILES = 2146
 # TASK-41248 adds the two-case Session Git row shutdown regression module.
 MINIMUM_FILES = 2147
+# TASK-41125 (2026-11-15): append the known-profiles backup review file at the
+# tail. The floor is the measured entry count.
+MINIMUM_FILES = 2148
 
 
 def read_census(path: Path) -> list[str]:

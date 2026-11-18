@@ -344,7 +344,11 @@ def guarded(name,*args,**kwargs):
 builtins.__import__=guarded
 def no_database(*args,**kwargs):raise AssertionError('database opened')
 sqlite3.connect=no_database
-from tldw_chatbook.Backup_Recovery import bootstrap
+# Import admission (via service_storage) before bootstrap._registry is replaced
+# below: since 3e618d7119 it snapshots bootstrap's readers and their modules'
+# __file__ at import, and a reader defined in this -c script's __main__ has none
+# (TASK-41125). Extraction imports it anyway; no forbidden module is involved.
+from tldw_chatbook.Backup_Recovery import bootstrap, service_storage
 from tldw_chatbook.Backup_Recovery.inert_extraction import preview_inert_extraction,extract_inert
 from tldw_chatbook.Backup_Recovery.archive_reader import acquire
 from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits

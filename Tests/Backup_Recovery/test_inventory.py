@@ -23,6 +23,70 @@ from tldw_chatbook.Backup_Recovery.models import StorageItem
 from tldw_chatbook.Backup_Recovery import profile_paths
 
 
+#: The DB and Utils modules discovery imports, and no others: the package
+#: init's tiktoken armer, the inventory's platform shim and recovered_media's
+#: private SQLite layer, all since b5251e9a6e, which added the purity pins.
+#: None reads config, starts a service or writes (TASK-41116).
+PURE_LOW_LEVEL_MODULES = (
+    "tldw_chatbook.Utils",
+    "tldw_chatbook.Utils.tiktoken_runtime",
+    "tldw_chatbook.Utils.platform_files",
+    "tldw_chatbook.Utils.private_paths",
+    "tldw_chatbook.Utils.path_validation",
+    "tldw_chatbook.Utils.file_durability",
+    "tldw_chatbook.DB",
+    "tldw_chatbook.DB.sqlite_datetime_fix",
+    "tldw_chatbook.DB.private_sqlite",
+    "tldw_chatbook.DB.private_sqlite_process",
+    "tldw_chatbook.DB.private_sqlite_protocol",
+    "tldw_chatbook.DB.recovery_sqlite",
+)
+
+
+def pure_child_guard(*allowed: str) -> str:
+    """Prelude for a purity child: refuse config, keyring, chromadb, textual
+    and every DB/Utils module outside the allowlist, and record SQLite opens
+    and process spawns for PURE_CHILD_CHECK."""
+    names = tuple(sorted({*PURE_LOW_LEVEL_MODULES, *allowed}))
+    return f"""
+import importlib.abc, sys
+ALLOWED = frozenset({names!r})
+blocked = []
+class Block(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "tldw_chatbook.config" or fullname.startswith(("keyring", "chromadb", "textual")) or (
+            fullname.startswith(("tldw_chatbook.DB", "tldw_chatbook.Utils")) and fullname not in ALLOWED
+        ):
+            # Recorded first: a caller that swallows the error still fails the check.
+            blocked.append(fullname)
+            raise AssertionError("forbidden service import: " + fullname)
+sys.meta_path.insert(0, Block())
+opened, spawned = [], []
+def audit(event, args):
+    if event == "sqlite3.connect":
+        opened.append(str(args[0]))
+    elif event in ("subprocess.Popen", "os.posix_spawn", "os.exec", "os.spawn", "os.system", "os.fork"):
+        spawned.append(event)
+sys.addaudithook(audit)
+"""
+
+
+#: Postlude: no forbidden import attempted (even one a caller swallowed) or
+#: loaded, only in-memory SQLite, no process. The controlled connect proves the
+#: hook records opens.
+PURE_CHILD_CHECK = """
+assert not blocked, blocked
+loaded = [name for name in sys.modules if name == "tldw_chatbook.config" or name.startswith(("keyring", "chromadb", "textual")) or (
+    name.startswith(("tldw_chatbook.DB", "tldw_chatbook.Utils")) and name not in ALLOWED
+)]
+assert not loaded, loaded
+import sqlite3
+sqlite3.connect(":memory:").close()
+assert opened[-1:] == [":memory:"] and set(opened) <= {":memory:"}, sorted(set(opened))
+assert not spawned, spawned
+"""
+
+
 def config_file(tmp_path, name="selected", user="Ada", extra=""):
     config = tmp_path / f"{name}.toml"
     config.write_text(
@@ -38,6 +102,19 @@ def real_db(path):
         connection.execute("CREATE TABLE fixture (value TEXT)")
         connection.execute("INSERT INTO fixture VALUES ('kept')")
     return path
+
+
+@pytest.fixture(autouse=True)
+def _no_installed_owners(monkeypatch):
+    """Each test starts from the base declarations, as a fresh process does.
+
+    install_adapters() registers process-wide, so an earlier test in the same
+    worker (test_restore_plan, test_data_groups, ...) made the media core
+    report a custom file "included" and hid an undeclared alias (TASK-41116).
+    """
+    from tldw_chatbook.Backup_Recovery import owner_registry
+
+    monkeypatch.setattr(owner_registry, "_adapters", {})
 
 
 def test_custom_db_and_disabled_features_are_not_external_or_unused(tmp_path):
@@ -242,23 +319,22 @@ def test_fresh_process_discovery_imports_no_bootstrap_or_services_and_changes_no
         )
         for p in tmp_path.rglob("*")
     }
-    code = """
-import importlib.abc, sys
+    code = (
+        pure_child_guard()
+        + """
 from pathlib import Path
-class Block(importlib.abc.MetaPathFinder):
-    def find_spec(self, fullname, path=None, target=None):
-        if fullname == "tldw_chatbook.config" or fullname.startswith(("tldw_chatbook.DB", "tldw_chatbook.Utils", "keyring", "chromadb", "textual")):
-            raise AssertionError("forbidden service import: " + fullname)
-sys.meta_path.insert(0, Block())
 from tldw_chatbook.Backup_Recovery.inventory import discover
 assert not discover((Path(sys.argv[1]),)).complete
 """
-    subprocess.run(
+        + PURE_CHILD_CHECK
+    )
+    result = subprocess.run(
         [sys.executable, "-c", code, str(selected)],
         cwd=Path(__file__).resolve().parents[2],
-        check=True,
         capture_output=True,
+        text=True,
     )
+    assert result.returncode == 0, result.stderr[-3000:]
     after = {
         p.relative_to(tmp_path): (
             p.stat().st_mode,
@@ -268,6 +344,25 @@ assert not discover((Path(sys.argv[1]),)).complete
         for p in tmp_path.rglob("*")
     }
     assert before == after
+
+
+def test_profile_without_data_resolves_every_core_dependency(tmp_path):
+    """TASK-41125: with no ChaChaNotes database to read, the builtin visual
+    identity owner declared no root item, so the core's edge to it dangled and
+    a backup preview of such a known profile failed dependency_unavailable."""
+    from tldw_chatbook.Backup_Recovery import owner_registry
+    from tldw_chatbook.Backup_Recovery.data_groups import resolve_inventory_groups
+
+    owner_registry.install_adapters()
+    items = discover((config_file(tmp_path),)).items
+    resolve_inventory_groups(items, None)
+    builtin = [
+        item.status
+        for item in items
+        if item.owner == "persona.visual_identity_builtin"
+        and item.logical_id.endswith(":persona.visual_identity_builtin")
+    ]
+    assert builtin == ["unavailable"]
 
 
 def test_duplicate_registration_is_rejected(monkeypatch):

@@ -1063,6 +1063,12 @@ def test_later_preview_refuses_generation_evidence_change_during_observation(
     assert not bootstrap._records(tmp_path / "bootstrap")[0]
 
 
+# TASK-41117: at -n 4 and load 100-129 this test's later_case setup took 212 s
+# and its child 301 s (it passed); at load 76-98 the job's 300 s per-test limit
+# had cut the child at 165 s. The child keeps its hang detector (60 s without
+# CPU); its wall backstop is 2x the 301 s, and the test's own limit 2x the
+# setup plus that backstop. Re-measure at load ~40 before tightening either.
+@pytest.mark.timeout(1050)
 def test_fresh_process_rederives_finite_sources_and_executes_later_rollback(
     later_case, tmp_path, helper_resource_root
 ):
@@ -1102,7 +1108,7 @@ original = load_plan(Journal(root/'control',operation))
 test_later_execution_restores_old_core_and_preserves_current_files((operation,original,_current(root)),root)
 print('FRESH_NATIVE_LATER_COMPLETE')
 """
-    from Tests.Backup_Recovery.test_config_sibling_capture import _wait_while_busy
+    from Tests.Backup_Recovery.restart_observation import _wait_while_busy
 
     log = tmp_path / "fresh-later.log"
     with log.open("w") as stream:
@@ -1121,7 +1127,7 @@ print('FRESH_NATIVE_LATER_COMPLETE')
         # TASK-40306: the child repeats a whole later rollback, which took 87 s
         # in-process at load 50 against the old fixed 60 s; it fails only once
         # it uses no CPU for 60 s (a hang), within the test's own limit.
-        returncode = _wait_while_busy(process, idle=60, timeout=210)
+        returncode = _wait_while_busy(process, idle=60, timeout=600)
     assert returncode == 0, log.read_text()[-7000:]
     assert "FRESH_NATIVE_LATER_COMPLETE" in log.read_text()
 

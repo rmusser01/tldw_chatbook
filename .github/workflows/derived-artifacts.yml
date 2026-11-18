@@ -1505,6 +1505,8 @@ jobs:
       # (bootstrap_profile; each a private subprocess, ~30-45 s serial).
       # TASK-40301's four Trace export nodes (pure) and TASK-40303's
       # legacy-ledger node (in-memory DB) follow TASK-39149's.
+      # Round 15: TASK-41112's Actor Pack export file (sandboxed, ~83 s serial
+      # at load 104) joins the sandboxed block, before the bootstrap ones.
       # test_closed_loop_pending_submit_is_emergency_detachment: deselected
       # 2026-11-12: red on dev e0186fa10a (console_send_diagnostic ContextVar
       # token reset across contexts), owned by TASK-33621.36 AC#3; remove when fixed.
@@ -1530,6 +1532,7 @@ jobs:
             Tests/Backup_Recovery/test_config_participant_lifetimes.py \
             Tests/Chat/test_subscription_background_readiness.py \
             Tests/Wizards/test_first_run_subscription_readiness.py \
+            Tests/Actor_Packs/test_actor_pack_export.py \
             Tests/Prompt_Management/test_prompt_improvement_service.py \
             Tests/RAG_Search/test_keyword_leg_chacha.py \
             Tests/RAG_Search/test_keyword_leg_db_resolution.py \
@@ -1914,13 +1917,22 @@ jobs:
     # The deselected nodes were red at dev 26b2e677dd outside TASK-40306's five
     # files (drift, local-profile refusals and fixed child budgets); TASK-40307
     # lists each one's first error. Remove a line when its node is fixed.
+    # TASK-41116 re-admitted five; its notes give the three left their causes.
     # timeout-minutes: three local runs of this step took 30.6-42.9 min (-n 4,
     # load 22-57 on a shared 18-core host); the persona rollback test alone
     # takes 9.6 min of it. Re-read the first CI runs before tightening a cap.
+    # Round 15 (2026-11-15) adds eleven files that ran on no lane, all
+    # sandboxed: TASK-41125's restored-startup and manual-extraction files and
+    # TASK-41118's Personal Context backup/restore files (Personal Context and
+    # the app wiring file leak storage leases under --storage-lease-guard, so
+    # not recovered-suites). Measured at -n 4 or serially on the same host at
+    # load 73-123: test_restore_data_groups 12.5 min at -n 4 (its slowest
+    # cases near 300 s), the rest about 30 min serial together. Both caps
+    # rise by 20 min for them.
     name: Backup_Recovery owner suites (push to dev)
     if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    timeout-minutes: 75
 
     steps:
       - uses: actions/checkout@v4
@@ -1934,7 +1946,7 @@ jobs:
         run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2 hypothesis pytest-xdist
 
       - name: Run the Backup_Recovery owner suites
-        timeout-minutes: 50
+        timeout-minutes: 70
         run: |
           pytest \
             Tests/Backup_Recovery/test_builtin_later_snapshot.py \
@@ -1951,14 +1963,20 @@ jobs:
             Tests/Backup_Recovery/test_core_owners.py \
             Tests/Backup_Recovery/test_operational_owners.py \
             Tests/Backup_Recovery/test_publication_crashes.py \
-            --deselect="Tests/Backup_Recovery/test_complete_roundtrip.py::test_two_known_profiles_complete_capture_preserves_native_state_and_resumes" \
-            --deselect="Tests/Backup_Recovery/test_complete_roundtrip.py::test_two_captured_profiles_plan_shared_concrete_roots_for_isolated_restore" \
+            Tests/Backup_Recovery/test_activation_startup.py \
+            Tests/Backup_Recovery/test_inert_extraction.py \
+            Tests/Backup_Recovery/test_activation_network_sync.py \
+            Tests/Backup_Recovery/test_portable_relocation.py \
+            Tests/Backup_Recovery/test_restore_data_groups.py \
+            Tests/Backup_Recovery/test_credentials.py \
+            Tests/Backup_Recovery/test_data_groups.py \
+            Tests/Personal_Context/test_repository.py \
+            Tests/Personal_Context/test_runtime_policy.py \
+            Tests/Personal_Context/test_service.py \
+            Tests/App/test_personal_context_wiring.py \
             --deselect="Tests/Backup_Recovery/test_complete_roundtrip.py::test_two_captured_profiles_restore_and_open_with_native_content" \
             --deselect="Tests/Backup_Recovery/test_later_rollback_credential_ui.py::test_f9_later_rollback_requires_explicit_credential_review" \
             --deselect="Tests/Backup_Recovery/test_inventory.py::test_normal_config_and_pure_resolvers_agree" \
-            --deselect="Tests/Backup_Recovery/test_inventory.py::test_fresh_process_discovery_imports_no_bootstrap_or_services_and_changes_nothing" \
-            --deselect="Tests/Backup_Recovery/test_inventory.py::test_custom_db_and_disabled_features_are_not_external_or_unused" \
-            --deselect="Tests/Backup_Recovery/test_core_owners.py::test_factory_discovery_and_schema_policy_are_runtime_independent" \
             -n 4 \
             --timeout=300 \
             --tb=short
