@@ -447,7 +447,7 @@ async def test_compact_media_viewer_back_survives_targeted_reorder() -> None:
         moved = next(item for item in media if item["id"] == f"media-{backing_id}")
         moved["last_modified"] = "2030-01-01T00:00:00Z"
         controller = screen._library_media_browse_controller
-        screen._request_library_media_browse(
+        screen._media_controller._request_library_media_browse(
             controller.mutation_refresh_scope,
             focus_identity=None,
         )
@@ -491,7 +491,7 @@ async def test_media_reader_back_keeps_a_retained_row_after_origin_removed() -> 
             for index, item in enumerate(service.media_items)
             if service._backing_id(item, index) != removed_backing
         ]
-        screen._request_library_media_browse(
+        screen._media_controller._request_library_media_browse(
             controller.mutation_refresh_scope,
             focus_identity=None,
         )
@@ -580,7 +580,7 @@ async def test_compact_media_viewer_back_follows_single_page_clamp() -> None:
             if service._backing_id(item, index) != target_backing
         ]
         controller = screen._library_media_browse_controller
-        screen._request_library_media_browse(
+        screen._media_controller._request_library_media_browse(
             controller.mutation_refresh_scope,
             focus_identity=None,
         )
@@ -617,7 +617,7 @@ async def test_compact_media_viewer_back_empty_page_focuses_recovery_control() -
         )
         controller = screen._library_media_browse_controller
         service.media_items = []
-        screen._request_library_media_browse(
+        screen._media_controller._request_library_media_browse(
             controller.mutation_refresh_scope,
             focus_identity=None,
         )
@@ -677,7 +677,7 @@ async def test_compact_media_empty_page_landing_survives_a_queued_grip_focus(
         screen, _media_id, _scroll_offset = await _open_scrolled_compact_media_viewer(
             host, pilot
         )
-        reset = screen._reset_library_media_reader_to_no_selection
+        reset = screen._media_controller._reset_library_media_reader_to_no_selection
 
         def reset_then_park_on_grip() -> None:
             reset()
@@ -686,13 +686,13 @@ async def test_compact_media_empty_page_landing_survives_a_queued_grip_focus(
             screen.post_message(DescendantFocus(grip))
 
         monkeypatch.setattr(
-            screen,
+            screen._media_controller,
             "_reset_library_media_reader_to_no_selection",
             reset_then_park_on_grip,
         )
         controller = screen._library_media_browse_controller
         service.media_items = []
-        screen._request_library_media_browse(
+        screen._media_controller._request_library_media_browse(
             controller.mutation_refresh_scope, focus_identity=None
         )
         await _wait_for_condition(
@@ -740,7 +740,7 @@ async def test_wide_media_reader_reset_leaves_focus_the_user_holds_in_the_rail()
         assert screen.focused is search
         controller = screen._library_media_browse_controller
         service.media_items = []
-        screen._request_library_media_browse(
+        screen._media_controller._request_library_media_browse(
             controller.mutation_refresh_scope, focus_identity=None
         )
         await _wait_for_condition(
@@ -1394,7 +1394,7 @@ async def test_compact_media_stale_and_retry_actions_remain_truthful() -> None:
                 assert not row.disabled
                 assert not str(row.label).startswith("○")
 
-            screen._sync_library_media_browse_state(None)
+            screen._media_controller._sync_library_media_browse_state(None)
             await _wait_for_condition(
                 pilot,
                 lambda: screen.query_one("#library-media-export", Button).disabled,
@@ -1421,7 +1421,7 @@ async def test_compact_media_pager_receipt_and_empty_states_remain_contained() -
         assert canvas.region.contains_region(pager.region)
 
         screen._media_state.delete_receipt_ids = ("local:media:1",)
-        screen._sync_library_media_browse_state(None)
+        screen._media_controller._sync_library_media_browse_state(None)
         receipt = await _wait_for_selector(
             screen, pilot, "#library-media-bulk-delete-receipt"
         )
@@ -1607,7 +1607,7 @@ async def test_full_success_bulk_delete_focuses_undo_and_enter_restores() -> Non
         # preserve, and Undo lost focus. Clearing focus first reproduces that
         # ordering: the identity must carry the target on its own.
         screen.set_focus(None)
-        screen._sync_library_media_browse_state("#library-media-bulk-delete-undo")
+        screen._media_controller._sync_library_media_browse_state("#library-media-bulk-delete-undo")
         await pilot.pause()
         await pilot.pause()
         assert screen.focused is not None
@@ -1640,7 +1640,7 @@ async def test_receipt_dismiss_clears_the_failed_undo_copy_too() -> None:
         screen = await _open_media_list(host, pilot)
         screen._media_state.delete_receipt_ids = ("local:media:1",)
         screen._media_state.delete_receipt_undo_failure = "1 of 1 · database is locked"
-        screen._sync_library_media_browse_state(None)
+        screen._media_controller._sync_library_media_browse_state(None)
         receipt_copy = await _wait_for_selector(
             screen, pilot, "#library-media-bulk-delete-receipt-copy"
         )

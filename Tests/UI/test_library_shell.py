@@ -164,6 +164,7 @@ from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.UI.Library_Modules.library_ingest_controller import (
     LibraryIngestController,
 )
+from tldw_chatbook.UI.Library_Modules.library_media_controller import LibraryMediaController
 from tldw_chatbook.UI.Library_Modules.library_notes_work_session import (
     NotesWorkSessionPhase,
 )
@@ -4542,7 +4543,7 @@ async def test_ordinary_same_contract_resizes_do_no_reader_or_destination_work(
         rail_refresh = Mock(wraps=rail.refresh)
         canvas_refresh = Mock(wraps=canvas.refresh)
         service_calls = AsyncMock(wraps=screen._run_library_service_call)
-        media_loads = Mock(wraps=screen._request_library_media_browse)
+        media_loads = Mock(wraps=screen._media_controller._request_library_media_browse)
         prompt_loads = Mock(wraps=screen._request_library_prompts_browse)
         raw_reads = Mock(wraps=library_screen_module.read_cli_config_serialized)
         cached_reads = Mock(wraps=library_screen_module.get_cli_setting)
@@ -4580,7 +4581,7 @@ async def test_ordinary_same_contract_resizes_do_no_reader_or_destination_work(
         monkeypatch.setattr(rail, "refresh", rail_refresh)
         monkeypatch.setattr(canvas, "refresh", canvas_refresh)
         monkeypatch.setattr(screen, "_run_library_service_call", service_calls)
-        monkeypatch.setattr(screen, "_request_library_media_browse", media_loads)
+        monkeypatch.setattr(screen._media_controller, "_request_library_media_browse", media_loads)
         monkeypatch.setattr(screen, "_request_library_prompts_browse", prompt_loads)
         monkeypatch.setattr(
             library_screen_module, "read_cli_config_serialized", raw_reads
@@ -12172,7 +12173,7 @@ async def test_library_paged_empty_recovery_is_painted_and_keyboard_reachable(
             await pilot.pause()
 
             if row_id == LIBRARY_ROW_BROWSE_MEDIA:
-                screen._request_library_media_type("video", focus_identity=None)
+                screen._media_controller._request_library_media_type("video", focus_identity=None)
                 filtered_selector = "#library-media-empty-clear-type"
             elif row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
                 screen._start_library_conversation_page_request(1, "draft")
@@ -13373,7 +13374,7 @@ async def test_library_media_stale_page_disables_actions_across_recompose() -> N
         assert not undo.disabled
         assert str(undo.label) == "Undo"
 
-        screen._sync_library_media_browse_state(None)
+        screen._media_controller._sync_library_media_browse_state(None)
         await _wait_for_condition(
             pilot,
             lambda: screen.query_one("#library-media-export", Button).disabled,
@@ -13383,7 +13384,7 @@ async def test_library_media_stale_page_disables_actions_across_recompose() -> N
 
         screen._media_state.select_mode = True
         screen._media_state.row_selection.toggle("local:media:45")
-        screen._sync_library_media_browse_state(None)
+        screen._media_controller._sync_library_media_browse_state(None)
         await _wait_for_condition(
             pilot,
             lambda: bool(screen.query("#library-media-delete-selected")),
@@ -13630,7 +13631,7 @@ async def test_library_media_newer_page_and_facet_generations_win() -> None:
             assert controller.applied_result is None
             assert screen._build_library_media_state().rows == ()
 
-            screen._request_library_media_type("audio", focus_identity=None)
+            screen._media_controller._request_library_media_type("audio", focus_identity=None)
             screen._media_controller._request_library_media_facets()
             await _wait_for_condition(
                 pilot,
@@ -13716,13 +13717,13 @@ async def test_library_media_mutation_completion_after_unmount_only_reconciles()
             initial_searches = len(service.search_calls)
             initial_facets = len(service.type_calls)
             sync_calls = []
-            original_sync = screen._sync_library_media_browse_state
+            original_sync = screen._media_controller._sync_library_media_browse_state
 
             def record_sync(focus=None):
                 sync_calls.append(focus)
                 original_sync(focus)
 
-            screen._sync_library_media_browse_state = record_sync
+            screen._media_controller._sync_library_media_browse_state = record_sync
             screen._media_state.bulk_delete_in_flight = True
             screen._media_controller._begin_library_media_mutation()
             initial_syncs = len(sync_calls)
@@ -13819,7 +13820,7 @@ def test_library_media_scope_change_clears_page_selection_with_notice() -> None:
     screen._media_state.confirming_bulk_delete = True
     screen._media_state.row_selection.toggle("local:media:1")
 
-    screen._clear_library_media_selection_for_scope_change()
+    screen._media_controller._clear_library_media_selection_for_scope_change()
 
     assert screen._media_state.select_mode is False
     assert screen._media_state.confirming_bulk_delete is False
@@ -13847,7 +13848,7 @@ async def test_library_media_mounted_type_change_clears_page_selection() -> None
         await pilot.pause()
         assert screen._media_state.row_selection.count == 1
 
-        screen._request_library_media_type("audio", focus_identity=None)
+        screen._media_controller._request_library_media_type("audio", focus_identity=None)
         await _wait_for_condition(
             pilot,
             lambda: (
@@ -13882,16 +13883,16 @@ def test_library_media_type_handler_preserves_none_and_literal_all(
     screen._media_state.type_filter = initial
     screen._library_media_browse_controller.type_options = ("All", "video")
     requested: list[str | None] = []
-    screen._request_library_media_type = lambda value, **_kwargs: requested.append(
+    screen._media_controller._request_library_media_type = lambda value, **_kwargs: requested.append(
         value
     )
-    screen._exit_library_media_select_mode = lambda **_kwargs: None
+    screen._media_controller._exit_library_media_select_mode = lambda **_kwargs: None
     event = SimpleNamespace(
         option=SimpleNamespace(choice_value=choice),
         stop=lambda: None,
     )
 
-    LibraryScreen.handle_library_media_type_choice(screen, event)
+    LibraryMediaController.handle_library_media_type_choice(screen._media_controller, event)
 
     assert screen._media_state.type_filter is choice
     assert requested == [choice]

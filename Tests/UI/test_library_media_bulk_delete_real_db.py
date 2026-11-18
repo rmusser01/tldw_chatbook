@@ -278,7 +278,7 @@ async def test_rows_still_open_while_the_page_sits_behind_the_stale_gate(tmp_pat
             controller.reconcile_committed_mutation(remove_ids=())
             screen._media_state.mutation_scope = None
             screen._media_state.mutation_authority = None
-            screen._sync_library_media_browse_state(None)
+            screen._media_controller._sync_library_media_browse_state(None)
             await pilot.pause()
 
             assert controller.freshness == "stale"
@@ -323,7 +323,7 @@ async def test_retry_paints_a_new_reason_every_time_the_refresh_fails(tmp_path):
             controller.reconcile_committed_mutation(remove_ids=())
             screen._media_state.mutation_scope = None
             screen._media_state.mutation_authority = None
-            screen._sync_library_media_browse_state(None)
+            screen._media_controller._sync_library_media_browse_state(None)
             await pilot.pause()
             status = screen.query_one("#library-media-status", Static)
             assert "Media changed" in str(status.renderable)

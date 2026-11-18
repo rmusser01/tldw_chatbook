@@ -711,7 +711,7 @@ async def test_select_mode_bulk_rows_paint_analyze_export_and_review():
     host = _host()
     async with host.run_test(size=(235, 52)) as pilot:
         screen = await _open_media_list(host, pilot)
-        screen._toggle_library_media_select_mode()
+        screen._media_controller._toggle_library_media_select_mode()
         row = await _wait_for_selector(
             screen, pilot, "#library-media-select-actions"
         )
@@ -750,7 +750,7 @@ async def test_pressing_analyze_leaves_select_mode_and_paints_its_receipt():
                 "analysis_unavailable_reason",
                 lambda *_a, **_k: "",
             )
-            screen._toggle_library_media_select_mode()
+            screen._media_controller._toggle_library_media_select_mode()
             await _wait_for_selector(
                 screen, pilot, "#library-media-analyze-selected"
             )
@@ -900,7 +900,7 @@ async def test_analyze_bulk_action_follows_the_selection_in_place():
                 "analysis_unavailable_reason",
                 lambda *_a, **_k: "",
             )
-            screen._toggle_library_media_select_mode()
+            screen._media_controller._toggle_library_media_select_mode()
             await _wait_for_selector(
                 screen, pilot, "#library-media-analyze-selected"
             )
@@ -2063,7 +2063,7 @@ async def test_select_mode_analyze_reason_is_painted_inline_not_hover_only(size)
     _without_analysis_provider(host)
     async with host.run_test(size=size) as pilot:
         screen = await _open_media_list(host, pilot)
-        screen._toggle_library_media_select_mode()
+        screen._media_controller._toggle_library_media_select_mode()
         await _wait_for_selector(screen, pilot, "#library-media-analyze-selected")
         await pilot.pause()
         analyze = screen.query_one("#library-media-analyze-selected", Button)
@@ -2090,7 +2090,7 @@ async def test_select_mode_bulk_reason_is_painted_with_nothing_selected(size):
     host = _host()
     async with host.run_test(size=size) as pilot:
         screen = await _open_media_list(host, pilot)
-        screen._toggle_library_media_select_mode()
+        screen._media_controller._toggle_library_media_select_mode()
         await _wait_for_selector(screen, pilot, "#library-media-select-actions")
         await pilot.pause()
         export_btn = screen.query_one("#library-media-export-selected", Button)
@@ -2147,7 +2147,7 @@ async def test_select_mode_empty_refresh_does_not_ask_to_select_nothing():
     host = LibraryProductionCSSHarness(app)
     async with host.run_test(size=(235, 52)) as pilot:
         screen = await _open_media_list(host, pilot)
-        screen._toggle_library_media_select_mode()
+        screen._media_controller._toggle_library_media_select_mode()
         await _wait_for_selector(screen, pilot, "#library-media-select-actions")
         await pilot.pause()
         # Baseline: with rows present and nothing selected, the reason paints.
@@ -2157,7 +2157,7 @@ async def test_select_mode_empty_refresh_does_not_ask_to_select_nothing():
         # A successful refresh empties the list while select mode survives.
         controller = screen._library_media_browse_controller
         service.media_items = []
-        screen._request_library_media_browse(
+        screen._media_controller._request_library_media_browse(
             controller.mutation_refresh_scope,
             focus_identity=None,
         )

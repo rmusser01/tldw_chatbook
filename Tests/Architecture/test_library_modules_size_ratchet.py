@@ -523,7 +523,15 @@ _BUDGETS: dict[str, int] = {
     # prose only: the docstring's binding counts re-measured after this slice.
     # 2026-11-15, rebased onto 3.1's rebase onto dev cc6006fcf5: 7196 -> 7197
     # (the same +1), measured; the binding counts re-measured unchanged.
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 7197,
+    # 2026-11-15, TASK-36952.3.3 (media body move slice 3 of 8, the same
+    # sanctioned move): 7151 -> 7864 (+713): 23 bodies byte-for-byte with
+    # their separators and a section comment (+692), 7 callbacks out (-42),
+    # the `check_action` service, 2 getters and 4 shell helpers in (+40),
+    # imports (+5), prose (+18).
+    # 2026-11-16, TASK-36952.3.3 rebased onto 3.2's rebase onto dev
+    # cc6006fcf5: 7197 -> 7912 (+715), the same +713 plus dev's 2-line
+    # TASK-40293 branch ported into the moved browse sync, measured.
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 7912,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only

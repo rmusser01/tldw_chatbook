@@ -1415,7 +1415,18 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-11-15, TASK-36952.3.2 rebased onto 3.1's rebase onto dev
     #: cc6006fcf5: the same -1024 lines and -7 methods, measured 36455 lines,
     #: 1362 methods.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 36539, 1364),
+    #: 2026-11-15, TASK-36952.3.3 (architecture review F2, media body move
+    #: slice 3 of 8): 23 media bodies (select mode, the row press, the browse
+    #: request and sync, the type filter, the take-note action) moved to
+    #: ``LibraryMediaController``. 16 keep a one-line delegator (-450) and 7
+    #: were pruned (-175); 7 callback kwargs left the controller call and 6
+    #: binding kwargs arrived (-9): 36431 -> 35797 lines, 1361 -> 1354 methods
+    #: (measured with ``_measure``).
+    #: 2026-11-16, TASK-36952.3.3 rebased onto 3.2's rebase onto dev
+    #: cc6006fcf5: the moved browse sync carries dev's 2-line TASK-40293
+    #: branch, so -636 lines (-634 before) and the same -7 methods, measured
+    #: 35819 lines, 1355 methods.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 35903, 1357),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard
@@ -1548,7 +1559,10 @@ def test_budget_is_not_left_slack_after_a_wave(rel_path: str) -> None:
 #: whose bodies it now owns, and gained 5 shell-helper callbacks they call.
 #: TASK-36952.3.2 lowered it to 413: the media controller lost 2 callbacks
 #: whose bodies it now owns, and gained 1 getter (`_local_source_counts`).
-_LIBRARY_INIT_LAMBDAS = 413
+#: TASK-36952.3.3 lowered it to 412: the media controller lost 7 callbacks
+#: whose bodies it now owns, and gained 2 getters (`_notes_controller`,
+#: `_notes_state`) and 4 shell-helper callbacks.
+_LIBRARY_INIT_LAMBDAS = 412
 #: Measured at dev 26b2e677dd by `_unbound_class_calls` over Tests/**/*.py:
 #: 724 in 59 files. TASK-36952.2 lowered it to 722 (still 59 files): the two
 #: `LibraryScreen.handle_library_media_reader_more(fake, ...)` calls now call
@@ -1573,7 +1587,11 @@ _LIBRARY_INIT_LAMBDAS = 413
 #: TASK-36952.3.2 lowered it to 599, in 57 files: the 74 calls and
 #: `MethodType` bindings that reached its 24 moved bodies now name
 #: `LibraryMediaController` (none sits inside an `assert`).
-_LIBRARY_UNBOUND_TEST_CALLS = 599
+#: TASK-36952.3.3 lowered it to 571, still in 57 files: the 28 calls,
+#: `MethodType` bindings and `__get__` binding that reached its 23 moved
+#: bodies (3 of them inside an `assert`, ruling R1) now name
+#: `LibraryMediaController`.
+_LIBRARY_UNBOUND_TEST_CALLS = 571
 
 
 def _library_init_lambdas() -> int:

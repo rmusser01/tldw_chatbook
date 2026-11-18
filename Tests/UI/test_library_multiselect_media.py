@@ -152,17 +152,17 @@ def _media_fake(
     # bound to this fake -- ``types.MethodType`` reuses the REAL
     # implementation rather than a hand-rolled stub duplicating its logic.
     fake._exit_library_media_select_mode = types.MethodType(
-        LibraryScreen._exit_library_media_select_mode, fake
+        LibraryMediaController._exit_library_media_select_mode, fake
     )
     # task-28012: the "Select"/"Done" button and the "s" key share this seam.
     fake._toggle_library_media_select_mode = types.MethodType(
-        LibraryScreen._toggle_library_media_select_mode, fake
+        LibraryMediaController._toggle_library_media_select_mode, fake
     )
     fake._clear_library_media_selection_for_scope_change = types.MethodType(
-        LibraryScreen._clear_library_media_selection_for_scope_change, fake
+        LibraryMediaController._clear_library_media_selection_for_scope_change, fake
     )
     fake._notify_library_media_selection_discarded = types.MethodType(
-        LibraryScreen._notify_library_media_selection_discarded, fake
+        LibraryMediaController._notify_library_media_selection_discarded, fake
     )
     fake._cancel_library_media_bulk_delete = types.MethodType(
         LibraryMediaController._cancel_library_media_bulk_delete, fake
@@ -182,7 +182,7 @@ def test_row_press_in_select_mode_toggles_not_opens():
     fake.refresh = lambda **k: setattr(fake, "_refreshed", fake._refreshed + 1)
     fake._open_library_media_viewer = lambda mid: fake._viewer_opened.append(mid)
     event = SimpleNamespace(button=SimpleNamespace(media_id="7"), stop=lambda: None)
-    LibraryScreen.handle_library_media_row(fake, event)
+    LibraryMediaController.handle_library_media_row(fake, event)
     assert fake._media_state.row_selection.is_selected("7")
     assert fake._viewer_opened == []  # viewer NOT opened
     assert fake._refreshed == 1
@@ -192,7 +192,7 @@ def test_row_press_normal_mode_opens_viewer():
     fake = _media_fake(select_mode=False)
     fake._open_library_media_viewer = lambda mid: fake._viewer_opened.append(mid)
     event = SimpleNamespace(button=SimpleNamespace(media_id="7"), stop=lambda: None)
-    LibraryScreen.handle_library_media_row(fake, event)
+    LibraryMediaController.handle_library_media_row(fake, event)
     assert fake._viewer_opened == ["7"]
     assert not fake._media_state.row_selection.is_selected("7")
 
@@ -209,10 +209,10 @@ def test_space_action_toggles_focused_row_in_select_mode():
     fake = _media_fake(select_mode=True)
     fake.refresh = lambda **k: setattr(fake, "_refreshed", fake._refreshed + 1)
     fake.focused = _focused_media_row("7")
-    LibraryScreen.action_library_media_toggle_row_selection(fake)
+    LibraryMediaController.action_library_media_toggle_row_selection(fake)
     assert fake._media_state.row_selection.is_selected("7")
     # Toggling again clears it.
-    LibraryScreen.action_library_media_toggle_row_selection(fake)
+    LibraryMediaController.action_library_media_toggle_row_selection(fake)
     assert not fake._media_state.row_selection.is_selected("7")
 
 
@@ -221,7 +221,7 @@ def test_space_action_noop_outside_select_mode():
     fake = _media_fake(select_mode=False)
     fake.refresh = lambda **k: None
     fake.focused = _focused_media_row("7")
-    LibraryScreen.action_library_media_toggle_row_selection(fake)
+    LibraryMediaController.action_library_media_toggle_row_selection(fake)
     assert not fake._media_state.row_selection.is_selected("7")
 
 
@@ -230,7 +230,7 @@ def test_space_action_noop_when_focus_is_not_a_row():
     fake = _media_fake(select_mode=True)
     fake.refresh = lambda **k: None
     fake.focused = SimpleNamespace(has_class=lambda cls: False)
-    LibraryScreen.action_library_media_toggle_row_selection(fake)
+    LibraryMediaController.action_library_media_toggle_row_selection(fake)
     assert fake._media_state.row_selection.count == 0
 
 
@@ -247,16 +247,16 @@ def test_select_enter_available_matches_the_button_gate():
             retained_items=({"id": "local:media:1"},),
         )
     )
-    assert LibraryScreen._library_media_select_enter_available(fake) is True
+    assert LibraryMediaController._library_media_select_enter_available(fake) is True
 
     # No rows -> not available (matches the disabled Select button).
     fake._library_media_browse_controller.retained_items = ()
-    assert LibraryScreen._library_media_select_enter_available(fake) is False
+    assert LibraryMediaController._library_media_select_enter_available(fake) is False
 
     # Stale page -> not available even with rows.
     fake._library_media_browse_controller.retained_items = ({"id": "x"},)
     fake._library_media_browse_controller.freshness = "stale"
-    assert LibraryScreen._library_media_select_enter_available(fake) is False
+    assert LibraryMediaController._library_media_select_enter_available(fake) is False
 
 
 @pytest.mark.asyncio
@@ -510,7 +510,7 @@ async def test_media_empty_import_uses_existing_library_destination():
         _select_library_rail_row=select_row,
     )
 
-    await LibraryScreen.handle_library_media_empty_import(
+    await LibraryMediaController.handle_library_media_empty_import(
         fake, SimpleNamespace(stop=lambda: None)
     )
 
@@ -528,7 +528,7 @@ def test_media_empty_clear_type_requests_applied_scope_page_one():
         ),
     )
 
-    LibraryScreen.handle_library_media_empty_clear_type(
+    LibraryMediaController.handle_library_media_empty_clear_type(
         fake, SimpleNamespace(stop=lambda: None)
     )
 
@@ -953,7 +953,7 @@ def test_row_press_blocked_while_confirming_bulk_delete():
     fake = _media_fake(select_mode=True, confirming_bulk_delete=True)
     fake._media_state.row_selection.toggle("7")  # pre-armed selection
     event = SimpleNamespace(button=SimpleNamespace(media_id="7"), stop=lambda: None)
-    LibraryScreen.handle_library_media_row(fake, event)
+    LibraryMediaController.handle_library_media_row(fake, event)
     # Still selected -- untouched, not toggled off.
     assert fake._media_state.row_selection.is_selected("7")
     assert fake._refreshed == 0
@@ -1113,7 +1113,7 @@ def test_select_toggle_off_with_selection_notifies_discard_and_resets_confirm():
     fake.refresh = lambda **k: setattr(fake, "_refreshed", fake._refreshed + 1)
     fake._media_state.row_selection.select_all(["1", "2"])
     event = SimpleNamespace(stop=lambda: None)
-    LibraryScreen.handle_library_media_select_toggle(fake, event)
+    LibraryMediaController.handle_library_media_select_toggle(fake, event)
     assert fake._media_state.select_mode is False
     assert fake._media_state.confirming_bulk_delete is False
     assert fake._media_state.row_selection.count == 0
@@ -1127,7 +1127,7 @@ def test_select_toggle_off_with_empty_selection_does_not_notify():
     fake = _media_fake(select_mode=True)
     fake.refresh = lambda **k: setattr(fake, "_refreshed", fake._refreshed + 1)
     event = SimpleNamespace(stop=lambda: None)
-    LibraryScreen.handle_library_media_select_toggle(fake, event)
+    LibraryMediaController.handle_library_media_select_toggle(fake, event)
     assert fake._notified == []
 
 
@@ -1135,7 +1135,7 @@ def test_select_toggle_on_does_not_notify():
     fake = _media_fake(select_mode=False)
     fake.refresh = lambda **k: setattr(fake, "_refreshed", fake._refreshed + 1)
     event = SimpleNamespace(stop=lambda: None)
-    LibraryScreen.handle_library_media_select_toggle(fake, event)
+    LibraryMediaController.handle_library_media_select_toggle(fake, event)
     assert fake._media_state.select_mode is True
     assert fake._notified == []
 
@@ -1158,7 +1158,7 @@ def test_select_toggle_on_arms_row_focus_not_the_items_pane():
     fake._arm_library_list_entry_focus = lambda **_kwargs: seams.append("list-entry")
     fake.call_after_refresh = lambda callback, *args: callback(*args)
     event = SimpleNamespace(stop=lambda: None)
-    LibraryScreen.handle_library_media_select_toggle(fake, event)
+    LibraryMediaController.handle_library_media_select_toggle(fake, event)
     assert fake._media_state.select_mode is True
     assert seams == ["list-entry"]
 
@@ -1173,7 +1173,7 @@ def test_select_toggle_off_keeps_the_users_focus():
     fake._arm_library_list_entry_focus = lambda **_kwargs: seams.append("list-entry")
     fake.call_after_refresh = lambda callback, *args: callback(*args)
     event = SimpleNamespace(stop=lambda: None)
-    LibraryScreen.handle_library_media_select_toggle(fake, event)
+    LibraryMediaController.handle_library_media_select_toggle(fake, event)
     assert fake._media_state.select_mode is False
     assert seams == []
     assert fake._footer_registrations == 1
@@ -1201,12 +1201,12 @@ def test_type_filter_change_exits_select_mode_and_notifies_discard():
         type_options=("All", "video")
     )
     fake._library_media_type_options = (
-        LibraryScreen._library_media_type_options.__get__(fake)
+        LibraryMediaController._library_media_type_options.__get__(fake)
     )
     # Pressing the chooser under an armed confirm is inert: no strip, no
     # filter drift, the confirmation stays exactly as armed.
     press = SimpleNamespace(stop=lambda: None)
-    LibraryScreen.handle_library_media_type_filter_pressed(fake, press)
+    LibraryMediaController.handle_library_media_type_filter_pressed(fake, press)
     assert fake._media_state.type_choices_visible is False
     assert fake._media_state.type_filter == "All"
     assert fake._media_state.confirming_bulk_delete is True
@@ -1220,7 +1220,7 @@ def test_type_filter_change_exits_select_mode_and_notifies_discard():
         stop=lambda: None,
         option=SimpleNamespace(choice_value="video"),
     )
-    LibraryScreen.handle_library_media_type_choice(fake, pick)
+    LibraryMediaController.handle_library_media_type_choice(fake, pick)
     assert fake._media_state.type_filter == "video"
     assert fake._media_state.type_choices_visible is False
     assert fake._media_state.select_mode is False
@@ -2471,7 +2471,7 @@ def test_space_action_noops_on_a_stale_page_and_under_a_confirm():
         fake.refresh = lambda **k: None
         fake.focused = _focused_media_row("7")
         mutate(fake)
-        LibraryScreen.action_library_media_toggle_row_selection(fake)
+        LibraryMediaController.action_library_media_toggle_row_selection(fake)
         assert fake._media_state.row_selection.count == 0
 
 

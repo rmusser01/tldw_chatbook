@@ -1701,7 +1701,7 @@ async def test_authoritative_content_revision_clamps_once_and_labels_outcome(
             for index, item in enumerate(service.media_items)
             if service._backing_id(item, index) != removed_backing
         ]
-        screen._request_library_media_browse(
+        screen._media_controller._request_library_media_browse(
             controller.mutation_refresh_scope,
             focus_identity=None,
         )
