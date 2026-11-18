@@ -3518,3 +3518,6 @@ Tests/UI/test_screen_navigation.py::test_workflows_and_schedules_updates_after_r
 Tests/UI/test_screen_navigation.py::test_workflows_load_after_the_exit_fence_posts_no_status
 Tests/UI/test_screen_navigation.py::test_search_route_lands_on_library_rag_canvas
 Tests/UI/test_screen_navigation.py::test_legacy_alias_explicit_context_merges_default_under_caller_keys
+# TASK-41501 review r16nv-rev1 (2026-11-18): late Workflows/Schedules updates
+# inside a screen's removal window (4.9-5.3 s serially, load 16-19).
+Tests/UI/test_screen_navigation.py::test_workflows_and_schedules_updates_during_removal_touch_no_controls

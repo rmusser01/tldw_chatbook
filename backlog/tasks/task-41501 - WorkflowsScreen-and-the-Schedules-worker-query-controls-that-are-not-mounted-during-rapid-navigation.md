@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-17 05:27
-updated_date: 2026-11-18 08:21
+updated_date: 2026-11-18 09:30
 labels:
 - follow-up
 - ui
@@ -73,3 +73,18 @@ Found by TASK-41127 (libtests, round 15). `WorkflowsScreen._show_status` (introd
 **Ratchet.** `schedules_workbench.py`: 5530 -> 5544 lines (+14, measured); the budget moves 5532 -> 5544 with a dated note.
 
 **Files.** `tldw_chatbook/UI/Screens/workflows_screen.py`, `tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py`, `Tests/UI/test_screen_navigation.py`, `Tests/Architecture/test_module_size_ratchet.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `backlog/docs/lessons-textual.md` (a `call_after_refresh` entry gains the "outlives its own screen" paragraph).
+
+**Review round 1 (r16nv-rev1).**
+- **A definition-detail worker could still crash the app.** `_load_queue_definition_detail` awaits its count read and then paints through `_detail_panes`. `_detail_panes` now returns no panes once the screen is not live, so its other callers (the reminder detail, the follow button, the no-service branch) are covered too. The follow button's own check is gone. The removal test now runs the worker body as well. With the new check temporarily removed, it was red on the detail panes, the follow button and the definition detail.
+- **The `_pruning` half now has a test.** `test_workflows_and_schedules_updates_during_removal_touch_no_controls` follows TASK-36527's recipe during a real navigation away from each screen. When the screen's `remove()` starts, it gathers the children's tasks before the screen's own exit does, then calls each update while the screen is attached, pruning, childless and not yet unmounted. The test asserts that window before and after the calls.
+  - Red with `and not self._pruning` temporarily dropped from Workflows' `_controls_live`: refresh, library and layout raised `NoMatches`.
+  - Red with it dropped from Schedules': table, detail panes, follow, owner and mount raised `NoMatches`.
+  - Green with both restored.
+- **Workflows' session attach after a failed load** now checks `_controls_live()`, so the mount-worker comment holds. `schedules_workbench.py` stays at 5544 lines; its check moved, it did not grow.
+- **Runs.**
+  - `test_screen_navigation.py` at `-n 4`: 149 passed, 2 failed (TASK-23149's two), 71 s, load 18-21.
+  - The removal, removal-window and exit-fence tests ×10 each (a temporary parametrize, removed afterwards): 30 of 30 at `-n 4`.
+  - The window node, 3 serial lane-flag rounds: 4.9-5.3 s each, load 16-19; it goes at the census tail.
+  - The Workflows and Schedules files at `-n 4`, plain: 898 passed, 341 failed, 6 errors, almost all of them the local `RecoveryRequired` trap. Under a temporary `bootstrap_profile` marker: 24 failed at this round's source, 20 at round 0's (b617bce9c8), load 11-19.
+  - The six nodes that failed only at this round's source, rerun 3× on each side, flake on both. To rule out the new check, it was temporarily made to record each trip, and the four definition and repeat nodes ran 5×. It tripped once, in a run that passed, at a real removal (`attached=True pruning=True`). The one failure in those runs (`test_definition_runs_on_retry_button_rebegins_a_failed_transfer`, the confirm dialog not yet on top) had no trip.
+  - Serial ratchets: 498 passed, plus the same two `project_index_binding_card.py` timer-inventory reds.

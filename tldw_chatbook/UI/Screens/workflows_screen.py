@@ -160,7 +160,7 @@ class WorkflowsScreen(BaseAppScreen):
             self.call_after_refresh(self._show_status)
         self.call_after_refresh(self._layout_panes)
         session = getattr(self.app_instance, "_workflow_session", None)
-        if session is not None:
+        if session is not None and self._controls_live():
             await self._attach_session(session)
 
     def _controls_live(self):

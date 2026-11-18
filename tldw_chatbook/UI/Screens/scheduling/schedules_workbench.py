@@ -1642,6 +1642,8 @@ class SchedulesWorkbench(BaseAppScreen):
         availability flag) pass ``None`` and reach every instance, as
         before.
         """
+        if not self._controls_live():
+            return []
         panes: list[Any] = [self.query_one(pane_id, pane_type)]
         pushed = self._pushed_detail
         if (
@@ -2262,8 +2264,6 @@ class SchedulesWorkbench(BaseAppScreen):
         self._update_follow_button_state()
 
     def _update_follow_button_state(self) -> None:
-        if not self._controls_live():
-            return
         available = (
             self._latest_console_follow_item_id is not None
             or self._latest_console_launch_kwargs is not None

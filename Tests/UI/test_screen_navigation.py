@@ -1533,24 +1533,135 @@ async def test_workflows_and_schedules_updates_after_removal_touch_no_controls()
             "Schedules was never removed"
         )
 
-        errors = []
-        for name, call in (
-            ("workflows status", workflows._show_status),
-            ("workflows refresh", workflows._refresh_authoring),
-            ("workflows library", workflows._show_library),
-            ("workflows layout", workflows._layout_panes),
-            ("schedules table", schedules._render_table),
-            ("schedules follow", schedules._update_follow_button_state),
-            ("schedules owner", schedules._refresh_owner_select),
-            ("schedules mount", schedules.on_mount),
-        ):
-            try:
-                result = call()
-                if asyncio.iscoroutine(result):
-                    await result
-            except Exception as exc:  # noqa: BLE001 - collected for the assert
-                errors.append((name, exc))
+        errors = await _late_update_errors(
+            (
+                *_workflows_late_updates(workflows),
+                *_schedules_late_updates(schedules),
+                (
+                    "schedules definition detail",
+                    lambda: schedules._load_queue_definition_detail(
+                        schedules._selected_row_id, {"id": "r16nv-definition"}
+                    ),
+                ),
+            )
+        )
         assert not errors, f"a late update queried a removed screen: {errors}"
+
+
+def _workflows_late_updates(screen):
+    return (
+        ("workflows status", screen._show_status),
+        ("workflows refresh", screen._refresh_authoring),
+        ("workflows library", screen._show_library),
+        ("workflows layout", screen._layout_panes),
+    )
+
+
+def _schedules_late_updates(screen):
+    from tldw_chatbook.UI.Screens.scheduling.definition_detail import DefinitionDetail
+
+    return (
+        ("schedules table", screen._render_table),
+        (
+            "schedules detail panes",
+            lambda: screen._detail_panes(
+                "#scheduling-queue-definition-detail", DefinitionDetail
+            ),
+        ),
+        ("schedules follow", screen._update_follow_button_state),
+        ("schedules owner", screen._refresh_owner_select),
+        ("schedules mount", screen.on_mount),
+    )
+
+
+async def _late_update_errors(calls) -> list:
+    errors = []
+    for name, call in calls:
+        try:
+            result = call()
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception as exc:  # noqa: BLE001 - collected for the assert
+            errors.append((name, exc))
+    return errors
+
+
+def _hold_removal_window(screen) -> SimpleNamespace:
+    """Catch ``screen`` attached, pruning and childless, before its Unmount.
+
+    TASK-36527's recipe. When navigation starts the removal, gather the
+    children's tasks before the screen's own exit does, so awaiting
+    ``window.children_gone`` resumes the test before the screen goes on to
+    unmount and detach. That is the window a screen's workers still run in.
+    """
+    window = SimpleNamespace(started=asyncio.Event(), children_gone=None)
+    real_remove = screen.remove
+
+    def remove():
+        children = (*screen.children, *screen._get_virtual_dom())
+        window.children_gone = asyncio.gather(
+            *(child._task for child in children if child._task is not None)
+        )
+        removal = real_remove()
+        window.started.set()
+        return removal
+
+    screen.remove = remove
+    return window
+
+
+@pytest.mark.asyncio
+async def test_workflows_and_schedules_updates_during_removal_touch_no_controls():
+    """TASK-41501 review r16nv-rev1: the ``_pruning`` half of the check.
+
+    Textual cancels a screen's workers only at its Unmount, after its
+    children have gone, so they run while the screen is still attached and
+    pruning. Each update is called in that window, during a real
+    navigation away from each screen.
+    """
+    from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
+        SchedulesWorkbench,
+    )
+    from tldw_chatbook.UI.Screens.workflows_screen import WorkflowsScreen
+
+    app = _build_unsplashed_test_app()
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await _wait_for_initial_screen(pilot)
+        for route, screen_type, ready, updates, away in (
+            (
+                "workflows",
+                WorkflowsScreen,
+                "_loaded",
+                _workflows_late_updates,
+                "schedules",
+            ),
+            (
+                "schedules",
+                SchedulesWorkbench,
+                "is_mounted",
+                _schedules_late_updates,
+                "home",
+            ),
+        ):
+            app.post_message(NavigateToScreen(route))
+            assert await _settle(
+                pilot,
+                lambda kind=screen_type, flag=ready: (
+                    isinstance(app.screen, kind) and getattr(app.screen, flag)
+                ),
+            ), f"{route} never finished mounting"
+            screen = app.screen
+            window = _hold_removal_window(screen)
+            app.post_message(NavigateToScreen(away))
+            await asyncio.wait_for(window.started.wait(), timeout=15)
+            await asyncio.wait_for(window.children_gone, timeout=15)
+            entered = (screen.is_attached, screen._pruning, len(screen.children))
+            errors = await _late_update_errors(updates(screen))
+            left = (screen.is_attached, screen._pruning)
+            assert entered == (True, True, 0), f"{route} window missed: {entered}"
+            assert left == (True, True), f"{route} left its window: {left}"
+            assert not errors, f"an update queried a pruning {route}: {errors}"
 
 
 @pytest.mark.asyncio
