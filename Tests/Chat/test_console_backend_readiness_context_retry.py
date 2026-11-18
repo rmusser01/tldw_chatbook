@@ -213,7 +213,17 @@ async def test_readiness_context_retry_requires_original_settlement(request, cha
                 )
             )
             if change in {"once", "agent_once", "persisted", "settings"}:
-                await asyncio.shield(receipt.applied)
+                if change == "persisted":
+                    # Transcript preparation precedes readiness. First-save
+                    # publication invalidates its original marker selection,
+                    # even though the readiness-only retry settles correctly.
+                    with pytest.raises(
+                        RuntimeError, match="^Console marker publication changed$"
+                    ) as caught:
+                        await asyncio.shield(receipt.applied)
+                    assert type(caught.value) is RuntimeError
+                else:
+                    await asyncio.shield(receipt.applied)
                 assert readiness.context_key == readiness._context_key(session)
                 assert readiness.agent_key == readiness._agent_key(session)
                 assert readiness.key == readiness._key(session, session.settings, backend.controls.source_revision)
