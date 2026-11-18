@@ -284,12 +284,15 @@ edit fixtures. Each side must finish both journeys and pass shutdown to count.
 | Clean pair on `41a4d02006` | README baseline / candidate | Approved edit baseline / candidate | Original assertions and shutdown |
 |---|---:|---:|---|
 | 1 | 341.4389 s / 28.5447 s | 461.5773 s / 28.0529 s | Both sides passed. Candidate first HTTP arrived at 14.5345 s and 9.2941 s. |
+| 2 | Pending / 33.2691 s | Pending / 40.9775 s | Candidate passed and shut down. First HTTP arrived at 13.4365 s and 10.1955 s. Its matched baseline follows it. |
 
 The original receipt SHA-256 values for pair 1 are
 `37cd15b0121e8547b5345e68f471d22f039fdf73daa3fc7bdf8abff4ca2feb21`
 (baseline) and
 `d903b709c5bb92b4a9a911d1c1c612e0c78ce92039a95e9dde1b7d1381f0ea2e`
 (candidate). Both candidate turns exceeded five seconds.
+The pair 2 candidate receipt SHA-256 is
+`1db0f406bc3d37008b81c4b496d85bc7c090c722bba2bfc7d5326ee956373f08`.
 
 Batch `q5` started its first clean baseline on Windows 10 at 07:59 UTC on November 18. The driver pinned candidate `a3bf91340319ad7ad60177a37a537ca46364c2e3` and configuration SHA-256 `6af37c73d99d05badc21dc5b570104a3b513414cd213af8cc9464df362f62f93`. Its order is B1/C1, C2/B2, B3/C3. The earlier q4 plan never launched. A separate native component test accepted the corrected rail Apply, then the mounted-writer test failed in its subsequent visible read. Those tests contribute no journey times.
 

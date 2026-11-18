@@ -25,8 +25,10 @@ import os as _os
 import platform
 import stat as _stat
 import struct
-from pathlib import Path
-from types import SimpleNamespace
+from pathlib import Path, WindowsPath
+from types import MethodType, SimpleNamespace
+
+from .definition_records import capture_definitions, definitions_current
 
 _U32 = C.c_uint32
 _I32 = C.c_int32
@@ -55,6 +57,8 @@ _FILE_RENAME_REPLACE_IF_EXISTS = 0x00000001
 _FILE_RENAME_POSIX_SEMANTICS = 0x00000002
 _FILE_RENAME_INFORMATION_EX = 65
 _EPOCH_100NS = 116444736000000000
+# Enabled by the component comparison while the complete-operation cost is measured.
+_ORDINARY_STAT_VOLUME_PROOF = False
 
 
 class _UnicodeString(C.Structure):
@@ -374,9 +378,30 @@ class _Native:
             ),
             (self.nt, "RtlNtStatusToDosError", [_I32], _U32),
         ]
+        self._stat_calls = []
         for dll, name, arguments, result in signatures:
             function = getattr(dll, name)
             function.argtypes, function.restype = arguments, result
+            if name in {
+                "NtCreateFile",
+                "GetFileInformationByHandle",
+                "GetFileType",
+                "GetVolumeInformationByHandleW",
+                "NtQueryVolumeInformationFile",
+                "CloseHandle",
+            }:
+                self._stat_calls.append(
+                    (
+                        dll,
+                        name,
+                        function,
+                        function.argtypes,
+                        tuple(function.argtypes),
+                        result,
+                        getattr(function, "errcheck", None),
+                    )
+                )
+        self._stat_calls = tuple(self._stat_calls)
         self.user_sid = self._user_sid()
 
     def check(self, result):
@@ -606,6 +631,10 @@ class _Native:
             if proof is None:
                 self.ntfs(handle)
             else:
+                if _metadata_record.stat_audit:
+                    # Ordinary stat retains the real allocation/audit performed
+                    # by ntfs, before replacing only its two volume queries.
+                    C.create_unicode_buffer(32)
                 # Only this finite observation's still-owned directory birth
                 # proves the relative child's filesystem, never a serial cache.
                 _component(name)
@@ -722,6 +751,7 @@ class _AdmissionMetadataHandle:
         self.directory = False
         self.qualified = False
         self.close_error = None
+        self.stat_audit = False
 
 
 class _AdmissionMetadataCloseError(OSError):
@@ -814,6 +844,23 @@ class WindowsOS:
         if isinstance(path, int):
             return self.fstat(path)
         native = _native()
+        if (
+            _ORDINARY_STAT_VOLUME_PROOF
+            and dir_fd is None
+            and type(self) is WindowsOS
+            and type(path) in (str, WindowsPath)
+        ):
+            raw = _os.fspath(path)
+            drive, tail = ntpath.splitdrive(ntpath.normpath(raw))
+            if (
+                len(drive) == 2
+                and drive[1] == ":"
+                and drive[0].isalpha()
+                and tail.startswith(("\\", "/"))
+                and tail.strip("\\/")
+                and _stat_sources_current(native, self)
+            ):
+                return self._stat_absolute(raw, native)
         with _parent(path, dir_fd) as (parent, leaf):
             if leaf is None:
                 with native.reopen(
@@ -825,6 +872,89 @@ class WindowsOS:
             return self._stat_handle(handle)
         finally:
             native.kernel.CloseHandle(handle)
+
+    def _stat_absolute(self, path, native):
+        """Own one rolling absolute traversal; no verdict outlives its handles."""
+        absolute = ntpath.abspath(path)
+        drive, tail = ntpath.splitdrive(absolute)
+        if (
+            len(drive) != 2
+            or drive[1] != ":"
+            or not drive[0].isalpha()
+            or not tail.startswith("\\")
+        ):
+            raise ValueError("local_absolute_drive_path_required")
+        parts = [_component(part) for part in tail.split("\\") if part]
+        opened, failed = {}, []
+        close = native.kernel.CloseHandle
+        close_arguments = close.argtypes
+        close_items = tuple(close_arguments)
+        close_result, close_check = close.restype, getattr(close, "errcheck", None)
+
+        def current():
+            if not _stat_sources_current(native, self):
+                raise OSError(errno.ESTALE, "windows_stat_source_changed")
+
+        def release(record):
+            del opened[id(record)]  # Never retry an uncertain numeric handle.
+            if record.handle is None:
+                return
+            try:
+                if (
+                    close.argtypes is not close_arguments
+                    or len(close_arguments) != len(close_items)
+                    or any(
+                        left is not right
+                        for left, right in zip(
+                            close_arguments, close_items, strict=True
+                        )
+                    )
+                    or close.restype is not close_result
+                    or getattr(close, "errcheck", None) is not close_check
+                ):
+                    raise OSError(errno.ESTALE, "windows_stat_close_source_changed")
+                closed = close(record.handle)
+            except BaseException as error:
+                record.close_error = error
+                failed.append(record)
+            else:
+                if not closed:
+                    record.close_error = C.get_last_error()
+                    failed.append(record)
+
+        parent = None
+        selected = Path(drive + "\\")
+        try:
+            current()
+            for index, name in enumerate(("\\??\\" + drive + "\\", *parts)):
+                if index:
+                    selected = selected / name
+                record = _AdmissionMetadataHandle(native, selected)
+                record.owner, record.parent, record.stat_audit = opened, parent, True
+                opened[id(record)] = record
+                native.open_handle(
+                    name,
+                    parent=None if parent is None else parent.handle,
+                    directory=index < len(parts),
+                    metadata=index == len(parts),
+                    _metadata_record=record,
+                )
+                if parent is not None:
+                    release(parent)
+                    if failed:
+                        raise _AdmissionMetadataCloseError(failed)
+                parent = record
+                # One scan after the step's native open and rolling close;
+                # the exact birth/parent proof still runs on every child.
+                current()
+            result = self._stat_handle(parent.handle)
+        finally:
+            for record in reversed(tuple(opened.values())):
+                release(record)
+            if failed:
+                raise _AdmissionMetadataCloseError(failed)
+        current()
+        return result
 
     def stat_for_admission(self, path, *, follow_symlinks=False):
         """Read fresh metadata/descriptor with checked named-handle retirement."""
@@ -875,12 +1005,12 @@ class WindowsOS:
         opened: dict[int, _AdmissionMetadataHandle] = {}
         failed = []
 
-        def named_handle(node):
+        def named_handle(node, parent):
             record = _AdmissionMetadataHandle(native, node)
             record.owner = opened
-            record.parent = None if node.parent == node else handles[node.parent]
+            record.parent = None if parent == node else handles[parent]
             opened[id(record)] = record
-            if node.parent == node:
+            if parent == node:
                 native.open_handle(
                     "\\??\\" + node.drive + "\\",
                     directory=True,
@@ -889,7 +1019,7 @@ class WindowsOS:
             else:
                 native.open_handle(
                     node.name,
-                    parent=handles[node.parent].handle,
+                    parent=handles[parent].handle,
                     metadata=True,
                     directory=node in parents,
                     _metadata_record=record,
@@ -913,11 +1043,12 @@ class WindowsOS:
 
         try:
             for node in nodes:
-                if node.parent != node and handles[node.parent] is None:
+                parent = node.parent
+                if parent != node and handles[parent] is None:
                     handles[node] = None
                     continue
                 try:
-                    record = named_handle(node)
+                    record = named_handle(node, parent)
                 except FileNotFoundError:
                     handles[node] = None
                     continue
@@ -929,11 +1060,12 @@ class WindowsOS:
                     if failed:
                         raise _AdmissionMetadataCloseError(failed)
             for node in reversed(nodes):
-                if node.parent != node and handles[node.parent] is None:
+                parent = node.parent
+                if parent != node and handles[parent] is None:
                     observations[node] = None
                     continue
                 try:
-                    current = named_handle(node)
+                    current = named_handle(node, parent)
                 except FileNotFoundError:
                     current = None
                 if current is None:
@@ -1355,3 +1487,70 @@ def flush_file(fd: int) -> None:
     # never a reconstructed path, when a verifier holds a read-only descriptor.
     with native.reopen(handle, 0x40000000) as writable:
         native.check(native.kernel.FlushFileBuffers(writable))
+
+
+def _stat_sources_current(native, facade):
+    """Custom sources keep the original per-handle volume qualification."""
+    if type(native) is not _Native or type(facade) is not WindowsOS:
+        return False
+    calls = vars(native).get("_stat_calls")
+    for name in ("stat", "_stat_absolute", "_stat_handle"):
+        bound = vars(facade).get(name)
+        if (
+            type(bound) is not MethodType
+            or bound.__self__ is not facade
+            or bound.__func__ is not vars(WindowsOS).get(name)
+        ):
+            return False
+    if (
+        any(name in vars(native) for name in _STAT_METHODS)
+        or type(calls) is not tuple
+        or len(calls) != 6
+    ):
+        return False
+    try:
+        if not definitions_current(_STAT_DEFINITIONS):
+            return False
+        for owner, name, function, arguments, items, result, check in calls:
+            if (
+                not isinstance(function, C._CFuncPtr)
+                or vars(owner).get(name) is not function
+                or function.argtypes is not arguments
+                or len(arguments) != len(items)
+                or any(
+                    left is not right
+                    for left, right in zip(arguments, items, strict=True)
+                )
+                or function.restype is not result
+                or getattr(function, "errcheck", None) is not check
+            ):
+                return False
+    except (AttributeError, TypeError, ValueError):
+        return False
+    return vars(native).get("_stat_calls") is calls
+
+
+_STAT_METHODS = (
+    "__init__",
+    "open_handle",
+    "info",
+    "ntfs",
+    "security",
+    "check",
+    "ntcheck",
+)
+_STAT_DEFINITIONS = capture_definitions(
+    (
+        *((_Native, name, getattr(_Native, name)) for name in _STAT_METHODS),
+        *(
+            ((WindowsOS, name, getattr(WindowsOS, name)))
+            for name in ("stat", "_stat_absolute", "_stat_handle")
+        ),
+        *(
+            (globals(), name, globals()[name])
+            for name in ("_parent", "_component", "_stat_sources_current")
+        ),
+        (_AdmissionMetadataHandle, "__init__", _AdmissionMetadataHandle.__init__),
+        (C, "create_unicode_buffer", C.create_unicode_buffer),
+    )
+)

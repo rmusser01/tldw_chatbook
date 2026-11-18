@@ -1980,6 +1980,38 @@ volume mismatch, name replacement, missing paths and native close failures.
 The unchanged original journeys remain the performance gate; this local saving
 alone makes no claim about the five-second target.
 
+#### Finite ordinary read-only stat traversal (TASK-40608)
+
+A stock `WindowsOS.stat` of one absolute non-root local drive path may use the
+same live-parent volume proof within that single synchronous traversal. This
+extends Task32 only for that route. Every root still receives fresh complete
+NTFS/local-device qualification. Every child keeps its original relative native
+open, fresh identity/type/reparse checks and matching-volume proof. Full component
+validation, the leaf's fresh ACL and ChangeTime, and rolling parent-close order
+remain. No proof survives the call or combines separate paths or operations.
+
+Retain the actual ctypes Unicode-buffer allocation and its audit event at each
+original volume-qualification point. Custom/changed sources, relative paths,
+borrowed descriptors, drive-root queries and mutating opens keep the original
+route. Once selected, source drift or a failed parent proof refuses; it does not
+retry through the original route. Capture every successful birth before native
+validation, retain the original closer, and refuse uncertain close without
+retrying a handle value. Cleanup preserves the original failure as context.
+
+The causal stock baseline observed eleven opens, eleven Unicode audit events,
+one security read and eleven volume qualifications, with every handle closed.
+It failed only the proposed one-root qualification count. The uninstrumented
+component baseline measured median 1.215 ms for a single stat and 31.542 ms for a
+complete warm acquisition plus close. These are local component observations,
+not journey speedups. Adoption requires native outcome/audit/source/retirement
+controls and improvement in both single-path and complete-operation comparisons;
+a regressing candidate stays off. The original six journey timings remain the
+sub-five-second acceptance gate.
+
+The draft comparison enables this path only in its component tests. The
+Windows CI runner measures the original and candidate paths in alternating
+order using the same file, native hold and confirmed warm evidence.
+
 #### TASK-40608 — private admission observation owner (2026-11-14)
 
 **Qualification outcome: rejected for production.** Task38 passed its correctness cohorts but all six measured warm acquisitions regressed with the resident observer, including IPC, parent guards and receipt retirement. The experiment remained disabled. Remove its product hooks and worker modules using the exact Task36/37 preimages; preserve the replayable Gate17 candidate, diagnostic sources and receipts outside production. The contract below records the evaluated alternative, not an installed architecture. This rejection does not remove the earlier admission reuse, shared displays, finite DB batches, permission worker or Task32 metadata-tree volume proof. It establishes no five-second result; TASK-40608 remains open.
@@ -2228,6 +2260,25 @@ The callback still runs its original queries, source checks and physical
 retirement checks. Cancellation waits for the submitted producer, and
 cleanup joins the worker before returning. The independently owned
 transaction survives. A failed or uncertain close still refuses the turn.
+
+#### Run-log availability in a mounted Agent section
+
+A full Console display read can omit the optional disk probe for the Agent
+section's log button when the requesting view has observed that mounted
+section closed for this visit, conversation and log target. The original
+rail already restricts this probe to times when it can present the button.
+The backend was probing on full refreshes even with the section closed.
+Activity in the current conversation alone leaves that section closed.
+
+An omitted observation has a distinct wire value. It cannot authorize
+opening a log or supply a cached negative result to a visible section.
+Initial mount, an unknown or changed target, explicit expansion and
+automatic expansion each require the original fresh availability read.
+Reopening a section whose observation was omitted requests it immediately.
+Ordinary full requests retain their complete result. Each probe and viewer
+open retains its existing source, session, visit, permission and physical
+retirement checks. A closed or replaced visit cannot publish its completion
+to the next view.
 
 #### Approval observers follow the checked decision publication
 
