@@ -134,5 +134,9 @@ Red/green (load 55-80, `-n 2` unless noted):
 ### Review r16rs-rev3, fix round 3
 
 - AC#2 names the excluded shapes instead of the higher-id tasks (CLAUDE.md section 2); TASK-41705, TASK-41706 and TASK-41707 track them and depend on this task.
-- The `[databases]` case now shows by itself that the board lived only in the `-wal`: after the writer and before the rollback, it copies the main database file alone and finds no board there. So the safety-copy check still guards the WAL path if preview or inventory ever checkpoints first. Control: with the writer running a passive checkpoint before it exits, the case failed at that assertion (`AssertionError: kanban.local`, 42 s). Green: 1 passed (102 s serial, load 7); preflight passed.
+- The `[databases]` case now shows by itself that the board lived only in the `-wal`: after the writer, it copies the main database file alone and finds no board there. Control: with the writer running a passive checkpoint before it exits, the case failed at that assertion (`AssertionError: kanban.local`, 42 s). Green: 1 passed (102 s serial, load 7); preflight passed. (Fix round 4 corrects this note: this check runs before the inventory and the rollback preview, so it could not catch a checkpoint made by them.)
+
+### Review r16rs-rev4, fix round 4
+
+- The main-file-only check now also runs right after `preview_rollback` (whose target is a fresh `preview_backup`), so the test guards against the inventory or the rollback preview checkpointing the `-wal` before execution: the board must still be missing from the main file there, and the new safety copy must then hold it. A checkpoint made inside execution, before the safety capture, cannot be seen from this test: execution runs in one call, and its capture reads the main file and the `-wal` together. Control: with `_created_destination_target` temporarily running a passive checkpoint on a created database, the case failed at the new check (`AssertionError: ('kanban.local', 'previewed')`, 50 s). Green: 1 passed (96 s serial, load 7-9); preflight passed.
 

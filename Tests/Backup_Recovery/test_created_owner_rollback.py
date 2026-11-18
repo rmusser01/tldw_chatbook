@@ -298,6 +298,17 @@ def located(root,made):
 def present(paths):
     return {label for label,path in paths.items() if path.exists()}
 
+def board_only_in_wal(paths,stage):
+    # The main file alone lacks the post-restore board: nothing has
+    # checkpointed the -wal by this stage.
+    import shutil,sqlite3
+    from contextlib import closing
+    for label in case.get('wal',()):
+        main_only=Path.home()/(label+'-'+stage+'-main-only.db')
+        shutil.copyfile(paths[label],main_only)
+        with closing(sqlite3.connect(main_only)) as db:
+            assert not db.execute("SELECT name FROM kanban_boards WHERE uuid='post-restore-board'").fetchall(),(label,stage)
+
 shared=Path.home().parent.parent/'source'/'home'
 service=RecoveryService(Path.home()/'recovery-control')
 try:
@@ -334,13 +345,7 @@ try:
             subprocess.run([sys.executable,'-c',writer,str(paths[label]),BOARD_INSERT],check=True,timeout=60)
             assert Path(str(paths[label])+'-wal').stat().st_size>0,label
             assert Path(str(paths[label])+'-shm').exists(),label
-            # The board is in the -wal only: the main file alone lacks it.
-            import shutil,sqlite3
-            from contextlib import closing
-            main_only=Path.home()/(label+'-main-only.db')
-            shutil.copyfile(paths[label],main_only)
-            with closing(sqlite3.connect(main_only)) as db:
-                assert not db.execute("SELECT name FROM kanban_boards WHERE uuid='post-restore-board'").fetchall(),label
+        board_only_in_wal(paths,'written')
         if case.get('second_profile'):
             from tldw_chatbook.Backup_Recovery.control_records import bind_profile
             other=source.parent/'other.toml'
@@ -360,6 +365,8 @@ try:
         else:
             rollback=preview_rollback(operation,control_root=service.control_root,old_password=b'rollback-test-password',
                 target=service.preview_backup((source,),options={}),cancel=Event())
+            # Neither the inventory nor the rollback preview checkpointed it.
+            board_only_in_wal(paths,'previewed')
             def later(issues=()):
                 approved=rollback if not issues else service.preview_rollback(operation,old_password=b'rollback-test-password',
                     target=service.preview_backup((source,),options={}),acknowledged_credential_issues=issues)
