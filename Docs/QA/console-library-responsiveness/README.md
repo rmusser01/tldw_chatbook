@@ -327,3 +327,104 @@ the source snapshot. The Conversations scope read returned within
 38 ms of snapshot completion in all six runs. The 104-entry private
 receipt manifest has SHA-256
 `4e4ddffecab1546dd355be2ef48b0175b6f7404d22f935ecea71d4c2ae2d741c`.
+
+## Cold Library conversation message counts
+
+TASK-41668 traced the Library's 20-row conversation page on the
+`7c562db08e` source. The first two cold diagnostic visits painted in
+1,337 ms and 1,057 ms. On the first trace, the page read spent 317 ms
+acquiring its native connection and the message count used 80 ms of
+worker CPU. The two traces each recorded seven denied socket attempts
+in the fixture.
+
+The query now filters the conversation side of its existing join. With
+the same 20 IDs and real sealed SQLite corpus, the median count CPU
+fell from 59.10 ms to 2.14 ms. The read-only comparisons matched each
+count across 1-, 20-, and 75-ID pages under all four deletion-option
+combinations. The native regression checks counts for deleted and
+missing IDs, a duplicate ID, and soft-deleted messages. Its SQLite
+progress counter saw 620 groups of 100 instructions on the baseline.
+The candidate passed the test's 200-group bound.
+
+Both sets of alternating 120×50 macOS PTY pairs used the sealed
+10,000-conversation fixture, the frozen baseline, and a candidate
+with the conversation filter change. The CPU column measures the exact
+message count for the cold conversation page. First echo is measured
+from process launch to the terminal flush containing the typed input.
+
+### Empty tokenizer cache override
+
+The existing fixture's explicit empty cache selected the upstream
+tokenizer download path. The network guard rejected those attempts in
+both arms and the caller stack identified `tiktoken.load`.
+
+| Run order | One-minute load, start → end | Cold paint | Warm paint | Count CPU | Launch to first echo | Denied network attempts |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 1 baseline | 17.3 → 12.8 | 758 ms | 114 ms | 42.89 ms | 6.16 s | 5 |
+| 1 candidate | 12.7 → 14.2 | 812 ms | 71 ms | 2.12 ms | 6.87 s | 5 |
+| 2 candidate | 17.9 → 24.8 | 1,384 ms | 316 ms | 2.64 ms | 10.80 s | 6 |
+| 2 baseline | 23.8 → 17.9 | 810 ms | 48 ms | 50.86 ms | 7.75 s | 5 |
+| 3 baseline | 17.4 → 29.6 | 923 ms | 63 ms | 49.26 ms | 6.88 s | 5 |
+| 3 candidate | 30.3 → 40.9 | 1,106 ms | 298 ms | 2.88 ms | 9.10 s | 6 |
+
+Median count CPU moved from 49.26 ms to 2.64 ms. Median cold paint
+rose from 810 ms to 1,106 ms, and every cold pair was slower. Across
+the full cold windows the number of gaps over 50 ms rose from eight
+to eleven, with worst gaps of 254 ms and 574 ms.
+
+### Shipped offline tokenizer
+
+The follow-up used the harness's existing bundled-tokenizer option,
+which removes the fixture override and lets the app select its shipped
+assets. All six processes reported zero denied network attempts.
+
+| Run order | One-minute load, start → end | Cold paint | Warm paint | Count CPU | Launch to first echo | Denied network attempts |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 1 candidate | 42.7 → 29.7 | 736 ms | 50 ms | 2.03 ms | 8.85 s | 0 |
+| 1 baseline | 29.7 → 21.2 | 806 ms | 72 ms | 41.05 ms | 6.66 s | 0 |
+| 2 baseline | 14.6 → 12.6 | 821 ms | 39 ms | 48.06 ms | 6.67 s | 0 |
+| 2 candidate | 12.6 → 11.9 | 781 ms | 50 ms | 2.13 ms | 5.52 s | 0 |
+| 3 candidate | 12.0 → 11.6 | 709 ms | 74 ms | 1.77 ms | 5.64 s | 0 |
+| 3 baseline | 12.7 → 11.7 | 774 ms | 41 ms | 39.95 ms | 6.32 s | 0 |
+
+Median cold paint fell from 806 ms to 736 ms. The individual savings
+were 70 ms, 40 ms, and 65 ms. Median cold source time fell from 535 ms
+to 464 ms and count CPU from 41.05 ms to 2.03 ms. Median warm paint rose
+from 41 ms to 50 ms. Cold gaps over 50 ms fell from nine to six, with a
+worst gap of approximately 228 ms on both arms. The warm windows each
+recorded one gap over 50 ms and their worst gaps were 52 ms and 51 ms.
+Both sets of pairs and both diagnostic runs kept the full 13-second
+first-input, cold and warm windows. All fourteen quit normally with zero
+scoped SQLite descriptors and no profile boundary violations.
+
+The native database and service selection reported 119 passes. Its two
+legacy migration fixture errors reproduced on the frozen database source.
+Two of the four Library checks passed in the ordinary profile. The other
+two refused the config source before mount in both versions. In the
+existing bootstrap profile, the in-place reconciliation check passed on
+both versions and the focus assertion reproduced on both. The edited
+ranges passed formatting and Ruff added zero findings. The 254-entry
+private receipt manifest has SHA-256
+`745e491310327ae5f270f471e351d2e3876d346e296761e27fdd64001153c80a`.
+
+## App startup through first input
+
+With the shipped tokenizer, launch to a physically echoed first key took
+5.52–8.85 seconds across the six runs above. The message count began
+after the first usable composer in each run.
+
+| Startup stage | Observed wall time |
+| --- | ---: |
+| App import | 1.06–1.64 s |
+| Additional initial Console import | 0.35–0.53 s |
+| App construction | 0.85–1.20 s |
+| Initial Console push through first usable composer | 2.36–4.28 s |
+
+Notes initialization was the longest parallel constructor worker at
+0.42–0.57 s. The Console push through first paint was the largest
+measured stage. Sampled stacks included stylesheet matching, native
+layout and SQLite preparation. The traces recorded 45–48 guarded
+SQLite helper starts before the first usable composer, including
+Chat/Notes, scheduled tasks and Workspace storage. The startup samples
+identify the work present in those intervals and leave its necessity
+and individual contribution open.
