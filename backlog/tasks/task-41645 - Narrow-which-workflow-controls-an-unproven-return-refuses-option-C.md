@@ -1,7 +1,7 @@
 ---
 id: TASK-41645
 title: "Narrow which workflow controls an unproven return refuses (option C)"
-status: To Do
+status: In Progress
 assignee: []
 created_date: 2026-11-17 19:05
 labels:
@@ -30,3 +30,14 @@ Found during the TASK-41306..41320 follow-up burn-down (2026-11-17, merged as #3
 - [ ] #2 Controls outside that set work on a run with an unproven return
 - [ ] #3 Tests cover one refused and one allowed control
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: yes, a dated ADR-285 amendment recording which controls an unproven return refuses and why.
+
+1. Analysis first: list, per unproven resource (a control return `control_unknown`, which is per run; an unproven metadata read, whose marker is coordinator-wide), which controls refuse today and which the resource itself requires to refuse. If the set turns out to be a product trade-off rather than determined by the resource, stop and report options.
+2. Under the read marker, refuse before any effect only the controls whose completion needs a proven workflow metadata read: reconcile (already), and approve, start and revise, whose new driver can only release its chat through a proven terminal publication. Stop, Pause, Resume, quality acceptance and result removal keep working and report "applied" (TASK-41647).
+3. Test: under the marker, Approve is refused with `workflow_return_unproven` and changes nothing; Stop on the same workflow still applies.
+4. ADR-285 amendment; covering files on base and head.
+<!-- SECTION:PLAN:END -->

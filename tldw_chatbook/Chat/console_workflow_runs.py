@@ -880,6 +880,16 @@ class ConsoleWorkflowCoordinator:
             for future in self._metadata_cells.values()
         )
 
+    def _refuse_new_driver_if_unproven(self):
+        """Refuse Start, Approve and Revise under the unproven-read marker.
+
+        TASK-41645 (ADR-285): their new driver returns its chat only through a
+        proven terminal metadata read, which the marker refuses until restart,
+        so the work would run and then hold the chat. Refused before any effect.
+        """
+        if self._metadata_unproven():
+            raise ValueError("workflow_return_unproven")
+
     def _metadata_lower_bound(self, snapshot):
         current = self._metadata_floor.get(snapshot.id, (0, 0))
         self._metadata_floor[snapshot.id] = (
@@ -1359,6 +1369,7 @@ class ConsoleWorkflowCoordinator:
         async def accept():
             import asyncio
 
+            self._refuse_new_driver_if_unproven()
             session, binding = self._selection(request)
             run = _WorkflowRun(
                 None,
@@ -1585,6 +1596,7 @@ class ConsoleWorkflowCoordinator:
                 return await self._applied(decision.workflow_id)
             if decision.action != "approve":
                 raise ValueError("workflow_approval_required")
+            self._refuse_new_driver_if_unproven()
             snapshot = await self.service.call(self.service.get, decision.workflow_id)
             session, binding = self._selection(snapshot.request)
             if decision.workflow_id in self._runs:
@@ -2565,6 +2577,7 @@ class ConsoleWorkflowCoordinator:
         async def revise():
             import asyncio
 
+            self._refuse_new_driver_if_unproven()
             if workflow_id in self._runs:
                 raise PermissionError("workflow original producer still active")
             snapshot = await self.service.call(self.service.get, workflow_id)

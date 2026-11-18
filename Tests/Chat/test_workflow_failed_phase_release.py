@@ -110,6 +110,15 @@ def test_stop_under_an_unproven_read_applies_and_says_so(tmp_path):
     _run(tmp_path, "stop_under_unproven_read", "native", script=_SCRIPT, timeout=180)
 
 
+def test_unproven_read_refuses_approve_but_stop_still_applies(tmp_path):
+    """Under the unproven-read marker an approved phase claimed the chat and
+    ran, yet could never publish its terminal state, so it held the chat
+    until restart. Approve (like Start and Revise) now refuses with
+    `workflow_return_unproven` before any effect, while Stop, which needs no
+    proven read, still applies (TASK-41645, ADR-285)."""
+    _run(tmp_path, "approve_under_unproven_read", "native", script=_SCRIPT, timeout=180)
+
+
 async def _started(rig):
     rig.provider.plan["phases"][0]["tasks"].append(
         dict(
@@ -907,6 +916,34 @@ async def stop_under_unproven_read(tmp_path):
     finally:
         gate.set()
         # The marker stays until restart (TASK-41320).
+        await _close_unresolved(rig, "workflow_original_metadata_shutdown_unresolved")
+
+
+async def approve_under_unproven_read(tmp_path):
+    from Tests.Chat.workflow_rig import WorkflowProvider, build_workflow_rig
+
+    rig = await build_workflow_rig(tmp_path, None, WorkflowProvider())
+    session_id = "workflow-test-chat"
+    try:
+        decision = await _started(rig)
+        await _unproven_other_read(rig)
+        stored = await rig.service.call(rig.service.get, rig.workflow.id)
+        # Refused: its driver could not release the chat under the marker.
+        with pytest.raises(ValueError, match="^workflow_return_unproven$"):
+            await rig.coordinator.approve(decision, command_id="approve-under-marker")
+        assert rig.workflow.id not in rig.coordinator._runs
+        wake = rig.controller._fleet_wake
+        assert session_id not in wake._automatic_primary_claims
+        assert await rig.service.call(rig.service.get, rig.workflow.id) == stored
+        assert [key for key, _ in rig.provider.calls] == ["planning"]
+        # Allowed: Stop needs no proven read, so it still applies.
+        with pytest.raises(RuntimeError, match="^workflow_command_applied$"):
+            await rig.coordinator.stop(
+                rig.workflow.id, expected_control_revision=stored.control_revision
+            )
+        stopped = await rig.service.call(rig.service.get, rig.workflow.id)
+        assert stopped.status == "stopped", stopped.status
+    finally:
         await _close_unresolved(rig, "workflow_original_metadata_shutdown_unresolved")
 
 
