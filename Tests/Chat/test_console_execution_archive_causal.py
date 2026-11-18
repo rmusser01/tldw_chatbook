@@ -117,14 +117,49 @@ async def test_saved_process_send_keeps_original_archive_reservation_and_generat
         await asyncio.shield(receipt.received)
         assert (await asyncio.shield(receipt.applied))["turn_id"] == receipt.turn_id
         index = 0
-        async with asyncio.timeout(10):
-            while (event := await client.next_turn_event(receipt, index)) is not None:
-                index += 1
-                if event.kind == "commit_planned":
-                    assert accepted, "An archive-refused turn reached the commit gate"
-                    await joined(client.acknowledge_plan(receipt, event))
-            assert await asyncio.shield(receipt.retired) is True
-            assert await _until(lambda: receipt.identity.request_id not in client._archive_sends)
+        commit_ordinal, commit_ack = None, None
+        try:
+            async with asyncio.timeout(10):
+                while (event := await client.next_turn_event(receipt, index)) is not None:
+                    index += 1
+                    if event.kind == "commit_planned":
+                        assert accepted, "An archive-refused turn reached the commit gate"
+                        commit_ordinal = event.payload["ordinal"]
+                        commit_ack = client.acknowledge_plan(receipt, event)
+                        await joined(commit_ack)
+                assert await asyncio.shield(receipt.retired) is True
+                assert await _until(lambda: receipt.identity.request_id not in client._archive_sends)
+        except BaseException as error:
+            def state(future):
+                if not future.done():
+                    return "pending"
+                if future.cancelled():
+                    return "cancelled"
+                failure = future.exception()
+                if failure is not None:
+                    return type(failure).__name__
+                value = future.result()
+                return value if type(value) is bool else "done"
+
+            def states(item):
+                return tuple(state(getattr(item, name)) for name in ("received", "applied", "retired"))
+
+            error.add_note("Selected archive wait state: " + repr({
+                "expected_accepted": accepted,
+                "receipt_states_received_applied_retired": states(receipt),
+                "archive_ordinal": record.ordinal,
+                "archive_terminal": record.terminal,
+                "archive_ack_count": len(record.acknowledgements),
+                "archive_ack_states": [states(ack) for ack in record.acknowledgements[:2]],
+                "commit_ordinal": commit_ordinal,
+                "commit_ack_states": None if commit_ack is None else states(commit_ack),
+                "events_consumed": index,
+                "received_event_count": len(receipt.events),
+                "received_event_kinds": [event.kind for event in receipt.events[-16:]],
+                "loopback_request_count": len(accepted_process_provider.requests),
+                "loopback_post_count": len(accepted_process_provider.payloads),
+            }))
+            raise
         terminal = [event for event in receipt.events if event.kind == "terminal"]
         assert len(terminal) == 1 and terminal[0].payload["accepted"] is accepted
         assert record.terminal and not app._conversation_send_inflight
