@@ -151,6 +151,8 @@ In the first baseline of `q2`, Windows storage admission ran 2,042 times for REA
 
 On the later saved-session correction, the real archive reservation, generation race, archived-chat refusal and positive release test passed on hosted Windows. The broader hosted run passed 52 tests and reported three failures, including the existing mount and Enter deadlines. The worktree also restores the real backend workspace registry in project instruction dispatch. It rechecks that original registry and parent association across consent before publishing a result.
 
+On Windows 10, both focused tests for the original project consent and workspace registry passed. On candidate `5e176ee1f4`, the original README replay received the Send, acknowledged its plan, committed its draft and returned an accepted dispatch. During that turn two passive reads refused existing worker-local database or storage custody before opening a display connection. All 2,741 observed source checks passed. The replay ended before the disclosure and supplies no completed journey time. [ADR-126](../decisions/126-complete-local-backup-and-recovery.md#windows-worker-ownership-for-a-selected-display-read) assigns the serialized display phases their own runtime worker and retains the refusal.
+
 <!-- SECTION:NOTES:END -->
 
 Measured follow-up under the same [ADR-126 bounded configuration-read amendment](../decisions/126-complete-local-backup-and-recovery.md#task-40608--bounded-sensitive-database-path-configuration-reads): qualify the original sensitive container-reader cohort, then group its admissions without changing readers, overrides or refusal checks. The measured 0.218-second component is separate from the unresolved planning delay; final three-pair acceptance remains open.
