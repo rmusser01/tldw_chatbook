@@ -41,6 +41,7 @@ On the earlier `g25` run, Send to first request took **14.267 s**. The interval 
 | `g32f` | Foreground and corrected approval v3 observers on frozen `997b3339ff` | 10.530 s | — | — | — | Project disclosure painted; no click or provider request. ReadProjection failed at application in `require_retired_context_change:861`. No completed journey or tool-approval measurement. |
 | `g33p` | Separate readiness predicate diagnostic on the same `997b3339ff` product | 11.847 s | 0.420 s | 1.397 s | 13.663 s | README passed all original checks at 30.786 s raw and 29.241 s adjusted. Returning from Settings failed at `_require_selected_publication:75`, before edit Send. The readiness verifier failure from `g32f` did not recur. |
 | `g34f` | Separately reviewed foreground/approval v3 candidate on `46ff4b9ed8` | — | — | — | — | Workspace setup stopped before Send. ApplySourceRevision was refused at admission in `_require_rail_publication:294`; neither journey started. |
+| `g36f` | Retained display owner on `f0709ee4c0` | — | — | — | — | Workspace creation and New Chat completed. After README Send, Sending painted in 0.0824 s. The received turn failed before disclosure or the first HTTP request. Neither journey produced a completion time. |
 
 The 2.318 s difference in time to first request between `g21` and `g25` is an observation across two diagnostic runs. Several code and instrumentation changes separate them.
 
@@ -192,7 +193,7 @@ Batch `q5` started its first clean baseline on Windows 10 at 07:59 UTC on Novemb
 
 | Batch | Pair | README baseline / candidate | Approved edit baseline / candidate | State |
 |---|---|---|---|---|
-| `q5` | 1 | 284.7760 s / — | 374.3431 s / — | Baseline `q51b1` passed both journeys. Candidate `q51c1` started at 08:13 UTC on November 18. |
+| `q5` | 1 | 284.7760 s / — | 374.3431 s / — | Baseline `q51b1` passed both journeys. Candidate `q51c1` timed out after 300 s waiting for the workspace name field. Shutdown also failed to confirm retirement. Neither Send ran. Batch stopped with no completed pair. |
 | `q2` | 1 | 470.518 s / — | 575.079 s / — | Baseline passed. Candidate timed out at disclosure. Batch stopped. |
 | `q3` | 1 | 312.621 s / — | 392.728 s / — | Baseline `q31b1` passed. On `997b3339ff`, candidate `q31c1` reached the persisted README reply at 30.027 s adjusted and found its mounted row. The original painted-code check timed out at 300 s, and a ReadProjection command failed at application. The edit did not start. |
 | `q3` | 2–3 | — / — | — / — | The driver stopped at the failed first pair. |
@@ -434,3 +435,5 @@ receipts are `original-journey-46ff4bfg/replay-runs/g34f/{timings,run-metadata}.
 `lab-observer/backend-failure-3860.jsonl` plus its four tool-observer streams.
 This is an incomplete nonqualifying diagnostic, not a measured speedup or a
 five-second result.
+
+The subsequent `g36f` replay took 72.609 s through fixture failure. The backend spent 0.8031 s in `run_received_intent` across five yields before it unwound. The observer saw no skill, consent, tool or provider span. The later backend failure receipt names `finish` awaiting the work receipt. It does not identify the original raise site. No candidate approval or file-worker interval can be compared with `fgv3b1` from this run. The original journey source digest matched the candidate copy. [Observer source bundle](original-journey/windows-preconsent-foreground-approval-v3-f0709e.zip) · [SHA-256](original-journey/windows-preconsent-foreground-approval-v3-f0709e.sha256)
