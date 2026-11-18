@@ -12,6 +12,7 @@ on:
       - 'Tests/UI/test_console_resume_navigation_barrier.py'
       - 'Tests/Tools/test_native_fs_read_physical_bounds.py'
       - 'Tests/Tools/test_workspace_tool_isolated_installation.py'
+      - 'Tests/Utils/test_definition_records_current.py'
 
 permissions:
   contents: read
@@ -82,6 +83,8 @@ jobs:
             'Tests/Chat/test_console_execution_mounted.py'
             'Tests/Chat/test_console_execution_send.py'
             'Tests/Chat/test_console_backend_seed_retirement.py'
+            'Tests/Chat/test_console_saved_preparation_retirement.py'
+            'Tests/Chat/test_console_execution_retirement.py::test_actual_archive_close_uncertainty_never_becomes_turn_retired'
             'Tests/Chat/test_console_execution_workspace.py'
             'Tests/Chat/test_console_execution_workspace_values.py'
             'Tests/Chat/test_console_execution_readers.py'
@@ -92,6 +95,7 @@ jobs:
             'Tests/Chat/test_console_agent_history_bounded.py'
             'Tests/Chat/test_console_source_guard_direct_lookup.py'
             'Tests/Utils/test_plain_method_lookup.py'
+            'Tests/Utils/test_definition_records_current.py'
             'Tests/Chat/test_console_instance_method_guards.py'
             'Tests/Chat/test_console_execution_permission_bootstrap.py'
             'Tests/UI/test_console_selected_workspace_browser.py'
