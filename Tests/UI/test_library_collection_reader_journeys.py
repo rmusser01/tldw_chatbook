@@ -832,8 +832,9 @@ async def _settle_collections_entry(screen, pilot):
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile  # the Library harness's profile (TASK-39141)
 @pytest.mark.parametrize("terminal_width", [80, 127])
+@pytest.mark.parametrize("closed_before_measure", [False, True])
 async def test_a_pane_toggle_sent_before_the_shell_is_measured_lands_once_it_is(
-    terminal_width, monkeypatch
+    closed_before_measure, terminal_width, monkeypatch
 ):
     """TASK-41503: a toggle that arrives before the first measure is kept.
 
@@ -850,6 +851,11 @@ async def test_a_pane_toggle_sent_before_the_shell_is_measured_lands_once_it_is(
     the toggle lost to the resolver's reopen hysteresis there (a 122-125 cell
     shell with Items open); it has to reach the measured resolve as an
     explicit priority.
+
+    Closed before the measure (review r16mo-rev2): when the Library
+    preference is closed again before the measure, as the persistence
+    rollback does when the choice fails to save, the deferred toggle is
+    cancelled and Library stays closed.
     """
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
     from tldw_chatbook.Widgets.Library.library_adaptive_reader_shell import (
@@ -894,9 +900,25 @@ async def test_a_pane_toggle_sent_before_the_shell_is_measured_lands_once_it_is(
             message="The grip press never reached the toggle",
         )
         assert not shell.effective_layout.library_open, "applied before any measure"
+        if closed_before_measure:
+            screen._replace_library_reader_preference(
+                "collections", "library_open", False
+            )
 
         measured["on"] = True
         shell.post_message(AdaptiveReaderShellResized())
+        if closed_before_measure:
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen._collections_controller._deferred_layout_priority is None
+                ),
+                message="The measured sync never ran",
+            )
+            assert not shell.effective_layout.library_open, (
+                f"A cancelled toggle reopened Library: {shell.effective_layout}"
+            )
+            return
         await _wait_for_condition(
             pilot,
             lambda: shell.effective_layout.library_open,

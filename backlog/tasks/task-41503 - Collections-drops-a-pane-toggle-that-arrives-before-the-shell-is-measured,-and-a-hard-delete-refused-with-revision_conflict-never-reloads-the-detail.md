@@ -4,7 +4,7 @@ title: "Collections drops a pane toggle that arrives before the shell is measure
 status: Done
 assignee:
 - '@claude'
-updated_date: 2026-11-18 07:44
+updated_date: 2026-11-18 07:55
 created_date: 2026-11-17 05:27
 labels:
 - follow-up
@@ -47,6 +47,10 @@ Found by TASK-41126 (libcoll, round 15; both also on base). (1) `LibraryScreen._
   - `[80]`: the original case.
   - `[127]`: the terminal widens before the measure, so the shell measures 123 cells; the test asserts it is in the band. Red with the first version: `The early toggle was dropped: AdaptiveReaderEffectiveLayout(library_open=False, items_open=True, library_width=0, items_width=56, reader_width=57, priority_pane=None, ...)`. Green with the explicit priority.
   - Fix-round runs: both Collections pins 6 of 6 in parallel at load 45-53; the journeys file at `-n 4`, 14 passed and 8 failed, all eight the local `RecoveryRequired` trap as in the first round; the serial ratchets and wiring tests 93 passed; preflight passed. The toggle entry is now two cases, 2.2 s call each serially at load ~13 (6.7 s for the process); the census line selects both.
+- **Review r16mo-rev2 (fix round 2): the preference gate is pinned.** The gate keeps the persistence rollback working: when a pane choice fails to save, `_replace_library_reader_preference` restores the durable value, and that must cancel a deferred toggle. The toggle test now also runs with `closed_before_measure`. After the grip press and before the measure, it closes the Library preference, posts `AdaptiveReaderShellResized`, waits for the measured sync to clear the deferral, and asserts Library stayed closed.
+  - Red with the gate clause removed, at `[True-80]` and `[True-127]`: `A cancelled toggle reopened Library: AdaptiveReaderEffectiveLayout(library_open=True, ...)`. The two open cases still passed.
+  - Green with the gate.
+  - The pins at `-n 4`, load ~34: 5 passed. The toggle entry is now four cases, 2.8-3.3 s call each serially at load ~35 (17.1 s for the process).
 - **Hard delete fix.** When a confirm is refused with `revision_conflict`, the controller warns as before, then reloads the selected capture (`refresh_selected_detail`, through `_run_library_collections_capture_transition` so the reader repaints). The confirm stays armed, so the next **Delete permanently** sends the current revision. A failed reload warns with its reason.
 - **Tests** (`Tests/UI/test_library_collection_reader_journeys.py`, real Library screen):
   - `test_a_pane_toggle_sent_before_the_shell_is_measured_lands_once_it_is` gates `_library_adaptive_reader_allocation_is_current` to False at 80x24. It presses the Library grip and waits for the toggle's persistence claim, checks nothing applied yet, then lifts the gate and posts the shell's own `AdaptiveReaderShellResized`.
