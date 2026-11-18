@@ -66,6 +66,7 @@ class ConsoleProcessReceipt:
     events: list[ConsoleWireMessage] = field(default_factory=list, repr=False)
     projection_message: ConsoleWireMessage | None = field(default=None, repr=False)
     changed: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
+    display_poll: Mapping | None = field(default=None, repr=False)
 
 
 @dataclass(eq=False, slots=True)
@@ -275,6 +276,7 @@ class ConsoleExecutionClient:
         self._decision_hint = None
         self._decision_rendered_hint = None
         self._projection_sequence = 0
+        self._display_publication = None
         self._projection_lock = asyncio.Lock()
         self._projection_reads: set[asyncio.Task] = set()
         self._queued_projection = None
@@ -1010,6 +1012,14 @@ class ConsoleExecutionClient:
             else None
         )
         payload = {"known_display_revision": known}
+        if view is not None:
+            previous_display = self._display_publication
+            after = None
+            if previous_display is not None and known is not None and (
+                previous_display.attachment_id == attachment and previous_display.visit == visit
+            ):
+                after = previous_display.message.identity.request_id
+            payload["display_poll"] = {"attachment_id": attachment, "visit": visit, "after": after}
         payload["workspace_count_ids"] = list(self._workspace_count_ids)
         payload["known_marker_revision"] = previous.marker_revision if known is not None else None
         if _run_history is not None:
@@ -1220,6 +1230,11 @@ class ConsoleExecutionClient:
         self.project_head = project_head
         self.pressed_inputs = payload["session_view"]["pressed_inputs"]
         self._projection_sequence = receipt.identity.sequence
+        from .console_display_poll import DisplayPublication
+
+        self._display_publication = (
+            DisplayPublication(attachment, visit, message) if receipt.display_poll is not None else None
+        )
         self._decision_full_observation = (value, observation)
         return value
 
@@ -1536,6 +1551,8 @@ class ConsoleExecutionClient:
             future(),
         )
         receipt.turn_id = message.payload["turn_id"] if operation == "ReceiveTurn" else None
+        if operation == "ReadProjection":
+            receipt.display_poll = message.payload.get("display_poll")
         if operation == "ReceiveTurn":
             from .console_execution_archive import reserve_archive_send
 
@@ -1630,6 +1647,10 @@ class ConsoleExecutionClient:
                 or identity.source_revision != receipt.identity.source_revision
             ):
                 raise ConsoleProtocolError("operation_session_changed")
+            if message.kind == "projection_delta":
+                from .console_display_poll import expand_projection_delta
+
+                message = expand_projection_delta(message, receipt.display_poll, self._display_publication)
             if message.kind == "received":
                 if (
                     receipt.received.done()

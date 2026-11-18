@@ -2322,3 +2322,28 @@ Preserve recognition of earlier archives, qualify the migration in staging,
 and reject unexpected or incomplete schema objects. The index saves work
 as history grows. The original README journey starts with an empty history
 and still needs its own wall-clock qualification.
+
+#### TASK-40608 external Console runtime and profile writer
+
+The Windows Console runtime owns turn execution, ordered decisions and durable
+turn results outside Textual. A UI attachment submits intents and polls the
+runtime for display values. Each poll identifies the runtime source, session
+incarnation, visible visit and last adopted publication. A new attachment gets
+a complete snapshot. An existing attachment can receive the changed sections.
+The runtime checks a complete publication before deriving a delta. The client
+checks the reconstructed publication, including relations between sections,
+and adopts it only after the original command retires. A publication conveys
+display facts. Every action still validates current authority at execution.
+
+App instances sharing a private profile must submit mutations of the shared
+stores to one writer. The writer executes whole domain operations using the
+stock repositories and their original transaction and recovery boundaries.
+This includes Settings edits, Chatbook imports, ordinary Notes and Console
+work. A client must never send SQL, executable objects or OS handles. Writer
+election and transport are local to the Windows user and admitted profile.
+Disconnect with an unknown commit outcome fails the operation without replay.
+Backup or restore must drain physical operations before replacing store files.
+The writer holds no transaction or recovery lease during a user decision or
+provider wait. External file or policy changes continue to require the original
+live checks. Enabling this path requires exercising independent instances and
+real recovery as well as the ordinary mounted Console.

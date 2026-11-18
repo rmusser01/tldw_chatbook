@@ -48,11 +48,14 @@ The real Console UI, workspace binding, local tool workers, file permissions, an
 - [x] #3 Record a reproducible Windows benchmark and show materially shorter end-to-end turns on the same fixture while preserving grounded answers, read-only behavior, write approval, and the exact on-disk diff.
 - [x] #4 Reduce repeated admissions within bounded MCP storage operations and unchanged Console presentation refreshes, preserving fresh authority checks, external-change reconciliation and operation retirement. Verify work counts and at least 30% median reduction for both journeys across three sequential baseline/candidate pairs.
 - [ ] #5 On Windows, both the unchanged README and approved edit journeys complete in under 5 seconds of application time (Send to completed persisted reply excluding measured human disclosure/approval waits) with the deterministic loopback provider, while preserving all existing authority, approval and file-integrity checks. Record absolute timings and work counts across three sequential baseline/candidate pairs.
+- [ ] #6 On Windows, the Console turn runs outside Textual. A UI attachment polls for changed display sections and can reattach with a complete snapshot. Settings, imports and another app instance share one profile writer with the Console. Committed results, refusal paths and recovery retain their existing semantics.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
+The [external runtime and writer plan](../../Docs/superpowers/plans/2026-11-18-task-40608-runtime-writer.md) covers the November 18 redesign. ADR required: yes. ADR path: [ADR-126](../decisions/126-complete-local-backup-and-recovery.md#task-40608-external-console-runtime-and-profile-writer). The change moves cross-process persistence and display ownership.
+
 See the [Windows admission reuse plan](../../Docs/superpowers/plans/2026-11-12-task-40608-windows-admission-reuse.md) and the [ADR-126 amendment](../decisions/126-complete-local-backup-and-recovery.md#task-40608--ordinary-windows-admission-reuse).
 
 For the activity-header rendering cost, measure label and status updates with eight mounted disclosures and one changed status. Compare freshly derived styled content with the installed content of each existing cell before asking Textual to lay it out again. Exercise changed styles, externally replaced content, focus and width as well as unchanged rows. Allow every existing approval, render-source and retirement check to run. This presentation-only change needs no additional ADR. Recheck the original Windows journeys after the focused test.

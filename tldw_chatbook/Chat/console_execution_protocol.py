@@ -699,6 +699,10 @@ def _projection_request(value, path):
     if not value:
         return  # Original callers request a complete first snapshot.
     fields = {"known_display_revision": _MAYBE_REVISION}
+    if "display_poll" in value:
+        fields["display_poll"] = _record(
+            attachment_id=_REFERENCE, visit=_SEQUENCE, after=_optional(_REFERENCE),
+        )
     if "known_marker_revision" in value:
         fields["known_marker_revision"] = _MAYBE_REVISION
     if "workspace_count_ids" in value:
@@ -1187,6 +1191,13 @@ def _validate_message(identity, kind, operation, payload):
         return
     if operation not in _COMMANDS:
         _reject("message", "unknown operation")
+    if kind == "projection_delta":
+        if operation != "ReadProjection" or not identity.session_id:
+            _reject("message", "display delta requires a scoped projection")
+        from .console_display_poll import validate_delta
+
+        validate_delta(payload)
+        return
     if kind == "decision_changed":
         if operation != "ReadProjection" or not identity.session_id:
             _reject("message", "decision hint requires a scoped projection")

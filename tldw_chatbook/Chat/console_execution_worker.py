@@ -531,6 +531,7 @@ class _BackendService:
         self._received_requests: set[str] = set()
         self._projection_messages = None
         self._projection_key = None
+        self._display_publication = None
         self._decision_revision = 0
         self._decision_hint_pending = None
         self._decision_hint_handle = None
@@ -653,7 +654,13 @@ class _BackendService:
                 command.identity, result
             )
             message = ConsoleWireMessage(identity, "applied", "ReadProjection", body)
-            self.channel.send(message)
+            from .console_display_poll import DisplayPublication, poll_response
+
+            poll = request.payload.get("display_poll")
+            self.channel.send(poll_response(message, poll, self._display_publication))
+            self._display_publication = (
+                DisplayPublication(poll["attachment_id"], poll["visit"], message) if poll else None
+            )
             self.sequence = message.identity.sequence
             return
         message = (
