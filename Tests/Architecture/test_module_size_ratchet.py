@@ -211,7 +211,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-14, TASK-40716 (owner rule: exact measurement, dated note):
     # 2207 -> 2216 (+9) -- quit logs every app-owned shutdown failure it
     # does not raise, so a Console shutdown error is never dropped.
-    "tldw_chatbook/app_lifecycle.py": 2216,
+    "tldw_chatbook/app_lifecycle.py": 2215,
     # TASK-33011: TldwCli's screen navigation moved verbatim out of app.py
     # (NavigationMixin); governed there, so governed here.
     # TASK-34000.27 (2026-10-09): 1110 -> 1195 (+85), owner decision
@@ -1280,7 +1280,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-18, TASK-41522 (owner rule: raise by the change's own lines): +13,
     # OpenAI, Anthropic, Cohere, Google and Hugging Face check their base URL.
     "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5202,
-    "tldw_chatbook/Notes/notes_sync_runtime.py": 5167,
+    "tldw_chatbook/Notes/notes_sync_runtime.py": 5033,
     "tldw_chatbook/Personal_Context/repository.py": 4997,
     # owner decision 2026-11-06 (expand limits, never contort code): TASK-39040
     # fix rounds 2 and 3, 4968 -> 5138 (+170) -- a clip handed to the default
