@@ -1667,7 +1667,8 @@ async def test_console_queued_send_made_before_attach_finishes_is_not_refused(
 
     monkeypatch.setattr(ChatScreen, "_reconcile_console_after_attach", slow_attach)
     # Observe the sealed handoff the queued turn will later claim, and prove
-    # the seal still refuses a copy that differs in anything but the origin.
+    # the seal refuses any copy but the one the runtime stamped for the queue:
+    # a changed copy, and (TASK-41649) a structurally equal one.
     from contextlib import contextmanager
 
     from tldw_chatbook.Chat import console_configuration_preparation as prep
@@ -1680,6 +1681,7 @@ async def test_console_queued_send_made_before_attach_finishes_is_not_refused(
         raw = prep._mcp_capture_witness.get()
         for bad in (
             replace(configuration, rag_defaults={"top_k": 99}),
+            replace(configuration),
         ):
             with pytest.raises(RuntimeError, match="skill preparation changed"):
                 with real_seal(controller, session, bad):

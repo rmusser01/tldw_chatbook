@@ -2301,6 +2301,20 @@ def original_skill_capture_preparation():
     return None
 
 
+def stamp_queue_user_origin(configuration, origin):
+    """Copy ``configuration`` with the queue's user origin; the capture adopts it.
+
+    When ``configuration`` is the current capture witness's original, the
+    copy takes its place there. That registered copy is the token the seal
+    accepts (TASK-41649, ADR-356 rule 4); an equal copy made elsewhere is not.
+    """
+    copy = replace(configuration, recovery_user_origin=origin)
+    state = _mcp_capture_witness.get()
+    if type(state) is tuple and state[-4] is configuration:
+        _mcp_capture_witness.set((*state[:-4], copy, *state[-3:]))
+    return copy
+
+
 @contextmanager
 def seal_pending_queue_capture(controller, session, configuration):
     """Seal an original live received result before the queue's own lock."""
@@ -2332,18 +2346,10 @@ def seal_pending_queue_capture(controller, session, configuration):
         or dict(prepared.maximum) != dict(configuration.skill_context_maximum)
     ):
         raise RuntimeError("Original queued skill capture changed; send again.")
-    # The queue dispatcher stamps ``recovery_user_origin`` onto a copy of the
-    # captured snapshot, so identity alone would refuse every cold-skill queue.
+    # The queue's copy is accepted only as the object `stamp_queue_user_origin`
+    # registered in this witness, never by structural equality (TASK-41649).
     if deferred is not None and (
-        not configuration.skill_capture_pending
-        or witness[-4] is None
-        or (
-            witness[-4] is not configuration
-            and replace(
-                witness[-4], recovery_user_origin=configuration.recovery_user_origin
-            )
-            != configuration
-        )
+        not configuration.skill_capture_pending or witness[-4] is not configuration
     ):
         raise RuntimeError("Original queued skill preparation changed; send again.")
     unused_trust = (
@@ -2367,12 +2373,7 @@ def seal_pending_queue_capture(controller, session, configuration):
             vars(source.local).get("_trust_service") if source is not None else None
         )
     sealed = _QueuedCaptureTransfer(
-        (
-            *witness[:-4],
-            configuration if deferred is not None else witness[-4],
-            None,
-            *witness[-2:],
-        ),
+        (*witness[:-3], None, *witness[-2:]),
         configuration,
         preparation,
         app_trust,
