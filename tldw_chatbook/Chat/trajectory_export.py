@@ -423,6 +423,17 @@ def _mask_credential_material(value: Any, *, structural_keys: bool = False) -> t
     return value, False
 
 
+def _json_object(value: Any) -> Any:
+    """``value`` parsed when it is JSON text holding an object, else as is."""
+    if not isinstance(value, str):
+        return value
+    try:
+        parsed = json.loads(value)
+    except (ValueError, RecursionError):
+        return value
+    return parsed if isinstance(parsed, dict) else value
+
+
 def _masked(value: Any) -> Any:
     """A value read from a file, masked as a bundle masks it, for an error
     message to quote (TASK-41604)."""
@@ -1389,14 +1400,6 @@ def build_trajectory_export(
         exported_row["payload_json"] = payload_json
         rows_out.append(exported_row)
 
-    # TASK-41603: message content and the title are masked as a Trace v2
-    # bundle masks text; a v1 import masks the rest of the file.
-    messages_out = [
-        {key: _jsonable(message.get(key)) for key in _MESSAGE_KEYS}
-        for message in messages
-    ]
-    for message in messages_out:
-        message["content"] = _mask_credential_material(message["content"])[0]
     payload: dict = {
         "format": TRAJECTORY_EXPORT_FORMAT,
         "version": TRAJECTORY_EXPORT_VERSION,
@@ -1404,17 +1407,35 @@ def build_trajectory_export(
         "redacted": not include_payloads,
         "conversation": {
             "id": conversation.get("id"),
-            "title": _mask_credential_material(_jsonable(conversation.get("title")))[0],
+            "title": _jsonable(conversation.get("title")),
             "created_at": _jsonable(conversation.get("created_at")),
         },
         "active_leaf_message_id": db.get_conversation_active_leaf(conversation_id),
-        "messages": messages_out,
+        "messages": [
+            {key: _jsonable(message.get(key)) for key in _MESSAGE_KEYS}
+            for message in messages
+        ],
         "trajectory_rows": rows_out,
         "compaction_records": compaction_records,
     }
     if variant_sets:
         payload["variants"] = [_serialize_variant_set(vs) for vs in variant_sets]
-    return payload
+    # TASK-41603: the finished payload is masked as a Trace v2 bundle is
+    # (review r16tr-rev1). A tool payload's JSON object is masked as v2 masks
+    # a payload, and stays as written when nothing in it is masked.
+    written = [row["payload_json"] for row in rows_out]
+    parsed = [_json_object(value) for value in written]
+    for row, value in zip(rows_out, parsed, strict=True):
+        row["payload_json"] = value
+    masked = _mask_credential_material(payload)[0]
+    for row, before, original in zip(masked["trajectory_rows"], parsed, written, strict=True):
+        if isinstance(row["payload_json"], dict):
+            row["payload_json"] = (
+                original
+                if row["payload_json"] == before
+                else json.dumps(row["payload_json"], ensure_ascii=False)
+            )
+    return masked
 
 
 # ---------------------------------------------------------------------------

@@ -163,9 +163,14 @@ another machine (or attached to a bug report):
   privacy inventory, digest verdict, and source-authenticity limitation.
 - `DIGEST VALID` means the bundle content matches its included SHA-256 digest;
   it does **not** verify the sender. The screen therefore also states
-  `SOURCE NOT AUTHENTICATED`. Malformed files, unknown versions, tampering, and
-  credential-bearing bundles fail closed with actionable errors. Legacy v1
-  `tldw-trajectory` files remain importable and say that no digest was provided.
+  `SOURCE NOT AUTHENTICATED`. Malformed files, unknown versions and tampering
+  fail closed with actionable errors; a value an error quotes from the file is
+  credential-masked and shown as plain text. A bundle holding credential-shaped
+  text is not refused: it imports with those values masked by the current
+  export rules (TASK-41133). Legacy v1 `tldw-trajectory` files remain
+  importable, are masked the same way as they load (TASK-41603), and say that
+  no digest was provided. The v1 export masks its whole payload by the same
+  rules.
 
 The v2 export API lives in `tldw_chatbook/Chat/trajectory_export.py`
 (`preflight_trace_export`, `build_trace_export`, `write_trajectory_export`);

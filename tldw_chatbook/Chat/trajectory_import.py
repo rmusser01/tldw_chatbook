@@ -43,6 +43,7 @@ from tldw_chatbook.Chat.trajectory_export import (
     TRACE_EXPORT_VERSION,
     TraceExportProfile,
     TrajectoryExportError,
+    _json_object,
     _mask_credential_material,
     _masked,
     _trace_digest,
@@ -137,17 +138,6 @@ def _read_document(source: Path | str | Mapping) -> dict:
             f"must be a JSON object, got {type(document).__name__}"
         )
     return document
-
-
-def _json_object(value: Any) -> Any:
-    """``value`` parsed when it is JSON text holding an object, else as is."""
-    if not isinstance(value, str):
-        return value
-    try:
-        parsed = json.loads(value)
-    except (ValueError, RecursionError):
-        return value
-    return parsed if isinstance(parsed, dict) else value
 
 
 def _v1_snapshot(document: Mapping, path: Path | None) -> TrajectorySnapshot:
