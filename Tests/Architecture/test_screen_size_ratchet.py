@@ -1399,7 +1399,7 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-11-15, TASK-36952.3.1 rebased onto dev cc6006fcf5 (dev's row
     #: 38188 lines, 1377 methods): the same -709 lines and -8 methods,
     #: measured 37479 lines, 1369 methods.
-    #: 2026-11-18 (rb5): the media series is rebased onto dev 45b1949ca3, so the slices' figures above predate dev's TASK-41129 lines; the row is re-measured per slice.
+    #: 2026-11-18 (rb5): the media series is rebased onto dev 45b1949ca3, so the slices' figures above and below predate dev's TASK-41129 lines; the row is re-measured per slice.
     #: 2026-11-15, TASK-36952.3.2 (architecture review F2, media body move
     #: slice 2 of 8): 24 media bodies (the ADR-055 mutation interlock, bulk
     #: and single-item delete, Undo, the selection export, the edit save)
@@ -1494,7 +1494,15 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: through the screen, found once the census counted every kind of fake
     #: attribute the same way, were pruned (-44, -8 methods): 32757 -> 32713
     #: lines, 1295 -> 1287 methods (measured with ``_measure``).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32797, 1289),
+    #: Rebased onto dev 45b1949ca3 (rb5): measured 32797 lines, 1289 methods.
+    #: Fix round 2 (re-review N1): 2 more media delegators
+    #: (``_claim_library_media_mutation``,
+    #: ``_reset_library_media_reader_to_no_selection``) whose only string
+    #: references are on the controller (a ``monkeypatch.setattr`` on it, a
+    #: substring check against its methods' source) were pruned (-13, -2
+    #: methods): 32797 -> 32784 lines, 1289 -> 1287 methods (measured with
+    #: ``_measure``).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32784, 1287),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

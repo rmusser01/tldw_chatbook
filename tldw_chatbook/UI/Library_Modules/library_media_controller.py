@@ -605,12 +605,13 @@ tokens resolve.
 ``@staticmethod``, so its group-(e) callable is gone and group (e) is empty.
 ``LibraryScreen`` keeps a static delegator at the old name, because it
 imports this module lazily: the Prompts, Skills and Notes clusters' bindings
-to the screen name are unchanged. The slice also pruned 38 screen
+to the screen name are unchanged. The slice also pruned 40 screen
 delegators that the earlier slices left with no caller through the screen
 (``_MEDIA_CLUSTER_SCREEN_DELEGATOR_PRUNED``), the two dead Trash statics
-among them (30 in its first commit, 8 more in its fix round). ``_toggle_library_media_reader_pane`` (class 7) stays on the
-screen: it is the parent task's one AC #1 exception, the multi-subsystem
-reader-pane dispatcher.
+among them: 30 in its second code commit, 8 more in its first fix round
+and 2 more in its second. ``_toggle_library_media_reader_pane`` (class 7)
+stays on the screen: it is the parent task's one AC #1 exception, the
+multi-subsystem reader-pane dispatcher.
 
 Ruling R4 (the parent's AC #2): the constructor takes a ``LibraryMediaHost``
 (the Protocol above this class) instead of ``LibraryScreen``, and this
@@ -861,7 +862,7 @@ class LibraryMediaController:
     TASK-36952.3.6 moved 16 more and kept a delegator for 8;
     TASK-36952.3.7 moved 23 more and kept a delegator for 17.
     TASK-36952.3.8 moved ``_sanitize_media_field`` here behind a static
-    screen delegator and pruned 38 delegators nothing reached.
+    screen delegator and pruned 40 delegators nothing reached.
     """
 
     def __init__(

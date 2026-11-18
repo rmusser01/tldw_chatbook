@@ -15999,16 +15999,6 @@ class LibraryScreen(BaseAppScreen):
     def _library_media_selected_backing_id(self) -> int | None:
         return self._media_controller._library_media_selected_backing_id()
 
-    def _claim_library_media_mutation(
-        self,
-        work: Coroutine[Any, Any, None],
-        *,
-        on_failure: Callable[[], object] | None = None,
-    ) -> None:
-        return self._media_controller._claim_library_media_mutation(
-            work, on_failure=on_failure
-        )
-
     @staticmethod
     def _restore_library_media_scope(state: Mapping[str, Any]) -> MediaBrowseScope:
         from ..Library_Modules.library_media_controller import (
@@ -16019,9 +16009,6 @@ class LibraryScreen(BaseAppScreen):
 
     def _adopt_library_media_highlight(self, media_state: Any) -> None:
         return self._media_controller._adopt_library_media_highlight(media_state)
-
-    def _reset_library_media_reader_to_no_selection(self) -> None:
-        return self._media_controller._reset_library_media_reader_to_no_selection()
 
     def _sync_library_media_browse_state(self, focus_identity: str | None) -> None:
         return self._media_controller._sync_library_media_browse_state(focus_identity)

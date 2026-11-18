@@ -567,7 +567,9 @@ _BUDGETS: dict[str, int] = {
     # unfiltered total's body reduced to one call (-11); the three Notes
     # getters read off `_notes_state` instead of their own accessors (-6);
     # prose (+21).
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 11084,
+    # 2026-11-18, TASK-36952.3.8 fix round 2: 11084 -> 11085 (+1), the module
+    # docstring's prune count rewrapped (40 delegators, by commit).
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 11085,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only

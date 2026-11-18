@@ -633,7 +633,9 @@ _MEDIA_CLUSTER_STATICMETHOD_NAMES: frozenset[str] = frozenset(
 #: The moved names whose screen delegator nothing reaches through a screen
 #: or ``LibraryScreen``. Every remaining reference to such a name is the
 #: controller's own ``self.<name>``, a ``*_media_controller`` /
-#: ``LibraryMediaController`` receiver, a fake's own attribute (a
+#: ``LibraryMediaController`` receiver (a ``monkeypatch.setattr`` or
+#: ``getattr`` string on one, and a substring check against a controller
+#: method's source, count as such), a fake's own attribute (a
 #: ``SimpleNamespace(<name>=...)`` keyword, an attribute assigned on a fake,
 #: or a ``def`` on a fake class), a pin in this file, or prose. Census roots:
 #: ``tldw_chatbook/``, ``Tests/``, ``scripts/``, ``Helper_Scripts/`` and
@@ -789,6 +791,12 @@ _MEDIA_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
         "_request_library_media_filter",
         "_required_library_media_backing_id",
         "_sync_library_media_viewer_mutation_gate",
+        # TASK-36952.3.8 fix round 2: 2 more, once a string that names the
+        # delegator on a controller receiver (a ``monkeypatch.setattr`` on the
+        # controller, a substring check against a controller method's source)
+        # counted as a controller reference, as the header says.
+        "_claim_library_media_mutation",
+        "_reset_library_media_reader_to_no_selection",
     }
 )
 
