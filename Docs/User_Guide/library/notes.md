@@ -710,7 +710,8 @@ first note row, where opening Notes puts it, not in the filter, so the next
 letter is a list key rather than filter text. When the list has no note row
 — no notes yet ("No notes yet. Create your first note."), or a kept filter
 that matches nothing — focus goes to its **New** button instead. (Opening
-an empty Notes list from the rail puts focus in the filter.)
+an empty Notes list from the rail, from anywhere other than Create, puts
+focus in the filter.)
 
 ### Add from files and lasting sync
 

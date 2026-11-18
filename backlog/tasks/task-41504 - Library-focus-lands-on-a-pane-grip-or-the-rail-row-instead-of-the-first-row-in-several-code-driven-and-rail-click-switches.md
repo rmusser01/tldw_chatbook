@@ -4,7 +4,7 @@ title: "Library focus lands on a pane grip or the rail row instead of the first 
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-18 09:13'
+updated_date: '2026-11-18 16:24'
 created_date: 2026-11-17 05:27
 labels:
 - follow-up
@@ -76,3 +76,18 @@ Found by the libfocus stream and its review (TASK-41128 to TASK-41130 area, roun
 - **Size.** `library_screen.py` 38280 -> 38311 lines (1380 methods), `library_notes_controller.py` 7462 -> 7493, `canvas_sync.py` 1314 -> 1319: ratchet rows raised to the measurements, with notes.
 - **Files.** `UI/Screens/library_screen.py`, `UI/Library_Modules/screen_constants.py`, `UI/Library_Modules/library_notes_controller.py`, `Tests/UI/test_library_rail_switch_keeps_reader_and_note.py`, `Tests/UI/test_library_notes_move_never_false_conflicts.py`, `Tests/UI/test_library_shell.py`, the three ratchet files, `Docs/User_Guide/library/notes.md`, `backlog/docs/lessons-textual.md`.
 - **Docs.** `notes.md`: where the receipt's action leaves focus, and that opening an empty Notes list from the rail lands in the filter (the documented empty-state control; unchanged behaviour, now pinned).
+
+**Fix round 1 (review r16fo-rev1, 2026-11-18).**
+- **An empty Collections page lands on Quick Capture (coordinator's call, Minor 4).** With nothing narrowing the page, its own copy reads "press Quick Capture above", like Media's empty page, which lands on its action. After a scope or filter miss, or while Quick Capture is disabled, the page lands in the filter.
+  - `library_collections_capture_reader.py` now names the two narrowings once (`_collections_scope_filters`, `_collections_scope_narrowed`, and the public `collections_scope_is_unnarrowed`), shared with `collections_empty_state_copy`.
+  - `LibraryCollectionsController._library_collections_empty_entry_target` picks the control.
+- **Tests.** `media-press-collections` now expects `library-collections-quick-capture`: red on `b0cd65a9b8`, which landed in `library-collections-filter`. The new `media-press-collections-empty-scope` sets the rail scope to Archived with two saved captures and expects the filter. It passed on `b0cd65a9b8`, and failed when the target was always Quick Capture. `test_library_crit10_pagers.py` still pins the copy rule.
+- **Ceiling seen this round.** At load 59-69 (other agents), `media-press-collections-with-captures` ended with nothing focused, 2 of 2 runs: the capture loader outlasted the fixed 2 s entry window. That is TASK-32301's ceiling, a list arriving after the window; at load up to 52 it passed every run. Nothing changed for it here.
+- **Proposed follow-up (Minor 2, not fixed).** At 80x24 a code-driven switch into Collections lands nothing, because its rows, filter and Quick Capture all sit in the collapsed Items pane. It is not a regression: the base ends on `nav-home`.
+- **Size.** `library_screen.py` 38280 -> 38313 (1380 methods), `library_collections_controller.py` 1756 -> 1776. `canvas_sync.py` is back to 1314 and its row with it.
+- **Runs (fix round 1, final source).**
+  - **New and re-pinned nodes** (22, `-n 4`): 22 passed in each of 3 runs at load 12-24. An earlier run at load 72-83 failed 6 with nothing focused, all from entry windows expiring; the same command passed 21 of 21 at load 41-47.
+  - **Covering set** (the 62 Library files plus `test_library_notes_w4_import_keyboard.py` and `test_library_crit10_pagers.py`, `-n 4`, with the temporary bootstrap-marker plugin): 60 failed, 1735 passed, at load 30-97 over 59 min.
+    - 50 of the 60 are in the base-failing list.
+    - Re-run on head at load ~30, the other 10 passed 9 of 10. The one failure is `test_mounted_abandoned_receipt_reload_ignores_late_page_or_filter_result[False-browse]`, which fails 12 of 12 on base.
+  - **Serial ratchets and wiring** (now including the Collections wiring test): 325 passed. Preflight passed; ruff gate passed.

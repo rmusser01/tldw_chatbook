@@ -1523,7 +1523,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: delegator forwards the pre-sync focus: 38280 -> 38311 lines, 1380
     #: methods.
     #: 2026-11-18, TASK-41504/41600/41601 rebased onto the round-16 stack on dev 908e9840aa (stack row plus this commit's growth): measured 32822 lines, 1288 methods.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32822, 1288),
+    #: records the control a click or Tab (the narrow emergency Tab too)
+    #: focused: 38280 -> 38313 lines, 1380 methods.
+    #: 2026-11-18, fix round 1 on the round-16 stack (stack row plus this commit's growth): measured 32824 lines, 1288 methods.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32824, 1288),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

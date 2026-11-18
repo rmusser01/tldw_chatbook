@@ -4,7 +4,7 @@ title: "A Notes canvas sync moves focus off a pane grip or the Library notes sou
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-18 09:13'
+updated_date: '2026-11-18 16:24'
 created_date: 2026-11-17 19:40
 labels:
 - follow-up
@@ -77,3 +77,11 @@ Reproduced on the base (`67583dfa72`): during a waiting Notes entry, Tab put foc
 - **Runs.** Final source, the four nodes x 10 with 16 CPU burners at `-n 6`: all passed (load 14-43, in the 170-node run noted in TASK-41504). Covering runs and lane times are recorded in TASK-41504.
 - **Files.** `UI/Library_Modules/canvas_sync.py`, `UI/Library_Modules/library_notes_controller.py`, `UI/Screens/library_screen.py` (`_library_input_focus`, the delegator), `Tests/UI/test_library_notes_move_never_false_conflicts.py`, `Docs/User_Guide/library/notes.md`, `backlog/docs/lessons-textual.md` (an incident added to the TASK-34000.28 entry).
 - **Docs.** `notes.md`: a refresh of the Notes list leaves focus on a pane grip or the source strip.
+
+**Fix round 1 (review r16fo-rev1, 2026-11-18).**
+- **The restore reads the current focus, not the focus from when the sync began (Minor 3a).** A click or Tab that lands while the sync repaints is kept: the rule is now "focus is the control the user last clicked or Tabbed to, reachable, not a text field". The `focused_before` parameter is gone, so `canvas_sync.py` and the screen delegator are back to their base form.
+- **The narrow emergency Tab is recorded (Minor 3b).** Below 64 columns the canvas-only stage handles Tab in `on_key`, and that branch now records `_library_input_focus` as well.
+- **Tests** (`Tests/UI/test_library_notes_move_never_false_conflicts.py`):
+  - `test_a_click_while_a_notes_sync_repaints_keeps_its_target` does the click's focus half inside the sync, before its restore, the way Textual's MouseDown forwarding does it (`get_focusable_widget_at`, then `set_focus`). Red on `b0cd65a9b8`: the restore put focus back on `library-notes-tree-note-1`.
+  - `test_a_narrow_emergency_stage_tab_counts_as_the_users_focus` (60x24) sets the canvas-only stage as `test_emergency_tab_from_a_note_field_still_reaches_on_key` does, Tabs onto `#library-browse-items-grip`, then runs a sync. Red on `b0cd65a9b8` and without the new line: the sync moved focus to `library-notes-filter`.
+  - The stage has to be set by hand: at 60x24 and 50x20 the Notes route never enters it (a probe found the stage `None`).

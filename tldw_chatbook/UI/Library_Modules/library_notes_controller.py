@@ -1835,26 +1835,25 @@ class LibraryNotesController:
             target = None
         if target is None:
             if authority == "files":
-                # TASK-41601: with no folder linked the Files pane, search
-                # included, is hidden; Choose folder… is the page's way in.
+                # TASK-41601: the Files search box when its pane is open,
+                # else Choose folder… (Change… once linked). With no folder
+                # linked the pane is hidden but may not be yet.
                 workspace = self._library_file_notes_workspace
                 linked = workspace is not None and workspace.root is not None
-                selector = "#file-notes-search" if linked else "#file-notes-choose-root"
+                selectors = ("#file-notes-search",) if linked else ()
+                selectors += ("#file-notes-choose-root",)
             else:
-                selector = (
-                    "#library-note-body" if self._library_notes_view == "editor" else ""
+                selectors = (
+                    ("#library-note-body",) if self._library_notes_view == "editor" else ()
                 )
-            if selector:
+            for selector in selectors:
                 try:
                     candidate = self.query_one(selector, Widget)
                 except (NoMatches, QueryError):
-                    candidate = None
-                if (
-                    candidate is not None
-                    and candidate.visible
-                    and candidate in self.focus_chain
-                ):
+                    continue
+                if candidate.visible and candidate in self.focus_chain:
                     target = candidate
+                    break
         if target is None:
             return False
         self.set_focus(target, scroll_visible=False)
@@ -2271,9 +2270,7 @@ class LibraryNotesController:
         return True
 
     def _restore_library_notes_after_targeted_sync(
-        self,
-        identity: LibraryNotesFocusIdentity,
-        focused_before: Widget | None = None,
+        self, identity: LibraryNotesFocusIdentity
     ) -> None:
         """Restore portable Notes focus + scroll after a canvas-scoped sync.
 
@@ -2288,7 +2285,6 @@ class LibraryNotesController:
 
         Args:
             identity: The portable identity captured before the sync.
-            focused_before: The widget focused when ``identity`` was taken.
 
         Returns:
             None.
@@ -2308,17 +2304,17 @@ class LibraryNotesController:
         # repainted by a Media -> Notes switch otherwise replayed an identity
         # captured with nothing focused, the filter, over the entry's first
         # row (TASK-41129 review r15lf-rev1).
-        # TASK-41600: a reachable control the user clicked or Tabbed to (a
-        # pane grip, the source buttons) that the repaint never replaced keeps
+        # TASK-41600: a reachable control the user last clicked or Tabbed to
+        # (a pane grip, the source buttons), even during this repaint, keeps
         # focus; it has no role, so replaying it moved focus to the filter.
         # Textual's reset onto a grip is still restored, and so is a text
         # field: the rail search box is TASK-34000.89's.
+        focused = self.focused
         untouched = (
-            focused_before is not None
-            and focused_before is getattr(self._screen, "_library_input_focus", None)
-            and self.focused is focused_before
-            and focused_before in self.focus_chain
-            and not isinstance(focused_before, (Input, TextArea))
+            focused is not None
+            and focused is getattr(self._screen, "_library_input_focus", None)
+            and focused in self.focus_chain
+            and not isinstance(focused, (Input, TextArea))
         )
         if not (
             getattr(self._screen, "_library_pending_list_entry_focus", False)
@@ -2711,6 +2707,10 @@ class LibraryNotesController:
         width = shell.region.width
         if width <= 0:
             return
+        # TASK-41601: the workspace learns its width from its own Resize,
+        # which can arrive after this first sync. Its stale narrow flag opened
+        # the Files pane at 80 columns for a frame, and focus landed in it.
+        workspace._apply_responsive_layout(workspace.size.width)
         previous = self._library_file_notes_reader_layout
         if (
             previous.reader_width == 0
@@ -5619,18 +5619,17 @@ class LibraryNotesController:
             database_shell.display = False
             database_shell.library.display = False
             workspace.display = True
-            restored = self._restore_library_notes_authority_focus("files")
             self._sync_library_notes_source_controls()
             self.call_after_refresh(
                 self._sync_library_file_notes_reader_layout_from_shell
             )
             self.call_after_refresh(self._hide_library_adaptive_reader_rail_collapse)
-            if not restored:
-                # TASK-41601: a linked folder's Files pane shows only once the
-                # layout sync above has run, as on the compose path.
-                self.call_after_refresh(
-                    self._restore_library_notes_authority_focus, "files"
-                )
+            # TASK-41601: only once that layout sync has opened or closed the
+            # Files pane can its search box be told from Change…, as on the
+            # compose path.
+            self.call_after_refresh(
+                self._restore_library_notes_authority_focus, "files"
+            )
         # The production app can recompose Library after the initial mount-time
         # responsive callback. Measure again once the Files canvas owns its
         # final shell geometry so a compact terminal cannot retain stale wide

@@ -395,6 +395,27 @@ class LibraryCollectionsScopeRows(Vertical):
             )
 
 
+def _collections_scope_filters(scope: CapturePageRequest) -> bool:
+    """Whether the filter form or the search box narrowed ``scope``."""
+    return bool(
+        scope.search or scope.tags or scope.domain or scope.date_from or scope.date_to
+    )
+
+
+def _collections_scope_narrowed(scope: CapturePageRequest) -> bool:
+    """Whether a rail scope row or a saved search narrowed ``scope``."""
+    # ``favorite`` is tri-state: ``False`` is the saved-search predicate "not
+    # a favourite", an active narrowing, so truthiness is the wrong test
+    # (Qodo review of PR #2599, item 4).
+    return bool(scope.statuses) or scope.favorite is not None
+
+
+def collections_scope_is_unnarrowed(scope: CapturePageRequest) -> bool:
+    """Whether nothing narrowed ``scope``: an empty page then means nothing is
+    saved, and its copy points at Quick Capture (TASK-41504)."""
+    return not (_collections_scope_filters(scope) or _collections_scope_narrowed(scope))
+
+
 def collections_empty_state_copy(scope: CapturePageRequest) -> str:
     """Name what narrowed an empty capture page, and the way back out of it.
 
@@ -419,18 +440,9 @@ def collections_empty_state_copy(scope: CapturePageRequest) -> str:
     Returns:
         One sentence, already in "reason · next step" form.
     """
-    if (
-        scope.search
-        or scope.tags
-        or scope.domain
-        or scope.date_from
-        or scope.date_to
-    ):
+    if _collections_scope_filters(scope):
         return "No captures match these filters · clear them to see everything saved."
-    # ``favorite`` is tri-state: ``False`` is the saved-search predicate "not
-    # a favourite", an active narrowing, so truthiness is the wrong test
-    # (Qodo review of PR #2599, item 4).
-    if scope.statuses or scope.favorite is not None:
+    if _collections_scope_narrowed(scope):
         return (
             "Nothing in this scope yet · choose All Captures in the rail to see "
             "everything saved."
@@ -1275,6 +1287,7 @@ class LibraryCollectionsWorkPane(VerticalScroll):
 
 __all__ = [
     "collections_empty_state_copy",
+    "collections_scope_is_unnarrowed",
     "CollectionsCaptureReaderPresentation",
     "CollectionsReaderMode",
     "LibraryCollectionsHighlightButton",

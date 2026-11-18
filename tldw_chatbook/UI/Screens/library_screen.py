@@ -5574,12 +5574,10 @@ class LibraryScreen(BaseAppScreen):
         )
 
     def _restore_library_notes_after_targeted_sync(
-        self,
-        identity: LibraryNotesFocusIdentity,
-        focused_before: Widget | None = None,
+        self, identity: LibraryNotesFocusIdentity
     ) -> None:
         return self._notes_controller._restore_library_notes_after_targeted_sync(
-            identity, focused_before
+            identity
         )
 
     def _library_notes_restore_guard_is_current(
@@ -8369,6 +8367,7 @@ class LibraryScreen(BaseAppScreen):
                         focused.focus()
                 else:
                     focused = self._move_library_screen_focus(-1)
+            self._library_input_focus = focused  # TASK-41600
             self._advance_library_ordinary_emergency_user_interaction(focused)
         self._mark_library_notes_user_interaction()
         self._withdraw_library_notes_pending_focus_handoffs()
@@ -10675,8 +10674,11 @@ class LibraryScreen(BaseAppScreen):
                 "library-notes-row": self._library_pending_list_entry_empty_target,
                 # task-32228: same answer for an empty conversation list.
                 "library-conversation-row": "#library-conversations-filter",
-                "library-collections-item-row": "#library-collections-filter",
             }.get(row_class)
+            if row_class == "library-collections-item-row":
+                fallback_selector = (
+                    self._collections_controller._library_collections_empty_entry_target()
+                )
             if fallback_selector is not None:
                 try:
                     control = self.query_one(fallback_selector, Widget)

@@ -4,7 +4,7 @@ title: "Folder files mode leaves focus on the hidden Database Notes filter, and 
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-18 09:13'
+updated_date: '2026-11-18 16:24'
 created_date: 2026-11-17 19:40
 labels:
 - follow-up
@@ -83,3 +83,16 @@ A probe of Notes in Folder files mode found two things:
 **Files.** `UI/Library_Modules/library_notes_controller.py`, `Tests/UI/test_library_notes_move_never_false_conflicts.py`, `Docs/User_Guide/library/file-notes.md`, `backlog/docs/lessons-testing-evidence.md`.
 
 **Docs.** `file-notes.md`: where focus lands on entering Folder files, and the keyboard linking step that no longer needs a Tab.
+
+**Fix round 1 (review r16fo-rev1, 2026-11-18).**
+- **A linked folder below 120 columns now lands on Change… (Important 1).** The Files entry target with a folder linked is the Files search box, then Change… (`#file-notes-choose-root`), whichever is first in `screen.focus_chain`. The switch now makes its only attempt after its layout sync.
+- **The layout seeding behind it.** With that rule alone, a `set_focus` trace at 80x24 (load ~96) found focus on `#library-file-notes-items-grip` in 3 of 4 runs.
+  - The first Files layout sync ran before the workspace's first real Resize. The workspace still held `narrow=True` from two width-0 Resizes, so the sync opened the Files pane at 80 columns and focus went to the search box.
+  - The Resize-driven sync then closed the pane, and the shell parked focus on its grip.
+  - Hiding the Database shell before mounting the workspace did not help: the workspace still got width-0 Resizes first, and 4 of 4 traced runs ended on the grip.
+  - The fix: `_sync_library_file_notes_reader_layout_from_shell` refreshes the workspace's responsive state from its measured width (`workspace._apply_responsive_layout(workspace.size.width)`) before resolving. That gave 4 of 4 runs on Change…, with no one-frame open pane.
+- **Tests.** `test_folder_files_focus_lands_on_a_visible_files_control[switch-linked-80x24]` expects `file-notes-choose-root`.
+  - Red on `b0cd65a9b8`: focus None.
+  - Without the width refresh, 4 of 4 runs ended on `library-file-notes-items-grip`.
+- **Docs.** `file-notes.md` now says where focus lands at both widths. Linking a folder from the keyboard now gives the measured route: about ten **Tab** presses from the search box to Change… at 120-235 columns. **Shift+Tab** takes 31 at 170 and 235, because it walks back through the Library rail, and 3 at 120.
+- **Size.** `library_notes_controller.py` 7462 -> 7492.

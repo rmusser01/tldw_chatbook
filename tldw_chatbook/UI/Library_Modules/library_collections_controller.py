@@ -94,6 +94,7 @@ from ...Widgets.Library import (
     LibraryAdaptiveReaderShell,
 )
 from ...Widgets.Library.library_collections_capture_reader import (
+    collections_scope_is_unnarrowed,
     recompose_capture_panes,
 )
 from .library_collections_capture_controller import (
@@ -445,6 +446,25 @@ class LibraryCollectionsController:
         if search is not None:
             request = dataclasses.replace(request, search=search, page=1)
         return request
+
+    def _library_collections_empty_entry_target(self) -> str:
+        """Where entry focus lands on an empty capture page (TASK-41504).
+
+        Quick Capture when nothing narrowed the page, as its own copy says
+        ("press Quick Capture above"), like Media's empty page and its
+        Import; the filter after a scope or filter miss, or while Quick
+        Capture is disabled.
+        """
+        controller = self._library_collections_capture_controller
+        page = controller.state.page if controller is not None else None
+        if page is not None and collections_scope_is_unnarrowed(page.applied):
+            try:
+                quick = self.query_one("#library-collections-quick-capture", Button)
+            except (NoMatches, QueryError):
+                quick = None
+            if quick is not None and not quick.disabled:
+                return "#library-collections-quick-capture"
+        return "#library-collections-filter"
 
     def _refresh_library_collections_capture_reader(self) -> None:
         """TASK-41126: repaint the panes in place once the current message is done."""

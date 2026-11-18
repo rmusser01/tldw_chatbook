@@ -704,41 +704,57 @@ _FIRST_ROW = {"media": "library-media-row-0", "notes": "library-notes-tree-note-
 
 
 @pytest.mark.parametrize(
-    ("notes", "setup", "switch", "expected"),
+    ("notes", "captures", "setup", "switch", "expected"),
     [
         # TASK-41504: each switch the libfocus stream saw land on a pane grip
         # or the rail row, and where it must land: the first row, or the empty
-        # list's documented control (the filter, task-31946).
-        pytest.param(True, (), ("click", "notes"), _FIRST_ROW["notes"], id="rail-click-notes"),
-        pytest.param(False, (), ("press", "notes"), "library-notes-filter", id="press-empty-notes"),
-        pytest.param(False, (), ("click", "notes"), "library-notes-filter", id="click-empty-notes"),
+        # list's documented control (the Notes filter, task-31946; Collections'
+        # Quick Capture, or its filter when a scope or filter narrowed it).
         pytest.param(
-            False, ("media",), ("click", "notes"), "library-notes-filter",
+            True, "", (), ("click", "notes"), _FIRST_ROW["notes"], id="rail-click-notes"
+        ),
+        pytest.param(
+            False, "", (), ("press", "notes"), "library-notes-filter",
+            id="press-empty-notes",
+        ),
+        pytest.param(
+            False, "", (), ("click", "notes"), "library-notes-filter",
+            id="click-empty-notes",
+        ),
+        pytest.param(
+            False, "", ("media",), ("click", "notes"), "library-notes-filter",
             id="media-click-empty-notes",
         ),
         pytest.param(
-            True, ("media",), ("press", "collections"), "library-collections-filter",
+            True, "", ("media",), ("press", "collections"),
+            "library-collections-quick-capture",
             id="media-press-collections",
         ),
         pytest.param(
-            True, ("media",), ("press", "collections"), "library-collections-row-0",
+            True, "saved", ("media",), ("press", "collections"),
+            "library-collections-row-0",
             id="media-press-collections-with-captures",
         ),
         pytest.param(
-            True, ("media", "notes"), ("press", "media"), _FIRST_ROW["media"],
+            True, "saved-archived-scope", ("media",), ("press", "collections"),
+            "library-collections-filter",
+            id="media-press-collections-empty-scope",
+        ),
+        pytest.param(
+            True, "", ("media", "notes"), ("press", "media"), _FIRST_ROW["media"],
             id="notes-press-resident-media",
         ),
         pytest.param(
-            True, ("notes", "media"), ("click", "notes"), _FIRST_ROW["notes"],
+            True, "", ("notes", "media"), ("click", "notes"), _FIRST_ROW["notes"],
             id="media-click-resident-notes",
         ),
     ],
 )
 async def test_each_library_switch_lands_on_its_first_row_never_a_grip(
-    notes, setup, switch, expected
+    notes, captures, setup, switch, expected
 ):
     """TASK-41504: a rail click or a code-driven ``press()`` lands entry focus
-    on the destination's first row (or its empty list's filter), reachable,
+    on the destination's first row (or its empty list's control), reachable,
     and still there once the entry window has closed -- never a pane grip
     or the rail row. Production stylesheet at 170x48, where grips were seen.
     """
@@ -749,7 +765,7 @@ async def test_each_library_switch_lands_on_its_first_row_never_a_grip(
         notes=_two_notes() if notes else [],
         media=_two_media_items(),
     )
-    if expected == "library-collections-row-0":
+    if captures:
         # Two saved captures, so the entry has rows to wait for.
         scope = app.collections_capture_scope_service
         for title in ("Alpha", "Beta"):
@@ -766,6 +782,9 @@ async def test_each_library_switch_lands_on_its_first_row_never_a_grip(
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
+        if captures == "saved-archived-scope":
+            # Nothing is archived, so the page is empty but narrowed.
+            screen._collections_state.active_scope = "archived"
 
         def on(widget_id: str) -> bool:
             focused = screen.focused

@@ -25,8 +25,10 @@ Browse section (on a brand-new profile that section is not there yet — see
 then use the source strip at the top of the canvas: it reads
 **Library notes** | **Folder files**. Click **Folder files** — while the
 workspace loads you'll briefly see "Opening File Notes…". Focus lands in the
-**Files** search box, or on **Choose folder…** while no folder is linked; a
-later return to Notes from the rail lands there too. At wide sizes,
+**Files** search box. When the Files pane is closed, as it is on an
+80-column terminal, or no folder is linked yet, focus lands on the folder
+line's **Change…** / **Choose folder…** instead. A later return to Notes from
+the rail lands the same way. At wide sizes,
 Library navigation and the Folder files tree have separate slim collapse
 grips. Each pane remembers its own choice; collapsing the tree does not also
 collapse Library navigation or the Library notes list. On compact
@@ -160,8 +162,12 @@ Every step has a keyboard route (task-32606):
 1. From the notes list, **Shift+Tab** back to the mode strip at the top of the
    screen until **Folder files** carries the focus underline, then **Enter**.
 2. With no folder linked, focus is already on **Choose folder…**; press
-   **Enter**. Once a folder is linked, focus starts in the **Files** search
-   box: **Shift+Tab** back to **Change…** and press **Enter**.
+   **Enter**. Once a folder is linked, focus starts on **Change…** when the
+   Files pane is closed. When the pane is open, focus starts in the **Files**
+   search box and **Change…** is about ten **Tab** presses on, past the Files
+   tree, the file work area's buttons and the source strip. **Shift+Tab**
+   gets there too, but on a wide terminal it first walks back through the
+   whole Library rail. Then press **Enter**.
 3. The picker opens with the **Folder path** field focused and its value
    selected — type or paste the folder and it replaces what was there.
 4. **Enter** browses into the typed folder; **Tab** then **Enter** on

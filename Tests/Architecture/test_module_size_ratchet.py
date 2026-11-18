@@ -91,8 +91,7 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/UI/Library_Modules/screen_helpers.py": 401,
     "tldw_chatbook/UI/Console_Modules/command_handoff.py": 322,
     "tldw_chatbook/UI/Console_Modules/composer_run_controls.py": 1567,
-    # TASK-41600: the Notes sync hands its restore the pre-sync focus.
-    "tldw_chatbook/UI/Library_Modules/canvas_sync.py": 1319,
+    "tldw_chatbook/UI/Library_Modules/canvas_sync.py": 1314,
     "tldw_chatbook/Notes/notes_sync_startup.py": 34,
     "tldw_chatbook/UI/Console_Modules/session_prompt_seed.py": 109,
     "tldw_chatbook/Widgets/Console/console_selection_geometry.py": 52,
