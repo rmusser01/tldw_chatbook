@@ -265,6 +265,10 @@ class ConsoleExecutionClient:
         self.project_head = None
         self.decision_head = None
         self._decision_head_sequence = 0
+        self._decision_head_observation = None
+        self._decision_full_observation = None
+        self._decision_resolution_sequence = 0
+        self._decision_resolutions: set[str] = set()
         self._display_checkpoint = None
         self._project_modal = None
         self._project_modal_transition = None
@@ -807,6 +811,15 @@ class ConsoleExecutionClient:
         task.add_done_callback(self._projection_read_finished)
         return await asyncio.shield(task)
 
+    def _decision_observation_context(self):
+        """Scope an observer read; unresolved decisions cannot restore old values."""
+        if self._decision_resolutions:
+            return None
+        return (
+            self._view, self._visit, self._attachment_id, self._source_revision,
+            self._decision_hint, self._decision_resolution_sequence,
+        )
+
     async def read_decision_head(self, view, visit: int, session_id: str, incarnation_id: str):
         """Join a finite decision read independently of FULL's native work."""
         from .console_execution_decision_head import decode_decision_head
@@ -833,6 +846,7 @@ class ConsoleExecutionClient:
                 if await asyncio.shield(transition) is not True:
                     raise ConsoleChannelLost("Console project visibility restoration is unproven")
                 current()
+            observation = self._decision_observation_context()
             receipt = self.submit("ReadDecisionHead", {
                 "attachment_id": attachment, "visit": visit,
             }, session_id=session_id, incarnation_id=incarnation_id)
@@ -860,6 +874,7 @@ class ConsoleExecutionClient:
             if receipt.identity.sequence > self._decision_head_sequence:
                 self.decision_head = head
                 self._decision_head_sequence = receipt.identity.sequence
+                self._decision_head_observation = (head, observation)
             return self.decision_head
 
         task = asyncio.create_task(read(), name="console_execution_decision_head")
@@ -980,6 +995,7 @@ class ConsoleExecutionClient:
             payload["view_checkpoint"] = {
                 "attachment_id": self._attachment_id, "visit": visit, "action": _checkpoint,
             }
+        observation = self._decision_observation_context()
         receipt = self.submit(
             "ReadProjection",
             payload,
@@ -1191,6 +1207,7 @@ class ConsoleExecutionClient:
         self.project_head = project_head
         self.pressed_inputs = payload["session_view"]["pressed_inputs"]
         self._projection_sequence = receipt.identity.sequence
+        self._decision_full_observation = (value, observation)
         return value
 
     async def read_run_history(self, request):
@@ -1538,6 +1555,11 @@ class ConsoleExecutionClient:
             original.potentially_committed = True
         if operation in {"FenceSource", "CloseIntake", "Drain", "Shutdown"}:
             self._intake_open = False
+        if operation == "ResolveDecision" and message.payload["decision"]["kind"] != "ApprovalPresentationDecision":
+            # Invalidate observer values before any bytes may reach the peer.
+            # A refused/rolled-back choice needs a new checked read too.
+            self._decision_resolution_sequence = receipt.identity.sequence
+            self._decision_resolutions.add(receipt.identity.request_id)
         try:
             if synchronous:
                 write_message(self._channel.output, encode_message(message))
@@ -1638,6 +1660,8 @@ class ConsoleExecutionClient:
                 ):
                     self._shutdown_acknowledged = True
                 if message.payload["retired"] is True:
+                    if receipt.operation == "ResolveDecision":
+                        self._decision_resolutions.discard(identity.request_id)
                     self._requests.pop(identity.request_id)
                     if receipt.operation == "ReceiveTurn":
                         for key in tuple(self._plans):
@@ -1662,6 +1686,8 @@ class ConsoleExecutionClient:
                 if not receipt.received.done():
                     receipt.received.set_exception(error)
                 receipt.applied.set_exception(error)
+                if admission_refused and receipt.operation == "ResolveDecision":
+                    self._decision_resolutions.discard(identity.request_id)
                 if receipt.operation == "ReceiveTurn" and admission_refused:
                     from .console_execution_archive import settle_archive_send
 

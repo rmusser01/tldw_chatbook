@@ -196,6 +196,13 @@ class ConsoleControllerReader:
     def __init__(self, client):
         self._client = client
         self._agent_bridge = ConsoleRunHistoryReader(client)
+        self._decision_readers = tuple(
+            (name, _definition(getattr(type(client), name)))
+            for name in (
+                "read_decision_head", "_read_projection_locked", "_submit_command",
+                "_receive", "_decision_observation_context", "require_view",
+            )
+        )
 
     @property
     def store(self):
@@ -214,12 +221,56 @@ class ConsoleControllerReader:
     def _parked_approval_payloads(self):
         view = self.store._current()
         frame = view._projection_for_session(view.active_session_id)
-        decision = frame.decision
+        decision = self._observed_approval_head(view, frame)
         return (
             decision
             if decision is not None and decision.decision_type == "approval"
             else None
         )
+
+    def _observed_approval_head(self, view, frame):
+        """Read the checked decision lane without waiting for unrelated FULL."""
+        from .console_execution_decision_head import ConsoleDecisionHead
+
+        client = self._client
+        head = client.decision_head
+        if (head is None and client._decision_full_observation is None
+            and client._decision_hint is None and client._decision_resolution_sequence == 0):
+            return frame.decision  # Legacy value-only readers; no read/transition occurred.
+        if head is not None and type(head) is not ConsoleDecisionHead:
+            raise ConsoleProjectionUnavailable("Console decision observation changed")
+        matching_head = head is not None and (
+            head.source_revision, head.session_id, head.incarnation_id,
+            head.attachment_id, head.visit) == (
+            client._source_revision, view.active_session_id, frame.incarnation_id,
+            client._attachment_id, client._visit,
+        )
+        for name, record in self._decision_readers:
+            if (
+                inspect.getattr_static(client, name, None) is not record[0]
+                or not _definition_current(record)
+            ):
+                raise ConsoleProjectionUnavailable("Console decision reader changed")
+        if client._view is not None:
+            client.require_view(client._view, client._visit)
+        context = client._decision_observation_context()
+        if context is None:
+            return None
+        observed_head = client._decision_head_observation
+        observed_full = client._decision_full_observation
+        head_current = (
+            matching_head and observed_head is not None and observed_head[0] is head
+            and observed_head[1] == context
+        )
+        full_current = (
+            observed_full is not None and observed_full[0] is frame
+            and observed_full[1] == context
+        )
+        if full_current and (not head_current or client._projection_sequence > client._decision_head_sequence):
+            return frame.decision
+        if head_current:
+            return head.decision  # None is an observed clear, never a FULL fallback.
+        return None  # Hint/Resolve crossed the read; wait for a fresh observation.
 
     def _head_round_payload(self, payloads, session_id):
         current = self._parked_approval_payloads
