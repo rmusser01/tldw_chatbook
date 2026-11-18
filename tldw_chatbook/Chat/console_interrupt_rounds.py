@@ -1293,16 +1293,15 @@ class InterruptRoundHost(InitialHookReviewMixin):
                 is_head = self.park_round_payload(kind, round_id, payload)
         try:
             app = self.read_controller_app()
-            # TASK-41637: a round armed while the App's own marshal has no running
-            # app (never started, or exited) can show no card and get no answer:
-            # fail it closed. A host without is_running (mobile context) or with
-            # a rerouted marshal is live. An exit mid-wait is runtime disposal's.
-            marshal = getattr(app, "call_from_thread", None)
-            app_gone = (
-                app is not None
-                and not getattr(app, "is_running", True)
-                and getattr(marshal, "__self__", None) is app
-            )
+            # TASK-41637: no running app behind its own marshal (never started, or
+            # exited) and no answerable view: nobody can answer, so fail closed.
+            # A host without is_running (mobile context) or with a rerouted
+            # marshal is live. An exit mid-wait is runtime disposal's to settle.
+            try:
+                app_gone = not app.is_running and app.call_from_thread.__self__ is app
+            except AttributeError:
+                app_gone = False
+            app_gone = app_gone and self.read_controller__approval_view_is_detached()()
             park_toast = self.read_controller_park_pending_approval()
             if hard_expired() or app_gone:
                 pass

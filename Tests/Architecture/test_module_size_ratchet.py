@@ -297,9 +297,10 @@ _BUDGETS: dict[str, int] = {
     # the skill trust a cold capture reads (Chat/console_configuration_preparation.py).
     "tldw_chatbook/Chat/console_chat_controller.py": 28764,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
-    # TASK-41637, 2026-11-18: +10, a round armed with no running app fails
-    # closed instead of waiting forever (6298 -> 6308).
-    "tldw_chatbook/Chat/console_interrupt_rounds.py": 6308,
+    # TASK-41637, 2026-11-18: +9, a round armed with no running app and no
+    # answerable view fails closed instead of waiting forever (dev's row +
+    # growth: 6298 -> 6307).
+    "tldw_chatbook/Chat/console_interrupt_rounds.py": 6307,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.
     # 2026-10-31 PR3295 R1: user-waived cap; exact remembered-prompt-delta measurement.
     "tldw_chatbook/Chat/console_context_compaction.py": 4217,
