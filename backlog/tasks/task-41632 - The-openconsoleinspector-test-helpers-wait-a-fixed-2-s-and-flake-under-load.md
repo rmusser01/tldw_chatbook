@@ -48,5 +48,7 @@ ADR required: no (test-helper timing only)
 **Evidence** (worktree fu2-redui at d0486978dd, scratch-profile wrapper):
 - Both files together at `-n 4`, load 95 at start: the five MCP-row tests (`test_console_run_inspector_shows_mcp_tools_ready_row`, `..._shows_mcp_not_connected_row`, `..._omits_mcp_row_by_default`, `..._mcp_row_reflects_real_compose_mcp_provider`, `..._mcp_row_shows_blocked_when_stale_server_has_tools`) all passed. In that run the two files had 162 other failures, nearly all `RecoveryRequired: raw_source_selection_changed` on tests without the `bootstrap_profile` marker; TASK-41633 fixes those.
 
+- With TASK-41633's markers on the branch, each file alone at `-n 4`, load 80-88: scope_row 42 of 43 passed, decomposition 130 of 142, MCP rows included. No remaining red waits in `_open_console_inspector`.
+
 Files: `Tests/UI/test_console_internals_decomposition.py`, `Tests/UI/test_console_scope_row.py`.
 <!-- SECTION:NOTES:END -->
