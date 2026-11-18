@@ -518,7 +518,9 @@ class HomeScreen(BaseAppScreen):
 
     def _sync_home_triage_after_refresh(self, *, cache_ready: bool = False) -> None:
         """Keep hidden completion pending until visible, warmed presentation."""
-        if not self.is_mounted:
+        # TASK-41702: shutdown's exit fence detaches every node before Textual
+        # empties the stack, so a late completion must not read app.screen.
+        if not self.is_mounted or not self.is_attached:
             return
         if self.app.screen is not self:
             self._home_pending_refresh_sync = True

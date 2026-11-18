@@ -17,6 +17,7 @@ class _CompletionReceiver:
 
     def __init__(self):
         self.is_mounted = True
+        self.is_attached = True
         self.app = SimpleNamespace(screen=object())
         self.adapter = SimpleNamespace(
             refresh_active_work_cache_async=self.refresh_cache,

@@ -29,7 +29,7 @@ HELD_SLOTS_COPY = (
 class ConsoleHeldToolSlotsModal(SafeModalDismissMixin, ModalScreen[None]):
     """List each held slot by what held it; Release returns only the slot."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ConsoleHeldToolSlotsModal {
         align: center middle;
     }

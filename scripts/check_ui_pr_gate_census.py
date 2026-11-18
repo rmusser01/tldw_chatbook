@@ -1135,6 +1135,8 @@ MINIMUM_FILES = 2179
 # by parameter and append the repaired cold-home node. The floor is the
 # measured entry count.
 MINIMUM_FILES = 2243
+# TASK-41564 plan23: append the reused exit-fence regression; exact entry count.
+MINIMUM_FILES = 2244
 
 
 def read_census(path: Path) -> list[str]:
