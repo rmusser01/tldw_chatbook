@@ -73,6 +73,10 @@ class Cycle:
 
 async def main():
     app = Host()
+
+    def complete():
+        raise AssertionError('completion must stay queued for the UI loop')
+
     held = asyncio.Event()
     finish = asyncio.Event()
     references = []
@@ -87,7 +91,9 @@ async def main():
         del cycle
         return True
 
-    worker = threading.Thread(target=warm.preimport_first_send_modules, args=(app,), daemon=True)
+    worker = threading.Thread(
+        target=warm.preimport_first_send_modules, args=(app, complete), daemon=True
+    )
     worker.start()
     try:
         assert await asyncio.to_thread(entered.wait, 15), 'actual import not entered'
@@ -118,6 +124,7 @@ async def main():
         retire.set()
         await asyncio.to_thread(worker.join, 15)
         assert not worker.is_alive(), 'warm-up worker did not retire'
+        assert app.callbacks == [(complete, ())], 'completion was not queued exactly once'
         gc.collect(2)
         retained = references[0]() is not None
         gc.unfreeze()
