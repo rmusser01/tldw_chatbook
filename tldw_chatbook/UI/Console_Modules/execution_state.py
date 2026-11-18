@@ -44,13 +44,19 @@ def selected_client(screen: ChatScreen) -> ConsoleExecutionClient | None:
 
     require_reader_sources()
     client.require_view(screen, client._visit)
+    _require_selected_publication(client, client._source_revision)
+    return client
+
+
+def _require_selected_publication(client, revision: int) -> None:
+    """Check one internally consistent publication without rendering its values."""
     view, frame = client.projection_view, client._projection
     composition = client.session_composition
     if (
         type(composition) is not ConsoleSessionComposition
         or type(view) is not ConsoleProjectionView
         or type(frame) is not ConsoleProjection
-        or view.source_revision != client._source_revision
+        or view.source_revision != revision
         or frame.source_revision != view.source_revision
         or frame.session_id != view.active_session_id
         or not any(item is frame for item in view.projections)
@@ -67,7 +73,33 @@ def selected_client(screen: ChatScreen) -> ConsoleExecutionClient | None:
         )
     ):
         raise RuntimeError("Console selected projection is unavailable")
-    return client
+
+
+def _resumed_source_refresh(screen, client) -> bool:
+    """Allow only a resumed visit to replace its older, coherent publication.
+
+    The old row supplies identifiers to the ordinary checked ReadProjection;
+    it is never accepted as current display or command authority.
+    """
+    view = getattr(client, "projection_view", None)
+    if (type(view) is not ConsoleProjectionView
+        or view.source_revision >= client._source_revision):
+        return False
+    _require_sources()
+    if type(screen) is not ChatScreen or type(client) is not ConsoleExecutionClient:
+        raise TypeError("Original Console process refresh owner is required")
+    _require_methods(client, _CLIENT_METHODS)
+    from ...Chat.console_execution_readers import require_reader_sources
+
+    require_reader_sources()
+    client.require_view(screen, client._visit)
+    _require_selected_publication(client, view.source_revision)
+    mounted = getattr(screen, "_console_process_mounted_visit", None)
+    return (
+        type(mounted) is int and mounted < client._visit
+        and getattr(screen, "_console_process_visit", None) == client._visit
+        and client._intake_open
+    )
 
 
 class ConsoleDisplayExpired(RuntimeError):
@@ -307,7 +339,7 @@ async def refresh_selected_view(screen: ChatScreen, *, checkpoint: str | None = 
     visit = getattr(screen, "_console_process_visit", client._visit)
     if _defer_selected_refresh(screen, client, visit):
         return False
-    if selected_client(screen) is not client:
+    if not _resumed_source_refresh(screen, client) and selected_client(screen) is not client:
         raise RuntimeError("Console process refresh requires its selected owner")
     source = client._source_revision
     screen._console_selected_refresh_count = getattr(screen, "_console_selected_refresh_count", 0) + 1
@@ -525,7 +557,7 @@ async def reconcile_selected_view(screen: ChatScreen) -> None:
     visit = getattr(screen, "_console_process_visit", client._visit)
     if _defer_selected_refresh(screen, client, visit):
         return
-    if selected_client(screen) is not client:
+    if not _resumed_source_refresh(screen, client) and selected_client(screen) is not client:
         raise RuntimeError("Console reconciliation owner changed")
     from .execution_decisions import pending_project_visibility
 
@@ -644,15 +676,17 @@ def request_selected_decision_refresh(client, hint: tuple) -> bool:
 
 def refresh_selected_when_due(screen: ChatScreen) -> None:
     """Request the original readiness refresh after its published expiry."""
-    if defer_selected_passive_render(screen):
+    if defer_selected_passive_render(screen, for_refresh=True):
         return
     # A genuine decision change need not wait for an unrelated FULL read. It
     # still uses the same source-qualified channel and original UI owners.
     from .execution_decisions import is_owned_project_modal, pending_project_visibility
 
     owner = screen.app_instance.console_execution_client
+    resumed = owner is not None and _resumed_source_refresh(screen, owner)
     modal_visible = owner is not None and is_owned_project_modal(owner, screen, owner._visit)
-    start_selected_decision_refresh(screen, force=modal_visible)
+    if not resumed:
+        start_selected_decision_refresh(screen, force=modal_visible)
     if modal_visible:
         return  # The decision refresh above remains eligible; FULL is hidden.
     if owner is not None and pending_project_visibility(owner, screen, owner._visit) is not None:
@@ -667,8 +701,8 @@ def refresh_selected_when_due(screen: ChatScreen) -> None:
         or getattr(screen, "_console_process_draft_switch", None) is not None
     ):
         return
-    client = selected_client(screen)
-    if client is None or time.monotonic() < client._readiness_deadline:
+    client = owner if resumed else selected_client(screen)
+    if client is None or (not resumed and time.monotonic() < client._readiness_deadline):
         return
     screen._console_attach_reconcile_worker = screen.run_worker(
         partial(reconcile_selected_view, screen),
@@ -737,7 +771,7 @@ async def _refresh_selected_decisions(screen, client, visit: int) -> None:
             screen.call_later(refresh_selected_when_due, screen)
 
 
-def defer_selected_passive_render(screen: ChatScreen) -> bool:
+def defer_selected_passive_render(screen: ChatScreen, *, for_refresh: bool = False) -> bool:
     """Skip obsolete timer work without substituting display values or authority."""
     app = getattr(screen, "app_instance", None)
     client = getattr(app, "console_execution_client", None)
@@ -764,7 +798,11 @@ def defer_selected_passive_render(screen: ChatScreen) -> bool:
     # A passive timer has nothing to paint on a covered/replaced screen. The
     # original owned disclosure remains eligible for its checked refresh path.
     # Eligible callers still use selected_client and propagate real failures.
-    return not screen.is_current and not is_owned_project_modal(client, screen, visit)
+    if not screen.is_current and not is_owned_project_modal(client, screen, visit):
+        return True
+    # Only a refresh may replace the older publication; ordinary consumers
+    # must wait rather than paint it. All visit/teardown guards above still apply.
+    return not for_refresh and _resumed_source_refresh(screen, client)
 
 
 _MOUNT_UI_METHODS = tuple(

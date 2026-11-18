@@ -55,6 +55,108 @@ def _cover(screen, app):
     screen.is_current = False
 
 
+def _resumed_publication(monkeypatch):
+    """Exercise real selection predicates with inert publication fixtures."""
+    original_selection = execution_state.selected_client
+    screen, client, app = _visit(monkeypatch)
+    monkeypatch.setattr(execution_state, "selected_client", original_selection)
+    from tldw_chatbook.Chat import console_execution_readers
+
+    monkeypatch.setattr(console_execution_readers, "require_reader_sources", lambda: None)
+    for name in ("ConsoleProjectionView", "ConsoleProjection", "ConsoleSessionComposition"):
+        monkeypatch.setattr(execution_state, name, SimpleNamespace)
+    row = client.projection_view.session("chat")
+    row.settings_revision = 2
+    client._projection = SimpleNamespace(
+        source_revision=3, session_id=row.id, incarnation_id=row.incarnation_id,
+    )
+    client.projection_view.source_revision = 3
+    client.projection_view.projections = (client._projection,)
+    client.session_composition = SimpleNamespace(
+        session_id=row.id, incarnation_id=row.incarnation_id, settings_revision=2,
+    )
+    client._visit = screen._console_process_visit = 3
+    client._intake_open = True
+
+    def require_view(view, visit):
+        if (view is not client._view or visit != client._visit
+            or app.screen is not view or client._channel_error is not None):
+            raise ConsoleChannelLost("original view boundary refused")
+
+    client.require_view = require_view
+    return screen, client, app
+
+
+@pytest.mark.asyncio
+async def test_resumed_fenced_publication_refreshes_without_rendering_old_values(monkeypatch):
+    screen, client, _ = _resumed_publication(monkeypatch)
+    with pytest.raises(RuntimeError, match="selected projection is unavailable"):
+        execution_state.selected_client(screen)
+    assert execution_state.defer_selected_passive_render(screen)
+    scheduled = []
+    screen.run_worker = lambda callback, **_: scheduled.append(callback) or SimpleNamespace(is_finished=False)
+    execution_state.refresh_selected_when_due(screen)
+    execution_state.refresh_selected_when_due(screen)
+    assert len(scheduled) == 1
+    calls = []
+
+    async def refresh(current_screen, *, checkpoint=None):
+        calls.append((current_screen, checkpoint))
+        return False  # No renderer can claim an interrupted refresh succeeded.
+
+    monkeypatch.setattr(execution_state, "refresh_selected_view", refresh)
+    await scheduled[0]()
+    assert calls == [(screen, "mount")]
+    assert not screen._console_attach_reconcile_running
+    with pytest.raises(RuntimeError, match="selected projection is unavailable"):
+        execution_state.selected_client(screen)
+
+
+@pytest.mark.asyncio
+async def test_resumed_refresh_only_exposes_new_current_publication(monkeypatch):
+    screen, client, _ = _resumed_publication(monkeypatch)
+    calls = []
+
+    async def read_and_present(current_screen, current_client, visit, checkpoint):
+        calls.append((current_screen, current_client, visit, checkpoint))
+        # The transport's actual checked adoption is covered by its own tests;
+        # here the new coherent revision models its successful return only.
+        client.projection_view.source_revision = client._source_revision
+        client._projection.source_revision = client._source_revision
+        assert execution_state.selected_client(screen) is client
+        return True
+
+    monkeypatch.setattr(execution_state, "_refresh_current_selected_view", read_and_present)
+    screen.call_later = lambda *_: None
+    assert await execution_state.refresh_selected_view(screen, checkpoint="mount")
+    assert calls == [(screen, client, 3, "mount")]
+    assert not execution_state.defer_selected_passive_render(screen)
+
+
+@pytest.mark.parametrize("changed", ["same_visit", "future", "frame", "composition", "channel", "view"])
+def test_resume_does_not_accept_mixed_or_unrelated_publications(monkeypatch, changed):
+    screen, client, app = _resumed_publication(monkeypatch)
+    if changed == "same_visit":
+        screen._console_process_mounted_visit = client._visit
+    elif changed == "future":
+        client.projection_view.source_revision = client._source_revision + 1
+    elif changed == "frame":
+        client._projection.source_revision = 2
+    elif changed == "composition":
+        client.session_composition.settings_revision += 1
+    elif changed == "channel":
+        client._channel_error = ConsoleChannelLost("actual channel failure")
+    else:
+        app.screen = Screen()
+    if changed in {"same_visit", "future"}:
+        assert not execution_state._resumed_source_refresh(screen, client)
+    else:
+        with pytest.raises((RuntimeError, ConsoleChannelLost)):
+            execution_state._resumed_source_refresh(screen, client)
+    with pytest.raises((RuntimeError, ConsoleChannelLost)):
+        execution_state.selected_client(screen)
+
+
 def test_only_actual_modal_coverage_or_ended_visit_defers_refresh(monkeypatch):
     screen, client, app = _visit(monkeypatch)
     assert not execution_state._defer_selected_refresh(screen, client, 1)

@@ -784,9 +784,12 @@ def _compose_virtual_cli_provider(
     service, control_sources = _composition_control_plane(self)
     if service is None:
         return None, None
+    from .console_control_tools import service_permission_scope
+
     try:
-        if _current_control_plane(self, control_sources, service).get_kill_switch():
-            return None, None
+        with service_permission_scope(service):
+            if _current_control_plane(self, control_sources, service).get_kill_switch():
+                return None, None
     except Exception:  # noqa: BLE001 -- unreadable security state fails closed
         return None, None
 

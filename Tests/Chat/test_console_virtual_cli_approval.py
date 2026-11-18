@@ -141,6 +141,30 @@ def test_controller_composition_honors_local_master_and_kill_switch(
     assert (hook is not None) is expected
 
 
+def test_composition_refuses_an_unretired_kill_switch_read(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+
+    from tldw_chatbook.Chat import console_control_tools
+
+    calls = []
+    service = SimpleNamespace(get_kill_switch=lambda: calls.append("read") or False)
+
+    @contextmanager
+    def unretired(checked_service):
+        assert checked_service is service
+        yield
+        raise RuntimeError("permission operation did not retire")
+
+    monkeypatch.setattr(console_control_tools, "service_permission_scope", unretired)
+    controller = object.__new__(ConsoleChatController)
+    controller.app = SimpleNamespace(unified_mcp_service=service)
+    context = SimpleNamespace(tool_configuration={"local_tools_enabled": True})
+    assert controller._compose_virtual_cli_provider(
+        session_id="session-1", turn_context=context, project_root=tmp_path,
+    ) == (None, None)
+    assert calls == ["read"]
+
+
 def test_compose_virtual_cli_provider_wires_arg_rule_persist_and_check(tmp_path):
     """task-32281: `_compose_virtual_cli_provider()`'s `persist_arg_rule`/
     `arg_rule_allows` closures route to the SAME service seams
