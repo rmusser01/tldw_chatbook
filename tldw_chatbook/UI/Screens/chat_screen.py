@@ -14344,9 +14344,17 @@ class ChatScreen(BaseAppScreen):
         self._console_guidance_dismissed = True
         self._sync_console_transcript_guidance()
 
-    @spend.console_readiness_presentation  # TASK-35645: every caller reads owned config
     def _sync_console_transcript_guidance(self) -> None:
         """Refresh Console onboarding and provider recovery copy in place."""
+        if getattr(getattr(self, "app_instance", None), "console_execution_client", None) is not None:
+            from ..Console_Modules.execution_state import sync_selected_guidance
+
+            sync_selected_guidance(self)
+            return
+        self._sync_local_console_transcript_guidance()
+
+    @spend.console_readiness_presentation
+    def _sync_local_console_transcript_guidance(self) -> None:
         from tldw_chatbook.Chat.console_parent_settings import parent_settings_render
 
         with parent_settings_render(self):
@@ -14359,51 +14367,54 @@ class ChatScreen(BaseAppScreen):
             # These synchronous presentation helpers consume one result. Keep the
             # acquisition (including session convergence) complete before sharing
             # it, and acquire afresh on the next update or independent helper call.
-            settings_readiness = self._active_console_settings_readiness()
-            blocker_copy = self._console_provider_blocker_copy(
+            self._apply_console_transcript_guidance(self._active_console_settings_readiness())
+
+    def _apply_console_transcript_guidance(self, settings_readiness) -> None:
+        """Use the same checked readiness for the inline card and blocking modal."""
+        blocker_copy = self._console_provider_blocker_copy(
+            settings_readiness=settings_readiness
+        )
+        action_label, _action_target, action_tooltip = (
+            self._console_provider_recovery_action(
                 settings_readiness=settings_readiness
             )
-            action_label, _action_target, action_tooltip = (
-                self._console_provider_recovery_action(
-                    settings_readiness=settings_readiness
+        )
+        if blocker_copy:
+            empty_action_label, empty_action_tooltip = (
+                self._console_empty_recovery_action_copy(
+                    blocker_copy,
+                    provider_action_label=action_label,
+                    provider_action_tooltip=action_tooltip,
                 )
             )
-            if blocker_copy:
-                empty_action_label, empty_action_tooltip = (
-                    self._console_empty_recovery_action_copy(
-                        blocker_copy,
-                        provider_action_label=action_label,
-                        provider_action_tooltip=action_tooltip,
-                    )
-                )
-            else:
-                # TASK-2154.8 (FR-03): no blocker -> the empty transcript offers no
-                # recovery action (it would dead-end as a misleading "Choose model"
-                # button when nothing is broken). The setup modal keeps its own
-                # default-label fallback, so card mode is unaffected.
-                empty_action_label, empty_action_tooltip = "", ""
+        else:
+            # TASK-2154.8 (FR-03): no blocker -> the empty transcript offers no
+            # recovery action (it would dead-end as a misleading "Choose model"
+            # button when nothing is broken). The setup modal keeps its own
+            # default-label fallback, so card mode is unaffected.
+            empty_action_label, empty_action_tooltip = "", ""
 
-            card_state = self._build_console_setup_card_state(
-                settings_readiness=settings_readiness
+        card_state = self._build_console_setup_card_state(
+            settings_readiness=settings_readiness
+        )
+        try:
+            surface = self.query_one(
+                "#console-session-surface", ConsoleSessionSurface
             )
-            try:
-                surface = self.query_one(
-                    "#console-session-surface", ConsoleSessionSurface
-                )
-            except QueryError:
-                pass
-            else:
-                surface.sync_inline_guidance(
-                    card_state,
-                    provider_action_label=empty_action_label,
-                    provider_action_tooltip=empty_action_tooltip,
-                )
-
-            self._sync_console_setup_modal(
+        except QueryError:
+            pass
+        else:
+            surface.sync_inline_guidance(
                 card_state,
-                action_label=empty_action_label,
-                action_tooltip=empty_action_tooltip,
+                provider_action_label=empty_action_label,
+                provider_action_tooltip=empty_action_tooltip,
             )
+
+        self._sync_console_setup_modal(
+            card_state,
+            action_label=empty_action_label,
+            action_tooltip=empty_action_tooltip,
+        )
 
     def _sync_console_setup_modal(
         self,
@@ -20209,6 +20220,16 @@ class ChatScreen(BaseAppScreen):
         pending (``retry_soon`` -> gated ``_attempt``).
         """
         self._console_unknown_send_armed = None
+        from ..Console_Modules.execution_state import selected_client
+
+        client = selected_client(self)
+        if client is not None:
+            # The composer publishes authored inputs before this queued event;
+            # the backend owns its handoff write-through and empty-draft wake.
+            self._console_draft_spend_refresh.route_edit(
+                run_active=client.session_composition.draft_spend_run_active
+            )
+            return
         if not str(event.value or "").strip():
             wake = getattr(self._console_chat_controller, "fleet_wake", None)
             if wake is not None:
@@ -22029,6 +22050,13 @@ class ChatScreen(BaseAppScreen):
         filters on the draft text itself, which moves on every keystroke
         while the derived Workbench state does not.
         """
+        if getattr(getattr(self, "app_instance", None), "console_execution_client", None) is not None:
+            from ..Console_Modules.execution_state import sync_selected_controls
+
+            sync_selected_controls(self, draft_only=True)
+            self._sync_console_command_popup()
+            return
+
         from tldw_chatbook.Chat.console_parent_settings import parent_settings_render
 
         with parent_settings_render(self):

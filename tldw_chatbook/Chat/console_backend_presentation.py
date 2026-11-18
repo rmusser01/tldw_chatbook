@@ -399,6 +399,7 @@ class ConsoleBackendPresentation:
         from .console_chat_controller import ConsoleChatController
         from .console_chat_start import ConsoleChatStartCoordinator
         from .console_agent_bridge import ConsoleAgentBridge
+        from .console_chat_models import FEEDBACK_ACTIVE_RUN_STATUSES
         from .console_execution_composition_values import encode_session_composition
         from .console_domain_services import _definition_current
 
@@ -506,6 +507,10 @@ class ConsoleBackendPresentation:
             acknowledgement_idle=not (
                 activity.accepted_live_turn or activity.occupies_slot or activity.queued_count
                 or controller.run_state_for(session.id).is_stop_allowed or blocked
+            ),
+            draft_spend_run_active=(
+                run_state.status in FEEDBACK_ACTIVE_RUN_STATUSES
+                or self._runtime.has_custodied_turns(session.id)
             ),
             chat_start_prepared=controller._chat_start.is_prepared(session.id),
             change_tracking_enabled=controller._agent_bridge.change_tracking_enabled,
@@ -826,7 +831,9 @@ _MARKER_HELPERS = tuple(
 
 _COMPOSITION_RUNTIME_METHODS = tuple(
     (name, _definition(getattr(_CompositionRuntime, name)))
-    for name in ("snapshot_console_staged_evidence", "_staged_evidence_state")
+    for name in (
+        "snapshot_console_staged_evidence", "_staged_evidence_state", "has_custodied_turns",
+    )
 )
 
 from .console_activity_receipts import ConsoleActivityReceiptService

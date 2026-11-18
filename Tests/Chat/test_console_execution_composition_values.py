@@ -27,6 +27,7 @@ def _encode(session):
         blocked_turn_reason="recovery needed",
         is_stop_allowed=True,
         acknowledgement_idle=False,
+        draft_spend_run_active=True,
         chat_start_prepared=False,
         change_tracking_enabled=True,
         tools_published=False, builtin_tool_count=None, mcp_tool_count=None,
@@ -61,6 +62,7 @@ def test_composition_retains_fresh_none_and_detaches_original_policy():
     assert result.blocked_turn_reason == "recovery needed"
     assert result.is_stop_allowed and not result.chat_start_prepared
     assert result.acknowledgement_idle is False
+    assert result.draft_spend_run_active is True
     assert result.response_rule_phase is None
     assert result.response_rule_copy == result.run_feedback_copy == ""
     assert result.selected_tool_count == 0 and not result.tools_published
@@ -113,6 +115,7 @@ def test_composition_refuses_stale_row_unknown_fields_and_authority_objects():
         dict(payload, controller=object()),
         dict(payload, is_stop_allowed=1),
         dict(payload, acknowledgement_idle=1),
+        dict(payload, draft_spend_run_active=1),
         dict(payload, project_instruction_status=dict(payload["project_instruction_status"], body="private")),
     ):
         with pytest.raises(ConsoleProtocolError):

@@ -106,6 +106,10 @@ class ConsoleStoreReader:
     def messages_for_session(self, session_id):
         return self._current().messages_for_session(session_id)
 
+    def has_messages(self, session_id: str) -> bool:
+        """Read the original transcript count from the current publication."""
+        return self.session_fingerprint(session_id)[0] > 0
+
     def pending_attachments(self, session_id):
         """Return detached staged values only for this publication's active row."""
         from .attachment_core import PendingAttachment

@@ -87,6 +87,9 @@ def test_held_store_and_session_follow_actual_replaced_publications():
     held = store.session(session.id)
     assert held is store.sessions()[0]
     assert held.persisted_conversation_id is None
+    assert not store.has_messages(held.id)
+    with pytest.raises(KeyError):
+        store.has_messages("missing")
 
     session.persisted_conversation_id = "persisted-conversation"
     session.draft = "after"
@@ -97,6 +100,7 @@ def test_held_store_and_session_follow_actual_replaced_publications():
     assert held.persisted_conversation_id == "persisted-conversation"
     assert held.draft == "after"
     assert store.display_projection_revision(held.id) == 2
+    assert store.has_messages(held.id)
     copied = store.messages_for_session(held.id)[0]
     assert copied is not message and copied.content == message.content
     copied.content = "local rendering edit"

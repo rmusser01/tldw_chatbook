@@ -307,7 +307,7 @@ async def refresh_selected_view(screen: ChatScreen, *, checkpoint: str | None = 
     return True
 
 
-def sync_selected_controls(screen: ChatScreen) -> bool:
+def sync_selected_controls(screen: ChatScreen, *, draft_only: bool = False) -> bool:
     """Render the attached visit's controls from its current checked display."""
     client = selected_client(screen)
     if client is None:
@@ -327,8 +327,13 @@ def sync_selected_controls(screen: ChatScreen) -> bool:
                 if time.monotonic() >= client._readiness_deadline:
                     raise ConsoleDisplayExpired("Console control presentation expired")
                 screen._push_console_control_state_if_changed(control, workbench)
-                screen._sync_console_settings_summary()
-                screen._sync_console_selected_recovery()
+                if not draft_only:
+                    screen._sync_console_settings_summary()
+                    screen._sync_console_selected_recovery()
+                    readiness = screen._active_console_settings_readiness()
+                    screen._apply_console_transcript_guidance(readiness)
+            if time.monotonic() >= client._readiness_deadline:
+                raise ConsoleDisplayExpired("Console control presentation expired")
             return True
         except ConsoleDisplayExpired:
             pass
@@ -336,7 +341,29 @@ def sync_selected_controls(screen: ChatScreen) -> bool:
     return False
 
 
+def sync_selected_guidance(screen: ChatScreen) -> None:
+    """Refresh the inline guidance and blocking modal together from this visit."""
+    if (
+        not screen.is_attached or not screen.is_current
+        or getattr(screen, "_console_sync_maintenance_paused", False)
+    ):
+        return
+    client = selected_client(screen)
+    if client is None:
+        raise RuntimeError("Console guidance presentation owner changed")
+    _require_methods(screen, _GUIDANCE_METHODS)
+    try:
+        screen._apply_console_transcript_guidance(settings_readiness(screen, client))
+    except ConsoleDisplayExpired:
+        refresh_selected_when_due(screen)
+
+
 _RESIZE_METHOD = (("_adapt_console_workspace_to_width", _definition(ChatScreen._adapt_console_workspace_to_width)),)
+
+_GUIDANCE_METHODS = tuple(
+    (name, _definition(getattr(ChatScreen, name)))
+    for name in ("_apply_console_transcript_guidance", "_active_console_settings_readiness")
+)
 
 _REFRESH_METHODS = tuple(
     (name, _definition(getattr(ChatScreen, name)))
@@ -349,7 +376,7 @@ _REFRESH_METHODS = tuple(
         "_sync_console_selected_recovery", "_console_settings_failure_display",
         "_console_selected_continuation_recovery", "_sync_console_settings_recovery_surfaces",
     )
-)
+) + _GUIDANCE_METHODS
 
 
 def resume_selected_view(screen: ChatScreen) -> None:

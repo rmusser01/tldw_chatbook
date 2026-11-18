@@ -83,6 +83,7 @@ class ConsoleSessionComposition:
     blocked_turn_reason: str
     is_stop_allowed: bool
     acknowledgement_idle: bool
+    draft_spend_run_active: bool
     chat_start_prepared: bool
     change_tracking_enabled: bool
     tools_published: bool
@@ -118,6 +119,7 @@ _COMPOSITION = {
     "blocked_turn_reason": _text,
     "is_stop_allowed": _boolean,
     "acknowledgement_idle": _boolean,
+    "draft_spend_run_active": _boolean,
     "chat_start_prepared": _boolean,
     "change_tracking_enabled": _boolean,
     "tools_published": _boolean,
@@ -145,6 +147,7 @@ def encode_session_composition(
     blocked_turn_reason: str,
     is_stop_allowed: bool,
     acknowledgement_idle: bool,
+    draft_spend_run_active: bool,
     chat_start_prepared: bool,
     change_tracking_enabled: bool,
     tools_published: bool, builtin_tool_count: int | None,
@@ -183,6 +186,7 @@ def encode_session_composition(
         blocked_turn_reason,
         is_stop_allowed,
         acknowledgement_idle,
+        draft_spend_run_active,
         chat_start_prepared,
         change_tracking_enabled,
         tools_published, builtin_tool_count, mcp_tool_count,

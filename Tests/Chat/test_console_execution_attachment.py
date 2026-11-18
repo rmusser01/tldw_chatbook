@@ -22,6 +22,9 @@ def test_coalesced_controls_use_current_selected_publication(monkeypatch, entry)
         _push_console_control_state_if_changed=lambda c, w: updates.append((c, w)),
         _sync_console_settings_summary=lambda: updates.append("settings"),
         _sync_console_selected_recovery=lambda: updates.append("recovery"),
+        _active_console_settings_readiness=lambda: "readiness",
+        _apply_console_transcript_guidance=lambda value: updates.append(value),
+        _sync_console_command_popup=lambda: updates.append("popup"),
     )
     monkeypatch.setattr(execution_state, "selected_client", lambda receiver: client)
     monkeypatch.setattr(execution_state, "_require_methods", lambda *args: None)
@@ -31,11 +34,17 @@ def test_coalesced_controls_use_current_selected_publication(monkeypatch, entry)
 
     sync = getattr(ChatScreen, entry)
     assert sync(screen)
-    assert updates == [("control", "workbench"), "settings", "recovery"]
+    assert updates == [("control", "workbench"), "settings", "recovery", "readiness"]
+    updates.clear()
+    ChatScreen._sync_console_workbench_actions_from_draft(screen)
+    assert updates == [("control", "workbench"), "popup"]
     updates.clear()
     clock[0] = 12.0
     assert not sync(screen)
     assert updates == ["refresh"]
+    updates.clear()
+    ChatScreen._sync_console_workbench_actions_from_draft(screen)
+    assert updates == ["refresh", "popup"]
     updates.clear()
     clock[0] = 10.0
     screen._build_console_workbench_state = lambda _: clock.__setitem__(0, 13.0)
@@ -45,6 +54,33 @@ def test_coalesced_controls_use_current_selected_publication(monkeypatch, entry)
     screen._console_sync_maintenance_paused = True
     assert not sync(screen)
     assert not updates
+
+
+def test_selected_guidance_keeps_blocking_modal_on_original_readiness(monkeypatch):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Console_Modules import execution_state
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    values = []
+    client = SimpleNamespace(_readiness_deadline=2.0)
+    screen = SimpleNamespace(
+        app_instance=SimpleNamespace(console_execution_client=client),
+        is_attached=True, is_current=True,
+        _apply_console_transcript_guidance=values.append,
+    )
+    monkeypatch.setattr(execution_state, "selected_client", lambda _: client)
+    monkeypatch.setattr(execution_state, "_require_methods", lambda *args: None)
+    monkeypatch.setattr(execution_state, "settings_readiness", lambda *_: "current")
+    monkeypatch.setattr(execution_state, "refresh_selected_when_due", lambda _: values.append("refresh"))
+    ChatScreen._sync_console_transcript_guidance(screen)
+
+    def expired(*args):
+        raise execution_state.ConsoleDisplayExpired("expired")
+
+    monkeypatch.setattr(execution_state, "settings_readiness", expired)
+    ChatScreen._sync_console_transcript_guidance(screen)
+    assert values == ["current", "refresh"]
 
 
 @pytest.mark.asyncio

@@ -756,7 +756,7 @@ class ConsoleLocalControls:
         task.add_done_callback(completed)
         receipt.work = task
 
-    def _queue_session_capture(self, command, receipt):
+    def _queue_session_capture(self, command, receipt, *, draft_checkpoint=None):
         """Retain each ordered capture while leaving control intake available."""
         from .console_control_settings import PendingSettingsApply
         from .console_parent_settings import (
@@ -859,7 +859,7 @@ class ConsoleLocalControls:
                     return await run_parent_settings_capture(command)
                 if type(command) is ReadProjection:
                     return await self._read_projection(identity)
-                self._apply_input_command(command, receipt)
+                self._apply_input_command(command, receipt, draft_checkpoint=draft_checkpoint)
                 return receipt.applied.result()
             finally:
                 self._capture_tasks.pop(task, None)
@@ -1622,15 +1622,26 @@ class ConsoleLocalControls:
         self._domain.require_current()
         if identity.session_id in self._closing_sessions:
             raise RuntimeError("Console session control intake is closing")
+        draft_checkpoint = None
+        if (
+            type(command) is UpdateInputs
+            and type(command.draft) is str and not command.draft.strip()
+        ):
+            from .console_backend_presentation import ConsoleBackendPresentation
+
+            presentation = self._domain.presentation
+            owner = self._service._display_owner
+            if type(presentation) is ConsoleBackendPresentation and owner is not None:
+                draft_checkpoint = presentation.capture_display_reuse_checkpoint(owner)
         if (
             type(command) is ApplySettings
             or identity.session_id in self._session_capture_tails
         ):
-            self._queue_session_capture(command, receipt)
+            self._queue_session_capture(command, receipt, draft_checkpoint=draft_checkpoint)
             return receipt
-        return self._apply_input_command(command, receipt)
+        return self._apply_input_command(command, receipt, draft_checkpoint=draft_checkpoint)
 
-    def _apply_input_command(self, command, receipt):
+    def _apply_input_command(self, command, receipt, *, draft_checkpoint=None):
         identity = command.identity
         if type(command) is UpdateInputs:
             if type(command.draft) is not str:
@@ -1665,6 +1676,17 @@ class ConsoleLocalControls:
                     self._store.set_session_one_shot_prefill(
                         identity.session_id, command.prefill.value
                     )
+            if (
+                draft_checkpoint is not None
+                and inputs.draft != command.draft and not command.draft.strip()
+                and self._store.active_session_id == identity.session_id
+                and self._domain.presentation.display_reuse_checkpoint_current(
+                    self._service._display_owner, draft_checkpoint,
+                )
+            ):
+                # Authored input and pending handoff custody are published first.
+                # A hidden/superseded visit must never wake a newer view.
+                self._controller._fleet_wake.retry_soon()
             receipt.applied.set_result(
                 self._store.session_input_snapshot(identity.session_id).draft_revision
             )
