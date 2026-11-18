@@ -181,3 +181,56 @@ Eight boot and module-size checks passed with two census warnings
 Derived-artifact preflight, Backlog guards, and Ruff gates passed.
 The SHA-256 of the private evidence manifest is
 `1a2904a16eebc4715f1e5a99eebeb57a4a529019d2f920354ef63a9b0d8911a2`.
+
+## Local Notes page and total
+
+TASK-41637 uses the exact `75994498f7` baseline with the same sealed
+120×50 macOS PTY profile. In two stock traces, the second same-file
+Notes owner took 243 ms and 324 ms to initialize. The count then used
+its own worker connection. A disposable joined-read prototype removed
+the extra owner in all three runs. Its cold median moved from 974 ms
+to 887 ms, measured from app key handling. All six prototype results
+remain in the private receipts.
+
+The final comparison measures from writing Ctrl+3 to the terminal flush
+that paints 10 Notes, 11 Media and 10,000 Conversations. Notes timings
+span owner selection, page reading and counting on the same worker or
+across the original two workers.
+
+| Run order | One-minute load, start → end | Cold populated paint | Warm populated paint | Cold Notes work | Warm Notes work |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 1 baseline | 35.5 → 34.1 | 988 ms | 127 ms | 601 ms | 285 ms |
+| 1 candidate | 34.5 → 31.6 | 1,087 ms | 87 ms | 406 ms | 233 ms |
+| 2 candidate | 30.6 → 28.1 | 993 ms | 77 ms | 393 ms | 236 ms |
+| 2 baseline | 28.1 → 32.7 | 995 ms | 211 ms | 367 ms | 326 ms |
+| 3 baseline | 33.0 → 25.5 | 941 ms | 34 ms | 597 ms | 215 ms |
+| 3 candidate | 25.0 → 17.9 | 893 ms | 78 ms | 428 ms | 212 ms |
+
+Each candidate used the existing profile owner and one Notes SQLite
+preparation per cold and warm visit. Each baseline used two preparations
+per visit and constructed a second owner on the cold visit. Median Notes
+work fell from 597 ms to 406 ms cold and from 285 ms to 233 ms warm.
+Median warm paint improved from 127 ms to 78 ms, with two faster pairs.
+Cold paint moved from 988 ms to 993 ms. Its two faster pairs saved 2 ms
+and 48 ms, and the first pair was 99 ms slower. Warm navigation can
+paint its retained snapshot while the fresh read runs. Median launch to
+usable input was 8.14 s on the baseline and 8.69 s on the candidate.
+
+The six processes kept all three 13-second windows, quit ordinarily and
+left zero scoped SQLite descriptors or profile and network guard
+violations. Gaps above 50 ms moved from six to nine in the cold windows
+and four to five in the warm windows. Worst gaps moved from 417 ms to
+575 ms cold and 156 ms to 81 ms warm. Send busy paint was outside this
+journey.
+
+The real source regression found two worker opens on the baseline and
+one on the candidate. The four final checks passed with exact paging,
+unknown total on count failure, denied access without a database open,
+and the original route for a different profile owner. The broader run
+recorded 166 passes and 24 failures. The frozen baseline reproduced all
+14 Notes profile-admission failures, and all 16 Notes cases passed in the
+existing bootstrap profile. The ten native worker tests blocked by the
+macOS sandbox passed with process inspection for their private children.
+Final derived-artifact, Backlog and Ruff checks passed. The SHA-256 of
+the 180-entry private receipt manifest is
+`3014644680e34feff930338a608b513afe6509cbe43ff8ed7d5d61bb5133e1a7`.
