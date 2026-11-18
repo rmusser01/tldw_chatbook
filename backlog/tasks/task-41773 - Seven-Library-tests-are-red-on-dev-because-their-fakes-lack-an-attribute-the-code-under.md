@@ -17,7 +17,7 @@ references:
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Each of these tests builds a `SimpleNamespace` fake and calls a real method on it. The method later started reading an attribute the fake does not have, so the tests fail before their assertions run. The Phase 4 media lane PR's discovery runs found the first six red (2026-11-18, dev 47a05413cb, 3 of 3) and left them off the lane; they listed the seventh, the walker's toast test, as a non-retarget assertion red. The multiselect three were re-checked at dev 908e9840aa the same day, with the same error.
+Each of these tests builds a `SimpleNamespace` fake and calls a real method on it. The method later started reading an attribute the fake does not have. Five of the tests fail on the `AttributeError` before their assertions run; in the other two the code catches the `AttributeError` and fails closed, so they fail on their own assertions. The Phase 4 media lane PR's discovery runs found the first six red on 2026-11-18 at dev 47a05413cb (the multiselect three in 3 of 3 runs, the walker three in 1 of 1) and left them off the lane; they listed the seventh, the walker's toast test, as a non-retarget assertion red. The multiselect three were re-checked at dev 908e9840aa the same day, with the same error.
 
 **Three multiselect tests.** These fail with `AttributeError: 'types.SimpleNamespace' object has no attribute '_library_media_editor_dirty'`:
 - `Tests/UI/test_library_multiselect_media.py::test_row_press_normal_mode_opens_viewer` (`:191`);
