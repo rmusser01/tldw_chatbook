@@ -14,6 +14,9 @@ source recovery, see [DIAGNOSTICS.md](DIAGNOSTICS.md),
 [the 84 KiB source archive](windows-foreground-approval-v2.zip) and its
 [SHA256](windows-foreground-approval-v2.sha256). The known v2 ancestry-probe defect
 is retained and documented; no qualified paint latency is claimed.
+The separately corrected [v3 archive](windows-foreground-approval-v3.zip) and
+[SHA256](windows-foreground-approval-v3.sha256) are prepared for later native
+diagnostics; neither baseline nor candidate has run with v3.
 
 ADR required: no new ADR. This is test-only reproduction of the existing
 [ADR-126](../../../../backlog/decisions/126-complete-local-backup-and-recovery.md)

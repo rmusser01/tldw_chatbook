@@ -1,8 +1,10 @@
 # Foreground and approval tracing recovery
 
-`windows-foreground-approval-v2.zip` is a portable, source-only **nonqualifying**
-diagnostic bundle. Its adjacent `.sha256` file pins the complete archive. It
-contains foreground monitors, approval v2 monitors, installers, source-only
+`windows-foreground-approval-v2.zip` preserves the executed diagnostic;
+`windows-foreground-approval-v3-997b33.zip` contains the separately corrected, **unrun**
+approval probe. Both are portable, source-only **nonqualifying** bundles. Each
+adjacent `.sha256` file pins its complete archive. They contain foreground
+monitors, the respective approval monitors, installers, source-only
 verification, a diagnostic summary helper, and the exact baseline/candidate
 source pins. It contains no profile, interpreter, dependency, receipt, mutable
 snapshot, user data or host path.
@@ -13,17 +15,34 @@ approval **v2** probe, including its known ancestry false-negative: it reads
 `_parent` directly, whereas pinned Textual stores a weakref in
 `_MessagePump__parent`. That run recorded no original-label probe or qualified
 approval paint. Preserve the diagnostic result; do not use v2 to claim paint
-latency. A correction must be a separately identified revision and run.
-Candidate pins refer specifically to
-`aab319544eb295d5b6ef78daab1bd8674743a839`. **The full per-tool diagnostic for that
-candidate has not run.** A later configuration fix or candidate is not covered.
+latency. The separately identified v3 correction still needs a native run.
+The immutable v2 archive's candidate pins refer to `aab319544eb295d5b6ef78daab1bd8674743a839`.
+The latest v3 candidate pins refer specifically to the product under q3:
+`997b3339ffd37fab54dc28054ed4987fb933e478`. **Its full per-tool diagnostic has not
+run.** A later configuration fix or candidate is not covered.
 The archive records no candidate timing result or executed overlay revision.
 
 Compatibility was checked without importing product code: all original monitored
 callables resolve; their bytecode, constants, names, closure and argument
 signatures match the previously reviewed source, excluding source locations.
 Fixed metadata arguments/free variables were checked explicitly. Whole-module
-pins and callable coordinates were updated to the frozen candidate.
+pins and callable coordinates were updated to the frozen candidate. The manifest
+lists reference/candidate source lines and whether each target's module changed;
+matching code and metadata contracts are required even when line positions move.
+
+V3 reads only the exact `weakref.ReferenceType` from the original resident
+`_MessagePump__parent` field. It does not call a parent property or arbitrary
+callback. Source-only tests execute the pinned getter/setter AST inside its
+original class name, covering Python name mangling, dead/wrong/malformed links,
+overlapping foreground widgets, missing updates, and partial clipping. This
+closes the demonstrated diagnostic error; it is not a native paint result.
+
+V3 also reports `qualified_delivered_button_region_cells` separately. It requires
+actual current ancestry/control eligibility, full clip/viewport containment and
+region cells in an original supported compositor update observed at the original
+display wrapper's return. It does **not** assert the fixed approval label was
+painted. Installed/summary records carry `approval_probe_revision: 3`; original
+label qualification and its missing observations remain independent.
 
 ## Restore sources and install
 
@@ -118,4 +137,6 @@ These validate pins and synthetic bookkeeping/monitor plumbing, not the actual
 journeys. `build_diagnostic_archive.py` is the source-only packaging recipe;
 all machine-specific input locations are explicit CLI arguments and never enter
 the archive. It refuses changed monitored definitions rather than inventing
-compatibility. The original source/environment prerequisites still apply.
+compatibility. Use `--approval-revision 3` when packaging the v3 source; its
+manifest explicitly records no baseline or candidate native run for that probe.
+The original source/environment prerequisites still apply.

@@ -23,10 +23,14 @@ STATE = (
     "card_generation",
     "same_generation",
     "information_ready",
+    "approval_phase",
+    "already_submitted",
+    "original_trace_started",
     "pending",
     "returned_true",
     "reused",
     "qualified_rendered_fast_approve",
+    "qualified_delivered_button_region_cells",
     "original_fixed_label_match",
     "original_match_cells_emitted",
     "eligible_visible_button",
@@ -54,6 +58,7 @@ STATE = (
     "prior_cells_seen",
     "prior_label_match_seen",
     "prior_qualified_rendered_seen",
+    "prior_qualified_region_cells_seen",
 )
 
 

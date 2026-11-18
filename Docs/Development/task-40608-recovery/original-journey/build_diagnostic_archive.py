@@ -65,7 +65,29 @@ def signature(code):
     )
 
 
-def build(foreground, approval, baseline, candidate, compatibility, output, approval_revision=2):
+def build(
+    foreground,
+    approval,
+    baseline,
+    candidate,
+    compatibility,
+    output,
+    approval_revision=2,
+):
+    declared_revision = next(
+        (
+            ast.literal_eval(node.value)
+            for node in ast.parse((approval / "observer.py").read_bytes()).body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(item, ast.Name) and item.id == "PROBE_REVISION"
+                for item in node.targets
+            )
+        ),
+        2,
+    )
+    if declared_revision != approval_revision:
+        raise ValueError("Approval revision does not match its original monitor source")
     roots = {
         "baseline": baseline,
         "candidate": candidate,
@@ -82,14 +104,18 @@ def build(foreground, approval, baseline, candidate, compatibility, output, appr
         raise ValueError(
             "Expected the original local baseline and selected process candidate"
         )
+    reviewed_candidates = {
+        2: "aab319544eb295d5b6ef78daab1bd8674743a839",
+        3: "997b3339ffd37fab54dc28054ed4987fb933e478",
+    }
     if (
         manifests["candidate"]["candidate_commit"]
-        != "aab319544eb295d5b6ef78daab1bd8674743a839"
+        != reviewed_candidates[approval_revision]
     ):
         raise ValueError(
-            "This recovery bundle is reviewed only for frozen candidate aab319544e"
+            "This probe revision is reviewed only for its recorded frozen candidate"
         )
-    files, code_cache, checked = {}, {}, set()
+    files, code_cache, checked = {}, {}, {}
 
     def source(role, module):
         key = role, module
@@ -116,7 +142,14 @@ def build(foreground, approval, baseline, candidate, compatibility, output, appr
                         + ":"
                         + function
                     )
-                checked.add((module, function))
+                checked[module, function] = {
+                    "module": module,
+                    "function": function,
+                    "reference_line": old.co_firstlineno,
+                    "candidate_line": code.co_firstlineno,
+                    "module_source_changed": source("candidate", module)[0]
+                    != source("compatibility", module)[0],
+                }
             required = {
                 "runtime_trace": {"kind", "kw"},
                 "tool_timeout_owner": {"fn"},
@@ -203,11 +236,14 @@ print(json.dumps({'members_verified': len(manifest['files']), 'native_launched':
             "candidate_commit": manifests["candidate"]["candidate_commit"],
             "candidate_full_diagnostic_run": False,
             "approval_probe_revision": approval_revision,
-            "baseline_diagnostic_run": "foreground-b1-20261117" if approval_revision == 2 else None,
+            "baseline_diagnostic_run": "foreground-b1-20261117"
+            if approval_revision == 2
+            else None,
             "compatibility_reference_commit": manifests["compatibility"][
                 "candidate_commit"
             ],
             "candidate_monitored_targets_checked": len(checked),
+            "candidate_compatibility_checks": [checked[key] for key in sorted(checked)],
             "equal_code_constants_names_closures_arguments": True,
             "fixed_metadata_contracts_checked": True,
             "files": {name: sha(raw) for name, raw in sorted(files.items())},
@@ -263,6 +299,7 @@ if __name__ == "__main__":
         "output",
     ):
         parser.add_argument("--" + name, type=Path, required=True)
+    parser.add_argument("--approval-revision", type=int, choices=(2, 3), default=2)
     args = parser.parse_args()
     build(
         args.foreground_artifact,
@@ -271,4 +308,5 @@ if __name__ == "__main__":
         args.candidate_replay,
         args.compatibility_replay,
         args.output,
+        args.approval_revision,
     )
