@@ -772,6 +772,7 @@ async def test_restored_profiles_settings_review_approves_config_alone(
             )
             assert "covers every profile this recovery restored" in review
             assert "It does not resume server sync." in review
+            previous_summary = screen.query_one("#backup-current-requirements")
             button = screen.query_one("#backup-approve-config", Button)
             assert str(button.label) == "Approve settings"
             button.press()
@@ -791,7 +792,14 @@ async def test_restored_profiles_settings_review_approves_config_alone(
                 assert pending == ["config", "runtime.sync_state"]
                 return
             async with asyncio.timeout(10):
-                while screen.query("#backup-config-review"):
+                # Child removal is incremental; wait for the new list publication.
+                while (
+                    screen.query("#backup-config-review")
+                    or screen.query("#backup-approve-config")
+                    or not screen.query("#backup-current-requirements")
+                    or screen.query_one("#backup-current-requirements")
+                    is previous_summary
+                ):
                     await pilot.pause(0.02)
             assert approved == ["generation-1"]
             assert not screen.query("#backup-approve-config")

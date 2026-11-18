@@ -3289,3 +3289,5 @@ Tests/UI/test_console_internals_decomposition.py::test_console_run_inspector_mcp
 # TASK-41307: the Console-wide held tool slots chip and its list's Release
 # (6 tests, 15 s serially at load 15).
 Tests/UI/test_console_held_tool_slots.py
+# TASK-41564 plan23: retain the reused Home/Library exit-fence regression.
+Tests/UI/test_screen_navigation.py::test_late_completions_after_the_exit_fence_skip_the_empty_stack

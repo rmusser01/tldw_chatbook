@@ -5962,6 +5962,57 @@ async def test_generic_reentry_returns_to_library_landing():
 
 
 @pytest.mark.asyncio
+async def test_late_completions_after_the_exit_fence_skip_the_empty_stack():
+    """TASK-41702: work that lands during shutdown must not read ``app.screen``.
+
+    Home and Library are reused, so a suspended screen's workers and
+    refreshes outlive the switch away. Shutdown sets the app's ``_exit``
+    fence first (``TldwCli._shutdown``, ``App.exit``), and Textual's
+    ``_close_all`` then empties the screen stack. Two readers raised
+    ``ScreenStackError: No screens on stack`` there: Home's triage refresh
+    completion, and Library's footer eligibility, which ``LibraryScreen.refresh``
+    reaches when a pruned child refreshes its parent. A late Home completion
+    must also paint nothing.
+    """
+    from textual.app import ScreenStackError
+
+    app = _build_test_app()
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await _wait_for_initial_screen(pilot)
+        await app.handle_screen_navigation(NavigateToScreen("home"))
+        home = app.screen
+        assert type(home).__name__ == "HomeScreen"
+        await app.handle_screen_navigation(NavigateToScreen("library"))
+        library = app.screen
+        assert type(library).__name__ == "LibraryScreen"
+        paints: list[str] = []
+        home._sync_home_triage = lambda: paints.append("paint")
+        pending = home._home_pending_refresh_sync
+
+        stack = app._screen_stack
+        saved = list(stack)
+        errors = []
+        app._exit = True
+        stack.clear()
+        try:
+            for name, late_call in (
+                ("home triage", home._sync_home_triage_after_refresh),
+                ("library footer", library._library_emergency_return_eligibility),
+            ):
+                try:
+                    late_call()
+                except ScreenStackError as exc:
+                    errors.append((name, exc))
+        finally:
+            stack.extend(saved)
+            app._exit = False
+        assert errors == [], f"a late completion read the emptied stack: {errors!r}"
+        assert paints == []
+        assert home._home_pending_refresh_sync is pending
+
+
+@pytest.mark.asyncio
 async def test_nav_bar_uses_overflow_instead_of_truncating_at_160_cols():
     """All destinations keep full labels through the overflow control."""
     from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER

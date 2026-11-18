@@ -132,7 +132,7 @@ jobs:
         pytest Tests --ignore=Tests/UI \
           -n auto --dist loadscope --max-worker-restart=3 \
           --shard-id=${{ matrix.shard }} --num-shards=6 \
-          --timeout=300 \
+          --timeout=300 --maxfail=1 -v \
           --json-report --json-report-omit log \
           --json-report-file=core-test-results-${{ matrix.shard }}.json
 
@@ -270,7 +270,7 @@ jobs:
         pytest Tests/UI \
           -n auto --dist loadscope --max-worker-restart=3 \
           --shard-id=${{ matrix.shard }} --num-shards=12 \
-          --timeout=180 \
+          --timeout=180 --maxfail=1 -v \
           --json-report --json-report-omit log \
           --json-report-file=ui-test-results-${{ matrix.shard }}.json
 

@@ -1829,10 +1829,10 @@ def test_interrupted_import_notice_clears_from_the_keyboard_off_the_ui_thread(
     import asyncio
     import threading
 
-    from textual.app import App
     from textual.containers import Vertical
     from textual.widgets import Button, Static
 
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp
     from tldw_chatbook.Actor_Packs.persona_coordinator import (
         PersonaActorPackCoordinatorError,
     )
@@ -1855,7 +1855,7 @@ def test_interrupted_import_notice_clears_from_the_keyboard_off_the_ui_thread(
             self.blocked_intent_ids = ()
             return 1
 
-    class Personas(App):
+    class Personas(ConsolidatedCSSApp):
         def __init__(self) -> None:
             super().__init__()
             self.persona_actor_pack_coordinator = Coordinator()

@@ -5711,7 +5711,7 @@ class LibraryScreen(BaseAppScreen):
         """Project the sole guarded truth for narrow canvas-to-rail recovery."""
         visible = self._library_emergency_stage == "canvas-only"
         guarded = bool(
-            (self.is_mounted and self.app.screen is not self)
+            (self.is_mounted and self.is_attached and self.app.screen is not self)
             or self._library_open_choice_strip() is not None
             or self._library_prompt_editor_active()
             or self._library_skill_editor_active()

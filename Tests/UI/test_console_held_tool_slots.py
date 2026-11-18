@@ -8,7 +8,7 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Static
 
-from Tests.UI.consolidated_css import BUNDLED_STYLESHEET
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from Tests.UI.test_console_rate_chip import _state
 from tldw_chatbook.UI.Console_Modules.agent import ConsoleAgentController
 from tldw_chatbook.Widgets.Console.console_cleanup_release import RELEASED_COPY
@@ -69,7 +69,7 @@ async def test_the_list_names_each_holder_and_releases_off_the_ui_thread():
         {"undo-owner": ("Undo", False), "run-1": ("fs_read", True)}, release
     )
 
-    class Harness(App):
+    class Harness(ConsolidatedCSSApp):
         def on_mount(self):
             self.push_screen(modal)
 
