@@ -109,6 +109,9 @@ class ConsoleExecutionBackend:
                 active_workspace_id=active.workspace_id if active is not None else None,
             )
         )
+        # Every authored turn uses this coordinator. Compose its original hooks
+        # on the backend loop before any parent visit can own the presentation.
+        self.runtime.ensure_archive_recovery()
         defaults = self.domain.default_session_settings()
         selection = build_console_provider_selection_from_settings(
             defaults,

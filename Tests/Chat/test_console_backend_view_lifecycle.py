@@ -1,5 +1,6 @@
 """Actual-owner lifecycle ordering for the qualified fresh-session boundary."""
 
+import asyncio
 import sys
 from dataclasses import replace
 
@@ -96,6 +97,13 @@ async def test_actual_fresh_view_supersession_no_seed_and_repeated_guarded_drain
             await lifecycle.prepare(visible)
             assert visibility == [False, False, True]
             assert backend.controller._interrupt_host.view_visible
+            # The first authored Send needs the same coordinator after mount.
+            # Constructing it here would rebind the attached parent's hooks.
+            archive = backend.runtime.ensure_archive_recovery()
+            assert archive is backend.controller._archive_recovery_runtime
+            assert archive.loop is asyncio.get_running_loop()
+            assert not archive._proofs and not archive._accepted_proofs
+            assert not archive._authorities and not archive.answerable(session.id)
             with pytest.raises(ConsoleBackendViewSuperseded):
                 await lifecycle.prepare(mount)
             assert visibility == [False, False, True]
