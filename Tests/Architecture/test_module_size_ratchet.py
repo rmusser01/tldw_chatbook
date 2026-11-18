@@ -1184,7 +1184,9 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py": 5532,
     # PR #3361, 2026-11-07 (owner size waiver, 2026-11-02 audit TASK-38580..38613):
     # 5167 -> 5189 (+22), TASK-38589 decodes legacy SSE streams as UTF-8 at four sites.
-    "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5189,
+    # 2026-11-18, TASK-41522 (owner rule: raise by the change's own lines): +13,
+    # OpenAI, Anthropic, Cohere, Google and Hugging Face check their base URL.
+    "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5202,
     "tldw_chatbook/Notes/notes_sync_runtime.py": 5167,
     "tldw_chatbook/Personal_Context/repository.py": 4997,
     # owner decision 2026-11-06 (expand limits, never contort code): TASK-39040

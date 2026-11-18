@@ -1944,6 +1944,11 @@ _REFUSED_PATHS_AND_PORTS = (
     "http://127.0.0.1:8000/v1?api_key=sk-secret123",
     "http://127.0.0.1:8000/v1/chat/completions/v1",
 )
+#: Of those, the two a first-party cloud provider reads as a gateway base.
+_CLOUD_GATEWAY_PATHS = (
+    "http://127.0.0.1:8000/v1/models/v1",
+    "http://127.0.0.1:8000/v1/api/v1/generate",
+)
 
 
 @pytest.mark.parametrize("provider", sorted(_DEFAULT_WRITE_PROVIDERS))
@@ -1964,6 +1969,10 @@ def test_make_default_never_writes_an_endpoint_the_contract_refuses(
     """TASK-38964 review r10e-rev3: Save endpoint & use model takes any
     authority the preview parses, a pasted key included ("Remote/unknown").
     Nothing the contract refuses may reach the config file."""
+    if provider == "openai" and endpoint in _CLOUD_GATEWAY_PATHS:
+        # TASK-41700 (owner decision 2026-11-18): a cloud provider reads a
+        # path whose v1 is not last, and that names no route, as its base.
+        written = True
     config_path = tmp_path / "config.toml"
     config_path.write_text(
         toml.dumps(
@@ -2422,6 +2431,9 @@ def test_a_provider_console_does_not_support_keeps_its_copy():
                 "user:pw@gpu-box.lan:8080",
                 ":secretpw@gpu-box.lan:8080",
                 "gpu-box.lan:8080?key=sk-x",
+                # Review r16cu-rev2 M-2: with a scheme the path is still
+                # refused, so adding one is no fix.
+                "gpu-box.lan:8080/v1/models/v1",
             )
         ],
     ],
@@ -3071,14 +3083,18 @@ def test_an_api_route_is_not_a_custom_endpoint_base(path):
         validate_entry,
     )
 
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+        ENDPOINT_ROUTE_REFUSAL,
+    )
+
     config = _entry_config(f"http://localhost:8000{path}")
 
     assert load_custom_endpoints(config) == {}
-    assert custom_endpoint_refusals(config) == {
-        "box": "Endpoint path has ambiguous API suffixes."
-    }
+    # Rewritten on purpose (review r16cu-rev3): a route is refused as a route,
+    # not as an ambiguous path.
+    assert custom_endpoint_refusals(config) == {"box": ENDPOINT_ROUTE_REFUSAL}
     assert validate_entry("Box", "openai_compatible", f"http://localhost:8000{path}") == [
-        "Endpoint path has ambiguous API suffixes."
+        ENDPOINT_ROUTE_REFUSAL
     ]
 
 
@@ -4221,6 +4237,412 @@ def test_every_engine_preset_still_resolves_its_shipped_base():
         environ={},
     )
     assert relaxed.base_url == "https://api.deepinfra.com/v1/openai"
+
+
+# --- TASK-41522: first-party cloud adapters ----------------------------------
+
+#: Each first-party cloud dispatch name, the table and key its adapter reads
+#: its base from when the call pins none, and the rest of that table.
+#: OpenAI overlays ``[api_settings.openai]``; Anthropic and HuggingFace read
+#: ``load_settings``' legacy tables.
+_CLOUD_OWN_ENDPOINTS = (
+    ("openai", ("api_settings", "openai"), "api_base_url", {}),
+    ("anthropic", ("anthropic_api",), "api_base_url", {}),
+    ("cohere", ("api_settings", "cohere"), "api_base_url", {}),
+    ("google", ("api_settings", "google"), "api_base_url", {}),
+    ("huggingface", ("huggingface_api",), "api_base_url", {}),
+    ("huggingface", ("huggingface_api",), "router_base_url", {"use_router_url_format": "true"}),
+    ("groq", ("api_settings", "groq"), "api_base_url", {}),
+    ("openrouter", ("api_settings", "openrouter"), "api_base_url", {}),
+    ("deepseek", ("api_settings", "deepseek"), "api_base_url", {}),
+    ("mistral", ("api_settings", "mistral"), "api_base_url", {}),
+    ("mistralai", ("api_settings", "mistral"), "api_base_url", {}),
+    ("moonshot", ("api_settings", "moonshot"), "api_base_url", {}),
+    ("zai", ("api_settings", "zai"), "api_base_url", {}),
+    ("qwencloud", ("api_settings", "qwencloud"), "api_base_url", {}),
+)
+_CLOUD_IDS = [f"{entry[0]}-{entry[2]}" for entry in _CLOUD_OWN_ENDPOINTS]
+#: The name each refusal shows and the provider key it carries.
+_CLOUD_REFUSAL_NAMES = {
+    "openai": ("OpenAI", "openai"),
+    "anthropic": ("Anthropic", "anthropic"),
+    "cohere": ("Cohere", "cohere"),
+    "google": ("Google", "google"),
+    "huggingface": ("Hugging Face", "huggingface"),
+    "groq": ("Groq", "groq"),
+    "openrouter": ("OpenRouter", "openrouter"),
+    "deepseek": ("DeepSeek", "deepseek"),
+    "mistral": ("Mistral", "mistral"),
+    "mistralai": ("Mistral", "mistral"),
+    "moonshot": ("Moonshot", "moonshot"),
+    "zai": ("Z.ai", "zai"),
+    "qwencloud": ("QwenCloud", "qwencloud"),
+}
+#: Moonshot, Z.ai and QwenCloud normalise their base before sending (the
+#: first two in the resolver their readiness shares; QwenCloud's check reads
+#: the normalised base, so a pasted ``/v1/responses`` keeps working), so
+#: these shapes were already refused there, with their own copy.
+_RESOLVER_REFUSALS = {
+    "moonshot": "Moonshot API base URL is invalid.",
+    "zai": "Z.ai API base URL is invalid.",
+    "qwencloud": "QwenCloud API base URL ",
+}
+_RESOLVER_REFUSED_SHAPES = frozenset({"fragment", "query", "user-info", "zone-id"})
+
+
+def _cloud_world(monkeypatch, config):
+    """The first-party cloud adapters read ``config``; every request they
+    send lands in the list returned, answered 400, and none reaches a socket."""
+    import requests
+
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls as cloud_calls
+    from tldw_chatbook.LLM_Calls import (
+        deepseek,
+        groq,
+        hosted_chat,
+        mistral,
+        moonshot,
+        openrouter,
+        provider_sessions,
+        qwencloud,
+        zai,
+    )
+
+    snapshot = SimpleNamespace(values=config)
+    for module in (cloud_calls, groq, openrouter, deepseek, mistral, moonshot, zai, qwencloud):
+        monkeypatch.setattr(module, "get_runtime_config_snapshot", lambda: snapshot)
+    monkeypatch.setattr(cloud_calls, "load_settings", lambda *a, **k: config)
+    for module, factory in (
+        (cloud_calls, "create_default_session"),
+        (cloud_calls, "create_owned_default_session"),
+        (cloud_calls, "create_pooled_default_session"),
+        (hosted_chat, "create_pooled_default_session"),
+        (qwencloud, "create_pooled_default_session"),
+    ):
+        monkeypatch.setattr(module, factory, lambda **_kw: requests.Session())
+    monkeypatch.setattr(provider_sessions, "get_session", lambda _key, factory: factory())
+    sent: list[str] = []
+
+    def send(_session, request, **_kwargs):
+        sent.append(request.url)
+        response = requests.Response()
+        response.status_code = 400
+        response._content = b'{"error": {"message": "stub"}}'
+        response._content_consumed = True
+        response.headers["Content-Type"] = "application/json"
+        response.url = request.url
+        response.request = request
+        return response
+
+    monkeypatch.setattr(requests.Session, "send", send)
+    return sent
+
+
+def _cloud_config(table, key, extra, value):
+    config: dict = {}
+    node = config
+    for part in table:
+        node = node.setdefault(part, {})
+    node.update(extra)
+    node[key] = value
+    return config
+
+
+@pytest.mark.parametrize(("dispatch", "table", "key", "extra"), _CLOUD_OWN_ENDPOINTS, ids=_CLOUD_IDS)
+def test_a_cloud_adapter_never_reaches_a_base_url_the_contract_refuses(
+    dispatch, table, key, extra, monkeypatch
+):
+    """TASK-41522: the first-party cloud adapters sent to a base-URL override
+    in their own table (or pinned) without the endpoint contract, so every
+    non-Console caller reached ``127.1``, ``0x7f.1`` or a user-info host. Each
+    now refuses it before any request, with the contract's reason."""
+    from tldw_chatbook.Provider_Contract import ChatConfigurationError
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import endpoint_refusal
+
+    for shape, pinned in itertools.product(sorted(_DISPATCH_REFUSED_BASES), (False, True)):
+        endpoint = _with_path("vllm", _DISPATCH_REFUSED_BASES[shape])
+        stored = _with_path("vllm", _SAFE_LOOPBACK) if pinned else endpoint
+        sent = _cloud_world(monkeypatch, _cloud_config(table, key, extra, stored))
+
+        try:
+            _dispatch(dispatch, api_base_url=endpoint if pinned else None)
+        except Exception as exc:  # the assertions below say which
+            caught = exc
+        else:
+            caught = None
+
+        assert sent == [], (shape, pinned)
+        assert isinstance(caught, ChatConfigurationError), (shape, pinned, repr(caught))
+        name, provider = _CLOUD_REFUSAL_NAMES[dispatch]
+        assert caught.status_code is None, (shape, pinned, caught.status_code)
+        assert caught.provider == provider, (shape, caught.provider)
+        assert not [part for part in _ECHO_PARTS if part in str(caught)], shape
+        if dispatch in _RESOLVER_REFUSALS and shape in _RESOLVER_REFUSED_SHAPES:
+            assert str(caught).startswith(_RESOLVER_REFUSALS[dispatch]), (shape, pinned)
+            continue
+        reason = endpoint_refusal(dispatch, endpoint)
+        assert reason and str(caught) == f"{name} API URL: {reason}", (shape, pinned, str(caught))
+
+
+#: TASK-41522 keeps-working checks: where each cloud adapter posts, unpinned,
+#: with the shipped config and with an accepted override in its own table
+#: (``http://gpu-box.lan:8000/v1``), before and after the contract check.
+_CLOUD_POSTS = {
+    "openai-api_base_url": "https://api.openai.com/v1/chat/completions",
+    "anthropic-api_base_url": "https://api.anthropic.com/v1/messages",
+    "cohere-api_base_url": "https://api.cohere.com/v2/chat",
+    "google-api_base_url": "https://generativelanguage.googleapis.com/v1beta/models/m:generateContent",
+    "huggingface-api_base_url": "https://api-inference.huggingface.co/v1/chat/completions",
+    "huggingface-router_base_url": "https://router.huggingface.co/v1/chat/completions",
+    "groq-api_base_url": "https://api.groq.com/openai/v1/chat/completions",
+    "openrouter-api_base_url": "https://openrouter.ai/api/v1/chat/completions",
+    "deepseek-api_base_url": "https://api.deepseek.com/chat/completions",
+    "mistral-api_base_url": "https://api.mistral.ai/v1/chat/completions",
+    "mistralai-api_base_url": "https://api.mistral.ai/v1/chat/completions",
+    "moonshot-api_base_url": "https://api.moonshot.ai/v1/chat/completions",
+    "zai-api_base_url": "https://api.z.ai/api/paas/v4/chat/completions",
+    "qwencloud-api_base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/responses",
+}
+_GPU_BOX_ROUTES = {
+    "anthropic-api_base_url": "/messages",
+    "cohere-api_base_url": "/v2/chat",
+    "google-api_base_url": "/models/m:generateContent",
+    "huggingface-router_base_url": "/models/m/v1/chat/completions",
+    "qwencloud-api_base_url": "/responses",
+}
+
+
+def test_a_cloud_adapter_still_posts_where_it_did(monkeypatch):
+    """TASK-41522: the check refuses only what the contract refuses; each
+    cloud adapter's shipped base and an accepted override still post."""
+    from tldw_chatbook.Provider_Contract import ChatBadRequestError
+
+    for (dispatch, table, key, extra), case in zip(_CLOUD_OWN_ENDPOINTS, _CLOUD_IDS):
+        override = "http://gpu-box.lan:8000/v1"
+        for config, posted in (
+            (_merged(_cloud_config(table, "model", extra, "m")), _CLOUD_POSTS[case]),
+            (
+                _cloud_config(table, key, extra, override),
+                override + _GPU_BOX_ROUTES.get(case, "/chat/completions"),
+            ),
+        ):
+            sent = _cloud_world(monkeypatch, config)
+
+            with pytest.raises(ChatBadRequestError):  # the stub answers 400
+                _dispatch(dispatch)
+
+            assert sent == [posted], case
+
+
+def test_the_strict_transport_refuses_a_user_info_base_without_rendering_it():
+    """TASK-41522 review r16cu-rev1 Minor 1 (moved here, lane-run, by review
+    r16cu-rev2 Minor 3): the contract refuses a base with user info before
+    any request; neither the refusal nor anything chained to it renders the
+    credential."""
+    import traceback
+
+    from tldw_chatbook.LLM_Calls.hosted_chat import (
+        HostedHTTPTransportConfig,
+        owned_json_post,
+    )
+    from tldw_chatbook.Provider_Contract import ChatConfigurationError
+
+    config = HostedHTTPTransportConfig(
+        provider="moonshot",
+        base_url="https://user:CRED-CANARY@example.com/v1",
+        api_key="not-a-real-key-0000",
+        timeout=0.2,
+        retries=0,
+        retry_delay=0.0,
+    )
+
+    with pytest.raises(ChatConfigurationError) as caught:
+        owned_json_post(config=config, route="chat/completions", payload={}, streaming=False)
+
+    assert type(caught.value) is ChatConfigurationError
+    assert caught.value.status_code is None
+    rendered = "".join(traceback.format_exception(caught.type, caught.value, caught.tb))
+    assert "CRED-CANARY" not in rendered
+
+
+# --- TASK-41700: gateway bases for first-party cloud providers ---------------
+
+_GATEWAY = "https://gateway.ai.cloudflare.com/v1/acct/gw"
+#: Per cloud dispatch case: gateway bases in the adapter's own table (or
+#: pinned) and the exact URL its adapter posts to, its route appended.
+_GATEWAY_POSTS = {
+    "openai-api_base_url": (
+        (f"{_GATEWAY}/openai", f"{_GATEWAY}/openai/chat/completions"),
+        ("https://api.deepinfra.com/v1/openai", "https://api.deepinfra.com/v1/openai/chat/completions"),
+    ),
+    "anthropic-api_base_url": (
+        (f"{_GATEWAY}/anthropic", f"{_GATEWAY}/anthropic/messages"),
+        (f"{_GATEWAY}/anthropic/v1", f"{_GATEWAY}/anthropic/v1/messages"),
+    ),
+    "cohere-api_base_url": ((f"{_GATEWAY}/cohere", f"{_GATEWAY}/cohere/v2/chat"),),
+    "google-api_base_url": (
+        (
+            f"{_GATEWAY}/google-ai-studio/v1beta",
+            f"{_GATEWAY}/google-ai-studio/v1beta/models/m:generateContent",
+        ),
+    ),
+    "huggingface-api_base_url": (
+        (f"{_GATEWAY}/huggingface/v1", f"{_GATEWAY}/huggingface/v1/chat/completions"),
+    ),
+    "huggingface-router_base_url": (
+        (f"{_GATEWAY}/huggingface", f"{_GATEWAY}/huggingface/models/m/v1/chat/completions"),
+    ),
+    "groq-api_base_url": ((f"{_GATEWAY}/groq", f"{_GATEWAY}/groq/chat/completions"),),
+    "openrouter-api_base_url": (
+        (f"{_GATEWAY}/openrouter", f"{_GATEWAY}/openrouter/chat/completions"),
+    ),
+    "deepseek-api_base_url": ((f"{_GATEWAY}/deepseek", f"{_GATEWAY}/deepseek/chat/completions"),),
+    "mistral-api_base_url": (
+        (f"{_GATEWAY}/mistral/v1", f"{_GATEWAY}/mistral/v1/chat/completions"),
+    ),
+    "mistralai-api_base_url": (
+        (f"{_GATEWAY}/mistral/v1", f"{_GATEWAY}/mistral/v1/chat/completions"),
+    ),
+    "moonshot-api_base_url": (
+        (f"{_GATEWAY}/moonshot/v1", f"{_GATEWAY}/moonshot/v1/chat/completions"),
+    ),
+    # Z.ai's preset reading already took a path as its base (TASK-34100.6).
+    "zai-api_base_url": ((f"{_GATEWAY}/zai", f"{_GATEWAY}/zai/chat/completions"),),
+    "qwencloud-api_base_url": (
+        (f"{_GATEWAY}/qwen/compatible-mode/v1", f"{_GATEWAY}/qwen/compatible-mode/v1/responses"),
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    ("dispatch", "table", "key", "extra", "case"),
+    [(*entry, case) for entry, case in zip(_CLOUD_OWN_ENDPOINTS, _CLOUD_IDS)],
+    ids=_CLOUD_IDS,
+)
+def test_a_cloud_adapter_sends_to_a_gateway_base_exactly(
+    dispatch, table, key, extra, case, monkeypatch
+):
+    """TASK-41700 (owner decision 2026-11-18): the contract called a gateway
+    base's mid-path ``v1`` ambiguous, so TASK-41522 refused a Cloudflare AI
+    Gateway or DeepInfra base for every ``chat_api_call`` caller (Dreams,
+    ingest, Evals). It is the adapter's base; the adapter appends its route."""
+    for (base, posted), pinned in itertools.product(_GATEWAY_POSTS[case], (False, True)):
+        stored = _with_path("vllm", _SAFE_LOOPBACK) if pinned else base
+        sent = _cloud_world(monkeypatch, _cloud_config(table, key, extra, stored))
+
+        try:
+            _dispatch(dispatch, api_base_url=base if pinned else None)
+        except Exception as exc:  # the stub answers 400
+            caught = exc
+        else:
+            caught = None
+
+        assert sent == [posted], (base, pinned, repr(caught))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    # "mistralai" and router mode share "mistral"'s and "huggingface"'s tables.
+    "case",
+    [case for case in sorted(_GATEWAY_POSTS) if case.endswith("-api_base_url") and "mistralai" not in case],
+)
+async def test_console_sends_to_a_gateway_base_exactly(case):
+    """TASK-41700: Console's readiness and send refused a gateway base since
+    TASK-40300 ("Invalid URL"). From the config or the session, it is Ready
+    and the adapter gets that exact base."""
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_settings_readiness,
+    )
+
+    provider = case.split("-")[0]
+    base = _GATEWAY_POSTS[case][-1][0]
+    for source in ("config", "session"):
+        table = {"api_key": "not-a-real-key-0000", "model": "m"}
+        settings = ConsoleSessionSettings(provider=provider, model="m", base_url=base)
+        if source == "config":
+            table["api_base_url"] = base
+            settings = ConsoleSessionSettings(provider=provider, model="m")
+        config = {"api_settings": {provider: table}}
+        seen: list[str] = []
+
+        readiness = build_console_settings_readiness(settings, app_config=config, environ={})
+        resolution = await _resolve_endpoint_send(settings, config, source == "session", seen)
+
+        assert readiness.label != "Invalid URL", (source, readiness)
+        assert resolution.ready is True, (source, resolution.visible_copy)
+        assert resolution.base_url == base, source
+        assert seen == [f"adapter:{base}"], source
+
+
+def test_a_gateway_base_saves_and_displays_as_itself():
+    """TASK-41700: Settings' save wrote no gateway base (the contract refused
+    it), and the display read it as "invalid endpoint"."""
+    from tldw_chatbook.Chat.provider_setup_persistence import persisted_endpoint_for_key
+
+    for case, pairs in sorted(_GATEWAY_POSTS.items()):
+        provider = case.split("-")[0]
+        for base, _posted in pairs:
+            assert persisted_endpoint_for_key(provider, "api_base_url", base) == base, case
+            assert persisted_endpoint_for_key(
+                provider, "api_base_url", f"{base}/chat/completions"
+            ) == base, case
+            assert safe_endpoint_display(base) == base, case
+
+
+#: TASK-41131/41132/41522 refusals, each with a gateway path.
+_GATEWAY_REFUSED_SHAPES = (
+    *(base + "/v1/acct/gw/openai" for base in _DISPATCH_REFUSED_BASES.values()
+      if "?" not in base and "#" not in base),
+    "http://127.0.0.1:8000/v1/acct/gw/openai?mode=fast",
+    "http://127.0.0.1:8000/v1/acct/gw/openai#part",
+    "http://0177.0.0.1:8000/v1/acct/gw/openai",
+    "http://0x7f000001:8000/v1/acct/gw/openai",
+    "http://127.0.0.1:8000/v1/acct//gw/openai",
+    "http://127.0.0.1:8000/v1/acct/../openai",
+)
+#: A route is not a base. Z.ai's preset reading takes any path as its base
+#: (TASK-34100.6), unchanged here, so it is not asked.
+_GATEWAY_ROUTE_SHAPES = (
+    "http://127.0.0.1:8000/v1/acct/gw/openai/responses",
+    "http://127.0.0.1:8000/v1/acct/gw/openai/chat/completions/v1",
+)
+#: Review r16cu-rev2 I-1: a native adapter's own route is a route too; the
+#: adapter appends it to the base (``.../v1/messages/messages``, a 404).
+_NATIVE_ROUTE_SHAPES = {
+    "anthropic": (
+        "https://api.anthropic.com/v1/messages",
+        f"{_GATEWAY}/anthropic/v1/messages",
+        f"{_GATEWAY}/anthropic/v1/complete",
+    ),
+    "cohere": ("https://api.cohere.com/v2/chat", f"{_GATEWAY}/cohere/v2/chat"),
+    "google": (
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        f"{_GATEWAY}/google-ai-studio/v1beta/models/x:generateContent",
+        f"{_GATEWAY}/google-ai-studio/v1beta/models/x:streamGenerateContent",
+    ),
+}
+
+
+def test_a_gateway_path_keeps_every_host_and_shape_refusal():
+    """TASK-41700 AC#2: a gateway path changes no host, user-info, zone-id,
+    query or fragment refusal, and a route or an ambiguous path is still not
+    a base, for every first-party cloud provider."""
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+        ENDPOINT_ROUTE_REFUSAL,
+        endpoint_refusal,
+    )
+
+    for provider in sorted({case.split("-")[0] for case in _GATEWAY_POSTS}):
+        routes = () if provider == "zai" else _GATEWAY_ROUTE_SHAPES
+        native = _NATIVE_ROUTE_SHAPES.get(provider, ())
+        for endpoint in _GATEWAY_REFUSED_SHAPES:
+            assert endpoint_refusal(provider, endpoint), (provider, endpoint)
+        # Review r16cu-rev3: a route is refused as a route, not as ambiguous.
+        for endpoint in (*routes, *native):
+            assert endpoint_refusal(provider, endpoint) == ENDPOINT_ROUTE_REFUSAL, (
+                provider,
+                endpoint,
+            )
 
 
 def test_the_shared_local_transport_keeps_its_recovery_wrapper():

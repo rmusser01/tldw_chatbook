@@ -796,6 +796,8 @@ def owned_json_post(
         A decoded object response or an owned SSE record stream.
 
     Raises:
+        ChatConfigurationError: Status-less, for a base URL the provider
+            endpoint contract refuses; nothing is sent.
         ChatAuthenticationError: For authentication failures.
         ChatRateLimitError: For exhausted rate limiting.
         ChatBadRequestError: For other client request failures.
@@ -808,6 +810,14 @@ def owned_json_post(
     )
     if route not in {"chat/completions", "responses"}:
         raise _transport_error(config.provider, "request route is invalid", label=label)
+    from tldw_chatbook.LLM_Calls.LLM_API_Calls_Local import _refuse_a_refused_endpoint
+    from tldw_chatbook.provider_registry import RECORDS_BY_KEY
+
+    # TASK-41522: Groq, OpenRouter, DeepSeek, Mistral, Moonshot and Z.ai
+    # sent to a base from their own table that no contract had read.
+    record = RECORDS_BY_KEY.get(label) if label == config.provider else None
+    name = record.display_name if record else label  # "Groq", not "groq"
+    _refuse_a_refused_endpoint(name, config.base_url, config.provider, config.provider)
     try:
         base_url = normalize_hosted_chat_base_url(
             config.base_url,

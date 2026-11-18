@@ -11,7 +11,12 @@ from typing import Literal
 from unicodedata import category
 from urllib.parse import urlparse, urlsplit, urlunparse, urlunsplit
 
-from tldw_chatbook.provider_registry import ALL_RECORDS, CUSTOM_HOSTED, ProviderRecord
+from tldw_chatbook.provider_registry import (
+    ALL_RECORDS,
+    CUSTOM_HOSTED,
+    RECORDS_BY_KEY,
+    ProviderRecord,
+)
 
 EndpointForm = Literal[
     "origin",
@@ -80,6 +85,16 @@ _ENGINE_PRESETS = {
     for record in ALL_RECORDS
     if record.engine_driven and record.key != "custom-hosted"
 }
+#: TASK-41700 (owner decision 2026-11-18, "Allow gateway paths"): a
+#: first-party cloud adapter appends its route to its configured base, so a
+#: base whose ``v1`` is not last (a Cloudflare AI Gateway
+#: ``/v1/<account>/<gateway>/openai``, DeepInfra's ``/v1/openai``) is read
+#: as its API base, as the custom-hosted engine reads one.
+_CLOUD_BASE_KEYS = frozenset(
+    key
+    for key, record in RECORDS_BY_KEY.items()
+    if record.classification == "cloud" and not record.engine_driven
+)
 
 
 #: TASK-34100.6 (review provider-20 / task-33621.32): a preset whose saved base
@@ -115,6 +130,10 @@ _REMOTE_HTTP_WARNING = "Remote HTTP endpoints are not encrypted."
 REMOTE_ENDPOINT_SCHEME_REQUIRED = (
     "Remote endpoint URLs must include an HTTP or HTTPS scheme."
 )
+#: The refusal of a path that names a request route the adapter adds to its
+#: base, such as ``/responses`` or Anthropic's ``/v1/messages`` (review
+#: r16cu-rev3: it is not ambiguous, so it no longer says so).
+ENDPOINT_ROUTE_REFUSAL = "Endpoint path names a request route; enter the API base."
 _PROVIDER_KEY = re.compile(r"[a-z0-9_]+")
 _UNSAFE_UNICODE_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
 _HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
@@ -299,6 +318,8 @@ def _resolve_provider_endpoint(
     segments = tuple(segment for segment in path.split("/") if segment)
     if any(segment in {".", ".."} for segment in segments):
         return _invalid_resolution(provider_key, "Endpoint path is ambiguous.")
+    if _names_a_native_route(provider_key, segments):
+        return _invalid_resolution(provider_key, ENDPOINT_ROUTE_REFUSAL)
 
     netloc = _normalized_netloc(canonical_host, port)
     preset = _ENGINE_PRESETS.get(provider_key) or _route_owning_presets().get(
@@ -317,17 +338,18 @@ def _resolve_provider_endpoint(
     if native:
         # Only from a plain root: an API suffix before the route is ambiguous.
         suffix = (suffix[0], "chat_url") if suffix and suffix[1] == "origin" else None
-    if (
-        suffix is None
-        and provider_key == "custom_hosted"
-        and not _names_a_route(segments)
+    if suffix is None and (
+        provider_key == "custom_hosted" or provider_key in _CLOUD_BASE_KEYS
     ):
         # TASK-40300, owner decision 2026-11-13: an OpenAI-compatible custom
         # endpoint's path is its API base even when its v1 is not the last
         # segment (DeepInfra /v1/openai, Cloudflare /v1/<acct>/<gw>/compat),
         # read as its custom-hosted engine reads it. A route is not a base
         # (chat would post to .../completions/chat/completions) and stays
-        # refused.
+        # refused, with the route reason (review r16cu-rev3).
+        # TASK-41700: so is a first-party cloud provider's gateway base.
+        if _names_a_route(segments):
+            return _invalid_resolution(provider_key, ENDPOINT_ROUTE_REFUSAL)
         return _engine_preset_resolution(
             CUSTOM_HOSTED, provider_key, scheme, netloc, canonical_host, segments
         )
@@ -374,7 +396,9 @@ def endpoint_refusal(
     registry, agent routing and ``chat_with_llama`` all decide with this, so
     none accepts a value the save refuses. TASK-41131: so do the shared local
     transport, KoboldCpp's send and the hosted engine, for every
-    ``chat_api_call`` caller. The reason never names any part of the value.
+    ``chat_api_call`` caller; TASK-41522: and the first-party cloud adapters
+    and the strict hosted transport. The reason never names any part of the
+    value.
 
     Args:
         provider: Provider key; one the contract cannot name (``local-llm``)
@@ -392,6 +416,28 @@ def endpoint_refusal(
         key = "custom_hosted"
     errors = resolve_provider_endpoint(key, value).errors
     return errors[0] if errors else ""
+
+
+def _names_a_native_route(provider_key: str, segments: tuple[str, ...]) -> bool:
+    """Whether a path ends in a native cloud adapter's own route.
+
+    TASK-41700 review r16cu-rev2: the adapter appends that route to its base,
+    so a pasted one was sent twice (``.../v1/messages/messages``, a 404).
+    Anthropic's ``/messages`` and legacy ``/complete``, Cohere's ``/chat``
+    (``/v2/chat``), and any Google segment naming ``:generateContent`` or
+    ``:streamGenerateContent``.
+    """
+    if provider_key == "anthropic":
+        return segments[-1:] in {("messages",), ("complete",)}
+    if provider_key == "cohere":
+        return segments[-1:] == ("chat",)
+    if provider_key == "google":
+        return any(
+            method in segment.casefold().replace("%3a", ":")
+            for segment in segments
+            for method in (":generatecontent", ":streamgeneratecontent")
+        )
+    return False
 
 
 def _names_a_route(segments: tuple[str, ...]) -> bool:
@@ -856,6 +902,10 @@ def _display_resolution(value: str):
     resolution = resolve_provider_endpoint("custom", value)
     if resolution.persisted_endpoint is None:
         resolution = resolve_provider_endpoint("koboldcpp", value)
+    if resolution.persisted_endpoint is None:
+        # TASK-41700: a gateway base (``/v1/<account>/<gateway>/openai``)
+        # displays as itself, not "invalid endpoint".
+        resolution = resolve_provider_endpoint("custom_hosted", value)
     return resolution
 
 

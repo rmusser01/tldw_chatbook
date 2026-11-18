@@ -116,7 +116,9 @@ def _refuse_a_refused_endpoint(
     Console checks the endpoint it sends to; every other ``chat_api_call``
     caller reached an adapter that read its own table unchecked. Each local
     and custom adapter calls this on the URL it is about to use, whatever
-    the caller pinned or the config held, before any session or request.
+    the caller pinned or the config held, before any session or request;
+    so do the first-party cloud adapters and the strict hosted transport
+    (TASK-41522), each with its own contract key.
 
     Args:
         display_name: The adapter's name, for the message.
