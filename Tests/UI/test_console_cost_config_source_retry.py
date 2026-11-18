@@ -17,7 +17,6 @@ from Tests.UI.test_console_cost_chip_screen import (
     _configure_anthropic_ready_console,
     _mount_and_send_warm_reply,
     _settle_successful_full,
-    attach_chachanotes_db,
     context_spend_for_test,
 )
 from tldw_chatbook import config
@@ -30,7 +29,6 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 async def test_cost_settings_only_native_postbody_refusal_and_fresh_retry(change):
     gateway = _AnthropicCostGateway(WARM_USAGE, reply="warm reply")
     app = _build_test_app()
-    attach_chachanotes_db(app)
     _configure_anthropic_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
