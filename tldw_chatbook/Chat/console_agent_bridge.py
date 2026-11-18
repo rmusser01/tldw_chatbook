@@ -8786,11 +8786,7 @@ class ConsoleAgentBridge:
             return self._db.count_subagent_runs(conversation_id)
 
     def subagent_counts(self, conversation_ids: list[str]) -> dict[str, int]:
-        """Batched per-conversation sub-agent counts (Finding A).
-
-        One call replaces one ``subagent_count(cid)`` call per row -- see
-        ``AgentRunsDB.count_subagents_by_conversation`` for the query.
-        """
+        """One batched query in place of a ``subagent_count`` per row (Finding A)."""
         with operation_owned_connection(self._db):
             return self._db.count_subagents_by_conversation(conversation_ids)
 
