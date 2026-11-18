@@ -256,11 +256,14 @@ _VIEW_READERS = tuple(
 
 
 def require_reader_sources():
+    for owner, name, original, record in _READERS:
+        declared = type.__getattribute__(owner, "__dict__") if type(owner) is type else None
+        current = declared.get(name) if declared is not None else None
+        if current is not original:
+            current = inspect.getattr_static(owner, name)
+        if current is not original or not _definition_current(record):
+            raise ConsoleProjectionUnavailable("Console reader definitions changed")
     if any(
-        inspect.getattr_static(owner, name) is not original
-        or not _definition_current(record)
-        for owner, name, original, record in _READERS
-    ) or any(
         getattr(ConsoleProjectionView, name) is not record[0]
         or not _definition_current(record)
         for name, record in _VIEW_READERS

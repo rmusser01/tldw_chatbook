@@ -797,3 +797,16 @@ success its commit precedes the UI or tool-activity callback. Grouping
 successive writes across those callbacks would change what readers see when
 a later step fails. The 29 run-log appends each checked a directory and a
 segment. Counts alone cannot justify removing either check.
+
+## Source checks during both completed Windows turns
+
+On `737e2a1ba8`, diagnostic `g56s` passed the original assertions and shutdown at 28.6737 s adjusted for README and 32.6502 s for edit. Both the UI and backend remained confined to the loopback fixture. The profiling run is separate from batch `qa`. The receipt SHA-256 is `9f00609574a0e7de069fe5da4ed3d545a07de34165dfce33e17839e5e84ec82e`. [Reproducible observer sources and method](original-journey/DIAGNOSTICS.md)
+
+| From Send to the original reply | README | Approved edit |
+|---|---:|---:|
+| Raw elapsed | 29.939 s | 34.776 s |
+| UI checks of reader definitions | 7,927 calls / 0.804 s | 10,278 calls / 1.120 s |
+| Backend checks of presentation definitions | 7,556 calls | 7,566 calls |
+| Time inside any timed source check in either process, counting overlaps once | 3.423 s | 3.753 s |
+
+Before first HTTP, Windows named opens appeared in 126 of 214 backend sampling ticks on README and 76 of 157 on edit. A sample can include the open, its enclosing storage admission and its caller. These counts locate the work and cannot be summed or converted to precise saved time. Reader checks repeatedly inspect the same small set of Python classes even on the three-file project. Tightening those lookups can save part of the source-check time. It leaves the larger cost of freshly admitting many separate operations.

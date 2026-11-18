@@ -77,6 +77,7 @@ jobs:
             'Tests/Chat/test_console_execution_workspace_values.py'
             'Tests/Chat/test_console_execution_readers.py'
             'Tests/Chat/test_console_execution_run_history.py'
+            'Tests/Chat/test_console_source_guard_direct_lookup.py'
             'Tests/Chat/test_console_execution_permission_bootstrap.py'
             'Tests/UI/test_console_selected_workspace_browser.py'
             'Tests/UI/test_settings_workspace_process_access.py'

@@ -718,11 +718,16 @@ def _definition_current(record):
 
 
 def _domain_definitions_current():
-    return all(
-        inspect.getattr_static(owner, name, None) is record[0]
-        and _definition_current(record)
-        for owner, name, record in _DOMAIN_DEFINITIONS
-    )
+    for owner, name, record in _DOMAIN_DEFINITIONS:
+        # Declaring classes use the ordinary metaclass and retain raw entries.
+        # Inherited or unusual owners keep the original static lookup semantics.
+        declared = type.__getattribute__(owner, "__dict__") if type(owner) is type else None
+        current = declared.get(name) if declared is not None else None
+        if current is not record[0]:
+            current = inspect.getattr_static(owner, name, None)
+        if current is not record[0] or not _definition_current(record):
+            return False
+    return True
 
 
 _DOMAIN_DEFINITIONS = tuple(
