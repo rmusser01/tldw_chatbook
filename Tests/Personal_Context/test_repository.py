@@ -2194,7 +2194,7 @@ def _pointers(db_path) -> dict[str, set[tuple]]:
 def test_remove_damaged_refuses_unsupported_pointer_before_sql(
     monkeypatch, pointer
 ) -> None:
-    monkeypatch.setitem(repository_keys._DROPPABLE, "undo", pointer)
+    monkeypatch.setitem(repository_keys._LOCAL_POINTERS, "undo", pointer)
     custody = repository_keys.RepositoryKeyCustody()
     with closing(sqlite3.connect(":memory:")) as connection:
         # Every candidate is executable SQL: refusal must come from custody,
@@ -2261,7 +2261,7 @@ def test_remove_damaged_refuses_unsupported_pointer_before_sql(
 def test_put_local_body_refuses_unsupported_reference_before_mutation(
     monkeypatch, object_type, pointer
 ) -> None:
-    monkeypatch.setitem(repository_keys._DROPPABLE, object_type, pointer)
+    monkeypatch.setitem(repository_keys._LOCAL_POINTERS, object_type, pointer)
     custody = repository_keys.RepositoryKeyCustody()
     encrypted_inserts = []
 

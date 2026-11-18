@@ -72,7 +72,8 @@ SIZE = (120, 36)
 def volume_348(tmp_path_factory, tmp_path):
     db = open_volume_db(tmp_path, volume_db_path(tmp_path_factory, 348))
     yield db
-    db.close_connection()
+    with db.quiesce_connections(timeout_seconds=5):
+        assert db.registered_connection_count() == 0
 
 
 def _db_ids(db) -> list[str]:

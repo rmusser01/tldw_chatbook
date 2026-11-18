@@ -62,8 +62,7 @@ KEY_MISMATCH = "personal_context_key_mismatch"
 # version (table, id column, version column). A damaged current manifest never
 # reaches it (the key does not authenticate). Owner decisions 2026-11-16: a
 # damaged current scope is rebuilt, and a dropped agent access setting is Off.
-# Pointers stay a literal mapping of tuples: the semantic mutation inventory
-# derives the dynamic SQL tables from it.
+# Local pointer rows by object kind: table, id column, version column.
 _LOCAL_POINTERS = {
     "outbox": ("encrypted_outbox", "outbox_id", "envelope_version"),
     "undo": ("local_undo", "undo_id", "encrypted_undo_version"),
@@ -494,12 +493,51 @@ class RepositoryKeyCustody:
     @staticmethod
     def _remove_local_pointer(connection, key) -> None:
         """Drop the local row naming a damaged version (``_LOCAL_POINTERS``)."""
-        table, id_column, version_column = _LOCAL_POINTERS[key[0]]
-        connection.execute(
-            f"DELETE FROM {table} WHERE {id_column} = ? "  # nosec B608 - fixed names
-            f"AND {version_column} = ?",
-            key[1:],
-        )
+        pointer = _LOCAL_POINTERS[key[0]]
+        if pointer == ("encrypted_outbox", "outbox_id", "envelope_version"):
+            connection.execute(
+                "DELETE FROM encrypted_outbox WHERE outbox_id = ? "
+                "AND envelope_version = ?",
+                key[1:],
+            )
+        elif pointer == ("local_undo", "undo_id", "encrypted_undo_version"):
+            connection.execute(
+                "DELETE FROM local_undo WHERE undo_id = ? "
+                "AND encrypted_undo_version = ?",
+                key[1:],
+            )
+        elif pointer == (
+            "local_record_links",
+            "record_id",
+            "encrypted_link_version",
+        ):
+            connection.execute(
+                "DELETE FROM local_record_links WHERE record_id = ? "
+                "AND encrypted_link_version = ?",
+                key[1:],
+            )
+        elif pointer == (
+            "local_scope_bindings",
+            "scope_id",
+            "encrypted_binding_version",
+        ):
+            connection.execute(
+                "DELETE FROM local_scope_bindings WHERE scope_id = ? "
+                "AND encrypted_binding_version = ?",
+                key[1:],
+            )
+        elif pointer == (
+            "local_runtime_policy",
+            "scope_id",
+            "encrypted_policy_version",
+        ):
+            connection.execute(
+                "DELETE FROM local_runtime_policy WHERE scope_id = ? "
+                "AND encrypted_policy_version = ?",
+                key[1:],
+            )
+        else:
+            raise ProfileLockedError("Damaged object reference is invalid.")
 
     @staticmethod
     def _scope_kinds(connection, damaged_ids, scopes) -> tuple[dict, list[str]]:
@@ -612,7 +650,17 @@ class RepositoryKeyCustody:
         does, inside the caller's transaction."""
         from .repository import _uuid
 
-        table, _, column = _LOCAL_POINTERS[object_type]
+        if (object_type, _LOCAL_POINTERS.get(object_type)) not in (
+            (
+                "scope_binding",
+                ("local_scope_bindings", "scope_id", "encrypted_binding_version"),
+            ),
+            (
+                "runtime_policy",
+                ("local_runtime_policy", "scope_id", "encrypted_policy_version"),
+            ),
+        ):
+            raise ProfileLockedError("Local body reference is invalid.")
         version_id = _uuid(f"{object_type}-version")
         self._insert_encrypted(
             connection,
@@ -629,11 +677,20 @@ class RepositoryKeyCustody:
         connection.execute(
             "INSERT INTO object_heads VALUES (?, ?, ?)", (object_type, scope_id, version_id)
         )
-        connection.execute(
-            f"INSERT INTO {table}(scope_id, {column}) VALUES (?, ?) "  # nosec B608 - fixed names
-            f"ON CONFLICT(scope_id) DO UPDATE SET {column} = excluded.{column}",
-            (scope_id, version_id),
-        )
+        if object_type == "scope_binding":
+            connection.execute(
+                "INSERT INTO local_scope_bindings(scope_id, encrypted_binding_version) "
+                "VALUES (?, ?) ON CONFLICT(scope_id) DO UPDATE SET "
+                "encrypted_binding_version = excluded.encrypted_binding_version",
+                (scope_id, version_id),
+            )
+        else:
+            connection.execute(
+                "INSERT INTO local_runtime_policy(scope_id, encrypted_policy_version) "
+                "VALUES (?, ?) ON CONFLICT(scope_id) DO UPDATE SET "
+                "encrypted_policy_version = excluded.encrypted_policy_version",
+                (scope_id, version_id),
+            )
 
     def _reencryption_source(self, connection, keys) -> str:
         """The live account holding exactly ``keys``; never mid-link."""
