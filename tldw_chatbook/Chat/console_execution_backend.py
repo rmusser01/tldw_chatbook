@@ -7,6 +7,8 @@ from copy import deepcopy
 from inspect import getattr_static
 from types import FunctionType
 
+from tldw_chatbook.Utils import plain_method_lookup as _plain_method_source
+
 from .console_execution_protocol import (
     ConsoleProtocolError,
     ConsoleWireMessage,
@@ -199,8 +201,10 @@ class ConsoleExecutionBackend:
         if (
             type(self) is not ConsoleExecutionBackend
             or not definitions_current(_RAIL_DEFINITIONS)
+            or _plain_method_source.plain_instance_method is not _PLAIN_METHOD[0]
+            or not _definition_current(_PLAIN_METHOD)
             or not all(
-                getattr_static(self, name, None) is record[0]
+                _PLAIN_METHOD[0](self, ConsoleExecutionBackend, name) is record[0]
                 and _definition_current(record)
                 for name, record in _DEFINITIONS
             )
@@ -479,6 +483,7 @@ from . import console_execution_profile as _profile_source, console_rail_state a
 from tldw_chatbook.Utils.definition_records import capture_definitions
 
 _PROFILE_SELECTION = _definition(ConsoleBackendProfile.selection_is_current)
+_PLAIN_METHOD = _definition(_plain_method_source.plain_instance_method)
 _RAIL_DEFINITIONS = capture_definitions((
     (_profile_source.config, "_load_settings_uncached", _profile_source.config._load_settings_uncached),
     (_profile_source, "_selection_facts", _profile_source._selection_facts),

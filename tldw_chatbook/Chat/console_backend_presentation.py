@@ -6,6 +6,7 @@ from inspect import getattr_static
 from types import FunctionType
 
 from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+from tldw_chatbook.Utils import plain_method_lookup as _plain_method_source
 
 from .console_presentation_port import ConsoleParentAssociation, ConsolePresentationPort
 
@@ -671,10 +672,15 @@ class ConsoleBackendPresentation:
     def definitions_current(self) -> bool:
         from .console_domain_services import _definition_current
 
-        return type(self) is ConsoleBackendPresentation and all(
-            getattr_static(self, name, None) is record[0]
-            and _definition_current(record)
-            for name, record in _DEFINITIONS
+        return (
+            type(self) is ConsoleBackendPresentation
+            and _plain_method_source.plain_instance_method is _PLAIN_METHOD[0]
+            and _definition_current(_PLAIN_METHOD)
+            and all(
+                _PLAIN_METHOD[0](self, ConsoleBackendPresentation, name) is record[0]
+                and _definition_current(record)
+                for name, record in _DEFINITIONS
+            )
         )
 
     def require_association(self, association) -> None:
@@ -897,6 +903,8 @@ class ConsoleBackendPresentation:
 
 
 from .console_domain_services import _definition
+
+_PLAIN_METHOD = _definition(_plain_method_source.plain_instance_method)
 
 _DEFINITIONS = tuple(
     (name, _definition(value))
