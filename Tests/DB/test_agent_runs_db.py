@@ -56,6 +56,50 @@ def test_append_steps_accumulates_and_parses(db):
     assert steps[1]["tool_name"] == "calculator"
 
 
+def test_terminal_step_retry_batches_durable_rows(db):
+    run_id = db.create_run(conversation_id="retry", agent_kind="primary")
+    steps = [(i, {"index": i, "summary": f"step {i}"}) for i in range(1100)]
+    db.append_steps(run_id, [payload for _, payload in steps])
+    statements = []
+    connection = db._held_connection()
+    connection.set_trace_callback(statements.append)
+    try:
+        db.insert_steps_at_indices(run_id, list(reversed(steps)))
+    finally:
+        connection.set_trace_callback(None)
+
+    reads = [
+        sql
+        for sql in statements
+        if sql.startswith("SELECT") and "FROM agent_run_steps" in sql
+    ]
+    assert len(reads) == 2
+    assert not any(sql.startswith(("INSERT", "UPDATE", "DELETE")) for sql in statements)
+    assert db.get_run(run_id)["steps"] == [payload for _, payload in steps]
+
+
+def test_terminal_step_recovery_observes_trigger_writes_in_input_order(db):
+    run_id = db.create_run(conversation_id="retry", agent_kind="primary")
+    db.append_steps(run_id, [{"index": 0}, {"index": 1}])
+    with db.transaction() as connection:
+        connection.execute(
+            """CREATE TRIGGER change_next_step AFTER INSERT ON agent_run_steps
+               WHEN NEW.seq = 2 BEGIN
+                   UPDATE agent_run_steps SET payload = '[]'
+                   WHERE run_id = NEW.run_id AND seq = 1;
+               END"""
+        )
+    with pytest.raises(AgentStepConflictError, match="durable indices: 1$"):
+        db.insert_steps_at_indices(
+            run_id, [(index, {"index": index}) for index in (0, 2, 1, 3)]
+        )
+    with db.connection() as connection:
+        rows = connection.execute(
+            "SELECT seq FROM agent_run_steps WHERE run_id = ? ORDER BY seq", (run_id,)
+        ).fetchall()
+    assert [row["seq"] for row in rows] == [0, 1, 2, 3]
+
+
 def test_set_status_and_result(db):
     run_id = db.create_run(
         conversation_id="c", agent_kind="subagent", task="do x", parent_run_id="p1"

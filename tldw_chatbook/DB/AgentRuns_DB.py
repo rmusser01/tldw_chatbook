@@ -17,6 +17,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import cached_property
 from datetime import datetime, timezone
+from itertools import batched
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterator, Mapping, Sequence, Union, overload
 
@@ -2244,29 +2245,45 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             ).fetchone()
             if exists is None:
                 raise KeyError(f"Unknown run id: {run_id}")
-            for index, canonical in prepared.items():
-                existing = conn.execute(
-                    "SELECT payload FROM agent_run_steps WHERE run_id = ? AND seq = ?",
-                    (run_id, index),
-                ).fetchone()
-                if existing is not None:
-                    try:
-                        stored = json.dumps(
-                            json.loads(existing["payload"]),
-                            sort_keys=True,
-                            separators=(",", ":"),
-                        )
-                    except (TypeError, ValueError):
-                        conflicts.append(index)
+            for chunk in batched(prepared, _IN_CLAUSE_CHUNK):
+                durable = None
+                if len(chunk) > 1:
+                    placeholders = ",".join("?" for _ in chunk)
+                    rows = conn.execute(
+                        f"SELECT seq, payload FROM agent_run_steps "
+                        f"WHERE run_id = ? AND seq IN ({placeholders})",
+                        (run_id, *chunk),
+                    )
+                    durable = {row["seq"]: row for row in rows}
+                for index in chunk:
+                    canonical = prepared[index]
+                    if durable is None:
+                        existing = conn.execute(
+                            "SELECT payload FROM agent_run_steps WHERE run_id = ? AND seq = ?",
+                            (run_id, index),
+                        ).fetchone()
+                    else:
+                        existing = durable.get(index)
+                    if existing is not None:
+                        try:
+                            stored = json.dumps(
+                                json.loads(existing["payload"]),
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            )
+                        except (TypeError, ValueError):
+                            conflicts.append(index)
+                            continue
+                        if stored != canonical:
+                            conflicts.append(index)
                         continue
-                    if stored != canonical:
-                        conflicts.append(index)
-                    continue
-                conn.execute(
-                    "INSERT INTO agent_run_steps (run_id, seq, payload, created_at) "
-                    "VALUES (?, ?, ?, ?)",
-                    (run_id, index, canonical, stamp),
-                )
+                    conn.execute(
+                        "INSERT INTO agent_run_steps (run_id, seq, payload, created_at) "
+                        "VALUES (?, ?, ?, ?)",
+                        (run_id, index, canonical, stamp),
+                    )
+                    # An insert trigger can change a later row in this chunk.
+                    durable = None
         if conflicts:
             indices = ", ".join(str(index) for index in conflicts)
             raise AgentStepConflictError(

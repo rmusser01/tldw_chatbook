@@ -44,6 +44,34 @@ The receipt has SHA-256
 `48db0b9fd48bd3803b67474e0df23ef8b8347eaf8ad8dfb0fd3d94df7d7ce73f`.
 The earlier failed `g57s` fixture was still polling during this diagnostic.
 
+`g57s` subsequently exited at 14:07:21 UTC with pytest code 1. Both
+application processes exited. The original guard did not certify shutdown.
+The next diagnostic, `g60f` on `41a4d02006`, started its application at
+14:08:30 UTC. README reached its persisted reply in 24.8424 s raw. The
+first HTTP request arrived after 11.07 s. The intervals between consecutive
+requests were 2.69, 1.81, 3.86 and 3.86 s, followed by 1.52 s to the reply.
+
+The source-verified backend checkpoint covered 237 sampling ticks after
+the first request. Windows file operations appeared on 147 ticks. Preparing
+the periodic or requested full display accounted for 66 distinct ticks with
+native work. These included 29 ticks in readiness, 11 in workspace counts
+and 26 in the physical display phases. The agent thread itself spent 67
+ticks waiting in the provider bridge, 41 in approval rounds and 29 joining
+the tool worker. Worker stacks and waits can overlap. These counts locate
+competing work and cannot be added as time savings. The source-validation
+checkpoint itself took 7.37 s in the backend and 15.87 s in the UI after
+README verification, which can affect the Settings visit and the edit.
+[Diagnostic source and method](original-journey/DIAGNOSTICS.md#windows-stack-sampling)
+
+The original adjusted README time was **23.0002 s**. The fixture then
+timed out waiting for the actionable workspace row in Settings. The
+stored UI exception came from the README Send's final display refresh,
+which found the original attachment visit had changed across navigation.
+Edit never reached Send. The backend guard finished with exit code 0.
+The UI exited 1 without a completed guard, and both processes exited.
+The original receipt SHA-256 is
+`d9dd2c2478edff56f270d8159194262d2d701fdeaeec03590cd06f450d1319bc`.
+
 The latest completed candidate in batch `qa`, `qa1c2` on frozen `e4fa0ea67d`, provides these raw intervals on the original Send clock. Each arrow subtracts its two adjacent recorded timestamps; intervals containing approvals include those waits. The application-time gate uses the fixture’s separately recorded disclosure and approval waits. Exact `fs_edit` invocation and approval stages from the instrumented run are [below](#completed-instrumented-windows-journeys-g47d).
 
 ```mermaid
@@ -245,6 +273,13 @@ Use the original `q21b1` progress and costs receipts for these historical values
 ## Qualifying pairs
 
 The earlier local implementation completed three sequential pairs with the original checks. Its median README time fell 64.33% and its median edit time fell 42.56%. Every candidate exceeded five seconds. The replacement process has its own qualification record below.
+
+The clean Windows 10 batch `qb` started at 14:21:18 UTC on November 18.
+It pins the original baseline `b6b53f084a` and candidate
+`41a4d020069ae569a50226b010065a88fc1ef744`. Configuration SHA-256 is
+`1a734e32b4f0d2fe8c22d30c6f293ebdce8bc9155d107756b5996683186e20c4`.
+The order is B1/C1, C2/B2, B3/C3. It uses the unchanged README and approved
+edit fixtures. Each side must finish both journeys and pass shutdown to count.
 
 Batch `q5` started its first clean baseline on Windows 10 at 07:59 UTC on November 18. The driver pinned candidate `a3bf91340319ad7ad60177a37a537ca46364c2e3` and configuration SHA-256 `6af37c73d99d05badc21dc5b570104a3b513414cd213af8cc9464df362f62f93`. Its order is B1/C1, C2/B2, B3/C3. The earlier q4 plan never launched. A separate native component test accepted the corrected rail Apply, then the mounted-writer test failed in its subsequent visible read. Those tests contribute no journey times.
 
