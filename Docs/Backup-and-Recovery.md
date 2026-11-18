@@ -373,8 +373,11 @@ active RAG profile selected and any draft changes saved or discarded:
    part of another restored profile, the review names that profile's generation:
    its model files need their own **Approve model files** too, or RAG stays off.
 2. Choose **Review recovery**, inspect the RAG owners, sources, and prerequisites,
-   then choose **Approve RAG owners**. Model permission and RAG permission are
-   separate; neither approval completes index validation.
+   then choose **Approve RAG owners**. The review lists the owners it approves
+   (Retrieval definitions, Retrieval indexes and Retrieval indexing records),
+   and the message that follows names the ones it approved: "Approved RAG
+   owners: …". Model permission and RAG permission are separate; neither
+   approval completes index validation.
 3. When the required local sources and model are available, choose
    **Reconcile / rebuild** and confirm that action. This explicitly rebuilds and
    verifies the index before recovered semantic retrieval can become available.

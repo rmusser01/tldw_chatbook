@@ -29986,11 +29986,13 @@ class SettingsScreen(BaseAppScreen):
                 review = preview_recovery_review(config, sources=sources)
                 self.app.call_from_thread(self._show_rag_recovery_review, review)
             else:
-                approve_recovery_review(config, fingerprint, sources=sources)
+                approved = approve_recovery_review(config, fingerprint, sources=sources)
                 self.app.call_from_thread(
                     self.app.notify,
-                    "RAG owner review approved. Local model setup remains separate. "
-                    "Use Reconcile / rebuild when prerequisites are ready.",
+                    f"Approved RAG owners: {approved.owner_names}. No index was rebuilt; "
+                    "local model setup remains separate. Use Reconcile / rebuild when "
+                    "prerequisites are ready.",
+                    markup=False,
                 )
         except (OSError, ValueError, RuntimeError):
             self.app.call_from_thread(
@@ -30006,7 +30008,7 @@ class SettingsScreen(BaseAppScreen):
             return
         message = (
             f"Model: {review.model}\nProvider host: {review.provider_host}\n"
-            f"Owners: {', '.join(review.owners)}\n"
+            f"Owners: {review.owner_names}\n"
             f"Prerequisites: {', '.join(review.prerequisites) or 'none reported'}\n"
             "Sources:\n"
             + "\n".join(review.sources)
