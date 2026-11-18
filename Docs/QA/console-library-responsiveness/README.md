@@ -503,3 +503,69 @@ eight traced processes kept all three 13-second windows, quit normally
 and left zero scoped SQLite descriptors. The profile and network guards
 recorded zero violations. The 148-entry private receipt manifest has
 SHA-256 `8d8d95de67aeefc78fc9cb125f96d8cfe8629db4b7f1f5350b80eb649e5b9019`.
+
+## Scheduling startup recovery on finite workers
+
+TASK-41698 compared frozen `a957ae3a64` with the two-file Scheduling change
+in three alternating pairs. All six ran the same sealed 120×50 macOS PTY
+profile with 10,000 saved chats, 10 notes, 11 media items, a migrated
+Scheduling database and the bundled offline tokenizer. First input and
+cold and warm Library navigation each kept their full 13-second observation.
+The host reported 18 logical CPUs.
+
+| Run order | One-minute load, start → end | Launch to first echo | First key to echo | UI-thread Scheduling prepares | Cold Library | Warm Library |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 1 baseline | 64.6 → 56.8 | 12.086 s | 136.1 ms | 4 (274.1 ms) | 1238.4 ms | 224.2 ms |
+| 1 candidate | 56.8 → 47.0 | 10.281 s | 36.0 ms | 1 (64.1 ms) | 1270.4 ms | 59.9 ms |
+| 2 candidate | 47.0 → 42.5 | 9.517 s | 30.0 ms | 1 (65.7 ms) | 1237.0 ms | 360.3 ms |
+| 2 baseline | 42.1 → 48.1 | 10.110 s | 35.6 ms | 4 (222.8 ms) | 954.6 ms | 397.9 ms |
+| 3 baseline | 45.9 → 39.2 | 11.044 s | 82.6 ms | 4 (257.9 ms) | 1388.7 ms | 453.6 ms |
+| 3 candidate | 38.4 → 35.5 | 10.804 s | 38.3 ms | 1 (68.5 ms) | 1290.7 ms | 449.2 ms |
+
+Native caller traces confirmed stale-run reconciliation, definition
+recovery and local reminder discovery ran in that order on executor
+threads in all three candidates. The original guarded SQLite preparation
+ran once for each call in both arms. Schema verification still ran with
+construction. The median time spent preparing Scheduling connections
+on the UI thread dropped from 258 to 66 ms. The local recovery sequence
+took a median of 214 ms in the baseline and 1,000 ms in the candidate,
+including the worker handoffs. The first queue load followed local
+recovery in every trace and completed 0.52–1.28 s before the first composer
+paint in the candidates.
+
+Launch-to-echo medians were 11.04 and 10.28 s. First-key echo medians
+were 82.6 and 36.0 ms. Cold Library paint was mixed and the median rose
+from 1,238 to 1,270 ms. Warm Library medians were 398 and 360 ms. These
+are observed end-to-end results under variable host load. The native
+call traces directly establish the reduction in foreground preparation.
+
+| Window | Gaps over 50 ms, baseline → candidate | Worst gap, baseline → candidate |
+| --- | ---: | ---: |
+| Startup heartbeat through first input | 56 → 56 | 2000 → 1655 ms |
+| First input observation | 8 → 10 | 279 → 274 ms |
+| Cold Library observation | 9 → 11 | 577 → 713 ms |
+| Warm Library observation | 5 → 6 | 401 → 375 ms |
+
+Every process quit through Ctrl+Q and returned with zero owned SQLite
+descriptors, blocked network attempts and protected-profile violations.
+The existing `textual_image` terminal cell-size query timeout appeared
+in both arms and the previous baseline. The loop-gap misses remain in
+the receipts.
+
+Thirteen Scheduling recovery cases and five native scheduler, ledger and
+transfer checks passed. The real scheduler waited through a slow mount
+until UI readiness. The candidate warm module census passed at the
+unchanged 1,040-module ceiling and emitted its zero-headroom warning. The
+frozen baseline observed 1,041 modules, including the known
+`DB.character_conversation_search` boot variation.
+
+The ordinary per-test profile hit `raw_source_selection_changed` on six
+extra controls before the subject ran. The frozen baseline reproduced
+those refusals. Using the repository's isolated bootstrap-profile fixture,
+all three pre-ready exit cases passed with the existing Splash syntax
+warnings. Two Watchlists cases passed on both arms in that fixture. The
+prior-process stranded-run case timed out at the same 20-second fetch wait
+on both arms. Those failures and warnings are retained.
+
+The 130-entry private receipt manifest has SHA-256
+`2d89f81f355d40d1a1c1a3cda97142393d3fe4f7d92dd30521898c4052a5eb4b`.
