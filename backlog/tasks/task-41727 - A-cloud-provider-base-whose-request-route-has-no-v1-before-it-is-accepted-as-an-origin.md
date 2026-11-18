@@ -11,7 +11,8 @@ labels:
 priority: low
 references:
 - tldw_chatbook/Provider_Contract/provider_endpoint_contract.py
-dependencies: []
+dependencies:
+- TASK-41704
 ---
 
 ## Description

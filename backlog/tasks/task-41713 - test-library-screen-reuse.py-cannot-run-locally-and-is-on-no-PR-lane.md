@@ -18,7 +18,7 @@ dependencies: []
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Found by TASK-41500 (round 16). The file's async tests build a `_scratch_env` that trips `RecoveryRequired` locally (red at dev too), and the file is not laned, so TASK-41500's re-pinned `test_suspended_library_gates_ingest_dom_work_until_resume` was reviewed by reading only.
+Found by TASK-41500 (round 16). The file's async tests build a `_scratch_env` that trips `RecoveryRequired` locally (red at dev too), and the file is not laned, so TASK-41500's re-pinned `test_suspended_library_gates_ingest_dom_work_until_resume` was reviewed by reading only. The same file's `test_on_screen_suspend_stops_every_timer_in_isolation` is red on dev for another reason: its hand-built Library screen has no `_artifacts_navigation` (`AttributeError` at library_screen.py ~9766).
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

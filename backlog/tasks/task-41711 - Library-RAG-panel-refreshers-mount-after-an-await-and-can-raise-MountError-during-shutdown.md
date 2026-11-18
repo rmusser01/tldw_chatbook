@@ -12,6 +12,7 @@ labels:
 priority: medium
 references:
 - tldw_chatbook/UI/Library_Modules/library_rag_search_controller.py
+- tldw_chatbook/UI/Screens/library_screen.py
 dependencies: []
 ---
 

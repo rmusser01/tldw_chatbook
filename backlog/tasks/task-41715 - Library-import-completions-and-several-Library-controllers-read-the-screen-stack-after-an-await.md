@@ -23,7 +23,7 @@ Found by TASK-41702's review (round 16). TASK-41702 guarded Home's and Library's
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 One shared "attached and current" predicate replaces the copies, and none of these sites raises after the exit fence
+- [ ] #1 None of these sites raises once its screen is detached after the exit fence, and each still applies its result while its screen is attached and current
 - [ ] #2 A test steps at least one completion past the fence and is red before the change
 - [ ] #3 The fakes the change touches are updated
 <!-- AC:END -->

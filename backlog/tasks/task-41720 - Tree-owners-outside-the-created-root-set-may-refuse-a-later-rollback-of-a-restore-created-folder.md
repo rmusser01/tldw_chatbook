@@ -23,5 +23,5 @@ Found by TASK-41521 (round 16), read from the code and not run. Folder owners no
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 Each backup-enabled folder owner is listed with whether a restore can create its folder
-- [ ] #2 Each that can is covered by a created-tree rollback test, red before the fix
+- [ ] #2 Each that can is covered by a created-tree rollback test, red before the fix where a gap exists
 <!-- AC:END -->
