@@ -32,6 +32,7 @@ At dev 908e9840aa (2026-11-18), an AST count over Tests finds 151 calls of a `Li
 `_LIBRARY_UNBOUND_TEST_CALLS` (511) ratchets the same shape for `LibraryScreen`. Nothing ratchets it for the controller, so the count can grow freely. The fakes are `SimpleNamespace` objects that break whenever a body gains a seam. Three `test_library_multiselect_media.py` fakes lack `_library_media_editor_dirty` and are red on dev for that reason.
 
 The constructor still takes 73 lambdas (`library_screen.py:3048`). 30 of them are accessors and setters for single screen fields, and they are what makes a real controller hard to build in a test.
+AC #3 also covers the 30 field accessors and setters (the Notes ones among them) that TASK-41757 leaves out of its callback scope.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

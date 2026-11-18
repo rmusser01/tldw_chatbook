@@ -27,7 +27,7 @@ At dev 908e9840aa (2026-11-18), after the series merged, `LibraryScreen.__init__
 - **4 sibling reader-layout syncs:** Conversations, Notes, Prompts and Skills.
 - **2 workspace-depth callbacks:** `library_workspace_depth_state` and `invalidate_library_workspace_depth_state`.
 
-The other 30 arguments are accessors and setters for single screen fields, among them the Notes ones (`notes_controller_accessor`, `notes_state_accessor`, and the programmatic-focus and restoring-focus pairs). They are not this task's subject: TASK-41759's AC #3 covers them. Each callback keeps the controller bound to the screen's private methods, and each is one of the lambdas `_LIBRARY_INIT_LAMBDAS` (397 at dev) counts. Related: TASK-36952, the work stream, whose AC #1 asks for the media controller to be constructed without the screen and tested directly; TASK-41051 applies the same rule to services the app wires.
+The other 30 arguments are accessors and setters for single screen fields, among them the Notes ones (`notes_controller_accessor`, `notes_state_accessor`, and the programmatic-focus and restoring-focus pairs). They are not this task's subject: the unbound-call follow-up filed beside this one takes them (its AC #3). Each callback keeps the controller bound to the screen's private methods, and each is one of the lambdas `_LIBRARY_INIT_LAMBDAS` (397 at dev) counts. Related: TASK-36952, the work stream, whose AC #1 asks for the media controller to be constructed without the screen and tested directly; TASK-41051 applies the same rule to services the app wires.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
