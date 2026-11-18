@@ -217,3 +217,14 @@ compatibility. Use `--approval-revision 3` when packaging the v3 source; its
 manifest records the source-only state at packaging time. Preserve that record;
 append later native outcomes above rather than rebuilding historical archives.
 The original source/environment prerequisites still apply.
+
+## Windows source-check timing
+
+The source-check sampler times seven guards on their actual threads in both
+processes and samples 34 storage, configuration, tool, and presentation
+functions. Its analyzer reports counts, thread CPU and elapsed time around the
+original first HTTP request. Nested guards and overlapping threads have
+separate accounting. The archive includes the CPython 3.12 synthetic controls,
+installer, analyzer, instructions and frozen source pins for `737e2a1ba8`.
+Use a separate disposable replay for these instrumented measurements.
+[Sampler source archive](windows-source-cost-737e2a.zip) · [SHA-256](windows-source-cost-737e2a.sha256)
