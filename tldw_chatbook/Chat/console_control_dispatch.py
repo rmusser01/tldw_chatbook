@@ -555,9 +555,65 @@ class ConsoleLocalControls:
             from .console_backend_presentation import ConsoleBackendPresentation
 
             if type(self._domain.presentation) is ConsoleBackendPresentation:
-                prepared_transcript = await self._domain.presentation.prepare_transcript(identity)
-                run_history = await self._domain.presentation.prepare_run_history(identity)
-                await self._domain.presentation.prepare_readiness(identity)
+                presentation = self._domain.presentation
+                session = self._store._sessions.get(identity.session_id)
+                binding_revision = getattr(session, "conversation_binding_revision", None)
+                lifecycle = presentation.view_lifecycle
+                current_view = lifecycle._current
+                attachment = presentation.parent_attachment
+                active_session = self._store.active_session_id
+                checkpoint = presentation.capture_display_reuse_checkpoint(owner)
+                prepared_transcript = await presentation.prepare_transcript(identity)
+                run_history = await presentation.prepare_run_history(identity)
+                await presentation.prepare_readiness(identity)
+                projection, selected = prepared_transcript
+                if selected[4] is None and session.persisted_conversation_id is not None:
+                    # First persistence can finish while readiness is being read.
+                    # Retake only the original post-FULL publications, once. An
+                    # old no-conversation marker selection must never be painted.
+                    source = require_control_source(self._runtime)
+                    conversation_id = session.persisted_conversation_id
+
+                    def require_first_persistence():
+                        self._domain.require_current(sources)
+                        presentation.require_association(association)
+                        presentation._require_marker_projection(identity, projection)
+                        live = projection._selection()
+                        if (
+                            source.identity is not identity or source.sources is not sources
+                            or self._settings_command_tasks.get(asyncio.current_task()) is not source
+                            or self.source_revision != revision or self._runtime.view is not None
+                            or self._store._sessions.get(identity.session_id) is not session
+                            or self._store.active_session_id != active_session
+                            or session.incarnation_id != identity.incarnation_id
+                            or session.conversation_binding_revision != binding_revision
+                            or type(conversation_id) is not str or not conversation_id
+                            or session.persisted_conversation_id != conversation_id
+                            or any(left is not right for left, right in zip(selected[:4], live[:4], strict=True))
+                            or selected[5] != live[5] or live[4] != conversation_id
+                            or presentation.view_lifecycle is not lifecycle
+                            or lifecycle._current is not current_view
+                            or presentation.parent_attachment != attachment
+                            or presentation.capture_display_reuse_checkpoint(owner) is not checkpoint
+                            or (checkpoint is not None and not presentation.display_reuse_checkpoint_current(owner, checkpoint))
+                            or not source.effects
+                            or any(
+                                effect.source_revision != revision
+                                or not effect.completed.done() or effect.completed.cancelled()
+                                or effect.completed.result() is not True
+                                or effect.physically_retired is not True
+                                for effect in source.effects
+                            )
+                        ):
+                            raise RuntimeError("Console first-persistence display scope changed")
+
+                    require_first_persistence()
+                    prepared_transcript = await presentation.prepare_transcript(identity)
+                    require_first_persistence()
+                    run_history = await presentation.prepare_run_history(identity)
+                    require_first_persistence()
+                    await presentation.prepare_readiness(identity)
+                    require_first_persistence()
         else:
             if (
                 type(view) is not ChatScreen
