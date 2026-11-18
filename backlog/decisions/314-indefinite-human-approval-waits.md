@@ -106,12 +106,16 @@ cancellation contract without adding a provider dispatch authority boundary.
 
 ## TASK-41637 clarification (2026-11-18): no running app, no wait
 
-"Indefinite" assumes someone can still answer. A round whose App is not
-running (constructed but never started, or already exited) can show no card
-and receive no decision, so `InterruptRoundHost.run_round` settles it as
-`cancelled` within one poll: fail closed, recorded as unresolved, never as a
-user Deny. Hosts without an `is_running` attribute (the mobile
-`HeadlessAppContext`) are answered elsewhere and keep waiting as above.
+"Indefinite" assumes someone can still answer. A round that arms while its
+App is not running (constructed but never started, or already exited) can
+show no card and receive no decision, so `InterruptRoundHost.run_round`
+settles it as `cancelled` within one poll: fail closed, recorded as
+unresolved, never as a user Deny. Hosts without an `is_running` attribute
+(the mobile `HeadlessAppContext`) are answered elsewhere and keep waiting as
+above. Liveness is read once, at arm time: an App that exits mid-wait is
+settled by runtime disposal (the visit and shutdown fences), and a
+per-poll read would also cancel live rounds in test harnesses that re-point
+`controller.app` at a never-run App on every Console ensure.
 
 ## Renumbering provenance
 

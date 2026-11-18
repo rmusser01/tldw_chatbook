@@ -867,25 +867,21 @@ async def test_approval_round_with_an_app_that_never_ran_is_refused_promptly():
 
 
 @pytest.mark.asyncio
-async def test_approval_round_is_refused_promptly_when_the_app_exits_mid_wait():
-    """An app that exits under a waiting round fails the round closed."""
+async def test_approval_round_requested_after_the_app_exited_is_refused_promptly():
+    """An App that has already exited cannot answer a new round either."""
     from textual.app import App
 
     store = ConsoleChatStore()
     session = store.ensure_session()
     controller = ConsoleChatController(store=store, provider_gateway=_StalledGateway())
     controller.mcp_approval_timeout_seconds = lambda: 0.0  # ADR-314: no deadline
-    mounted = threading.Event()
-    view = _View({"set_pending_approval": lambda payload: mounted.set()})
-    _runtime_with(controller, view)
     app = App()
     async with app.run_test():
-        controller.app = app
-        worker, box = _request_round_in_thread(controller, session.id)
-        assert await asyncio.to_thread(mounted.wait, 10), "the round never mounted"
-        assert worker.is_alive()
+        pass
+    controller.app = app
     assert not app.is_running
 
+    worker, box = _request_round_in_thread(controller, session.id)
     await asyncio.to_thread(worker.join, 10)
 
     _assert_refused_unanswered(worker, box, controller)

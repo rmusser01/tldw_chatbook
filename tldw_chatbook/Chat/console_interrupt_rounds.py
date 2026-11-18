@@ -1212,14 +1212,6 @@ class InterruptRoundHost(InitialHookReviewMixin):
         def hard_expired():
             return hard_deadline is not None and time.monotonic() >= hard_deadline
 
-        def app_gone():
-            # TASK-41637: an App that never started, or has exited, can show
-            # no card and deliver no answer; fail the round closed instead of
-            # waiting forever. Duck-typed hosts without ``is_running`` (the
-            # mobile HeadlessAppContext) are answered elsewhere: stay live.
-            app = self.read_controller_app()
-            return app is not None and not getattr(app, "is_running", True)
-
         notified_outcomes = set()
 
         def notify_outcome(value):
@@ -1301,8 +1293,18 @@ class InterruptRoundHost(InitialHookReviewMixin):
                 is_head = self.park_round_payload(kind, round_id, payload)
         try:
             app = self.read_controller_app()
+            # TASK-41637: a round armed while the App's own marshal has no running
+            # app (never started, or exited) can show no card and get no answer:
+            # fail it closed. A host without is_running (mobile context) or with
+            # a rerouted marshal is live. An exit mid-wait is runtime disposal's.
+            marshal = getattr(app, "call_from_thread", None)
+            app_gone = (
+                app is not None
+                and not getattr(app, "is_running", True)
+                and getattr(marshal, "__self__", None) is app
+            )
             park_toast = self.read_controller_park_pending_approval()
-            if hard_expired() or app_gone():
+            if hard_expired() or app_gone:
                 pass
             elif retained_decision:
                 if (
@@ -1352,7 +1354,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
                 # permission summary INSIDE the human-wait mark so the
                 # summariser's own model call never counts against the
                 # owning run's tool clock.
-                if before_wait is not None and not hard_expired() and not app_gone():
+                if before_wait is not None and not hard_expired() and not app_gone:
                     before_wait()
                 while True:
                     if hard_expired():
@@ -1366,7 +1368,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
                     )
                     if event.wait(min(self.POLL_SECONDS, remaining)):
                         break
-                    if app_gone() or self.read_controller__is_session_cancelled()(
+                    if app_gone or self.read_controller__is_session_cancelled()(
                         session_id,
                         cancel_event=state.get("cancel_event"),
                         visit_event=state.get("visit_event"),
