@@ -1,7 +1,7 @@
 {
   "_comment": "First-send warm-up payload census (the pre-import pass's last step, after the screen routes), counted from app + chat: an upper bound on what the warm-up adds. Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).",
-  "warmup_added_modules": 93,
-  "warmup_added_loc": 64047,
+  "warmup_added_modules": 94,
+  "warmup_added_loc": 66937,
   "listed": [
     "tldw_chatbook.UI.Console_Modules.send_acknowledgement",
     "tldw_chatbook.UI.Console_Modules.sent_draft",
@@ -56,9 +56,7 @@
     "tldw_chatbook.Chat.response_rules.resolution",
     "tldw_chatbook.Chat.response_rules.chat_state",
     "tldw_chatbook.UI.Console_Modules.response_rules",
-    "tldw_chatbook.app_served",
     "textual_serve",
-    "tldw_chatbook.Guardian.settings",
     "tldw_chatbook.Agents.local_tool_provider",
     "tldw_chatbook.Chat.console_run_start_tools",
     "tldw_chatbook.MCP.console_tool_preparation",
@@ -109,7 +107,7 @@
       ]
     },
     "tldw_chatbook.Chat.console_configuration_preparation": {
-      "loc": 3000,
+      "loc": 2808,
       "modules": [
         "tldw_chatbook.Chat.console_configuration_preparation"
       ]
@@ -127,7 +125,7 @@
       ]
     },
     "tldw_chatbook.MCP.console_snapshot": {
-      "loc": 1357,
+      "loc": 1372,
       "modules": [
         "tldw_chatbook.MCP.console_snapshot"
       ]
@@ -297,19 +295,6 @@
         "tldw_chatbook.Chat.response_rules.chat_state"
       ]
     },
-    "tldw_chatbook.app_served": {
-      "loc": 125,
-      "modules": [
-        "tldw_chatbook.app_served"
-      ]
-    },
-    "tldw_chatbook.Guardian.settings": {
-      "loc": 66,
-      "modules": [
-        "tldw_chatbook.Guardian",
-        "tldw_chatbook.Guardian.settings"
-      ]
-    },
     "tldw_chatbook.Agents.local_tool_provider": {
       "loc": 11736,
       "modules": [
@@ -391,9 +376,13 @@
       ]
     },
     "tldw_chatbook.Chat.console_agent_reply": {
-      "loc": 1164,
+      "loc": 4422,
       "modules": [
-        "tldw_chatbook.Chat.console_agent_reply"
+        "tldw_chatbook.Agents.execution_capacity",
+        "tldw_chatbook.Agents.ordinary_tree",
+        "tldw_chatbook.Chat.console_agent_reply",
+        "tldw_chatbook.Chat.console_ordinary_tree",
+        "tldw_chatbook.Workspaces.worktree_activity"
       ]
     },
     "tldw_chatbook.RAG_Search.scope_evidence": {
