@@ -109,9 +109,11 @@ class PluginCoordinator:
 
         The one exception is the reviewed post-restore reset (TASK-40308): while
         a restored generation awaits plugin review and authority was reset,
-        setup sets the restored registry, download records and downloads aside
-        and keeps every saved-data folder for reviewed reattachment. Returns
-        the set-aside folder, if any. An unreadable restore witness refuses.
+        setup sets the restored registry, download records, downloads and
+        package bytes aside and keeps every saved-data folder for reviewed
+        reattachment. Returns that set-aside folder, if any. An unreadable
+        restore witness refuses. With nothing retained, setup sets downloads
+        and records signed by an earlier authority aside (TASK-41108).
         """
         self._require_worker()
         prior = self.registry.authority_projection(operation_result=None)
@@ -133,6 +135,11 @@ class PluginCoordinator:
                 )
             else:
                 raise ValueError("retained data anchor requires reviewed recovery")
+        elif self.authority.posture() == "needs_setup":
+            # TASK-41108: records signed by a reset authority would fail every
+            # download listing under the new one; set them aside with their
+            # downloads. Not a restore, so nothing is approved (None).
+            self._set_aside(("staging", "acquisition-custody"))
         self.authority.bootstrap(passphrase)
         self._published = self.authority.verify_current()
         self.root_usage.initialize(self._published, fresh=True)
@@ -144,22 +151,34 @@ class PluginCoordinator:
         Backups exclude ``reset-<id>/`` whole, never walked (so the downloads'
         host configuration copies stay out of archives), and replace restores
         keep it (``Plugins/backup.kept_whole``). Saved-data folders under
-        ``data/`` stay where they are. Package bytes under ``packages/`` and
-        ``packages-revisions/`` stay too, unregistered, until removed by hand.
+        ``data/`` stay where they are. The restored package bytes
+        (``packages/``, ``packages-revisions/``) move too, so plugin storage
+        capacity stops counting them (TASK-41107); no registry names them.
         """
         if self.authority.posture() != "needs_setup":
             raise ValueError("plugin authority reset required before setup")
-        root = self.owner.root
-        aside = root / f"reset-{secrets.token_hex(8)}"
-        aside.mkdir(mode=0o700)
-        for name in ("staging", "acquisition-custody"):
-            if os.path.lexists(root / name):
-                os.rename(root / name, aside / name)
-        self.registry.set_aside(aside)
+        aside = self._set_aside(
+            ("staging", "acquisition-custody", "packages", "packages-revisions"),
+            registry=True,
+        )
         self._published = None
         self._reviews.clear()
         # The set-aside registry's roots are no longer registered here.
         self.root_usage.recovery.clear()
+        return aside
+
+    def _set_aside(self, names, *, registry=False) -> Path | None:
+        """Move ``names`` (and the registry) into a new ``reset-<id>/``, if any."""
+        root = self.owner.root
+        present = [name for name in names if os.path.lexists(root / name)]
+        if not (present or registry):
+            return None
+        aside = root / f"reset-{secrets.token_hex(8)}"
+        aside.mkdir(mode=0o700)
+        for name in present:
+            os.rename(root / name, aside / name)
+        if registry:
+            self.registry.set_aside(aside)
         return aside
 
     def reset(self, *, operation_id: str) -> Path | None:
@@ -1467,6 +1486,10 @@ class PluginCoordinator:
             # Proof may open its own registry read transaction.
             if proof(refs) is not True:
                 raise PermissionError("root_quiescence_unproven")
+        named = self.registry._connection.execute(
+            "SELECT alias FROM installations WHERE installation_id=?",
+            (review.installation_id,),
+        ).fetchone()
         with self.registry.transaction() as cursor:
             self._apply_review(cursor, review, retained)
             snapshot = self.registry.authority_projection(operation_result=result)
@@ -1493,6 +1516,25 @@ class PluginCoordinator:
         self._milestone("marker_advanced")
         with self.registry.transaction() as cursor:
             self.registry.write_operation(cursor, result, phase="complete")
+        try:
+            from .backup import record_change
+
+            record_change(
+                self.owner.root,
+                {
+                    "namespace_id": self.authority.namespace_id(),
+                    "generation": new.generation,
+                    "operation_id": operation_id,
+                    "parent": review.authority_marker.operation_id,
+                    "kind": review.kind,
+                    "installation_id": review.installation_id,
+                    "alias": getattr(review, "alias", None) or (named and named[0]),
+                    "detail": getattr(review, "intent", None)
+                    or getattr(review, "action", None),
+                },
+            )
+        except (OSError, ValueError):
+            pass  # Advisory (TASK-41105): the restore review falls back to a count.
         self._published = snapshot
         if review.kind == "activate" and target is None:
             self.fences.reconcile_enable(review.installation_id, review.workspace_id)

@@ -45,8 +45,12 @@ and file extraction; they cannot replace existing installation data.
 folder: the plugin registry, installed package bytes, every plugin's saved data,
 and each repository fetch's checked snapshot and fetch record, which recovery
 needs to re-verify a plugin installed from a repository. Left out, and shown as
-excluded in the review: the plugin runtime lock file, the `reset-…` folder a
-plugin authority reset after a restore sets aside (a later restore keeps it),
+excluded in the review: the plugin runtime lock file, the plugin change list
+(`authority-changes.json`, which a later restore keeps so recovery can name the
+changes it undoes), every `reset-…` folder that setting plugin authority up
+again after a reset sets plugin files aside in (after a restore: the restored
+registry, downloads and package files; otherwise: downloads made under the old
+authority; a later restore keeps it),
 and everything else in each fetch folder, such as the copies of your git and SSH configuration the fetch used
 (they can hold credential helpers), its git object store (`repository.git`) and
 its working copy (`content/`). Each is one excluded entry; Chatbook does not look
@@ -299,8 +303,11 @@ rollback cannot bring them back; your own git configuration and `~/.ssh` are not
 touched. Each folder's `snapshot` and its download record stay until you start
 the restore, which moves them into the before-replacement safety copy with the
 rest of your current data. Installed plugins keep working. The review then runs
-again. (Uninstalling a plugin does not remove these folders. Restoring without
-**Tools and skills** leaves them alone.) After a restore, plugins stay off until plugin
+again. `tldw-cli recovery restore` lists the same folders, files and warning,
+then refuses (`plugin_fetch_removal_required`) unless you add
+`--remove-newer-plugin-downloads`; with it, typing `remove` deletes them the same
+way and the restore is reviewed again. (Uninstalling a plugin does not remove
+these folders. Restoring without **Tools and skills** leaves them alone.) After a restore, plugins stay off until plugin
 authority recovery completes: open **Plugins → Authority…** and unlock with the
 plugin passphrase the backup was made with. With plugins unchanged since the
 backup on the same computer, unlocking recovers them. On another computer at the

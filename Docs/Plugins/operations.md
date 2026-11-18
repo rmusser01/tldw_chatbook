@@ -116,14 +116,22 @@ made with:
 
 In both, the same passphrase opens the restored plugin authority, and Plugins
 shows **Recover plugins from this backup** before anything changes. It names
-the generation of the restored authority the passphrase opened. It counts the
-plugin changes made after the backup that recovery undoes, when the keyring
-marker shows them; a restore keeps no record of what each change was, and with
-the marker missing, or set by a different plugin authority, the count is
-unknown. It lists the backup's plugins with their revisions and gives the
-number of its saved-data folders. **Confirm recovery** makes that authority
-current on this computer. Saved data stays attached, and plugins run again
-once recovery completes.
+the generation of the restored authority the passphrase opened, lists the
+backup's plugins with their revisions, gives the number of its saved-data
+folders, and says that **Confirm recovery** makes that authority current on
+this computer. Then it names the plugin changes made after the backup that
+recovery undoes, each with its generation, kind (install, update, enable or
+disable, configuration change, removal and so on) and plugin: the first 20,
+then how many more and their generation range. Chatbook records each change as
+it commits in `authority-changes.json` in the plugin folder; backups leave that
+file out and a restore keeps it, so it still names the changes afterwards. It
+names them only along the unbroken chain of changes back from this computer's
+protected marker to the backup's. When the list does not give that chain (the
+plugin folder was deleted before the restore, a change went unrecorded, or the
+changes predate the list), the review counts them instead, when the keyring
+marker shows them; with the marker missing, or set by a different plugin
+authority, the count is unknown. Saved data stays attached, and plugins run
+again once recovery completes.
 
 A restore over recreated folders gives them new identities. If the plugin
 folder, `staging/` or a saved-data folder was deleted before the restore, each
@@ -147,8 +155,9 @@ If the backup's passphrase is lost, **Reset authority…** keeps everything:
    plugin folder. Nothing is deleted, and every saved-data folder stays where it
    is. Backups leave the `reset-…` folder out (it holds the downloads' copies of
    your git and SSH settings), and a later restore leaves it in place. The
-   set-aside plugins' package files also stay in the plugin folder, unused, and
-   keep their disk space until you remove them by hand.
+   set-aside plugins' package files (`packages/`, `packages-revisions/`) move
+   there too, so they stop counting against the plugin storage limit; the
+   `reset-…` folder keeps its disk space until you delete it.
 3. Reinstall each plugin from its source. A plugin whose source is gone cannot
    come back this way.
 4. Manage plugin ▸ **Attach kept saved-data folder** lists the kept folders.
@@ -157,7 +166,11 @@ If the backup's passphrase is lost, **Reset authority…** keeps everything:
    the review shows its contents before you attach it.
 
 Outside a restore, reset still refuses setup while plugins are installed or
-saved data remains, and its confirmation says so.
+saved data remains, and its confirmation says so. With neither left, setup moves
+any downloads made under the old authority, with their download records, into a
+`reset-…` folder: the new authority cannot verify those records, and listing
+downloads (**Candidates…**) or downloading again would fail on them. Nothing is
+deleted.
 
 Each plugin download from a repository since the backup (a source refresh, an
 update check, an install or an update) leaves a download folder,
@@ -168,7 +181,8 @@ Uninstalling a plugin does not remove these folders. **Review restore** on the
 Backup screen lists them (`plugin_fetch_removal_required`) and offers **Remove
 newer plugin downloads**, which deletes those files with no safety copy, so a
 rollback cannot bring them back; `~/.gitconfig` and `~/.ssh` themselves are not
-touched. An installed plugin keeps working from `snapshot/` and its fetch
+touched. `tldw-cli recovery restore` lists them the same way and removes them
+only with `--remove-newer-plugin-downloads` and a typed `remove`. An installed plugin keeps working from `snapshot/` and its fetch
 record, and the restore then moves each folder's `snapshot/` and record into the
 safety copy with the rest of the plugin state newer than the backup.
 

@@ -1253,6 +1253,98 @@ def test_replace_restore_lists_and_removes_a_fetch_folder_added_since_the_backup
 
 
 @platform_support.package_capture
+@pytest.mark.parametrize("flag", [False, True])
+def test_recovery_cli_lists_newer_plugin_downloads_and_removes_them_on_its_flag(
+    tmp_path, monkeypatch, capsys, flag
+):
+    """TASK-41106: ``tldw-cli recovery restore`` is the path for a user who
+    cannot start the app. Over a download folder the backup lacks, it lists the
+    folder's members and the Backup screen's no-safety-copy warning. Without
+    ``--remove-newer-plugin-downloads`` it refuses and names the flag and the
+    Backup screen; with it, typing ``remove`` deletes exactly those members and
+    the restore is reviewed again, now with nothing to remove."""
+    import builtins
+
+    from tldw_chatbook.Backup_Recovery import launcher, recovery_service
+    from tldw_chatbook.Backup_Recovery.restore_plan import RestorePlan
+    from tldw_chatbook.Plugins import backup
+
+    config, root = _plugin_root(tmp_path)
+    archived = {item.logical_id: item for item in _plugin_rows(config, root)[0].items}
+    added = root / "staging" / "zz-new"
+    for relative in ("snapshot/plugin.json", "repository.git/HEAD", "host-git-config"):
+        (added / relative).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        (added / relative).write_bytes(b"x")
+    reviews = []
+
+    class Service:
+        issue_code = staticmethod(recovery_service.issue_code)
+
+        def start_inspection(self, archive, *, password):
+            return "inspection"
+
+        def wait(self, operation):
+            return {"state": "succeeded"}
+
+        def summary(self, inspection):
+            return {"profile_ids": ("profile",)}
+
+        def preview_backup(self, configs, *, options):
+            return _plugin_rows(config, root)[0]
+
+        def preview_restore(self, inspection, *, target, **choices):
+            # The planner's own refusal, over the target inventory it was given.
+            reviews.append(target)
+            backup.refuse_added_fetch_folders(target.items, archived)
+            return RestorePlan("reviewed", "replace", (), (), (), "local")
+
+        def replacement_capability(self, plan):
+            return True, ""
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(recovery_service, "RecoveryService", lambda root: Service())
+    answers = iter(["remove", "cancel"])
+    monkeypatch.setattr(builtins, "input", lambda prompt: next(answers))
+    argv = [
+        "--control-root",
+        str(tmp_path / "control"),
+        "restore",
+        str(tmp_path / "backup.zip"),
+        "--replace",
+        "--target-config",
+        str(config),
+    ]
+    code = launcher.recovery_main(argv + ["--remove-newer-plugin-downloads"] * flag)
+    shown = capsys.readouterr().out
+    assert f"Folder: {added}" in shown
+    assert "  Delete: host-git-config\n  Delete: repository.git" in shown
+    assert "Delete: snapshot" not in shown
+    assert (
+        "--remove-newer-plugin-downloads deletes the files below now, with no "
+        "safety copy; a rollback cannot bring them back"
+    ) in shown
+    if not flag:
+        assert code == 1
+        assert "Recovery refused: plugin_fetch_removal_required" in shown
+        refusal = recovery_service.issue_message("plugin_fetch_removal_required")
+        assert refusal in shown
+        assert "--remove-newer-plugin-downloads" in refusal
+        assert "Backup screen" in refusal
+        assert sorted(path.name for path in added.iterdir()) == [
+            "host-git-config",
+            "repository.git",
+            "snapshot",
+        ]
+        return
+    # Reviewed again over a fresh target inventory; "cancel" then applies nothing.
+    assert code == 0 and len(reviews) == 2 and reviews[0] is not reviews[1]
+    assert "Newer plugin downloads removed. Reviewing restore again." in shown
+    assert sorted(path.name for path in added.iterdir()) == ["snapshot"]
+
+
+@platform_support.package_capture
 def test_restored_registry_matches_its_root_through_a_symlinked_data_dir(tmp_path):
     """M8: the registry names its root as the runtime owner resolves it, so a
     restore onto the same root reached through a linked data folder is in place,
@@ -1289,7 +1381,17 @@ def test_restored_registry_matches_its_root_through_a_symlinked_data_dir(tmp_pat
 
 
 @platform_support.package_capture
-@pytest.mark.parametrize("member", ["host-git-config", "later-member/state"])
+@pytest.mark.parametrize(
+    "member",
+    [
+        "staging/op/host-git-config",
+        "staging/op/later-member/state",
+        # TASK-41105: the change list a restore must not replace, and its
+        # write's temporary file.
+        "authority-changes.json",
+        "authority-changes.json.tmp",
+    ],
+)
 def test_capture_refuses_an_included_item_at_an_excluded_staging_path(
     tmp_path, monkeypatch, member
 ):
@@ -1303,7 +1405,10 @@ def test_capture_refuses_an_included_item_at_an_excluded_staging_path(
     config, root = _plugin_root(tmp_path)
     snapshot = _plugin_rows(config, root)[1][root / "staging/op/snapshot/plugin.json"]
     assert snapshot.status == "included"
-    relative = "staging/op/" + member
+    relative = member
+    if not (root / relative).exists():
+        (root / relative).write_bytes(b'{"changes": []}')
+        (root / relative).chmod(0o600)
     item = replace(
         snapshot,
         path=root / relative,
@@ -1589,7 +1694,7 @@ def service():
  return PluginService(get_user_data_dir(),workspace_lookup=lambda _:None,marker_store_factory=marker())
 def excluded(path):
  parts=path.relative_to(root).parts
- return parts[0]=='runtime.lock' or parts[0].startswith('registry.sqlite3') or (len(parts)>2 and parts[0]=='staging' and parts[2]!='snapshot')
+ return parts[0] in {'runtime.lock','authority-changes.json'} or parts[0].startswith('registry.sqlite3') or (len(parts)>2 and parts[0]=='staging' and parts[2]!='snapshot')
 def state():
  files={p.relative_to(root).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.rglob('*')) if p.is_file() and not excluded(p)}
  with sqlite3.connect(f"file:{root/'registry.sqlite3'}?mode=ro",uri=True) as connection:registry=list(connection.iterdump())
@@ -1681,6 +1786,8 @@ try:
   status={item.path.relative_to(root).as_posix():item.status for item in plugins}
   staged=Path(json.loads((home/'plugin-seed.json').read_text())['staged']).relative_to(root).as_posix()
   assert status['registry.sqlite3']=='included' and status['runtime.lock']=='intentionally_excluded'
+  # TASK-41105: the change list stays out of the archive, so a restore keeps it.
+  assert status['authority-changes.json']=='intentionally_excluded'
   assert status[staged+'/snapshot/plugin.json']=='included'
   assert {status[staged+'/'+name] for name in ('host-git-config','host-ssh-input','host-ssh-config','repository.git','content')}=={'intentionally_excluded'}
   assert not [key for key in status if key.startswith((staged+'/repository.git/',staged+'/content/'))],status
@@ -1800,6 +1907,8 @@ async def main():
    # the plugin; confirming recovers it in place, data attached.
    review=await plugins.review_restored_authority('test passphrase')
    assert review.undone==1 and [row[0] for row in review.installations]==[seed['installation']],review
+   # TASK-41105: the real replace restore kept the change list, so it is named.
+   assert [row[:3]+row[4:] for row in review.changes]==[(review.marker.generation+1,'activate',seed['installation'],'disabled')],review
    receipts=await plugins.adopt_restored_authority(review)
    assert not [receipt for receipt in receipts if receipt.phase=='recovery_required'],receipts
    assert await plugins.authority_status()=='ready'
@@ -1936,7 +2045,7 @@ class _FakeSecureKeyring:
 
 
 async def _restored_after_change(
-    tmp_path, monkeypatch, native_package, *, recreate=True
+    tmp_path, monkeypatch, native_package, *, recreate=True, changes=("disabled",)
 ):
     """A git-installed plugin with saved data, backed up by copying its folders,
     changed afterwards, then restored by copying the backup over recreated
@@ -2000,15 +2109,22 @@ async def _restored_after_change(
     finally:
         await plugins.aclose()
     saved = tmp_path / "backup"
-    shutil.copytree(profile / "plugins", saved / "plugins", symlinks=True)
+    # Backups never hold the change list (TASK-41105); a restore keeps the target's.
+    shutil.copytree(
+        profile / "plugins",
+        saved / "plugins",
+        symlinks=True,
+        ignore=shutil.ignore_patterns(backup.CHANGES),
+    )
     shutil.copytree(trust, saved / "trust", symlinks=True)
     plugins = service()
     try:
         await plugins.unlock("test passphrase")
-        disable = await plugins.review_activation(
-            installation, workspace_id=None, intent="disabled"
-        )
-        await plugins.commit(disable, disable.operation_id)
+        for intent in changes:
+            change = await plugins.review_activation(
+                installation, workspace_id=None, intent=intent
+            )
+            await plugins.commit(change, change.operation_id)
     finally:
         await plugins.aclose()
     shutil.rmtree(trust)
@@ -2184,9 +2300,18 @@ async def test_lost_passphrase_reset_sets_restored_plugins_aside_and_keeps_data(
     sets the restored registry, download records and downloads aside and
     deletes nothing; the plugin is reinstalled from its source and its kept
     saved-data folder is attached again after review."""
+    from tldw_chatbook.Plugins.retention import managed_usage
+
     service, install, installation, root, approved = await _restored_after_change(
         tmp_path, monkeypatch, native_package
     )
+    plugin_root = root.path.parent.parent
+    package_bytes = sum(
+        path.stat().st_size
+        for path in (plugin_root / "packages").rglob("*")
+        if path.is_file()
+    )
+    assert package_bytes and managed_usage(plugin_root) > package_bytes
     plugins = service("elsewhere")
     try:
         assert await plugins.authority_status() == "recovery_required"
@@ -2196,12 +2321,16 @@ async def test_lost_passphrase_reset_sets_restored_plugins_aside_and_keeps_data(
         assert await plugins.authority_status() == "needs_setup"
         await plugins.bootstrap("new passphrase")
         assert approved, "setup after the reset did not approve the restore"
-        plugin_root = root.path.parent.parent
         (aside,) = plugin_root.glob("reset-*")
         assert (aside / "registry.sqlite3").is_file()
         assert (aside / "acquisition-custody").is_dir()
         assert [path.name for path in (aside / "staging").iterdir()]
         assert not (plugin_root / "staging").exists()
+        # TASK-41107: the package bytes no registry names any more move aside
+        # with the rest, so plugin storage capacity stops counting them.
+        assert (aside / "packages" / installation).is_dir()
+        assert not (plugin_root / "packages").exists()
+        assert managed_usage(plugin_root) == 0
         assert (root.path / "notes.txt").read_bytes() == b"made by the plugin"
         # r14plg-rev1: the set-aside registry names the folder's former plugin.
         ((kept, former, _alias),) = await plugins.kept_data_folders()
@@ -2224,6 +2353,194 @@ async def test_lost_passphrase_reset_sets_restored_plugins_aside_and_keeps_data(
         await plugins.aclose()
 
 
+@platform_support.managed_runtime
+@pytest.mark.asyncio
+@pytest.mark.timeout(300)
+async def test_restored_authority_review_names_the_changes_it_undoes(
+    tmp_path, monkeypatch, native_package
+):
+    """TASK-41105: each plugin change is recorded when it commits, in a list
+    kept outside every backup, so a restore keeps it. Restored over two changes
+    made after the backup, the review lists both by generation, kind and
+    plugin. Without the list it falls back to the count, and adoption works."""
+    from tldw_chatbook.Plugins.backup import CHANGES
+    from tldw_chatbook.Widgets.plugin_review_modal import adoption_review_text
+
+    service, _, installation, root, _ = await _restored_after_change(
+        tmp_path,
+        monkeypatch,
+        native_package,
+        recreate=False,
+        changes=("disabled", "enabled"),
+    )
+    plugins = service()
+    try:
+        review = await plugins.review_restored_authority("test passphrase")
+        assert review.undone == 2
+        backed_up = review.marker.generation
+        ((_, alias, _),) = review.installations
+        assert alias
+        assert review.changes == (
+            (backed_up + 1, "activate", installation, alias, "disabled"),
+            (backed_up + 2, "activate", installation, alias, "enabled"),
+        )
+        text = adoption_review_text(review)
+        assert "This undoes 2 plugin changes made after this backup:" in text
+        for generation, words in ((backed_up + 1, "disable"), (backed_up + 2, "enable")):
+            line = f"Generation {generation}: {words} · {alias} · {installation}"
+            assert line in text
+        (root.path.parent.parent / CHANGES).unlink()
+        review = await plugins.review_restored_authority("test passphrase")
+        assert review.undone == 2 and review.changes is None
+        assert "so it cannot name them" in adoption_review_text(review)
+        receipts = await plugins.adopt_restored_authority(review)
+        assert not any(r.phase == "recovery_required" for r in receipts)
+    finally:
+        await plugins.aclose()
+
+
+@platform_support.package_capture
+def test_change_list_names_only_an_unbroken_chain_from_the_backup(tmp_path):
+    """TASK-41105 reviews r15pa-rev1 and rev2: the review names changes only
+    along the parent chain back from the protected marker's operation, one
+    generation a step, landing on the backup's marker. A gap, a mismatched
+    newest entry, another namespace, a commit left unrecorded after a rewind,
+    a wrong generation, a chain that lands elsewhere or a malformed entry falls
+    back to the count; a newer entry of an abandoned branch never hides the
+    true one. The list keeps its last ``MAX_CHANGES`` entries, and a stale
+    temporary file from an interrupted write never blocks the next one."""
+    import json
+    from types import SimpleNamespace as Marker
+
+    from tldw_chatbook.Plugins.backup import (
+        CHANGES,
+        MAX_CHANGES,
+        changes_since,
+        record_change,
+    )
+
+    root = tmp_path / "plugins"
+    root.mkdir(mode=0o700)
+    namespace = "n" * 64
+
+    def entry(generation, operation, parent, kind="activate", detail="disabled"):
+        return {
+            "namespace_id": namespace,
+            "generation": generation,
+            "operation_id": operation,
+            "parent": parent,
+            "kind": kind,
+            "installation_id": "a" * 32,
+            "alias": "helper",
+            "detail": detail,
+        }
+
+    def write(*rows):
+        (root / CHANGES).write_text(json.dumps({"changes": list(rows)}))
+        (root / CHANGES).chmod(0o600)
+
+    def since(marker, current, *, of=namespace):
+        return changes_since(
+            root,
+            of,
+            Marker(generation=marker[0], operation_id=marker[1]),
+            Marker(generation=current[0], operation_id=current[1]),
+        )
+
+    def timeline(*rows):
+        (root / CHANGES).unlink(missing_ok=True)
+        for row in rows:
+            record_change(root, entry(*row))
+
+    timeline(*((g, f"a{g}", f"a{g - 1}") for g in range(1, 11)))
+    assert since((5, "a5"), (7, "a7")) == (
+        (6, "activate", "a" * 32, "helper", "disabled"),
+        (7, "activate", "a" * 32, "helper", "disabled"),
+    )
+    # The newest entry is not the protected marker's operation.
+    assert since((5, "a5"), (7, "b7")) is None
+    # Entries of another authority namespace are never named.
+    assert since((5, "a5"), (7, "a7"), of="m" * 64) is None
+    # A gap: generation 7 was never recorded.
+    timeline((6, "a6", "a5"), (8, "a8", "a7"))
+    assert since((5, "a5"), (8, "a8")) is None
+    # The probe's rewind: adoption rewound the marker to a5, b6 committed
+    # unrecorded, b7 recorded. a6 belongs to the undone timeline.
+    timeline(
+        *((g, f"a{g}", f"a{g - 1}") for g in range(1, 11)),
+        (7, "b7", "b6", "uninstall", None),
+    )
+    assert since((5, "a5"), (7, "b7")) is None
+    # rev2 (the reviewer's probe2 A5): a backup at a7 adopted after a branch
+    # b6 off a5, then a8. The lineage is a6, a7, a8, whatever came later at 6.
+    timeline(
+        *((g, f"a{g}", f"a{g - 1}") for g in range(1, 8)),
+        (6, "b6", "a5"),
+        (8, "a8", "a7"),
+    )
+    assert [row[0:2] for row in since((5, "a5"), (8, "a8"))] == [
+        (6, "activate"),
+        (7, "activate"),
+        (8, "activate"),
+    ]
+    # The chain lands on another operation than the backup's marker.
+    assert since((5, "z5"), (8, "a8")) is None
+    # A corrupt entry's generation is not the step it stands at.
+    write(entry(6, "a6", "a5"), entry(9, "a7", "a6"))
+    assert since((5, "a5"), (7, "a7")) is None
+    # rev2: a well-chained entry with a non-string kind or detail is malformed.
+    for kind, detail in ((["install"], None), ("activate", 7)):
+        write(entry(6, "x6", "a5", kind=kind, detail=detail))
+        assert since((5, "a5"), (6, "x6")) is None
+    # The cap: a full list drops its oldest entry for the next one, and a
+    # stale temporary file (a write interrupted before its replace) is cleared.
+    write(*(entry(g, f"c{g}", f"c{g - 1}") for g in range(1, MAX_CHANGES + 1)))
+    (root / (CHANGES + ".tmp")).write_bytes(b"partial")
+    record_change(root, entry(MAX_CHANGES + 1, "next", f"c{MAX_CHANGES}"))
+    kept = json.loads((root / CHANGES).read_text())["changes"]
+    assert len(kept) == MAX_CHANGES
+    assert (kept[0]["generation"], kept[-1]["operation_id"]) == (2, "next")
+    assert not (root / (CHANGES + ".tmp")).exists()
+
+
+def test_a_long_change_list_never_hides_the_plugins_or_the_confirmation():
+    """TASK-41105 review r15pa-rev1: about 200 named changes used to fill the
+    dialog's text limit and cut off the plugin rows and the confirmation. They
+    now come first, at most 20 changes are named with the rest counted, and
+    the changes read as the User Guide words them."""
+    from types import SimpleNamespace as Marker
+
+    from tldw_chatbook.Plugins.review import RestoredAuthorityReview
+    from tldw_chatbook.UI.Plugins_Modules.details import display_text
+    from tldw_chatbook.Widgets.plugin_review_modal import adoption_review_text
+
+    kinds = [("activate", "disabled"), ("uninstall", None), ("root_data", "delete")]
+    changes = tuple(
+        (5 + index, *kinds[(index - 1) % 3][:1], "b" * 32, "helper", kinds[(index - 1) % 3][1])
+        for index in range(1, 1001)
+    )
+    review = RestoredAuthorityReview(
+        "token",
+        Marker(generation=5),
+        Marker(generation=1005),
+        1000,
+        (("b" * 32, "helper", "c" * 64),),
+        1,
+        0.0,
+        changes,
+    )
+    text = display_text(adoption_review_text(review), limit=16384)
+    assert not text.endswith("[truncated]")
+    assert "Plugin: helper · " + "b" * 32 in text
+    assert "Confirm recovery makes this backup's plugin authority current" in text
+    assert text.index("Plugin: ") < text.index("This undoes 1000 plugin changes")
+    assert f"Generation 6: disable · helper · {'b' * 32}" in text
+    assert f"Generation 7: removal · helper · {'b' * 32}" in text
+    assert f"Generation 8: delete saved data · helper · {'b' * 32}" in text
+    assert "Generation 26:" not in text
+    assert "…and 980 more (generations 26 to 1005)" in text
+
+
 @platform_support.package_capture
 def test_reset_aside_is_excluded_whole_and_never_listed_as_newer_downloads(tmp_path):
     """TASK-40308 review r14plg-rev1 (the reviewer's probe, part 1): a reset's
@@ -2235,6 +2552,9 @@ def test_reset_aside_is_excluded_whole_and_never_listed_as_newer_downloads(tmp_p
 
     config, root = _plugin_root(tmp_path)
     archived = {item.logical_id: item for item in _plugin_rows(config, root)[0].items}
+    # TASK-41105: the change list is left out the same way.
+    (root / backup.CHANGES).write_bytes(b'{"changes": []}')
+    (root / backup.CHANGES).chmod(0o600)
     aside = root / "reset-0123456789abcdef"
     for relative in (
         "registry.sqlite3",
@@ -2248,6 +2568,7 @@ def test_reset_aside_is_excluded_whole_and_never_listed_as_newer_downloads(tmp_p
         (aside / relative).chmod(0o600)
     target, rows = _plugin_rows(config, root)
     assert rows[aside].status == "intentionally_excluded"
+    assert rows[root / backup.CHANGES].status == "intentionally_excluded"
     assert not [path for path in rows if aside in path.parents]
     backup.refuse_added_fetch_folders(target.items, archived)
     assert backup.kept_whole(target.items) == {aside}
@@ -2293,3 +2614,57 @@ async def test_unreadable_restore_witness_never_unlocks_adoption_or_setup(
         # Saved data never re-authenticated here, so a clean close refuses.
         with pytest.raises(PermissionError, match="root_authority_unavailable"):
             await plugins.aclose()
+
+
+@platform_support.managed_runtime
+@pytest.mark.asyncio
+@pytest.mark.timeout(300)
+async def test_setup_after_a_reset_outside_a_restore_keeps_downloads_listable(
+    tmp_path, monkeypatch, native_package
+):
+    """TASK-41108: with nothing installed, Reset authority… then setup works
+    outside a restore. Download records signed by the old authority used to stay
+    behind, and every listing (Candidates…) and every new download then failed
+    with ``acquisition custody invalid``. Setup now sets them aside with their
+    downloads, deleting nothing, and both keep working."""
+    from Tests.Plugins.acquisition_process_support import repository
+    from tldw_chatbook.Plugins import authority_store
+    from tldw_chatbook.Plugins.git_source import select_local_source
+    from tldw_chatbook.Plugins.service import PluginService
+    from tldw_chatbook.Plugins.source_service import SourceService
+
+    monkeypatch.setattr(
+        authority_store,
+        "is_secure_keyring_backend",
+        lambda candidate: isinstance(candidate, _FakeSecureKeyring),
+    )
+    keyring = _FakeSecureKeyring()
+    plugins = PluginService(
+        tmp_path / "profile",
+        workspace_lookup=lambda _: None,
+        marker_store_factory=lambda store: authority_store.KeyringPluginMarkerStore(
+            store, keyring_backend=keyring
+        ),
+    )
+    sources = SourceService(plugins)
+    source = select_local_source(repository(native_package(), tmp_path / "git-source"))
+    try:
+        await plugins.bootstrap("old passphrase")
+        destination = await plugins.acquisition_destination("op-old")
+        await plugins.acquire_snapshot(source, "op-old", destination)
+        assert [row["operation_id"] for row in await sources.list_persisted_candidates()]
+        reset = await plugins.review_authority_reset()
+        assert not reset.retained and not reset.restored
+        await plugins.reset_authority(reset)
+        await plugins.bootstrap("new passphrase")
+        assert await plugins.authority_status() == "ready"
+        assert await sources.list_persisted_candidates() == ()
+        (aside,) = (tmp_path / "profile" / "plugins").glob("reset-*")
+        assert len(list((aside / "acquisition-custody").iterdir())) == 1
+        assert (aside / "staging" / destination.parent.name / "snapshot").is_dir()
+        destination = await plugins.acquisition_destination("op-new")
+        await plugins.acquire_snapshot(source, "op-new", destination)
+        rows = await sources.list_persisted_candidates()
+        assert [row["operation_id"] for row in rows] == ["op-new"]
+    finally:
+        await plugins.aclose()

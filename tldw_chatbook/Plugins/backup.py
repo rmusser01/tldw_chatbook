@@ -5,11 +5,14 @@ SQLite member, captured through the SQLite backup route (committed WAL frames
 fold in) and validated against the exact frozen catalog below. Every other file
 is raw bytes, including staging snapshots and ``acquisition-custody/``: plugin
 recovery re-verifies git-installed packages from them. Left out: the runtime
-owner's ``runtime.lock``, and inside each ``staging/<name>/`` everything but
-``snapshot/`` (owner decision D1, 2026-11-10, as an allow-list): the fetch-time
-host git/SSH configuration copies (they can hold credential helpers and SSH
-config), ``repository.git``, ``content/`` and whatever a later fetch leaves there.
-Each is one excluded row whose contents are never listed.
+owner's ``runtime.lock``; ``authority-changes.json``, the advisory list of
+authority changes a restore must keep (TASK-41105); every ``reset-<id>/`` folder
+setup sets plugin state aside in (TASK-40308, TASK-41107, TASK-41108); and
+inside each ``staging/<name>/`` everything but ``snapshot/`` (owner decision D1,
+2026-11-10, as an allow-list): the fetch-time host git/SSH configuration copies
+(they can hold credential helpers and SSH config), ``repository.git``,
+``content/`` and whatever a later fetch leaves there. Each is one excluded row
+whose contents are never listed.
 
 While a plugin process may be running, or a live runtime owner holds the lock,
 the preview shows one unavailable plugin root and the issue
@@ -39,6 +42,8 @@ REGISTRY = "registry.sqlite3"
 LOCK = "runtime.lock"
 WRITERS_ACTIVE = "plugin_writers_active"
 FETCH_REMOVAL = "plugin_fetch_removal_required"
+CHANGES = "authority-changes.json"
+MAX_CHANGES = 1000
 
 # Exact installed v5 catalog, measured from PluginRegistry._reference_schema()
 # (migrations 001-005). A new migration must add its catalog here; the pinning
@@ -85,21 +90,123 @@ def _fetch_excluded(relative: str) -> bool:
 
 
 def _reset_aside(relative: str) -> bool:
-    """Whether a root-relative path is a post-restore reset's set-aside folder.
+    """Whether a root-relative path is a reset's set-aside folder.
 
-    TASK-40308: setup after a reset moves the restored registry, download
-    records and downloads to ``reset-<id>/``. Backups exclude it whole, never
+    TASK-40308, TASK-41107: setup after a post-restore reset moves the restored
+    registry, download records, downloads and package bytes to ``reset-<id>/``.
+    TASK-41108: setup after a reset outside a restore moves the old authority's
+    download records and downloads there. Backups exclude it whole, never
     walked, so its downloads' host configuration copies never enter an
-    archive, and restores keep it whole (``kept_whole``): it is the only record
-    of which kept saved-data folder belonged to which plugin.
+    archive, and restores keep it whole (``kept_whole``): a post-restore one is
+    the only record of which kept saved-data folder belonged to which plugin.
     """
     parts = Path(relative).parts
     return len(parts) == 1 and RESET_ASIDE.fullmatch(parts[0]) is not None
 
 
 def _staging_excluded(relative: str) -> bool:
-    """Whether the owner excludes a root-relative path whole, never walked."""
-    return _fetch_excluded(relative) or _reset_aside(relative)
+    """Whether the owner excludes a root-relative path whole, never walked.
+
+    ``authority-changes.json`` too, and its write's temporary file
+    (TASK-41105): it must outlive a restore, and a replace restore keeps an
+    excluded target file in place.
+    """
+    return (
+        _fetch_excluded(relative)
+        or _reset_aside(relative)
+        or relative in (CHANGES, CHANGES + ".tmp")
+    )
+
+
+def record_change(root: Path, change: dict) -> None:
+    """Remember one committed authority change outside every backup (TASK-41105).
+
+    After a restore, ``<plugins>/authority-changes.json`` still names the
+    changes made since the backup, so adopting the restored authority can list
+    what it undoes. Each entry names its parent operation; ``changes_since``
+    follows only the chain back from the protected marker, so stale entries of
+    an undone timeline or of another namespace can stay, bounded to the last
+    ``MAX_CHANGES``. Advisory only: nothing grants authority from it.
+    """
+    import json
+    import os
+
+    from tldw_chatbook.Utils.private_paths import open_private_binary
+
+    from .authority_store import _decode
+
+    path, rows = root / CHANGES, []
+    if os.path.lexists(path):
+        with open_private_binary(path) as opened:
+            if not opened.result.verified_private:
+                raise ValueError("unqualified plugin change list")
+            try:
+                rows = list(_decode(opened.stream.read(1024 * 1024))["changes"])
+            except (ValueError, KeyError, TypeError):
+                rows = []  # Unreadable: start again; the review falls back.
+    data = json.dumps({"changes": [*rows, change][-MAX_CHANGES:]}).encode()
+    # ponytail: private atomic replace without fsync (review r15pa-rev1: the
+    # durable chain cost 160-240 ms a commit). A list lost to a crash only
+    # makes the review fall back to its count.
+    temporary = root / (CHANGES + ".tmp")
+    if os.path.lexists(temporary):
+        os.unlink(temporary)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        with open(os.open(temporary, flags, 0o600), "wb") as handle:
+            handle.write(data)
+        os.replace(temporary, path)
+    except BaseException:
+        if os.path.lexists(temporary):
+            os.unlink(temporary)
+        raise
+
+
+def changes_since(root: Path, namespace_id: str, marker, current):
+    """The recorded changes after ``marker`` up to ``current``, oldest first.
+
+    Walks back from the protected marker's own operation through each entry's
+    parent, one generation a step, and must land on ``marker``'s operation.
+    So an entry of an abandoned branch never hides the true one, and a gap, an
+    unrecorded commit after a rewind, another namespace or a malformed entry
+    returns ``None``: the review falls back to its count (reviews r15pa-rev1,
+    r15pa-rev2).
+    """
+    from .authority_store import _read
+
+    try:
+        rows = {
+            row["operation_id"]: row
+            for row in _read(root / CHANGES)["changes"]
+            if row["namespace_id"] == namespace_id
+        }
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    named, operation = [], current.operation_id
+    for generation in range(current.generation, marker.generation, -1):
+        row = rows.get(operation)
+        if row is None:
+            return None
+        if row.get("generation") != generation:
+            return None
+        named.append(
+            tuple(
+                row.get(key)
+                for key in ("generation", "kind", "installation_id", "alias", "detail")
+            )
+        )
+        operation = row.get("parent")
+    if operation != marker.operation_id:
+        return None
+    if not all(
+        isinstance(kind, str)
+        and isinstance(installation, str)
+        and isinstance(alias, (str, type(None)))
+        and isinstance(detail, (str, type(None)))
+        for _, kind, installation, alias, detail in named
+    ):
+        return None
+    return tuple(reversed(named))
 
 
 def kept_whole(items) -> set[Path]:
@@ -161,6 +268,35 @@ def refuse_added_fetch_folders(items, archived) -> None:
                 members.add(root.joinpath(*parts[:3]))
     if members:
         raise FetchRemovalRequired(tuple(sorted(members)))
+
+
+def fetch_removal_review(members: tuple[Path, ...], removal: str) -> str:
+    """The newer-download removal review, before ``removal`` is used.
+
+    Shared by the Backup screen (``removal`` is its button) and the recovery
+    CLI (its flag), so both give the same no-safety-copy warning (TASK-41106).
+    """
+    rows = [
+        "Newer plugin downloads. These folders were downloaded from a "
+        "repository after this backup was made (a source refresh, an update "
+        "check, an install or an update). Restoring Tools and skills removes "
+        "them. Installed plugins keep working.",
+        f"{removal} deletes the files below now, with no safety copy; a "
+        "rollback cannot bring them back. They are each download's git copy "
+        "(repository.git, content) and the copies of your git and SSH settings "
+        "it made (host-git-config, host-ssh-*). Your own git configuration and "
+        "~/.ssh are not touched.",
+        "Each folder's snapshot and its download record stay until you start "
+        "the restore, which moves them into the before-replacement safety copy "
+        "with the rest of your current data.",
+        "The restore is reviewed again after the removal.",
+    ]
+    for folder in dict.fromkeys(member.parent for member in members):
+        rows.append(f"Folder: {folder}")
+        rows.extend(
+            f"  Delete: {member.name}" for member in members if member.parent == folder
+        )
+    return "\n".join(rows)
 
 
 def remove_fetch_members(members: tuple[Path, ...]) -> None:

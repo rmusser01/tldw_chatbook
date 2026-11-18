@@ -405,13 +405,63 @@ def authority_failure_message(error: BaseException, mode: str) -> str:
     return "Authority unavailable or passphrase incorrect. Retry after checking the protected backend."
 
 
+_CHANGE_WORDS = {
+    "install": "install",
+    "update": "update",
+    "select": "component selection change",
+    "configure": "configuration change",
+    "trust": "trust",
+    "revoke": "trust revoked",
+    "uninstall": "removal",
+    "fence_data": "saved data fenced",
+    "retain": "old revisions cleaned up",
+    "recover": "recovery",
+}
+NAMED_CHANGES = 20
+
+
+def _change_words(kind, detail) -> str:
+    """The User Guide's words for a recorded change (TASK-41105 review r15pa-rev1)."""
+    if kind == "activate":
+        return {"enabled": "enable", "disabled": "disable"}.get(
+            detail, "enable or disable change"
+        )
+    if kind == "root_data":
+        return f"{detail} saved data" if detail else "saved-data change"
+    return _CHANGE_WORDS.get(kind, f"{kind} change")
+
+
 def adoption_review_text(review) -> str:
-    """What adopting a restored plugin authority does, before it is confirmed."""
+    """What adopting a restored plugin authority does, before it is confirmed.
+
+    The plugins and the confirmation come first and at most ``NAMED_CHANGES``
+    changes are named, so a long list never truncates them away.
+    """
     if review.undone is None:
         undone = (
             "This computer's protected plugin marker is missing or names other "
             "plugin authority, so Chatbook cannot count the plugin changes made "
             "after this backup; every one of them is undone."
+        )
+    elif review.undone and review.changes:
+        named = [
+            f"  Generation {generation}: {_change_words(kind, detail)} · "
+            f"{f'{alias} · ' if alias else ''}{installation}"
+            for generation, kind, installation, alias, detail in review.changes[
+                :NAMED_CHANGES
+            ]
+        ]
+        rest = review.changes[NAMED_CHANGES:]
+        if rest:
+            named.append(
+                f"  …and {len(rest)} more (generations {rest[0][0]} to {rest[-1][0]})"
+            )
+        undone = "\n".join(
+            [
+                f"This undoes {review.undone} plugin change"
+                f"{'s' if review.undone != 1 else ''} made after this backup:",
+                *named,
+            ]
         )
     elif review.undone:
         undone = (
@@ -420,7 +470,7 @@ def adoption_review_text(review) -> str:
             f"(authority generations {review.marker.generation + 1} to "
             f"{review.marker.generation + review.undone}): installs, updates, "
             "configuration, enable or disable changes and removals made since then. "
-            "A restore keeps no record of what each one was."
+            "Chatbook has no complete list of them here, so it cannot name them."
         )
     else:
         undone = "No plugin change made after this backup is undone."
@@ -433,13 +483,13 @@ def adoption_review_text(review) -> str:
         [
             "Your passphrase opened the restored plugin authority, generation "
             f"{review.marker.generation}, and the restored plugin files match it.",
-            undone,
             *plugins,
             f"Saved-data folders kept attached: {review.data_roots}. A folder that "
             "was replaced since it was last bound asks for its own review in "
             "Manage plugin.",
             "Confirm recovery makes this backup's plugin authority current on this "
             "computer.",
+            undone,
         ]
     )
 
@@ -603,8 +653,8 @@ def reset_consequence(review) -> str:
             "sets the restored plugins aside (their registry, download records and "
             "downloads move to a reset-… folder inside the plugin folder) and keeps "
             "every saved-data folder where it is. Nothing is deleted. Their package "
-            "files stay in the plugin folder and keep using disk space until you "
-            "remove them by hand. Reinstall the plugins from their sources, then "
+            "files move there too and stop counting against plugin storage; the "
+            "reset-… folder keeps its disk space until you delete it. Reinstall the plugins from their sources, then "
             "attach their kept saved data in Manage plugin; a plugin whose source is "
             "gone cannot come back this way. If you still have the plugin passphrase "
             "this backup was made with, close this and unlock instead: that keeps "
@@ -615,7 +665,12 @@ def reset_consequence(review) -> str:
             "Setting authority up again is refused while plugins are installed or "
             "plugin saved data remains here."
         )
-    return "Afterwards, set authority up again with Authority…."
+    return (
+        "Afterwards, set authority up again with Authority…. Setup moves any "
+        "downloads made under the old authority, with their download records, into "
+        "a reset-… folder inside the plugin folder: the new authority cannot "
+        "verify them. Nothing is deleted."
+    )
 
 
 def reset_next_step(review) -> str:
