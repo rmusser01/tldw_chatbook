@@ -3533,6 +3533,25 @@ class ConsoleTraceRepository:
         ).fetchall()
         return tuple(self._call(row) for row in rows)
 
+    def read_child_calls(
+        self, cursor: sqlite3.Cursor, conversation_id: str
+    ) -> tuple[TraceCallRecord, ...]:
+        """Read every spawned child's calls under a conversation's attached owner.
+
+        Each call keeps its link's spawning ``turn_id`` and its child's
+        ``run_id``. Ordered by creation, so children appear in spawn order.
+        """
+        rows = cursor.execute(
+            self._call_select()
+            + """ WHERE segment_id IN (
+                    SELECT link.segment_id FROM console_trace_child_segments AS link
+                      JOIN console_trace_owners AS owner USING (owner_id)
+                     WHERE owner.conversation_id = ? AND owner.attached = 1)
+                  ORDER BY created_at, call_sequence, call_id""",
+            (conversation_id,),
+        ).fetchall()
+        return tuple(self._call(row) for row in rows)
+
     def bind_call(
         self,
         cursor: sqlite3.Cursor,

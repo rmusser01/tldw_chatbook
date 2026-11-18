@@ -929,3 +929,48 @@ def test_multiple_feedback_events_on_one_message_all_survive_in_seq_order() -> N
         "first",
         "second",
     ]
+
+
+def test_child_calls_nest_under_their_turn_numbered_in_dispatch_order() -> None:
+    """TASK-41650: siblings number by dispatch time, not input order, and a
+    call missing its turn or run is never guessed onto one."""
+
+    def call(call_id, run_id, seq, started, *, turn_id="u1", route="agent_first"):
+        return {
+            "call_id": call_id,
+            "turn_id": turn_id,
+            "run_id": run_id,
+            "call_sequence": seq,
+            "route_identity": route,
+            "state": "complete",
+            "dispatch_started_at": started,
+            "settled_at": started,
+            "model_name": "m",
+            "provider_name": "p",
+        }
+
+    snapshot = derive_trajectory(
+        [msg("u1", "user", ts="2026-08-14 10:00:00")],
+        {},
+        [],
+        [],
+        [],
+        child_calls=[
+            call("b2", "run-b", 1, "2026-08-14T10:00:09+00:00", route="tool_loop"),
+            call("b1", "run-b", 0, "2026-08-14T10:00:05+00:00"),
+            call("a1", "run-a", 0, "2026-08-14T10:00:03+00:00"),
+            call("x1", "run-x", 0, "2026-08-14T10:00:04+00:00", turn_id=None),
+        ],
+    )
+
+    (turn,) = snapshot.turns
+    children = [record for record in turn.records if record.kind == "child_call"]
+    assert [record.content_preview for record in children] == [
+        "sub-agent 1 · call 1 · agent first",
+        "sub-agent 2 · call 1 · agent first",
+        "sub-agent 2 · call 2 · tool loop",
+    ]
+    assert {(r.label, r.depth, r.actor_kind, r.status) for r in children} == {
+        ("Child call", 1, "subagent", "complete")
+    }
+    assert [record.run_id for record in children] == ["run-a", "run-b", "run-b"]

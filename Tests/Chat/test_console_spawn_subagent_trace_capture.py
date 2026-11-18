@@ -114,6 +114,7 @@ async def _spawn_turn(
     mixin=False,
     fenced_spawn=False,
     parent_openai=False,
+    trace_view=False,
 ) -> SimpleNamespace:
     """Send one turn (Capture On unless ``capture`` says otherwise) whose model
     spawns a child; return the facts."""
@@ -404,6 +405,16 @@ async def _spawn_turn(
             for step in (runs.get_run(row["id"]) or {}).get("steps") or ()
             if step.get("kind") == "error"
         ]
+
+        if trace_view:
+            from tldw_chatbook.UI.Console_Modules.review_selection import (
+                _build_trajectory_snapshot,
+            )
+
+            # The trace view's own snapshot, read before the databases close.
+            facts.snapshot = _build_trajectory_snapshot(
+                store, session.persisted_conversation_id, agent_runs_db=runs
+            )
         facts.calls = [
             tuple(row)
             for row in chat.get_connection().execute(
@@ -468,6 +479,8 @@ async def test_parent_follow_up_after_native_spawn_keeps_capture(tmp_path, monke
     [("Say child done.", False), (DRAFT, False), ("Say child done.", True)],
     ids=["own-task", "task-equals-user-message", "child-tool-loop"],
 )
+
+
 async def test_child_request_after_native_spawn_reaches_provider(
     tmp_path, monkeypatch, task, child_tool
 ):
@@ -520,6 +533,8 @@ async def test_parent_surface_still_refuses_a_changed_history_beside_a_child(
     [("Say child done.", "Say it again."), ("Say child done.", "Say child done.")],
     ids=["two-siblings", "respawn-same-task-text"],
 )
+
+
 async def test_sibling_children_each_get_their_own_segment_under_one_turn(
     tmp_path, monkeypatch, tasks
 ):
@@ -686,3 +701,56 @@ async def test_a_service_that_prepares_continuations_needs_a_child_owner_key(tmp
         AgentService(db=runs, registry=ToolCatalogRegistry(), chat_call=lambda **_: {})
     finally:
         runs.close()
+
+
+async def test_trace_view_lists_child_calls_under_the_spawning_turn(
+    tmp_path, monkeypatch
+):
+    """TASK-41650: the mounted Trace lists each child's calls under the turn
+    that spawned it, labelled as a child's, never as the parent's."""
+    from textual.app import App
+    from textual.widgets import DataTable
+
+    from tldw_chatbook.UI.Screens.trajectory_screen import TrajectoryScreen
+
+    tasks = ("Say child done.", "Say it again.")
+    facts = await _spawn_turn(
+        tmp_path, monkeypatch, tasks[0], tasks=tasks, child_tool=True, trace_view=True
+    )
+    why = str(vars(facts))
+    child = [call for call in facts.owned_calls if not call[0]]
+    assert len(child) == 4 and facts.boundary_errors == [], why
+    turn_id = child[0][2]
+
+    async with App().run_test(size=(200, 60)) as pilot:
+        screen = TrajectoryScreen(facts.snapshot)
+        await pilot.app.push_screen(screen)
+        await pilot.pause()
+        table = screen.query_one("#trajectory-table", DataTable)
+        rows = [
+            (row.key.value, [str(cell).strip() for cell in table.get_row(row.key)])
+            for row in table.ordered_rows
+        ]
+        # `a` (next child agent) reaches a child call from the top.
+        table.move_cursor(row=0)
+        await pilot.press("a")
+        await pilot.pause()
+        landed = dict(rows)[screen._cursor_key()]
+
+    headers = [i for i, (key, _) in enumerate(rows) if key.startswith("turn")]
+    start = [key for key, _ in rows].index(f"turn:{turn_id}")
+    end = next((i for i in headers if i > start), len(rows))
+    child_rows = [cells for _, cells in rows if cells[1] == "Child call"]
+    # Every child call sits inside the spawning turn's block, none elsewhere,
+    # so the parent's own two calls are never shown as a child's.
+    assert child_rows == [
+        cells for _, cells in rows[start:end] if cells[1] == "Child call"
+    ], rows
+    assert sorted(cells[2] for cells in child_rows) == [
+        "↳ sub-agent 1 · call 1 · agent first",
+        "↳ sub-agent 1 · call 2 · tool loop",
+        "↳ sub-agent 2 · call 1 · agent first",
+        "↳ sub-agent 2 · call 2 · tool loop",
+    ], rows
+    assert {cells[3] for cells in child_rows} == {"Complete"}, rows
+    assert landed[1] == "Child call", landed

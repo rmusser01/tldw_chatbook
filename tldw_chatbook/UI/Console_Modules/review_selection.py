@@ -121,6 +121,7 @@ def _build_trajectory_snapshot(
     agent_steps: list[Any] = []
     retrieval_runs: list[Any] = []
     diagnostic_events: list[Any] = []
+    child_calls: Any = ()
     active_leaf: str | None = None
 
     def capture_failed(
@@ -174,6 +175,14 @@ def _build_trajectory_snapshot(
         except Exception as error:  # noqa: BLE001
             capture_failed("active_leaf", error)
             active_leaf = None
+    trace_repository = getattr(persistence, "console_trace_repository", None)
+    if db is not None and trace_repository is not None:
+        try:
+            with db.transaction() as cursor:
+                child_calls = trace_repository.read_child_calls(cursor, conversation_id)
+        except Exception as error:  # noqa: BLE001
+            capture_failed("child_calls", error)
+            child_calls = ()
     usage_by_id: dict[str, ProviderUsage] = {}
     for message in messages:
         if not isinstance(message, Mapping):
@@ -316,6 +325,7 @@ def _build_trajectory_snapshot(
         agent_steps=agent_steps,
         retrieval_runs=retrieval_runs,
         diagnostic_events=diagnostic_events,
+        child_calls=child_calls,
     )
 
 
