@@ -56,4 +56,5 @@ The seal now accepts a queued Send's configuration only as the copy the runtime 
 - **Evidence.** Same covering runs as TASK-41644 (shared branch): no head-only failure after alone reruns; `Tests/Architecture` 3 failures identical on base; preflight passed.
 - **Lane (not edited here).** The node above is in no lane (the file's three spoken-send nodes are in `scripts/ui_pr_gate_census.txt`); the file is `bootstrap_profile`, the node takes ~18 s call / ~42 s alone under load 35-40.
 - Files: `tldw_chatbook/Chat/console_configuration_preparation.py`, `tldw_chatbook/UI/Console_Modules/prompt_queue.py`, `Tests/UI/test_console_send_draft_snapshot.py`.
+- Review round (2026-11-18): the seal comment now says both objects pass (the captured snapshot itself when the queue had no recovery runtime to stamp with, or the stamped copy that replaced it), and the queue comment says the stamp, not the capture, registers the copy.
 <!-- SECTION:NOTES:END -->
