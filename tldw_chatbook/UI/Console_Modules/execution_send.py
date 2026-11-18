@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from ...Chat.console_execution_process import (
     ConsoleChannelLost,
+    ConsoleExecutionClient,
     ConsoleReadinessExpired,
     ConsoleRemoteFailure,
 )
@@ -186,6 +187,7 @@ async def dispatch_send(screen, *, session_id=None, pending_send_token=None) -> 
         )
     receipt = None
     terminal_seen = False
+    cancelled_for_display = False
     try:
         _current(screen, client, visit)
         selection = {
@@ -212,7 +214,29 @@ async def dispatch_send(screen, *, session_id=None, pending_send_token=None) -> 
                 # handoff. Recheck the actual attached presentation before ACK.
                 from .execution_state import refresh_selected_view
 
-                await refresh_selected_view(screen)
+                try:
+                    await refresh_selected_view(screen)
+                except ConsoleRemoteFailure as error:
+                    _require_methods(client, _PLAN_FAILURE_METHODS)
+                    try:
+                        cancelled = client.cancel_unacknowledged_plan(
+                            receipt, event, error, screen, visit,
+                        )
+                        await asyncio.shield(cancelled.received)
+                        try:
+                            applied = await asyncio.shield(cancelled.applied)
+                            if applied.get("applied") is not True:
+                                raise RuntimeError("Console plan cancellation was not applied")
+                        finally:
+                            if await asyncio.shield(cancelled.retired) is not True:
+                                raise RuntimeError("Console plan cancellation retirement is unproven")
+                    except ConsoleRemoteFailure as refusal:
+                        # An unqualified display or refused CancelTurn is not a
+                        # known Send refusal; the outer friendly catch must not
+                        # discard its original wait or claim clean settlement.
+                        raise RuntimeError("Console plan cancellation was not confirmed") from refusal
+                    cancelled_for_display = True
+                    continue  # Observe this ReceiveTurn's own terminal/Retired; never ACK.
                 _current(screen, client, visit)
                 _require_ack(screen, ack)
                 acknowledged = client.acknowledge_plan(receipt, event)
@@ -235,6 +259,8 @@ async def dispatch_send(screen, *, session_id=None, pending_send_token=None) -> 
             elif event.kind == "terminal":
                 terminal_seen = True
                 accepted = event.payload["accepted"]
+                if cancelled_for_display and accepted:
+                    raise RuntimeError("Console cancelled plan unexpectedly committed")
                 if callback is not None:
                     _require_ack(screen, ack)
                     _require_methods(ack, _ACK_METHODS)
@@ -249,6 +275,10 @@ async def dispatch_send(screen, *, session_id=None, pending_send_token=None) -> 
             from .execution_state import refresh_selected_view
 
             await refresh_selected_view(screen)
+        if cancelled_for_display:
+            screen.app_instance.notify(
+                "Console input changed; your draft was kept.", severity="warning"
+            )
         return accepted
     except ConsoleReadinessExpired:
         if receipt is not None or press.task is not None:
@@ -290,6 +320,10 @@ _COMPOSER_METHODS = tuple(
 _ACK_METHODS = tuple(
     (name, _definition(getattr(sending.ConsoleSendAcknowledgement, name)))
     for name in ("custody_callback", "mark_admitted", "_custody_ended", "release")
+)
+_PLAN_FAILURE_METHODS = tuple(
+    (name, _definition(getattr(ConsoleExecutionClient, name)))
+    for name in ("cancel_unacknowledged_plan", "require_passive_projection_failure", "submit")
 )
 _SOURCES = tuple(
     (module, name, _definition(getattr(module, name)))

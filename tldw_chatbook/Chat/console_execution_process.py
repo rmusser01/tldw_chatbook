@@ -538,6 +538,37 @@ class ConsoleExecutionClient:
             incarnation_id=receipt.identity.incarnation_id,
         )
 
+    def cancel_unacknowledged_plan(
+        self, receipt: ConsoleProcessReceipt, plan: ConsoleWireMessage,
+        error: ConsoleRemoteFailure, view: Any, visit: int,
+    ) -> ConsoleProcessReceipt:
+        """Cancel one authentic waiting plan after its display positively retired."""
+        self.require_passive_projection_failure(error, view, visit)
+        if (
+            type(receipt) is not ConsoleProcessReceipt
+            or type(plan) is not ConsoleWireMessage
+            or self._requests.get(receipt.identity.request_id) is not receipt
+            or receipt.operation != "ReceiveTurn" or receipt.potentially_committed
+            or any(not future.done() or future.cancelled() or future.exception() is not None
+                   for future in (receipt.received, receipt.applied))
+            or receipt.retired.done()
+            or plan.kind != "commit_planned" or plan.operation != "ReceiveTurn"
+            or self._plans.get((receipt.identity.request_id, plan.payload["ordinal"])) is not plan
+            or not any(item is plan for item in receipt.events)
+            or plan.payload["received_request_id"] != receipt.identity.request_id
+            or plan.payload["turn_id"] != receipt.turn_id
+            or any(getattr(plan.identity, name) != getattr(receipt.identity, name) for name in
+                   ("profile_epoch", "service_epoch", "source_revision", "session_id", "incarnation_id"))
+            or (receipt.identity.source_revision, receipt.identity.session_id,
+                receipt.identity.incarnation_id) != error._retired_projection[6]
+        ):
+            raise ConsoleChannelLost("Console unacknowledged plan owner changed")
+        return self.submit(
+            "CancelTurn", {"turn_id": receipt.turn_id},
+            session_id=receipt.identity.session_id,
+            incarnation_id=receipt.identity.incarnation_id,
+        )
+
     async def next_turn_event(self, receipt: ConsoleProcessReceipt, index: int) -> ConsoleWireMessage | None:
         """Observe the next original event without replay or receipt cancellation."""
         if (type(receipt) is not ConsoleProcessReceipt
@@ -1141,8 +1172,8 @@ class ConsoleExecutionClient:
                 and _checkpoint is None and _preparation is None
                 and _run_history is None and _inspector_refresh is None
             ):
-                # Keep the exact refusal for every caller. Only the passive UI
-                # worker may handle it after rechecking this original receipt.
+                # Keep the exact refusal. A passive observer or cancellation of
+                # an authentic unacknowledged plan must recheck this receipt.
                 failure._retired_projection = (
                     self, receipt, view, visit, attachment, app, binding, published, previous,
                 )

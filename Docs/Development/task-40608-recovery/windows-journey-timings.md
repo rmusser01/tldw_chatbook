@@ -43,6 +43,12 @@ On the same Windows 10 host, compare the stock guarded backend with a disposable
 
 Later runs `g62`, `g63` and `g66` are individual diagnostics. Their clocks and application revisions are separate from the three paired candidates in the diagram.
 
+### What the backend admission observer actually covered
+
+On `g66warm1` (`b334c52d7e`), the original fixture passed both turns and shutdown. README took 25.5269 s (11.8570 / 10.9154 / 2.7545 s over the three adjusted intervals above). Edit took 26.1026 s (8.0841 / 15.0171 / 3.0014 s). The parent reported 96 and 50 storage admissions, all with reusable evidence. Five and six provider requests and all two and three Once approvals arrived in order. Original receipt SHA-256: `5499176db2b4c0653249c5816441e3baa49fe92554ad17f8b16e758f962f326b`.
+
+The separate backend observer stopped 11.299 s after README Send, 0.928 s before the first HTTP receipt. Its exact-code guard encountered a second nested function with the same qualified name. Four calls were unfinished. Across 189 completed admissions in the covered prefix, taking the union of overlapping intervals gives 4.041 s in input checks, including 2.507 s in metadata. Forty-two pairs of inputs overlapped. None had a second client already waiting when the first began. This trace supports investigating how concurrent checks interact with Windows scheduling. It provides neither an edit profile nor measured savings from sharing an in-flight check. Numeric stream SHA-256: `866430551dd6bac93cb920f2856a4d22a9f9d1dfe2fde21d34d98622e5a8740f`.
+
 ## Where the time goes
 
 On the separate Windows 10 diagnostic `g57s` (`5a8b730cfa`), README
