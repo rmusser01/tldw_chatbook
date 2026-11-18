@@ -200,15 +200,13 @@ async def test_ready_local_skill_capture_runs_original_body_on_worker_and_matche
     assert "capture-worker-fixture" in {
         row["name"] for row in actual_skill["available_skills"]
     }
-    # Legacy synchronous capture still reads MCP; stock temporary sessions
-    # intentionally capture an empty ceiling because they never compose MCP.
+    # Under a managed runtime, legacy synchronous capture reads only closed MCP
+    # metadata (11d71e5db5). The loop projection above leaves it open, so the
+    # legacy capture defers MCP with an empty ceiling; the owned one must match.
     assert case.store.session_is_ephemeral(case.session.id)
-    assert expected.mcp_definition_maximum
+    assert expected.mcp_capture_pending and not expected.mcp_definition_maximum
     assert (
         actual.mcp_definition_capture == expected.mcp_definition_capture == "captured"
-    )
-    expected = replace(
-        expected, mcp_tool_maximum=frozenset(), mcp_definition_maximum={}
     )
     for name in actual.__dataclass_fields__:
         if name != "skill_context_maximum":
