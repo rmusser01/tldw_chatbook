@@ -336,6 +336,10 @@ controls on the same product revision passed 531 tests with two skips,
 including the original bounded Enter test and the Settings navigation cases.
 [Hosted Windows control results](https://github.com/rmusser01/tldw_chatbook/actions/runs/44332076725/job/134898850941)
 
+| Clean pair on `495b3249e9` (`qc`) | README baseline / candidate | Approved edit baseline / candidate | Original assertions and shutdown |
+|---|---:|---:|---|
+| 1 | 326.2255 s / 24.1755 s | 459.1983 s / 24.5370 s | Both sides passed. Candidate first HTTP arrived at 9.7183 s and 7.4541 s. |
+
 Batch `q5` started its first clean baseline on Windows 10 at 07:59 UTC on November 18. The driver pinned candidate `a3bf91340319ad7ad60177a37a537ca46364c2e3` and configuration SHA-256 `6af37c73d99d05badc21dc5b570104a3b513414cd213af8cc9464df362f62f93`. Its order is B1/C1, C2/B2, B3/C3. The earlier q4 plan never launched. A separate native component test accepted the corrected rail Apply, then the mounted-writer test failed in its subsequent visible read. Those tests contribute no journey times.
 
 | Earlier local pair | README baseline → candidate | Edit baseline → candidate |
