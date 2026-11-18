@@ -2209,6 +2209,19 @@ The original FULL body, readiness, source checks, physical retirement and all ca
 
 The q91c2 correctness check reached the completed, painted and persisted README reply, but its original `list_runs` observation failed because the enclosing FULL readiness expired 16 ms before parent adoption. A fixed `ReadRunHistory` command may run the existing `ConsoleBackendRunHistoryRead` independently of FULL. It retains the original query, filters, limits, source definitions, actual AgentRunsDB and native-resource retirement. Admission captures the already-prepared visible checkpoint; the read rechecks that exact checkpoint, source, active session, incarnation and conversation before and after native work. Hidden or superseded visits refuse. The parent requires the original Received/Applied/positive Retired receipts and unchanged scope before returning detached history rows. It neither adopts a display nor renews readiness. Normal FULL remains complete, including its existing explicit history option; no expired display or stored history cache substitutes for a fresh query.
 
+#### SQLite ownership during received-turn configuration capture
+
+In the contained Console, final configuration capture over the stock
+file-backed repositories runs on a worker owned by that one callback.
+An independent caller may own a registered SQLite connection on a shared
+worker. The ordinary database scope preserves that caller's transaction,
+while the accepted turn must prove physical closure of every connection it
+actually observes in its capture. A fresh worker lets both contracts hold.
+The original capture still opens and retires its repositories, checks its
+source and awaits its producer on cancellation. The executor is joined on
+exit. On Windows run `g58r`, the worker had returned but its second enrolled
+connection was still open when the original retirement check refused the edit.
+
 #### Approval observers follow the checked decision publication
 
 The independent decision read already paints the original approval card, but the compatibility controller's pending-round getter still read only FULL. Consequently a mounted card could wait for an unrelated FULL before an observer could read its ordered call IDs. That getter may consume the same positively retired independent head in its exact source, session, incarnation, attachment and visible visit. It remains a value observer: original presentation checkpoints and ResolveDecision enforce answerability, identity and permission; no DTO becomes a grant.

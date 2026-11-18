@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import sys
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
+from types import CodeType, FunctionType
 
 import pytest
 
@@ -15,17 +18,28 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 
 
 @asynccontextmanager
-async def _routing(monkeypatch, loop, callback):
-    with monkeypatch.context() as routing:
+async def _routing(monkeypatch, loop, callback, monitor):
+    with monkeypatch.context() as routing, monitor:
         routing.setattr(loop, "run_in_executor", callback)
         yield
 
 
 @pytest.mark.parametrize("domain_case", ["control_saved"], indirect=True)
-@pytest.mark.parametrize("borrowed", [False, True])
+@pytest.mark.parametrize(
+    "borrowed, stop",
+    [
+        (False, None),
+        (True, None),
+        (True, "cancel"),
+        (True, "source-change"),
+    ],
+)
 async def test_saved_preparations_retire_on_reused_original_worker(
-    domain_case, monkeypatch, record_property, borrowed
+    domain_case, monkeypatch, record_property, borrowed, stop
 ):
+    from dataclasses import replace
+
+    from Tests.Chat.test_console_control_trace import _observe
     from Tests.Chat.test_console_domain_boundary import _selection
     from Tests.Chat.test_console_first_send_atomicity import _until
     from tldw_chatbook.Chat.console_control_dispatch import (
@@ -36,6 +50,11 @@ async def test_saved_preparations_retire_on_reused_original_worker(
         _command_source,
     )
     from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+    from tldw_chatbook.Chat.console_configuration_preparation import (
+        capture_console_turn_configuration,
+        capture_console_turn_configuration_owned,
+    )
+    from tldw_chatbook.Chat.console_execution_retirement import _native
     from tldw_chatbook.Chat.prompt_history import PromptHistory
 
     case = domain_case
@@ -59,13 +78,10 @@ async def test_saved_preparations_retire_on_reused_original_worker(
             case.session.id
         ).policy_revision,
     )
-    if not borrowed:
-        conversation_id = case.store.persistence.create_conversation(
-            conversation_title="Reused preparation worker"
-        )
-        case.store.publish_first_persisted_conversation(
-            case.session.id, conversation_id
-        )
+    conversation_id = case.store.persistence.create_conversation(
+        conversation_title="Reused preparation worker"
+    )
+    case.store.publish_first_persisted_conversation(case.session.id, conversation_id)
     await (
         case.runtime._execution_service.ensure_permission_operations().set_kill_switch(
             False
@@ -88,12 +104,38 @@ async def test_saved_preparations_retire_on_reused_original_worker(
     loop = asyncio.get_running_loop()
     original_submit = loop.run_in_executor
     retained = []
+    capture_code = next(
+        code
+        for code in capture_console_turn_configuration_owned.__code__.co_consts
+        if type(code) is CodeType and code.co_name == "capture"
+    )
+    entered, release = threading.Event(), threading.Event()
+    held = []
+
+    def hold_capture(frame):
+        observation = getattr(_native, "read", None)
+        if stop is None or observation is None or held:
+            return
+        if observation.read.callback.__code__ is not capture_code:
+            return
+        held.append(observation)
+        entered.set()
+        assert release.wait(10), "Original final capture was not released"
 
     @asynccontextmanager
     async def independent_connection(executor):
         connection = None
         if borrowed:
-            connection = await original_submit(executor, case.database.get_connection)
+
+            def acquire_original():
+                connection = case.database.get_connection()
+                connection.execute("BEGIN")
+                participant = case.database._maintenance_participant
+                return connection, participant, participant.connections[connection]
+
+            connection, participant, lease = await original_submit(
+                executor, acquire_original
+            )
         try:
             yield connection
         finally:
@@ -101,9 +143,15 @@ async def test_saved_preparations_retire_on_reused_original_worker(
                 # Its real original caller retains ownership; preparation must
                 # not close this thread's already-open handle on its behalf.
                 def release_original():
-                    assert case.database._local.conn is connection
-                    assert connection.execute("SELECT 1").fetchone()[0] == 1
-                    case.database.close_connection()
+                    try:
+                        assert case.database._local.conn is connection
+                        assert case.database._maintenance_participant is participant
+                        assert participant.connections[connection] is lease
+                        assert connection.in_transaction
+                        assert connection.execute("SELECT 1").fetchone()[0] == 1
+                    finally:
+                        connection.rollback()
+                        case.database.close_connection()
 
                 await original_submit(executor, release_original)
 
@@ -112,14 +160,39 @@ async def test_saved_preparations_retire_on_reused_original_worker(
         def route_original_read(selected, callback, *args):
             source = _command_source.get()
             if selected is None and source is not None and source.controls is controls:
-                selected = executor
+                if not borrowed:
+                    selected = executor
+                elif args and type(args[0]) is FunctionType:
+                    invoke = args[0]
+                    captured = dict(
+                        zip(
+                            invoke.__code__.co_freevars,
+                            (cell.cell_contents for cell in invoke.__closure__ or ()),
+                            strict=True,
+                        )
+                    )
+                    read = captured.get("read")
+                    if (
+                        getattr(getattr(read, "callback", None), "__code__", None)
+                        is capture_code
+                    ):
+                        selected = executor
             return original_submit(selected, callback, *args)
 
         async with (
-            independent_connection(executor),
-            _routing(monkeypatch, loop, route_original_read),
+            independent_connection(executor) as borrowed_connection,
+            _routing(
+                monkeypatch,
+                loop,
+                route_original_read,
+                _observe(
+                    capture_console_turn_configuration.__code__,
+                    sys.monitoring.events.PY_RETURN,
+                    hold_capture,
+                ),
+            ),
         ):
-            for attempt in range(2):
+            for attempt in range(1 if stop else 2):
                 sequence = attempt * 3 + 1
                 turn_id = f"reused-turn-{attempt}"
                 controls.dispatch(
@@ -135,6 +208,49 @@ async def test_saved_preparations_retire_on_reused_original_worker(
                 )
                 invocation = receipt.turn_retirement
                 try:
+                    if stop:
+                        assert await _until(
+                            lambda receipt=receipt: entered.is_set()
+                            or receipt.work.done()
+                        )
+                        if receipt.work.done():
+                            receipt.work.result()
+                        assert entered.is_set() and not receipt.retired.done()
+                        observation = held[0]
+                        assert (
+                            not observation.closed
+                            and not observation.read.retired.done()
+                        )
+                        if stop == "cancel":
+                            controls.dispatch(
+                                CancelTurn(identity(sequence + 2), turn_id)
+                            )
+                        else:
+                            case.store.replace_session_settings(
+                                case.session.id,
+                                replace(case.session.settings, model="changed-model"),
+                            )
+                        await asyncio.sleep(0)
+                        assert not receipt.work.done() and not receipt.retired.done()
+                        release.set()
+                        outcome = (
+                            await asyncio.gather(receipt.work, return_exceptions=True)
+                        )[0]
+                        if stop == "cancel":
+                            assert isinstance(outcome, asyncio.CancelledError)
+                        else:
+                            from tldw_chatbook.Backup_Recovery.bootstrap import (
+                                RecoveryRequired,
+                            )
+
+                            assert isinstance(outcome, RecoveryRequired)
+                        assert await asyncio.shield(receipt.retired) is True
+                        assert observation.confirmed()
+                        assert not observation.creator[1].is_alive()
+                        assert not any(
+                            plan.turn_id == turn_id for plan in controls.commit_plans
+                        )
+                        continue
                     assert await _until(
                         lambda turn_id=turn_id, receipt=receipt: any(
                             plan.turn_id == turn_id for plan in controls.commit_plans
@@ -148,6 +264,17 @@ async def test_saved_preparations_retire_on_reused_original_worker(
                     record_property(f"attempt_{attempt}_read_count", len(reads))
                     assert reads
                     assert all(read.read.task is receipt.work for read in reads)
+                    capture_read = next(
+                        read
+                        for read in reads
+                        if read.read.callback.__code__ is capture_code
+                    )
+                    assert capture_read.connections
+                    assert not capture_read.creator[1].is_alive()
+                    assert all(
+                        item[1] is not borrowed_connection
+                        for item in capture_read.connections
+                    )
                     # Re-evaluate the original proof after all subsequent reads,
                     # including original commit reservation, have completed.
                     assert all(
@@ -165,6 +292,7 @@ async def test_saved_preparations_retire_on_reused_original_worker(
                     assert invocation.logical_closed and invocation.source_closed
                     assert turn_id not in controls._turn_retirements
                 finally:
+                    release.set()
                     if not receipt.work.done():
                         receipt.work.cancel()
                     async with asyncio.timeout(10):
