@@ -1967,11 +1967,12 @@ async def test_selected_uncertain_acquired_close_blocks_publication_fence_and_dr
 
     events = sys.monitoring.events
     with ThreadPoolExecutor(max_workers=1, initializer=record_creator) as executor:
+        display_executor = runtime._display_phase_executor.executor()
 
         def route_exact_display(selected, callback, *args):
             full = owner._full
             if (
-                selected is None
+                selected is display_executor
                 and full is not None
                 and asyncio.current_task() is full.selection.task
             ):
