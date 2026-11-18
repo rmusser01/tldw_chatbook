@@ -4,19 +4,22 @@ TASK-40608 measures from Send to the persisted reply, subtracting only the origi
 
 ## Where the time goes
 
-The most recent run with an observed disclosure and first provider request was `g25` on `5d4739b317`. Each arrow uses the original journey clock.
+The diagram follows the README journey on `g27` (`f08b23a708`). Each arrow uses the original journey clock.
 
 ```mermaid
 flowchart TD
-    S["README Send"] -->|"0.093 s"| F["Sending appears"]
-    F -->|"12.540 s"| D["Project disclosure appears"]
-    D -->|"0.311 s measured user wait"| C["Proceed clicked"]
-    C -->|"1.323 s"| H["First request reaches loopback provider"]
-    H -->|"0.003 s"| R["Provider sends first response"]
-    R -.-> X["No completed README or approved edit recorded"]
+    S["README Send"] -->|"0.071 s"| F["Sending appears"]
+    F -->|"12.336 s"| D["Project disclosure appears"]
+    D -->|"0.733 s measured user wait"| C["Proceed clicked"]
+    C -->|"1.291 s"| H["First request reaches loopback provider"]
+    H -->|"13.098 s including 1.047 s in measured approval waits"| L["Fifth request reaches provider"]
+    L -->|"2.603 s"| R["Expected completed reply has persisted ID"]
+    R -.->|"300 s deadline"| X["Final transcript row missing, edit never started"]
 ```
 
-Send to first request took **14.267 s**. The interval from Send to painted disclosure took **12.633 s**. A separate UI observer in this run recorded **3.328 s** from entering Send capture to the draft commit returning. It first sampled the modal present **9.219 s** after that return. These same-observer deltas locate a large gap after the draft commit. Sampling cannot distinguish backend preparation, notification delivery, UI scheduling and paint within the gap. These intervals overlap the diagram and use a different clock origin.
+Between consecutive provider receipts, the four `g27` README rounds took **1.760, 1.610, 3.520 and 5.161 s** after the two measured approval waits. The total was **12.051 s**, versus **319.329 s** over the same boundaries on the completed baseline. The diagnostic failed the final row assertion. Its receipt has no matching per-round foreground storage counts.
+
+On the earlier `g25` run, Send to first request took **14.267 s**. The interval from Send to painted disclosure took **12.633 s**. A separate UI observer recorded **3.328 s** from entering Send capture to the draft commit returning. It first sampled the modal present **9.219 s** after that return. These same-observer deltas locate a large gap after the draft commit. Sampling cannot distinguish backend preparation, notification delivery, UI scheduling and paint within the gap.
 
 ## What changed between replays
 
@@ -28,6 +31,7 @@ Send to first request took **14.267 s**. The interval from Send to painted discl
 | `g24` | Isolated filesystem worker launch | — | — | — | — | Stopped during workspace setup, before Send. |
 | `g25` | Isolated worker with dependency roots in its regression test | 12.633 s | 0.311 s | 1.323 s | 14.267 s | First provider response. A decision refresh failed. Neither reply completed. |
 | `g26` | Modal dismissal waits for restored visibility, with backend disclosure instrumentation | — | — | — | — | The backend issued the disclosure. A passive readiness read refused a change in the active agent selection before the pilot observed the modal. |
+| `g27` | Same-turn retry after a retired readiness read on `f08b23a708` | 12.407 s | 0.733 s | 1.291 s | 14.431 s | Five provider requests and two approval clicks. The fixture found the expected completed assistant message with a persisted message ID at Send +30.132 s (28.352 s after measured waits). The final assistant row lookup then timed out during evidence verification. The edit did not run. |
 
 The 2.318 s difference in time to first request between `g21` and `g25` is an observation across two diagnostic runs. Several code and instrumentation changes separate them.
 
@@ -127,6 +131,43 @@ For this edit, 29.599 s elapsed from requesting approval to the pilot detecting 
 
 For the baseline/candidate comparison, track the outer approval interval, the 46.625 s from tool start to executor entry, and the 7.100 s request-build interval separately. Match admission start/finish to the same tool call and thread to measure the part on the critical path. Preserve the original authorization, storage checks and positive completion checks.
 
+### Trace ownership of each storage acquisition
+
+```mermaid
+flowchart TD
+    T["Observed fs_edit tool thread"] --> A["44 storage acquisitions · 36.373 s in total"]
+    A -.-> C["Pending measurement per acquisition: caller stack, entry and return"]
+    C -.-> S["Attribute by time: before executor, build request, executor remainder, after executor"]
+    S -.-> V["Compare counts and wall time by caller across baseline and candidate"]
+```
+
+The baseline receipt contains no per-acquisition stacks. In the diagnostic run, correlate `_acquire_storage` entry and return with the specific `fs_edit` call, thread, and executor/build boundaries. Split time at any crossed boundary. Group by code location and retain count, total, and longest call. Check that grouped calls reconcile to that run's count. If the count changes from 44, show both runs. Keep background threads and nested intervals separate from the foreground wall time.
+
+### Trace each interactive approval from request to paint
+
+```mermaid
+flowchart TD
+    R["Approval requested"] --> V["Review begins"]
+    V --> P["Interactive decision published"]
+    P --> U["UI receives decision"]
+    U --> M["Matching approval row mounts"]
+    M --> F["First frame paints that row and its approval control"]
+    M --> O["Pilot first observes mounted row and matching pending decision"]
+    O --> C["Pilot clicks Once"]
+```
+
+The arrows identify observation points for the next diagnostic. Paint and pilot observation have independent timestamps. Measure both against the same request, including any time between publication and UI delivery. Record the synchronous policy-check interval, queue wait and event-loop delay separately where the trace supports it. Keep any missing paint or boundary visible. Compare the same tool, call and visit on the candidate.
+
+| Baseline journey | Approval | Request → first pilot observation | First pilot observation → click | Request → first paint |
+|---|---|---:|---:|---|
+| README | `fs_list` | 35.927 s | 3.633 s | Unmeasured |
+| README | `fs_read` | 33.351 s | 3.820 s | Unmeasured |
+| Approved edit | `fs_read` | 23.901 s | 6.382 s | Unmeasured |
+| Approved edit | `fs_edit` | 29.599 s | 7.078 s | Unmeasured |
+| Approved edit | `git_diff` | 19.604 s | 5.677 s | Unmeasured |
+
+Use the original `q21b1` progress and costs receipts for these historical values. Keep fresh instrumented runs separate from the frozen qualifying pairs.
+
 ## Qualifying pairs
 
 The earlier local implementation completed three sequential pairs with the original checks. Its median README time fell 64.33% and its median edit time fell 42.56%. Every candidate exceeded five seconds. The replacement process has its own qualification record below.
@@ -140,7 +181,7 @@ The earlier local implementation completed three sequential pairs with the origi
 | Batch | Pair | README baseline / candidate | Approved edit baseline / candidate | State |
 |---|---|---|---|---|
 | `q2` | 1 | 470.518 s / — | 575.079 s / — | Baseline passed. Candidate timed out at disclosure. Batch stopped. |
-| `q3` | 1–3 | — / — | — / — | A configuration was prepared on `5d4739b317`. No pair start was recorded when this tracker was initialized. |
+| `q3` | 1–3 | — / — | — / — | A clean candidate was pinned at `f08b23a708`. The run ledger showed no pair start when the `g27` diagnostic ended. |
 
 Times in the pair table use the benchmark's original adjusted duration. A dash means there is no measurement for that cell. With each new Windows result, append its run ID and commit, retain failed rows and update the diagram to the latest measured path. For a performance claim, record the comparable before/after boundary, wall-time delta, available work count and source receipt. Publish qualifying pair rows separately from instrumented replays.
 

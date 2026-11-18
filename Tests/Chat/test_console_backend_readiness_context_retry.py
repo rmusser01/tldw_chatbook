@@ -30,7 +30,6 @@ async def test_readiness_context_retry_requires_original_settlement(request, cha
         ConsoleBackendReadiness,
         ConsoleBackendReadinessChanged,
     )
-    from tldw_chatbook.Chat.console_backend_presentation import ConsoleBackendPresentation
     from tldw_chatbook.Chat.console_control_dispatch import ConsoleLocalControls
     from tldw_chatbook.Chat.console_domain_display import ConsoleDomainDisplayOwner
     from tldw_chatbook.Chat.console_execution_backend import ConsoleExecutionBackend
@@ -56,9 +55,11 @@ async def test_readiness_context_retry_requires_original_settlement(request, cha
     )
     original_sources = None
     original_bridge = None
-    effects, reads, full_reads, marker_preparations, marker_effects = [], [], [], [], []
+    effects, reads, full_reads, marker_effects = [], [], [], []
     changed = 0
     publication_changed = False
+    old_marker_selection = None
+    old_marker_refused = False
     initial_at = None
     read_code = next(
         item
@@ -80,34 +81,24 @@ async def test_readiness_context_retry_requires_original_settlement(request, cha
         reads.append(True)
 
     def effect_entry(frame):
+        nonlocal publication_changed, old_marker_refused
         effect = frame.f_locals.get("effect")
         if effect is not None and effect.owner is backend.presentation.readiness:
             effects.append(effect)
         if effect is not None and effect.kind == "transcript_marker_read":
             marker_effects.append(effect)
-
-    def marker_entry(frame):
-        if frame.f_locals.get("self") is not backend.presentation:
-            return
-        marker_preparations.append(True)
-        if len(marker_preparations) == 2:
-            # The obsolete marker selection still refuses; the candidate must
-            # perform the actual saved-marker read instead of publishing it.
-            caller = frame.f_back.f_locals
-            with pytest.raises(RuntimeError, match="^Console marker publication changed$"):
-                backend.presentation.project_transcript(
-                    caller["identity"], caller["prepared_transcript"], (),
-                )
-            assert len(reads) == 2
-            assert all(effect.completed.result() is True for effect in effects)
-
-    def warm_return(frame):
-        nonlocal publication_changed
         if (
-            frame.f_locals.get("self") is not backend.presentation.readiness
-            or len(reads) != 2 or publication_changed
+            effect is None or effect.owner is not backend.presentation.readiness
+            or len(reads) != 2 or old_marker_selection is None or old_marker_refused
         ):
             return
+        # Observe the actual effect's return: both readiness reads have now
+        # positively retired, while the old marker selection still refuses.
+        assert all(item.completed.result() is True for item in effects)
+        source = backend.controls._settings_command_tasks[asyncio.current_task()]
+        with pytest.raises(RuntimeError, match="^Console marker publication changed$"):
+            backend.presentation.project_transcript(source.identity, old_marker_selection, ())
+        old_marker_refused = True
         if change == "persisted_hidden":
             backend.presentation.view_lifecycle.admit("readiness-visit", 1, "hidden")
         elif change == "persisted_bridge":
@@ -127,7 +118,7 @@ async def test_readiness_context_retry_requires_original_settlement(request, cha
         errors = []
 
         def mutate():
-            nonlocal changed
+            nonlocal changed, old_marker_selection
             try:
                 if change in {"agent_once", "agent_continuous", "agent_uncertain"}:
                     original_bridge.begin_setup_phase(conversation_id)
@@ -137,6 +128,8 @@ async def test_readiness_context_retry_requires_original_settlement(request, cha
                             primary=True,
                         )
                 elif change.startswith("persisted"):
+                    marker = backend.presentation._marker_projection
+                    old_marker_selection = marker, marker._selection()
                     backend.store.publish_first_persisted_conversation(session.id, conversation_id)
                 elif change == "settings":
                     backend.store.replace_session_settings(
@@ -217,8 +210,6 @@ async def test_readiness_context_retry_requires_original_settlement(request, cha
         initial_at = readiness.at
         with (
             _observe(read_code, sys.monitoring.events.PY_START, read_entry),
-            _observe(ConsoleBackendReadiness.warm.__code__, sys.monitoring.events.PY_RETURN, warm_return),
-            _observe(ConsoleBackendPresentation.prepare_transcript.__code__, sys.monitoring.events.PY_START, marker_entry),
             _observe(
                 config.load_settings.__code__,
                 sys.monitoring.events.PY_START,
@@ -226,7 +217,7 @@ async def test_readiness_context_retry_requires_original_settlement(request, cha
             ),
             _observe(
                 ConsoleLocalControls._finish_effect.__code__,
-                sys.monitoring.events.PY_START,
+                sys.monitoring.events.PY_RETURN,
                 effect_entry,
             ),
             _observe(
@@ -266,7 +257,7 @@ async def test_readiness_context_retry_requires_original_settlement(request, cha
                 # TTL; its final warm then performs one ordinary fresh read.
                 assert len(reads) in ({2, 3} if change == "persisted" else {2})
                 if change == "persisted":
-                    assert len(marker_preparations) == 2
+                    assert old_marker_refused
                     assert len(marker_effects) == 1
                     assert marker_effects[0].completed.result() is True
                     assert marker_effects[0].physically_retired is True
@@ -275,7 +266,10 @@ async def test_readiness_context_retry_requires_original_settlement(request, cha
                     await asyncio.shield(receipt.applied)
                 assert type(caught.value) is not ConsoleBackendReadinessChanged
                 assert len(reads) == 2
-                assert len(marker_preparations) == (2 if change == "persisted_uncertain" else 1)
+                assert old_marker_refused
+                assert len(marker_effects) == (1 if change == "persisted_uncertain" else 0)
+                if change != "persisted_uncertain":
+                    assert publication_changed
             elif change in {"continuous", "agent_continuous"}:
                 with pytest.raises(ConsoleBackendReadinessChanged) as caught:
                     await asyncio.shield(receipt.applied)

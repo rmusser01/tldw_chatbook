@@ -34,7 +34,7 @@ def _pilot_barrier_at_failure(error, pilot, current_pumps):
             for pump in children:
                 if id(pump) not in current:
                     detached.append(type(pump).__name__)
-                messages = (*pump._message_queue._queue, pump._pending_message)
+                messages = (*pump._message_queue.values, pump._pending_message)
                 if any(
                     isinstance(message, Callback)
                     and isinstance(message.callback, partial)
