@@ -28,6 +28,7 @@ from .console_native_commit import (
     _invoke_plan_native,
 )
 from .console_preparation_reads import run_preparation_read
+from .console_display_executor import ConsoleDisplayExecutor
 
 
 class ConsoleDisplayPhaseRefused(RuntimeError):
@@ -309,6 +310,7 @@ class ConsoleDisplayPhysicalOwner:
                 observers=tuple(self.observers[1:]),
                 require_current=self._require_current,
                 submission_slot=self.runtime._display_submission_slot,
+                executor=ConsoleDisplayExecutor.executor(self.runtime._display_phase_executor),
             )
         except asyncio.CancelledError:
             self.refusal = ConsoleDisplayPhaseRefused(
@@ -368,6 +370,7 @@ _PHASE_DEFINITIONS = tuple(
         ConsoleDisplayPhysicalOwner,
         ConsoleDisplaySessionChanged,
         ConsoleDisplayVisibilityChanged,
+        ConsoleDisplayExecutor,
     )
     for name, descriptor in vars(owner).items()
     for function in (

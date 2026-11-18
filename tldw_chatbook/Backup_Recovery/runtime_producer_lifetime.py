@@ -211,6 +211,7 @@ async def run_preparation_read[Result](
     require_current: Callable[[], None],
     source: object = None,
     submission_slot: asyncio.Semaphore | None = None,
+    executor=None,
 ) -> Result:
     """Retire an original hook read before returning or delivering cancellation.
 
@@ -224,6 +225,8 @@ async def run_preparation_read[Result](
         source: Opaque captured source available only inside the worker scope.
         submission_slot: Optional display permit held from submission through
             physical return. Queued reads retain observers without a worker.
+        executor: Optional existing owner-selected executor. None preserves the
+            original default executor; handoff and retirement are unchanged.
 
     Returns:
         Original callback result after its native scope has exited.
@@ -292,7 +295,7 @@ async def run_preparation_read[Result](
         try:
             context = copy_context()
             read._producer = asyncio.get_running_loop().run_in_executor(
-                None, context.run, invoke
+                executor, context.run, invoke
             )
             submitted = True
         finally:

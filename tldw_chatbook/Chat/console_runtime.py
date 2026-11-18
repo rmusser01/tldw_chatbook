@@ -1458,6 +1458,9 @@ class ConsoleRuntime:
         self._preparation_reads: set[Any] = set()
         # Only the three shared stock display callbacks queue here, before I/O.
         self._display_submission_slot = asyncio.Semaphore(1)
+        from .console_display_executor import ConsoleDisplayExecutor
+
+        self._display_phase_executor = ConsoleDisplayExecutor(self)
         from .console_preparation_reads import NativePluginHookPreparation
         from tldw_chatbook.Utils.platform_files import supports_native_process_groups
 
@@ -6165,6 +6168,9 @@ class ConsoleRuntime:
         workflow_cancellation = None
         wake_fence_error = None
         try:
+            from .console_display_executor import ConsoleDisplayExecutor
+
+            ConsoleDisplayExecutor.close_admission(self._display_phase_executor)
             # Native waves must finish their actual B/E and child/source tails
             # before capacity and consent owners close. No new wave may enter.
             self._workflow_closing = True
@@ -6310,27 +6316,32 @@ class ConsoleRuntime:
                     raise error from wake_fence_error
             raise
         finally:
-            cancelled = False
-            cancelled |= await self._drain_change_review_initialization()
-            if recovery_owner is not None:
-                cancelled |= await recovery_owner.drain_recovery()
-            if controller is not None:
-                cancelled |= await self._drain_ordinary_native_commits(controller)
-                retire = getattr(
-                    controller, "_retire_all_live_recovery_continuations", None
-                )
-                if callable(retire):
-                    retire()
-            cancelled |= await self._drain_v2_command_hooks()
-            cancelled |= await self._drain_legacy_hooks()
-            from .console_preparation_reads import drain_preparation_reads
+            try:
+                cancelled = False
+                cancelled |= await self._drain_change_review_initialization()
+                if recovery_owner is not None:
+                    cancelled |= await recovery_owner.drain_recovery()
+                if controller is not None:
+                    cancelled |= await self._drain_ordinary_native_commits(controller)
+                    retire = getattr(
+                        controller, "_retire_all_live_recovery_continuations", None
+                    )
+                    if callable(retire):
+                        retire()
+                cancelled |= await self._drain_v2_command_hooks()
+                cancelled |= await self._drain_legacy_hooks()
+                from .console_preparation_reads import drain_preparation_reads
 
-            cancelled |= await drain_preparation_reads(self._preparation_reads)
-            cancelled |= await self._drain_ordinary_turns()
-            cancelled |= await self._drain_hook_review_operations()
-            cancelled |= await self._drain_activity_hydration()
-            if cancelled:
-                raise asyncio.CancelledError
+                cancelled |= await drain_preparation_reads(self._preparation_reads)
+                cancelled |= await self._drain_ordinary_turns()
+                cancelled |= await self._drain_hook_review_operations()
+                cancelled |= await self._drain_activity_hydration()
+                if cancelled:
+                    raise asyncio.CancelledError
+            finally:
+                from .console_display_executor import ConsoleDisplayExecutor
+
+                await ConsoleDisplayExecutor.aclose(self._display_phase_executor)
 
 
     async def _dispose_owned(
