@@ -710,6 +710,12 @@ def _projection_result(value, path):
     validate_projection_payload(_detach(value, path, 2, set(), thaw=True))
 
 
+def _decision_head_result(value, path):
+    from .console_execution_decision_head import decode_decision_head
+
+    decode_decision_head(_detach(value, path, 2, set(), thaw=True))
+
+
 _COMMANDS = {
     "ArchiveSendCheckpointAck": _archive_checkpoint_ack,
     "UpdateInputs": _record(
@@ -739,6 +745,7 @@ _COMMANDS = {
         action=_enum("mounted", "hidden"),
     ),
     "ReadProjection": _projection_request,
+    "ReadDecisionHead": _record(attachment_id=_REFERENCE, visit=_SEQUENCE),
     "CancelTurn": _record(turn_id=_TURN_ID),
     "PermissionAction": _record(operation=_PERMISSION),
     "FenceSource": _record(source=_SOURCE),
@@ -1098,6 +1105,7 @@ _PERMISSION_RESULT = _tagged(
 _APPLIED = {
     "ArchiveSendCheckpointAck": _APPLIED_BOOL,
     "ReadProjection": _projection_result,
+    "ReadDecisionHead": _decision_head_result,
     "UpdateInputs": _record(draft_revision=_REVISION),
     "ReceiveTurn": _record(turn_id=_TURN_ID),
     "ApplySettings": _LIVE_COMMIT,
@@ -1204,7 +1212,7 @@ def _validate_message(identity, kind, operation, payload):
     check(payload, "payload")
     if (
         kind == "applied"
-        and operation == "ReadProjection"
+        and operation in {"ReadProjection", "ReadDecisionHead"}
         and (
             payload["source_revision"] != identity.source_revision
             or payload["session_id"] != identity.session_id

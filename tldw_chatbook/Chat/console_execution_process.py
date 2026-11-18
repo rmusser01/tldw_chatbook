@@ -258,6 +258,8 @@ class ConsoleExecutionClient:
         self.session_composition = None
         self.send_selection = None
         self.project_head = None
+        self.decision_head = None
+        self._decision_head_sequence = 0
         self._project_modal = None
         self._decision_hint = None
         self._decision_rendered_hint = None
@@ -758,6 +760,62 @@ class ConsoleExecutionClient:
                 )
 
         task = asyncio.create_task(read(), name="console_execution_projection")
+        self._projection_reads.add(task)
+        task.add_done_callback(self._projection_read_finished)
+        return await asyncio.shield(task)
+
+    async def read_decision_head(self, view, visit: int, session_id: str, incarnation_id: str):
+        """Join a finite decision read independently of FULL's native work."""
+        from .console_execution_decision_head import decode_decision_head
+
+        source, attachment = self._source_revision, self._attachment_id
+
+        def current():
+            self.require_view(view, visit)
+            published = self.projection_view
+            if (
+                self._source_revision != source or self._attachment_id != attachment
+                or self._view_preparation is not None or published is None
+                or published.source_revision != source
+                or published.active_session_id != session_id
+                or published.session(session_id).incarnation_id != incarnation_id
+            ):
+                raise ConsoleChannelLost("Console decision read scope changed")
+
+        async def read():
+            current()
+            receipt = self.submit("ReadDecisionHead", {
+                "attachment_id": attachment, "visit": visit,
+            }, session_id=session_id, incarnation_id=incarnation_id)
+            try:
+                payload = await asyncio.shield(receipt.applied)
+            finally:
+                admission_refused = False
+                try:
+                    await asyncio.shield(receipt.received)
+                except ConsoleRemoteFailure as error:
+                    admission_refused = error.stage == "admission"
+                    if admission_refused:
+                        receipt.applied.exception()
+                if not admission_refused and await asyncio.shield(receipt.retired) is not True:
+                    error = ConsoleChannelLost("Console decision read retirement is unproven")
+                    self._fail(error)
+                    raise error
+            current()
+            head = decode_decision_head(payload)
+            if (head.source_revision, head.session_id, head.incarnation_id,
+                head.attachment_id, head.visit) != (
+                source, session_id, incarnation_id, attachment, visit,
+            ):
+                raise ConsoleChannelLost("Console decision read identity changed")
+            if receipt.identity.sequence > self._decision_head_sequence:
+                self.decision_head = head
+                self._decision_head_sequence = receipt.identity.sequence
+            return self.decision_head
+
+        task = asyncio.create_task(read(), name="console_execution_decision_head")
+        # The existing read owner already drains these tasks on shutdown. No
+        # new lifecycle, polling queue, or native-retirement inference is needed.
         self._projection_reads.add(task)
         task.add_done_callback(self._projection_read_finished)
         return await asyncio.shield(task)

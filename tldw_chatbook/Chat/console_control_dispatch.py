@@ -281,6 +281,13 @@ class ReadProjection:
 
 
 @dataclass(frozen=True, slots=True)
+class ReadDecisionHead:
+    identity: ControlIdentity
+    attachment_id: str
+    visit: int
+
+
+@dataclass(frozen=True, slots=True)
 class ConsoleProjection:
     source_revision: int
     session_id: str
@@ -1401,6 +1408,7 @@ class ConsoleLocalControls:
             ProjectDecisionPresentation,
             ArchiveSendCheckpointAck,
             ReadProjection,
+            ReadDecisionHead,
         ):
             raise TypeError("Unsupported local Console command")
         self._require_graph()
@@ -1586,6 +1594,11 @@ class ConsoleLocalControls:
             receipt.applied.set_result(
                 resolve_original_decision(self, identity, command.decision)
             )
+            return receipt
+        if type(command) is ReadDecisionHead:
+            receipt.applied.set_result(self._domain.presentation.project_decisions.read_head(
+                identity, command.attachment_id, command.visit,
+            ))
             return receipt
         if type(command) is ArchiveSendCheckpointAck:
             from . import console_backend_archive_send as archive_send

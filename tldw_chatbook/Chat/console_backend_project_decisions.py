@@ -9,6 +9,7 @@ from . import console_runtime as runtime_source
 from .console_chat_controller import ConsoleChatController
 from .console_domain_services import _definition, _definition_current
 from .console_execution_project_values import ConsoleProjectDecisionHead
+from .console_interrupt_rounds import InterruptRoundHost
 
 
 class ConsoleBackendProjectDecisions:
@@ -98,6 +99,54 @@ class ConsoleBackendProjectDecisions:
                 )
             raise TypeError("Original Console project decision is required")
 
+    def read_head(self, identity, attachment_id, visit):
+        """Read resident decision owners without entering unrelated FULL work."""
+        from .console_execution_decision_head import ConsoleDecisionHead
+
+        runtime = self._require()
+        presentation = self.presentation
+        backend = presentation.backend
+        sources = backend.domain.sources
+        backend.require_sources()
+        backend.domain.require_current(sources)
+        lifecycle = presentation.view_lifecycle
+        checkpoint = lifecycle.capture_display_checkpoint()
+        host = runtime._chat_controller._interrupt_host
+        if (
+            type(attachment_id) is not str or not attachment_id
+            or type(visit) is not int or visit < 1
+            or presentation.parent_attachment != (attachment_id, visit)
+            or not backend.controls._intake_open
+            or identity.source_revision != backend.controls.source_revision
+            or checkpoint is None or not lifecycle.display_checkpoint_current(checkpoint)
+            or type(host) is not InterruptRoundHost
+            or any(
+                getattr_static(host, name) is not record[0]
+                or not _definition_current(record)
+                for name, record in _HEAD_METHODS
+            )
+        ):
+            raise RuntimeError("Console decision read scope changed")
+        # Each existing owner keeps its original lock and FIFO. There is no new
+        # merged queue or timer; capture also pauses an obsolete project clock.
+        project = self.capture(identity)
+        decision = runtime._chat_controller.pending_decision_projection(identity.session_id)
+        backend.require_sources()
+        backend.domain.require_current(sources)
+        self._require()
+        if (
+            presentation.parent_attachment != (attachment_id, visit)
+            or not lifecycle.display_checkpoint_current(checkpoint)
+            or identity.source_revision != backend.controls.source_revision
+            or runtime._chat_store.active_session_id != identity.session_id
+            or runtime._chat_store._sessions[identity.session_id].incarnation_id != identity.incarnation_id
+        ):
+            raise RuntimeError("Console decision read changed during capture")
+        return ConsoleDecisionHead(
+            identity.source_revision, identity.session_id, identity.incarnation_id,
+            attachment_id, visit, decision, project,
+        )
+
     def present(self, identity, attachment_id, visit, decision_id, action) -> bool:
         """Apply one actual modal mount/hidden checkpoint; never resolve a choice."""
         runtime = self._require()
@@ -167,9 +216,13 @@ _RUNTIME_METHODS = tuple(
 )
 _CONTROLLER_METHODS = tuple(
     (name, _definition(getattr(ConsoleChatController, name)))
-    for name in ("on_console_view_visibility_changed", "set_answerable_decision")
+    for name in ("on_console_view_visibility_changed", "set_answerable_decision", "pending_decision_projection")
+)
+_HEAD_METHODS = tuple(
+    (name, _definition(getattr(InterruptRoundHost, name)))
+    for name in ("pending_decision_projection", "_pending_round_states_snapshot", "_pending_decision_payloads_locked")
 )
 _METHODS = tuple(
     (name, _definition(getattr(ConsoleBackendProjectDecisions, name)))
-    for name in ("_require", "_head_locked", "pause", "capture", "present")
+    for name in ("_require", "_head_locked", "pause", "capture", "read_head", "present")
 )

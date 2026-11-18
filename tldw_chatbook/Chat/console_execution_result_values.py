@@ -179,6 +179,7 @@ _OPERATIONS = {
     controls.CloseSession: "CloseSession",
     controls.ResolveDecision: "ResolveDecision",
     controls.ProjectDecisionPresentation: "ProjectDecisionPresentation",
+    controls.ReadDecisionHead: "ReadDecisionHead",
     controls.ArchiveSendCheckpointAck: "ArchiveSendCheckpointAck",
     controls.CancelTurn: "CancelTurn",
     controls.CommitPlanAck: "CommitPlanAck",
@@ -226,7 +227,13 @@ def encode_control_applied(
     ):
         _fail("reply identity does not match original command")
 
-    if type(command) is controls.UpdateInputs:
+    if type(command) is controls.ReadDecisionHead:
+        from .console_execution_decision_head import encode_decision_head
+
+        payload = encode_decision_head(result)
+        if (result.attachment_id, result.visit) != (command.attachment_id, command.visit):
+            _fail("decision head does not match original visit")
+    elif type(command) is controls.UpdateInputs:
         _exact(result, int)
         payload = {"draft_revision": result}
     elif type(command) is controls.ReceiveTurn:
