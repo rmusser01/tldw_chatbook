@@ -787,6 +787,7 @@ async def test_full_console_manager_mounts_entry_children_before_live_list_inser
         )
         controller.prompt_queue_coordinator.publish_registry_change(session_id)
         await console._sync_native_console_chat_ui()
+        await _wait_for_production_console_ready(host, pilot)
 
         console.query_one("#console-prompt-queue-manage", Button).press()
         await pilot.pause()
