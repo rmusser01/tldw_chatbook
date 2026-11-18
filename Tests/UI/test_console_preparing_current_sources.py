@@ -1,5 +1,6 @@
 """Actual received-owner positives and source/custom polling boundaries."""
 
+import functools
 import sys
 from types import MethodType
 
@@ -34,10 +35,12 @@ async def test_preparing_defining_sources_decline_changed_callbacks(
             lambda: controls.preparing_poll_record(case.console) is record, 5
         )
         screen = case.console
+        session = screen._session
         callbacks = (
             (screen, "_sync_console_chat_core_state"),
             (screen, "_dispatch_active_console_roleplay_refresh"),
-            (screen._session, "_build_console_turn_execution_context"),
+            (session, "_build_console_turn_execution_context"),
+            (session, "_build_console_turn_capture_selection"),
             (case.controller, "_provider_selection"),
         )
         qualified = []
@@ -46,23 +49,47 @@ async def test_preparing_defining_sources_decline_changed_callbacks(
         for owner, name in callbacks:
             original = getattr(owner, name)
             function = original.__func__
-            for field, replacement in (
-                ("__code__", function.__code__.replace()),
-                ("__defaults__", (None,)),
-                ("__kwdefaults__", {"changed_source": None}),
-            ):
-                with monkeypatch.context() as changed:
-                    changed.setattr(function, field, replacement)
-                    assert controls.preparing_poll_record(screen) is None, (name, field)
-                assert controls.preparing_poll_record(screen) is record
-                qualified.append((name, field))
+            if owner is session:
+                # TASK-41643 (ADR-356 rule 4): the session readers are decided
+                # by the session's own state, not code identity, so a wrapped
+                # class method qualifies and only an instance override (below)
+                # declines. The execution-context builder is also the chat
+                # controller's registered provider, compared with ``==``, so
+                # its class method is wrapped only through the capture reader.
+                if name == "_build_console_turn_capture_selection":
+                    with monkeypatch.context() as changed:
+                        changed.setattr(
+                            type(owner),
+                            name,
+                            functools.wraps(function)(
+                                lambda *args, **kwargs: function(*args, **kwargs)
+                            ),
+                        )
+                        assert controls.preparing_poll_record(screen) is record, name
+                    qualified.append((name, "wrapped_class_method"))
+            else:
+                for field, replacement in (
+                    ("__code__", function.__code__.replace()),
+                    ("__defaults__", (None,)),
+                    ("__kwdefaults__", {"changed_source": None}),
+                ):
+                    with monkeypatch.context() as changed:
+                        changed.setattr(function, field, replacement)
+                        assert controls.preparing_poll_record(screen) is None, (name, field)
+                    assert controls.preparing_poll_record(screen) is record
+                    qualified.append((name, field))
 
             def custom(self, callback=original):
                 return callback()
 
+            assert name not in vars(owner)
             with monkeypatch.context() as changed:
                 changed.setattr(owner, name, MethodType(custom, owner))
                 assert controls.preparing_poll_record(screen) is None, name
+            # monkeypatch restores an instance attribute by setting the bound
+            # method it read back on the instance; drop it so the object holds
+            # no override again (the session readers refuse any instance entry).
+            del vars(owner)[name]
             assert controls.preparing_poll_record(screen) is record
             qualified.append((name, "instance_callback"))
         for name in ("poll_source", "poll_source_is_current"):

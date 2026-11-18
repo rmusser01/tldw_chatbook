@@ -6999,10 +6999,9 @@ _CONSOLE_TURN_CAPTURE_SELECTOR = (
 )
 
 
-# Direct callback definitions for optional manual Preparing display selection.
-_CONSOLE_PREPARING_SESSION_READERS = tuple(
-    (name, method, method.__code__, method.__defaults__, method.__kwdefaults__,
-     tuple((method.__kwdefaults__ or {}).items()))
-    for name in ('_build_console_turn_execution_context', '_build_console_turn_capture_selection')
-    for method in (getattr(ConsoleSessionController, name),)
+# Session readers the manual Preparing display relies on; an instance override
+# of one keeps the FULL poll (ADR-356 rule 4: no code identity).
+_CONSOLE_PREPARING_SESSION_READERS = (
+    "_build_console_turn_execution_context",
+    "_build_console_turn_capture_selection",
 )

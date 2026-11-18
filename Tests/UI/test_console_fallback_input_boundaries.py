@@ -175,9 +175,17 @@ async def test_late_fallback_adapter_drift_refuses_before_admission(
         await runtime.dispose(timeout_seconds=3)
 
 
-async def test_screen_fallback_preserves_replaced_class_dispatch_abi(
+async def test_screen_fallback_preserves_instance_dispatch_override_abi(
     wired_composer_case, monkeypatch
 ):
+    """A per-instance dispatch override keeps its legacy no-keyword ABI.
+
+    TASK-41643 (ADR-356 rule 4): this used to replace the class method and rely
+    on a code-identity check; a wrapped class method is now stock and takes the
+    pressed inputs, so the legacy route is the one queue's own override.
+    """
+    from types import MethodType
+
     from tldw_chatbook.UI.Console_Modules.prompt_queue import (
         ConsolePromptDispatchResult,
         ConsolePromptDispatchStatus,
@@ -209,7 +217,7 @@ async def test_screen_fallback_preserves_replaced_class_dispatch_abi(
     # this is an ABI control, not evidence about hook review or native custody.
     monkeypatch.setattr(screen._hooks, "_session", lambda: case.session.id)
     monkeypatch.setattr(screen._hooks, "dispatch", pass_hook_review)
-    monkeypatch.setattr(ConsolePromptQueueUIController, "dispatch", legacy_dispatch)
+    monkeypatch.setattr(queue, "dispatch", MethodType(legacy_dispatch, queue))
     queue_adapters = [
         row for row in screen._console_received_live_adapters if row[0] is queue
     ]
@@ -229,5 +237,59 @@ async def test_screen_fallback_preserves_replaced_class_dispatch_abi(
         assert case.composer.draft_text() == draft
         assert not runtime.has_custodied_turns()
         assert not case.store.messages_for_session(case.session.id)
+    finally:
+        await runtime.dispose(timeout_seconds=3)
+
+
+async def test_screen_fallback_gives_a_wrapped_class_dispatch_the_pressed_inputs(
+    wired_composer_case, monkeypatch
+):
+    """A wrapped class dispatch is the stock one and keeps the pressed inputs.
+
+    TASK-41643 (ADR-356 rule 4): the fallback decided this by code identity, so
+    a decorator on the class method lost the pressed revision.
+    """
+    import functools
+
+    from tldw_chatbook.UI.Console_Modules.prompt_queue import (
+        ConsolePromptDispatchResult,
+        ConsolePromptDispatchStatus,
+        ConsolePromptQueueUIController,
+    )
+
+    case = wired_composer_case
+    screen = case.screen
+    runtime = screen._console_runtime()
+    queue = screen._prompt_queue
+    draft = "wrapped class dispatch"
+    case.composer.load_draft(draft)
+    case.store.set_session_draft(case.session.id, draft)
+    stash = case.composer.capture_draft_for_send()
+    captured = case.store.session_input_snapshot(case.session.id)
+    calls = []
+
+    @functools.wraps(ConsolePromptQueueUIController.dispatch)
+    async def wrapped_dispatch(self, draft, **kwargs):
+        calls.append((self, draft, kwargs))
+        return ConsolePromptDispatchResult(
+            ConsolePromptDispatchStatus.REFUSED, session_id=kwargs.get("session_id")
+        )
+
+    async def pass_hook_review(draft, *, session_id, stash, dispatch):
+        return await dispatch()
+
+    # Same legacy hook-session route as the instance-override ABI control above.
+    monkeypatch.setattr(screen._hooks, "_session", lambda: case.session.id)
+    monkeypatch.setattr(screen._hooks, "dispatch", pass_hook_review)
+    monkeypatch.setattr(ConsolePromptQueueUIController, "dispatch", wrapped_dispatch)
+    try:
+        assert not await screen._dispatch_console_draft_send(
+            draft, session_id=case.session.id, stash=stash, _captured_inputs=captured
+        )
+        assert len(calls) == 1
+        assert calls[0][:2] == (queue, draft)
+        assert calls[0][2]["stash"] is stash
+        assert calls[0][2].get("_captured_inputs") is captured, calls[0][2]
+        assert not runtime.has_custodied_turns()
     finally:
         await runtime.dispose(timeout_seconds=3)

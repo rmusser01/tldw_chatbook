@@ -800,7 +800,7 @@ async def test_original_stock_handler_accepts_b_without_consuming_a_staging(
     import hashlib
 
     from Tests.UI.test_console_hook_review_send_freeze import _until
-    from tldw_chatbook.Chat.console_received_dispatch import stock_native_methods
+    from tldw_chatbook.Chat.console_received_dispatch import own_methods
     from tldw_chatbook.UI.Screens.chat_screen import _CONSOLE_RECEIVED_SCREEN_SELECTORS
     from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
     from tldw_chatbook.Widgets.Console.console_transcript import _citation_notice
@@ -823,7 +823,7 @@ async def test_original_stock_handler_accepts_b_without_consuming_a_staging(
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         await _select_llamacpp_console(console)
-        assert stock_native_methods(console, _CONSOLE_RECEIVED_SCREEN_SELECTORS)
+        assert own_methods(console, _CONSOLE_RECEIVED_SCREEN_SELECTORS)
         store = console._ensure_console_chat_store()
         runtime = console._console_runtime()
         first = store.active_session_id

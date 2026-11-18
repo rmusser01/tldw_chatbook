@@ -74,6 +74,22 @@ def stock_native_methods(owner: Any, originals: tuple) -> bool:
     )
 
 
+def own_methods(owner: Any, names: tuple[str, ...]) -> bool:
+    """True when each name is ``owner``'s class method, not an instance override.
+
+    ADR-356 rule 4: the owner's current state decides, not code identity, so a
+    wrapped class method qualifies like the stock one, and a callback put on
+    this one object (a foreign override) declines.
+    """
+    fields = vars(owner)
+    return all(
+        name not in fields
+        and isinstance(method := getattr(owner, name, None), MethodType)
+        and method.__self__ is owner
+        for name in names
+    )
+
+
 def preparation_native_runner(
     controller: Any, session_id: str | None = None, *, require_current=None
 ):

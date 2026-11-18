@@ -1057,23 +1057,23 @@ async def _dispatch_console_draft_send(
                     or getattr(outcome, "applied", False)
                 )
             return False
+        from tldw_chatbook.Chat.console_received_dispatch import own_methods
+
         from ..Console_Modules.prompt_queue import (
             ConsolePromptDispatchResult,
             ConsolePromptDispatchStatus,
             ConsolePromptQueueUIController,
-            _CONSOLE_PROMPT_QUEUE_DISPATCH,
         )
 
         fallback_kwargs = {}
         queue_owner = self._prompt_queue
-        dispatch_function, dispatch_code = _CONSOLE_PROMPT_QUEUE_DISPATCH
         adapters = getattr(self, "_console_received_live_adapters", ())
+        # ADR-356 rule 4: the stock queue type with no per-instance dispatch
+        # override takes the pressed inputs; a wrapped class method does too.
         if (
             _captured_inputs is not None
             and type(self._prompt_queue) is ConsolePromptQueueUIController
-            and getattr(self._prompt_queue.dispatch, "__func__", None)
-            is dispatch_function
-            and dispatch_function.__code__ is dispatch_code
+            and own_methods(self._prompt_queue, ("dispatch",))
             and any(
                 target is self._prompt_queue
                 and name == "_launch_chain_async"
@@ -1091,9 +1091,7 @@ async def _dispatch_console_draft_send(
         async def dispatch_fallback():
             if fallback_kwargs and (
                 self._prompt_queue is not queue_owner
-                or getattr(self._prompt_queue.dispatch, "__func__", None)
-                is not dispatch_function
-                or dispatch_function.__code__ is not dispatch_code
+                or not own_methods(queue_owner, ("dispatch",))
                 or not all(
                     getattr(target, name, None) is original
                     for target, name, original in adapters
@@ -1314,7 +1312,7 @@ def preparing_poll_record(self):
     from tldw_chatbook.Chat.console_configuration_preparation import (
         capture_console_received_configuration_preparation,
     )
-    from tldw_chatbook.Chat.console_received_dispatch import stock_native_methods
+    from tldw_chatbook.Chat.console_received_dispatch import own_methods
 
     from ...Chat.console_chat_controller import _CONSOLE_PREPARING_CONTROLLER_READERS
     from ..Screens import chat_screen as screen_module
@@ -1331,19 +1329,10 @@ def preparing_poll_record(self):
         or self._console_attach_reconcile_running
         or self._console_ordered_resume_pending()
         or not poll_source_is_current(self, source)
-        or not stock_native_methods(
-            self, screen_module._CONSOLE_RECEIVED_SCREEN_SELECTORS
-        )
+        or not own_methods(self, screen_module._CONSOLE_RECEIVED_SCREEN_SELECTORS)
         or not _preparing_methods_current(self, _PREPARING_SCREEN_READERS)
         or type(self._session) is not ConsoleSessionController
-        or not _preparing_methods_current(
-            self._session, _CONSOLE_PREPARING_SESSION_READERS
-        )
-        or any(
-            getattr(screen_module, function.__name__, None) is not function
-            or function.__code__ is not code
-            for function, code in screen_module._CONSOLE_RECEIVED_RAG_READERS
-        )
+        or not own_methods(self._session, _CONSOLE_PREPARING_SESSION_READERS)
     ):
         return None
     runtime, store, controller = (
@@ -1414,10 +1403,9 @@ def preparing_poll_record(self):
     ):
         return None
     context_provider = controller._turn_context_provider
-    if context_provider is not None and (
-        getattr(context_provider, "__self__", None) is not self._session
-        or getattr(context_provider, "__func__", None)
-        is not _CONSOLE_PREPARING_SESSION_READERS[0][1]
+    if (
+        context_provider is not None
+        and context_provider != self._session._build_console_turn_execution_context
     ):
         return None
     adapters = getattr(self, "_console_received_live_adapters", ())

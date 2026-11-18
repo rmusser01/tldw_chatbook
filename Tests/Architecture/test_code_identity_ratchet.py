@@ -53,6 +53,9 @@ PACKAGE = Path(__file__).resolve().parents[2] / "tldw_chatbook"
 # character_context.py's existing one; none decides authority (ADR-356 rule 4).
 # TASK-41644 (2026-11-18, Console configuration preparation) removed six:
 # __func__ 4, __code__ 1, __globals__ 1.
+# TASK-41643 (Console received route decided from registrations and
+# per-instance overrides) removed 18: __func__ 5, __code__ 10, __defaults__ 1,
+# __kwdefaults__ 2.
 # Lower a row when you remove sites.
 PINS = {
     # caller frames, coroutine/generator implementation
@@ -72,10 +75,10 @@ PINS = {
     "ag_code": 0,
     "ag_frame": 0,
     # function, code, default and closure identity
-    "__func__": 141,
-    "__code__": 388,
-    "__defaults__": 202,
-    "__kwdefaults__": 305,
+    "__func__": 140,
+    "__code__": 379,
+    "__defaults__": 201,
+    "__kwdefaults__": 303,
     "__closure__": 238,
     "cell_contents": 126,
     "__globals__": 208,
