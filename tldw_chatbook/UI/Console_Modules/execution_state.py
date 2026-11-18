@@ -258,21 +258,76 @@ def defer_selected_resize(screen: ChatScreen, event) -> bool:
     return True
 
 
+def _defer_selected_refresh(screen, client, visit: int) -> bool:
+    """Recognize presentation suspension without granting a covered view access."""
+    from textual.screen import ModalScreen
+    from .execution_decisions import is_owned_project_modal
+
+    _require_sources()
+    if type(screen) is not ChatScreen or type(client) is not ConsoleExecutionClient:
+        raise TypeError("Original Console process refresh owner is required")
+    _require_methods(client, _CLIENT_METHODS)
+    app = screen.app_instance
+    if (
+        client._app is not app or app.console_execution_client is not client
+        or getattr(app, "console_runtime", None) is not None
+        or client._channel_error is not None
+    ):
+        return False
+    deferred = (
+        client._visit > visit or client._disposed or client._shutdown_task is not None
+        or getattr(screen, "_console_chat_tearing_down", False)
+        or getattr(screen, "_closing", False)
+    )
+    if not deferred and client._view is screen and client._visit == visit:
+        stack = app.screen_stack
+        index = next((index for index, item in enumerate(stack) if item is screen), None)
+        deferred = bool(
+            screen.is_attached and screen.is_mounted and screen.app is app
+            and index is not None and index < len(stack) - 1
+            and app.screen is stack[-1]
+            and all(isinstance(item, ModalScreen) for item in stack[index + 1:])
+            and not is_owned_project_modal(client, screen, visit)
+        )
+    if deferred:
+        # Keep the last retired values; resume must fetch and reconcile again.
+        screen._console_process_surface_reconciled = False
+    return deferred
+
+
 async def refresh_selected_view(screen: ChatScreen, *, checkpoint: str | None = None) -> bool:
-    """Join the named projection and apply its original mounted surfaces."""
+    """Join a projection, deferring only an obsolete or genuinely covered visit."""
+    from ...Chat.console_execution_process import ConsoleChannelLost
+
     if getattr(screen, "_console_process_content_failed", False):
         return False
+    client = screen.app_instance.console_execution_client
+    if client is None:
+        raise RuntimeError("Console process refresh requires its selected owner")
+    visit = getattr(screen, "_console_process_visit", client._visit)
+    if _defer_selected_refresh(screen, client, visit):
+        return False
+    if selected_client(screen) is not client:
+        raise RuntimeError("Console process refresh requires its selected owner")
+    source = client._source_revision
+    try:
+        return await _refresh_current_selected_view(screen, client, visit, checkpoint)
+    except ConsoleChannelLost:
+        if client._source_revision == source and _defer_selected_refresh(screen, client, visit):
+            return False
+        raise
+
+
+async def _refresh_current_selected_view(screen, client, visit, checkpoint) -> bool:
     from .execution_projection import apply_console_process_projection
     from .execution_sessions import apply_console_process_sessions
 
-    client = selected_client(screen)
-    if client is None:
-        raise RuntimeError("Console process refresh requires its selected owner")
-    visit = client._visit
     row = client.projection_view.session(client.projection_view.active_session_id)
     projection = await client.read_projection(
         row.id, row.incarnation_id, _checkpoint=checkpoint,
     )
+    if _defer_selected_refresh(screen, client, visit):
+        return False
     client.require_view(screen, visit)
     if getattr(screen, "_console_process_content_failed", False):
         return False
@@ -283,7 +338,7 @@ async def refresh_selected_view(screen: ChatScreen, *, checkpoint: str | None = 
 
     if is_owned_project_modal(client, screen, visit):
         await present_selected_decision(screen, client, visit)
-        return True
+        return not _defer_selected_refresh(screen, client, visit)
     from .execution_rail import replay_selected_rail_toggles
 
     replay_selected_rail_toggles(screen, client, visit)
@@ -297,12 +352,16 @@ async def refresh_selected_view(screen: ChatScreen, *, checkpoint: str | None = 
         screen, client, client.session_surface, visit=visit,
     ):
         return False
+    if _defer_selected_refresh(screen, client, visit):
+        return False
     client.require_view(screen, visit)
     if not apply_console_process_projection(screen, client, projection, visit=visit):
         return False
     if not sync_selected_controls(screen):
         return False
     await present_selected_decision(screen, client, visit)
+    if _defer_selected_refresh(screen, client, visit):
+        return False
     client.require_view(screen, visit)
     return True
 
@@ -396,13 +455,20 @@ def resume_selected_view(screen: ChatScreen) -> None:
 
 async def reconcile_selected_view(screen: ChatScreen) -> None:
     """Join the real remote visit and publish its original mounted values."""
+    from ...Chat.console_execution_process import ConsoleChannelLost
+
     if getattr(screen, "_console_process_content_failed", False):
         return
-    client = selected_client(screen)
+    client = screen.app_instance.console_execution_client
     if (client is None or screen._console_attach_reconcile_running
         or getattr(screen, "_console_process_draft_switch", None) is not None):
         return
-    visit = client._visit
+    visit = getattr(screen, "_console_process_visit", client._visit)
+    if _defer_selected_refresh(screen, client, visit):
+        return
+    if selected_client(screen) is not client:
+        raise RuntimeError("Console reconciliation owner changed")
+    source = client._source_revision
     screen._console_attach_reconcile_running = True
     try:
         action = "mount" if getattr(screen, "_console_process_mounted_visit", None) != visit else None
@@ -433,13 +499,20 @@ async def reconcile_selected_view(screen: ChatScreen) -> None:
                 0.25, lambda: refresh_selected_when_due(screen),
             )
             screen._record_ui_timer_created("console-credential-poll")
-    except Exception:
-        if client._view is screen and client._visit == visit:
+    except ConsoleChannelLost:
+        if client._source_revision != source or not _defer_selected_refresh(screen, client, visit):
             raise
         # Superseded projection was not adopted; its command retains its
         # original physical owners independently of this removed screen.
     finally:
         screen._console_attach_reconcile_running = False
+        if (
+            client._view is screen and client._visit > visit and screen.is_current
+            and client._channel_error is None and client._shutdown_task is None
+            and not client._disposed and not getattr(screen, "_console_process_content_failed", False)
+        ):
+            # Resume may have run while this older worker still owned the flag.
+            screen.call_after_refresh(screen._start_console_attach_reconciliation)
 
 
 def refresh_selected_when_due(screen: ChatScreen) -> None:
