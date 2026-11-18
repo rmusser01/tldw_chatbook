@@ -179,7 +179,7 @@ capture with focus in it.
 | Summarize / Listen | Produce a summary or an audio rendering, when the active authority supports them. |
 | Save Offline Copy | Stores a managed local copy of the capture. |
 | Retry Extraction | Re-runs article extraction after a failed or interrupted attempt. |
-| Delete Permanently… | Two-step: it reveals a sentence naming the capture, its highlights and its offline copy, then **Delete permanently** / **Cancel**. This cannot be undone. |
+| Delete Permanently… | Two-step: it reveals a sentence naming the capture, its highlights and its offline copy, then **Delete permanently** / **Cancel**. This cannot be undone. If the capture changed elsewhere after it loaded, the delete is refused with a `revision_conflict` warning and the reader reloads the capture; **Delete permanently** stays offered, and pressing it again deletes the current version. |
 
 Every disabled action carries a text reason, never colour alone: a leading
 **○** marker plus a tooltip — either the capability's own reason from the

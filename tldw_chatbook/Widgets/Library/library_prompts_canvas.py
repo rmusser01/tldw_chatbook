@@ -16,7 +16,7 @@ from textual import events, on
 from textual.app import ComposeResult
 from textual.css.query import NoMatches
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Checkbox, Input, Select, Static, TextArea
+from textual.widgets import Button, Checkbox, Input, Static, TextArea
 
 from tldw_chatbook.Library.library_prompts_state import (
     LibraryPromptDeleteReceipt,
@@ -47,6 +47,7 @@ from tldw_chatbook.Widgets.Library.library_choice_strip import (
 from tldw_chatbook.UI.Library_Modules.prompt_history_region import (
     LibraryPromptHistoryRegion,
 )
+from tldw_chatbook.Widgets.prune_safe_select import PruneSafeSelect
 from tldw_chatbook.Widgets.Prompts.prompt_block_editor import PromptBlockEditor
 from tldw_chatbook.Widgets.Prompts.prompt_block_editor_state import (
     PromptBlockEditorState,
@@ -645,7 +646,9 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
             classes="destination-section",
             markup=False,
         )
-        type_filter = Select(
+        # TASK-41502: prune-safe, because the Library snapshot reconcile can
+        # replace this canvas while a recompose's new filter is still composing.
+        type_filter = PruneSafeSelect(
             (
                 ("All types", "all"),
                 ("Prompts", "prompt"),

@@ -243,6 +243,12 @@ class LibraryCollectionsController:
             return
         width = shell.content_size.width
         if width <= 0 or not self._library_adaptive_reader_allocation_is_current(shell):
+            if priority is not None:
+                # TASK-41503: a toggle before the first measure keeps its
+                # priority; the measured resolve inherits it from `previous`.
+                self._library_collections_reader_layout = dataclasses.replace(
+                    self._library_collections_reader_layout, priority_pane=priority
+                )
             return
         previous = self._library_collections_reader_layout
         if not (previous.reader_width or previous.library_width or previous.items_width):
@@ -1716,6 +1722,15 @@ class LibraryCollectionsController:
                 else "hard_delete_failed"
             )
             self._notify_library_collections_warning(reason)
+            if reason == "revision_conflict":
+                # TASK-41503: the loaded revision is stale. Reload it so the
+                # confirm, still armed, sends the current one.
+                try:
+                    await self._run_library_collections_capture_transition(
+                        controller.refresh_selected_detail()
+                    )
+                except CollectionsCaptureError as reload_exc:
+                    self._notify_library_collections_warning(reload_exc.reason)
         else:
             self._library_collections_confirming_hard_delete = False
             request = self._library_collections_capture_request()

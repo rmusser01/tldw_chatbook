@@ -811,3 +811,138 @@ async def test_collections_first_frame_opens_the_library_pane(entry, monkeypatch
             for _ in range(3):
                 await pilot.pause()
             assert screen.focused is row(), screen.focused
+
+
+async def _settle_collections_entry(screen, pilot):
+    await _wait_for_condition(
+        pilot,
+        lambda: (
+            bool(screen.query("#library-collections-reader-shell"))
+            and not screen._recompose_required
+            and not any(
+                worker.group == "library_collections_capture_entry"
+                and not worker.is_finished
+                for worker in screen.app.workers
+            )
+        ),
+        message="Collections never settled",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile  # the Library harness's profile (TASK-39141)
+async def test_a_pane_toggle_sent_before_the_shell_is_measured_lands_once_it_is(
+    monkeypatch,
+):
+    """TASK-41503: a toggle that arrives before the first measure is kept.
+
+    At 80 columns Collections opens on its reader stage, Library closed. A
+    grip press (or Escape) there reopens Library by giving it priority, and
+    the preference it writes is already "open". While the shell's allocation
+    is not yet current the layout sync returns early, so that priority was
+    dropped and the measured sync resolved the stage again: the first press
+    did nothing.
+    """
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+    from tldw_chatbook.Widgets.Library.library_adaptive_reader_shell import (
+        AdaptiveReaderShellResized,
+    )
+
+    measured = {"on": False}
+    allocation_is_current = LibraryScreen._library_adaptive_reader_allocation_is_current
+
+    def unmeasured_until_released(screen, reader):
+        return measured["on"] and allocation_is_current(screen, reader)
+
+    monkeypatch.setattr(
+        LibraryScreen,
+        "_library_adaptive_reader_allocation_is_current",
+        unmeasured_until_released,
+    )
+    app, _scope, _identities = await _seed()
+    screen = LibraryScreen(app)
+    screen._library_selected_row_id = "browse-collections"
+    host = LibraryProductionCSSHarness(app, screen=screen)
+    async with host.run_test(size=(80, 24)) as pilot:
+        await _wait_for_library_shell(screen, pilot)
+        await _settle_collections_entry(screen, pilot)
+        shell = screen.query_one("#library-collections-reader-shell")
+        assert not shell.effective_layout.library_open, shell.effective_layout
+
+        claimed = screen._library_reader_persistence_generations["library"]
+        shell.library_grip.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_reader_persistence_generations["library"] > claimed,
+            message="The grip press never reached the toggle",
+        )
+        assert not shell.effective_layout.library_open, "applied before any measure"
+
+        measured["on"] = True
+        shell.post_message(AdaptiveReaderShellResized())
+        await _wait_for_condition(
+            pilot,
+            lambda: shell.effective_layout.library_open,
+            message=lambda: f"The early toggle was dropped: {shell.effective_layout}",
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile  # the Library harness's profile (TASK-39141)
+async def test_a_hard_delete_refused_as_stale_reloads_so_the_next_confirm_deletes():
+    """TASK-41503: a ``revision_conflict`` refusal reloads the capture.
+
+    The confirm sends the loaded capture's revision. When another writer
+    has moved the capture on, the delete is refused; the reader used to keep
+    the stale revision, so every later confirm was refused too until the
+    capture was picked again.
+    """
+    app, scope, _identities = await _seed()
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = await _open(host, pilot)
+        engine = screen._library_collections_capture_controller
+        await _settle_collections_entry(screen, pilot)
+
+        def rows() -> int:
+            return len(screen.query(".library-collections-item-row"))
+
+        await _activate(screen, host, pilot, "#library-collections-more", "More")
+        await _activate(
+            screen, host, pilot, "#library-collections-hard-delete", "Delete"
+        )
+        await _wait_for_selector(
+            screen, pilot, "#library-collections-hard-delete-confirm"
+        )
+        stale = engine.state.loaded_detail.capture
+        # Another writer moves the open capture on behind the reader.
+        await scope.update_capture(stale.identity, stale.revision, {"favorite": True})
+        warnings = []
+        app.notify = lambda message, **_kwargs: warnings.append(message)
+
+        await _activate(
+            screen, host, pilot, "#library-collections-hard-delete-confirm", "Delete"
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: "revision_conflict" in warnings,
+            message=lambda: f"The stale delete was not refused: {warnings}",
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                engine.state.loaded_detail.capture.revision > stale.revision
+                and not engine.state.detail_loading
+            ),
+            message="The refused delete never reloaded the capture",
+        )
+        assert rows() == 2
+
+        await _activate(
+            screen, host, pilot, "#library-collections-hard-delete-confirm", "Delete"
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: rows() == 1 and not engine.state.page_loading,
+            message=lambda: f"The next confirm did not delete: {warnings}",
+        )
