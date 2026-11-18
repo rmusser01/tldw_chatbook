@@ -31,7 +31,7 @@ def _backend():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("borrowed_worker", ["default", "display"])
 async def test_display_worker_separates_foreign_custody_but_still_refuses_own_borrow(
-    borrowed_worker,
+    request, borrowed_worker,
 ):
     from tldw_chatbook.Chat.console_display_phases import ConsoleDisplayPhaseRefused
     from tldw_chatbook.Chat.console_execution_protocol import (
@@ -122,7 +122,7 @@ async def test_display_worker_separates_foreign_custody_but_still_refuses_own_bo
 @private_profile_test
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["cancel", "source"])
-async def test_display_worker_close_joins_actual_work_despite_failure(failure):
+async def test_display_worker_close_joins_actual_work_despite_failure(request, failure):
     backend = _backend()
     owner = backend.runtime._display_phase_executor
     pool = owner.executor()
