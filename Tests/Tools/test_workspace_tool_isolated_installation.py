@@ -55,11 +55,20 @@ assert Path(source.__file__).resolve() == expected / "tldw_chatbook/Tools/worksp
 executor = source.WorkspaceToolExecutor(Path(sys.argv[2]))
 argv = source._workspace_worker_argv()
 assert argv[:5] == [sys.executable, "-I", "-S", "-B", "-c"]
+stage = "fs_list"
 try:
     listed = executor.execute("fs_list", {"path": "."}, intent="read")
+    stage = "fs_read"
     read = executor.execute("fs_read", {"path": "note.txt"}, intent="read")
 except source.WorkspaceToolExecutionError as error:
-    print(json.dumps({"worker_error_code": error.code}))
+    reason = next((code for prefix, code in (
+        ("file changed while opening:", "read_open_metadata_changed"),
+        ("file changed while reading:", "read_final_metadata_changed"),
+        ("file changed or is not regular:", "read_not_regular"),
+        ("not a directory:", "list_not_directory"),
+    ) if str(error).startswith(prefix)), "other_validated_failure")
+    print(json.dumps({"worker_stage": stage, "worker_error_code": error.code,
+                      "worker_fixed_reason": reason}))
     raise SystemExit(1) from None
 try:
     executor.execute("fs_read", {"path": "../outside.txt"}, intent="read")

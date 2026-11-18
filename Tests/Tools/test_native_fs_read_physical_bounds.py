@@ -12,6 +12,13 @@ from tldw_chatbook.Tools import local_tool_impls as local
 pytestmark = pytest.mark.bootstrap_profile
 
 
+@pytest.mark.parametrize("content", [b"first\r\nsecond\r\n", b"before\x1aafter\r\n"], ids=["crlf", "ctrl-z"])
+def test_bounded_native_read_preserves_physical_windows_bytes(tmp_path, content):
+    target = tmp_path / "ordinary.txt"
+    target.write_bytes(content)
+    assert local._read_bounded_bytes(target) == content
+
+
 def test_native_read_observation_refuses_oversize_before_body(tmp_path, monkeypatch):
     target = tmp_path / "large.txt"
     with target.open("wb") as stream:

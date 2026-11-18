@@ -428,7 +428,8 @@ def _read_bounded_bytes(target: Path) -> bytes:
             info.st_ctime_ns,
         )
 
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    flags = (os.O_RDONLY | getattr(os, "O_BINARY", 0)
+             | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
     descriptor = os.open(target, flags)
     try:
         if version(os.fstat(descriptor)) != version(before):
