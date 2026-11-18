@@ -40,6 +40,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $env:TEMP = $env:TMP = $testRoot
           $checks = @(
+            'Tests/Chat/test_console_rail_configuration_publication.py'
+            'Tests/Chat/test_console_backend_log_probe_group.py'
+            'Tests/UI/test_console_selected_refresh_coverage.py'
+            'Tests/UI/test_console_return_acknowledgement.py'
             'Tests/Chat/test_console_execution_attachment.py'
             'Tests/Chat/test_console_execution_composition_values.py'
             'Tests/Chat/test_console_backend_view_lifecycle.py'
