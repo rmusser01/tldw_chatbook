@@ -13234,24 +13234,28 @@ async def test_library_media_complete_facets_commit_during_initial_recovery(
             # Once the opener is detached (parent None), every queue being
             # removed above it has emptied, so a surviving press is already
             # queued at or above the canvas, ahead of the drain's markers. A
-            # re-press made only if the strip is still closed after the drain
-            # therefore never toggles it twice, by message order.
+            # re-press made only after a complete drain, and only if the strip
+            # is still closed, therefore never toggles it twice, by message
+            # order. A drain cut short re-presses nothing.
             pressed = [opener]
             deadline = time.monotonic() + 30.0
 
-            async def drain_canvas_pumps() -> None:
+            async def drain_canvas_pumps() -> bool:
+                """True only once a marker has passed every pump to the screen."""
                 try:
                     canvas = screen.query_one("#library-media-canvas")
                     for node in (canvas, *canvas.ancestors):
                         done = asyncio.Event()
-                        if node.call_later(done.set):
-                            await asyncio.wait_for(
-                                done.wait(), max(deadline - time.monotonic(), 0.01)
-                            )
+                        if not node.call_later(done.set):
+                            return False
+                        await asyncio.wait_for(
+                            done.wait(), max(deadline - time.monotonic(), 0.01)
+                        )
                         if node is screen:
-                            break
+                            return True
                 except (TimeoutError, NoMatches):
                     pass  # The loop's deadline check reports the full state.
+                return False
 
             while not screen._media_state.type_choices_visible:
                 assert time.monotonic() < deadline, (
@@ -13261,8 +13265,7 @@ async def test_library_media_complete_facets_commit_during_initial_recovery(
                     f"pruning={pressed[-1]._pruning}, "
                     f"parent={pressed[-1].parent!r}, focused={screen.focused!r}."
                 )
-                if pressed[-1].parent is None:
-                    await drain_canvas_pumps()
+                if pressed[-1].parent is None and await drain_canvas_pumps():
                     live = screen.query("#library-media-type-filter")
                     if (
                         not screen._media_state.type_choices_visible

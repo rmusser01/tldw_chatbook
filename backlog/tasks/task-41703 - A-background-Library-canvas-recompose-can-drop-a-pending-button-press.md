@@ -31,7 +31,7 @@ Until this is fixed, the test works around it by re-pressing the opener (`Tests/
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A pilot test gates a press inside the canvas child until the recompose starts removing that child, and shows the press handled; red N of N before the fix
+- [ ] #1 A pilot test holds a press in a widget below the canvas child (for example the button), releases it once that child has stopped taking messages, and shows the press handled; red N of N before the fix
 - [ ] #2 The notes name what syncs the Media canvas while page 1 is held back in `[loading-All]`
 - [ ] #3 The re-press workaround in `test_library_media_complete_facets_commit_during_initial_recovery` is removed once the press can no longer be lost
 <!-- AC:END -->
