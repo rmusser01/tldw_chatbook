@@ -59,6 +59,58 @@ flowchart LR
 
 After removing the measured waits, the interval **between the first and last provider requests alone** accounts for 319.33 s on README and 428.34 s on edit. That interval includes tool review, execution, persistence, display, and preparation for subsequent requests. For scale, the edit's `fs_edit` took 56.37 s from the first tool-start event to success. The workspace executor took 7.58 s inside that interval, and its worker reported 0.172 s. The trace locates substantial application time outside the worker without assigning it all to one cause. Source receipts are `original-journey-win10-before-guarded/replay-runs/q21b1/{progress.jsonl,timings.json}` under `test-snapshots`.
 
+### Between consecutive provider requests
+
+Each arrow adds up the same interval across all four README rounds or all five edit rounds. Arrow labels give **README / approved edit**, in seconds. The requested-to-approved interval excludes the original measured time from observing an approval to clicking it.
+
+```mermaid
+flowchart TD
+    H["Provider receives request"] -->|"45.26 / 47.49 s"| P["Tool proposed"]
+    P -->|"47.55 / 46.16 s"| Q["Approval requested"]
+    Q -->|"87.88 / 98.14 s excluding human wait"| A["Approval recorded"]
+    A -->|"5.76 / 19.03 s"| S["Tool execution started"]
+    S -->|"64.66 / 119.67 s"| E["Tool succeeded"]
+    E -->|"16.99 / 33.47 s"| M["Next model request started"]
+    M -->|"51.22 / 64.39 s"| N["Provider receives next request"]
+```
+
+The first arrow includes 0.030 / 0.018 s in the loopback handler, 14.026 / 15.142 s from sending its response to the application's first model-complete event, and 31.205 / 32.325 s from that event to the tool proposal. Of the 87.88 / 98.14 s between requesting and recording approval, **69.278 / 73.104 s** elapsed between requesting an interactive approval and the pilot first observing it. The remainder includes the other approval decisions and the interval after a click. The trace records when the pilot observed each prompt. Its exact first paint in those rounds is unknown.
+
+| Journey and request interval | Tool | Proposal → execution start, s¹ | Execution → success, s | Provider receipt → proposal + success → next receipt, s | Total application time, s | Storage acquisitions² |
+|---|---|---:|---:|---:|---:|---:|
+| README 1→2 | `find_tools` | 22.02 | 0.75 | 23.12 | 45.89 | 210 |
+| README 2→3 | `load_tools` | 16.73 | 0.87 | 34.93 | 52.54 | 216 |
+| README 3→4 | `fs_list` | 43.06 | 30.32 | 31.74 | 105.13 | 481 |
+| README 4→5 | `fs_read` | 59.38 | 32.72 | 23.68 | 115.78 | 455 |
+| Edit 1→2 | `find_tools` | 18.73 | 3.85 | 24.31 | 46.89 | 202 |
+| Edit 2→3 | `load_tools` | 20.38 | 2.92 | 17.72 | 41.02 | 193 |
+| Edit 3→4 | `fs_read` | 48.69 | 34.10 | 31.98 | 114.77 | 494 |
+| Edit 4→5 | `fs_edit` | 44.08 | 56.37 | 38.26 | 138.70 | 550 |
+| Edit 5→6 | `git_diff` | 31.44 | 22.44 | 33.08 | 86.96 | 463 |
+| **README total** | | **141.19** | **64.66** | **113.47** | **319.33** | **1,362** |
+| **Edit total** | | **163.33** | **119.67** | **145.34** | **428.34** | **1,902** |
+
+¹ Application time excludes the original measured human wait. Columns are rounded independently. Each round is bounded by two successive requests received by the server. Within it, repeated copies of the same agent step use the first matching event for that tool call.
+
+² Counts use differences between cumulative `_acquire_storage` observations at consecutive HTTP **sends**. They include concurrent activity. The 550 acquisitions on the `fs_edit` round span two provider requests. The narrower tool-execution interval below has its own counts.
+
+### Inside the 56.366-second edit
+
+```mermaid
+flowchart TD
+    T["First fs_edit execution-start event"] -->|"46.625 s"| W["WorkspaceToolExecutor.execute entered"]
+    W -->|"0.001 s"| B["Request builder entered"]
+    B -->|"7.100 s"| R["Request built"]
+    R -->|"0.479 s including 0.172 s reported by child"| X["Workspace executor returned"]
+    X -->|"2.161 s"| OK["First fs_edit success event"]
+```
+
+The main gap is the **46.625 s before workspace executor entry**. The entire executor took 7.580 s. The interval after request construction includes child launch, communication, and return handling. Subtracting the child's reported 0.172 s leaves approximately **0.307 s** in that interval and **56.194 s** outside the reported child time across the whole edit.
+
+A second receipt measured **44 calls to `_acquire_storage` on the `tool-fs_edit` thread, totaling 36.373 s** under the execution-start phase. Its longest call took 6.425 s. Across all 18 threads with acquisitions in that phase, 187 calls accumulated 248.868 thread-seconds. These calls overlap the wall-clock arrows above. The receipt aggregates by entry phase, function and thread, so it cannot place individual acquisitions before or inside the executor. The phase costs come from `native-7aec54d3/costs.json` alongside the `q21b1` progress receipt.
+
+For the baseline/candidate comparison, track the outer approval interval, the 46.625 s from tool start to executor entry, and the 7.100 s request-build interval separately. Match admission start/finish to the same tool call and thread to measure the part on the critical path. Preserve the original authorization, storage checks and positive completion checks.
+
 ## Qualifying pairs
 
 The earlier local implementation completed three sequential pairs with the original checks. Its median README time fell 64.33% and its median edit time fell 42.56%. Every candidate exceeded five seconds. The replacement process has its own qualification record below.
