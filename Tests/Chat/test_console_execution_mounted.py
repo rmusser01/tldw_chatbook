@@ -57,6 +57,8 @@ def _pilot_barrier_at_failure(error, pilot, current_pumps):
 @private_profile_test
 @pytest.mark.asyncio
 async def test_selected_process_home_to_chat_composes_original_surface(request):
+    from textual.worker import WorkerFailed
+
     from Tests.Chat.test_console_control_trace import _observe
     from Tests.Chat.test_console_execution_backend_process import _ObservedStderr
     from Tests.Chat.console_execution_mount_wait import wait_for_selected_composer
@@ -259,6 +261,18 @@ async def test_selected_process_home_to_chat_composes_original_surface(request):
                 request.node.user_properties.append(
                     ("selected_app_shutdown_physically_closed", True)
                 )
+    except WorkerFailed as error:
+        # Textual keeps the original worker exception here and raises a new
+        # WorkerFailed at run_test exit, outside the mounted wait above.
+        from traceback import walk_tb
+
+        locations = [
+            (module, frame.f_code.co_qualname, line)
+            for frame, line in walk_tb(error.error.__traceback__)
+            if (module := frame.f_globals.get("__name__", "")).startswith("tldw_chatbook.")
+        ]
+        error.add_note("Original mounted Console worker locations: " + repr(locations[-16:]))
+        raise
     finally:
         if stderr_tail:
             diagnostic = stderr_tail.decode("utf-8", errors="replace")

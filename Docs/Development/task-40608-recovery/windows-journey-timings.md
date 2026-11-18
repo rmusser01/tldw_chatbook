@@ -339,7 +339,7 @@ including the original bounded Enter test and the Settings navigation cases.
 | Clean pair on `495b3249e9` (`qc`) | README baseline / candidate | Approved edit baseline / candidate | Original assertions and shutdown |
 |---|---:|---:|---|
 | 1 | 326.2255 s / 24.1755 s | 459.1983 s / 24.5370 s | Both sides passed. Candidate first HTTP arrived at 9.7183 s and 7.4541 s. |
-| 2 | Pending / 24.3015 s | Pending / 22.1905 s | Candidate passed. First HTTP arrived at 12.3709 s and 5.8483 s. |
+| 2 | 291.5947 s / 24.3015 s | 515.7448 s / 22.1905 s | Both sides passed. Candidate first HTTP arrived at 12.3709 s and 5.8483 s. |
 
 The subsequent local-parent change on `cae5d57fea` was measured separately
 on Windows Server 2022. Each arm used two warmups and 21 timed complete warm
@@ -349,6 +349,13 @@ baseline / candidate medians in milliseconds were 9.6109 / 9.1920,
 9.5168 / 9.1685. Across those six medians the saving was 0.4350 ms per
 lease (4.55%). The Windows 10 journey batch above pins the earlier revision.
 [Hosted component samples and driver](https://github.com/rmusser01/tldw_chatbook/actions/runs/44339331162/job/134924638726)
+
+The same hosted revision passed the new drive-root control, Enter and the
+three Settings transfer controls. The Home-to-Chat test surfaced a
+`WorkerFailed` with an attachment-visit change at test shutdown. The job
+reported 531 passed, one failed and two skipped. Its outer traceback omitted
+the original worker's source location. The task's mounted test now preserves
+that location on a recurrence. [Hosted mount test](https://github.com/rmusser01/tldw_chatbook/actions/runs/44339331162/job/134924638495)
 
 Batch `q5` started its first clean baseline on Windows 10 at 07:59 UTC on November 18. The driver pinned candidate `a3bf91340319ad7ad60177a37a537ca46364c2e3` and configuration SHA-256 `6af37c73d99d05badc21dc5b570104a3b513414cd213af8cc9464df362f62f93`. Its order is B1/C1, C2/B2, B3/C3. The earlier q4 plan never launched. A separate native component test accepted the corrected rail Apply, then the mounted-writer test failed in its subsequent visible read. Those tests contribute no journey times.
 
