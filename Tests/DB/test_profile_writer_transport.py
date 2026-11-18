@@ -75,12 +75,39 @@ def test_pipe_rejects_oversized_declared_frame_before_body_and_bounds_idle_reade
     name = rf"\\.\pipe\tldw-writer-test-{uuid4().hex}"
     with pipe.server(name) as owner, pipe.client(name) as client:
         pipe.accept(owner, 1)
-        write, _ = _winapi.WriteFile(client, struct.pack("!I", 2**32 - 1), True)
-        assert write.GetOverlappedResult(True) == (4, 0)
+        over = pipe._MAGIC + struct.pack("!Q", pipe.MAX_MESSAGE_BYTES + 1)
+        write, _ = _winapi.WriteFile(client, over, True)
+        assert write.GetOverlappedResult(True) == (len(over), 0)
         with pytest.raises(ValueError, match="frame"):
             pipe.read_frame(owner, 1)
         with pytest.raises(TimeoutError):
             pipe.read_frame(owner, .02)
+
+
+def test_large_writer_message_transfers_in_order_and_incomplete_stream_is_refused():
+    import _winapi
+    from concurrent.futures import ThreadPoolExecutor
+    from tldw_chatbook.DB import _profile_writer_windows as pipe
+
+    name = rf"\\.\pipe\tldw-writer-test-{uuid4().hex}"
+    # An ordinary 13 MiB attachment already expands past 16 MiB on the JSON
+    # wire. The whole logical document arrives before either peer can adopt it.
+    body = b"suffix" + bytes(range(256)) * (17 * 4096) + b"end"
+    with pipe.server(name) as owner, pipe.client(name) as client, ThreadPoolExecutor(1) as executor:
+        pipe.accept(owner, 1)
+        sending = executor.submit(pipe.write_frame, client, body, 5)
+        assert pipe.read_frame(owner, 5) == body
+        sending.result(timeout=5)
+    with pipe.server(name) as owner:
+        with pipe.client(name) as client:
+            pipe.accept(owner, 1)
+            # One complete JSON object arrives, then EOF without the terminal
+            # frame. A service must never dispatch this apparently valid prefix.
+            prefix = pipe._MAGIC + struct.pack("!QI", 2, 2) + b"{}"
+            write, _ = _winapi.WriteFile(client, prefix, True)
+            assert write.GetOverlappedResult(True) == (len(prefix), 0)
+        with pytest.raises((OSError, EOFError)):
+            pipe.read_frame(owner, 1)
 
 
 def test_client_rejects_an_endpoint_with_the_default_public_read_dacl():
@@ -106,6 +133,7 @@ def test_two_clients_commit_to_one_profile_and_a_lost_commit_reply_is_not_replay
     from tldw_chatbook.DB import profile_writer as writer
 
     profile = config.get_user_data_dir()
+    writer.call_profile_writer(profile, "agent_runs.open", {})
     source = """
 import sys
 from pathlib import Path
@@ -264,6 +292,7 @@ def _overlap_native_recovery():
     from tldw_chatbook.Backup_Recovery.admission import AdmissionTimeout
     from tldw_chatbook.Backup_Recovery.control_records import UNBOUND_NAMESPACE, admission_authority
     from tldw_chatbook.DB import profile_writer as writer
+    from tldw_chatbook.DB.profile_writer_selection import writer_file_identity
 
     profile = config.get_user_data_dir()
     database = profile / "agent_runs.db"
@@ -272,12 +301,19 @@ def _overlap_native_recovery():
         writer.call_profile_writer(profile, "agent_runs.open", {})
         authority = admission_authority(bootstrap.default_bootstrap_root())
         storage_admission._shutdown()  # This isolated coordinator has no app-owned repositories.
-        with authority.maintenance((UNBOUND_NAMESPACE,), 2):
-            pass  # The separately running idle server owns no recovery lease.
         payload = {
             "operation": "agent_runs.create_agent_definition",
             "arguments": {"defn": {"name": "maintenance-check", "instructions": "inspect"}},
+            "database": list(writer_file_identity(database)),
         }
+        with ThreadPoolExecutor(1) as executor:
+            with authority.maintenance((UNBOUND_NAMESPACE,), 2):
+                # A client may retain its own outer core operation while waiting
+                # for the reply. Waiting behind maintenance in the service
+                # would deadlock that caller's native drain.
+                refused = executor.submit(writer._exchange, profile, "call", payload)
+                with pytest.raises(bootstrap.RecoveryRequired, match="pause"):
+                    refused.result(timeout=3)
         with ThreadPoolExecutor(1) as executor, closing(sqlite3.connect(database)) as blocker:
             blocker.execute("BEGIN IMMEDIATE")
             # Send directly over the real transport. A caller-side lease must

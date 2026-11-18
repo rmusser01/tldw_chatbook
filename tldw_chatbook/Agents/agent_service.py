@@ -8902,6 +8902,7 @@ class AgentService:
             clock=self.clock,
             wall_clock=self.wall_clock,
             on_step=observe_step,
+            fatal_observation_errors=(StoreMutationOutcomeUnknown,),
             next_owner_seq=lambda: self._allocate_owner_seq(run_id),
             # Runtime progress observations are durable for every real service
             # run. Otherwise control steps can retain links to model events

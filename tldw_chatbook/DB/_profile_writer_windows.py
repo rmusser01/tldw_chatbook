@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import _winapi
 import ctypes as C
+import io
 import struct
 import time
 from collections.abc import Iterator
@@ -13,8 +14,16 @@ from ctypes import wintypes as W
 from tldw_chatbook.Utils.windows_files import _native
 
 
-MAX_FRAME_BYTES = 16 * 1024 * 1024
+# A stock ChaChaNotes SQLite row may contain a 1,000,000,000-byte blob,
+# base64-encoded by the domain codec. Archive imports support 528 MiB before
+# encoding. Enforce an independent aggregate cap without preallocating it.
+MAX_MESSAGE_BYTES = 2**31 - 1
+MAX_FRAME_BYTES = 1024 * 1024
 _BUFFER_BYTES = 64 * 1024
+_MAGIC = b"PWJ2"
+_END = bytes(4)
+_MIN_BYTES_PER_SECOND = 1024 * 1024
+_FRAME_IDLE_SECONDS = 10.0
 _PIPE_REJECT_REMOTE_CLIENTS = 8
 _SECURITY_SQOS_PRESENT = 0x00100000
 _KERNEL_OBJECT = 6
@@ -173,18 +182,45 @@ def _read_exact(handle: int, size: int, deadline: float | None) -> bytes:
     return bytes(data)
 
 
-def read_frame(handle: int, timeout: float | None) -> bytes:
+def read_frame(handle: int, timeout: float | None, *, maximum: int = MAX_MESSAGE_BYTES) -> bytes:
+    """Receive a complete length-prefixed chunk sequence, including its terminator."""
     deadline = None if timeout is None else time.monotonic() + timeout
-    size, = struct.unpack("!I", _read_exact(handle, 4, deadline))
-    if not 0 < size <= MAX_FRAME_BYTES:
+    if _read_exact(handle, 4, deadline) != _MAGIC:
+        raise ValueError("invalid profile writer frame protocol")
+    idle = _FRAME_IDLE_SECONDS if timeout is None else timeout
+    total, = struct.unpack("!Q", _read_exact(handle, 8, time.monotonic() + idle))
+    if not 0 < total <= min(maximum, MAX_MESSAGE_BYTES):
         raise ValueError("profile writer frame length out of bounds")
-    return _read_exact(handle, size, deadline)
+    deadline = time.monotonic() + idle + total / _MIN_BYTES_PER_SECOND
+    body = io.BytesIO()
+    while True:
+        expires = min(deadline, time.monotonic() + idle)
+        size, = struct.unpack("!I", _read_exact(handle, 4, expires))
+        if size == 0 and body.tell() == total:
+            return body.getvalue()
+        if not 0 < size <= min(MAX_FRAME_BYTES, total - body.tell()):
+            raise ValueError("invalid profile writer frame sequence")
+        body.write(_read_exact(handle, size, expires))
+
+
+def _write(handle: int, data: bytes, deadline: float) -> None:
+    write, _ = _winapi.WriteFile(handle, data, True)
+    if _complete(write, deadline) != len(data):
+        raise OSError("profile writer frame was incomplete")
 
 
 def write_frame(handle: int, body: bytes, timeout: float) -> None:
-    if not 0 < len(body) <= MAX_FRAME_BYTES:
+    total = len(body)
+    if not 0 < total <= MAX_MESSAGE_BYTES:
         raise ValueError("profile writer frame length out of bounds")
-    data = struct.pack("!I", len(body)) + body
-    write, _ = _winapi.WriteFile(handle, data, True)
-    if _complete(write, time.monotonic() + timeout) != len(data):
-        raise OSError("profile writer frame was incomplete")
+    header = _MAGIC + struct.pack("!Q", total)
+    if total <= MAX_FRAME_BYTES:
+        _write(handle, header + struct.pack("!I", total) + body + _END, time.monotonic() + timeout)
+        return
+    deadline = time.monotonic() + timeout + total / _MIN_BYTES_PER_SECOND
+    _write(handle, header, time.monotonic() + timeout)
+    view = memoryview(body)
+    for start in range(0, total, MAX_FRAME_BYTES):
+        chunk = view[start:start + MAX_FRAME_BYTES]
+        _write(handle, struct.pack("!I", len(chunk)) + chunk, min(deadline, time.monotonic() + timeout))
+    _write(handle, _END, min(deadline, time.monotonic() + timeout))

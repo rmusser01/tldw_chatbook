@@ -33,7 +33,7 @@ from tldw_chatbook.Agents.run_log import DEFAULT_MAX_RECORD_BYTES
 from tldw_chatbook.Provider_Contract.sampling_params import params_to_dict
 from . import store_kernel as _store_kernel
 from .base_db import BaseDB
-from .profile_writer_commands import agent_runs_writer_profile, profile_run_mutation
+from .profile_writer_commands import profile_run_mutation
 from .store_kernel import SQLiteStoreKernel
 
 if TYPE_CHECKING:
@@ -356,17 +356,27 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         self._init_store_kernel()
         self._join_connection_registry(db_path)  # owner's idle close (TASK-39117)
         self.receipt_capability_available = False
-        self._writer_profile = agent_runs_writer_profile(db_path) if type(self) is AgentRunsDB else None
+        self._writer_profile = None
+        if sys.platform == "win32" and type(self) is AgentRunsDB:
+            from .profile_writer_selection import writer_repository_profile
+
+            self._writer_profile = writer_repository_profile(db_path, "db.agent_runs")
         super().__init__(db_path, client_id, initialize_schema=self._writer_profile is None)
         if self._writer_profile is not None:
             from tldw_chatbook.Backup_Recovery.participants import core_access
             from .profile_writer import call_profile_writer
+            from .profile_writer_selection import writer_file_identity
 
             core_access(self)
             capability = call_profile_writer(self._writer_profile, "agent_runs.open", {})
             if type(capability) is not bool:
                 raise ValueError("Invalid AgentRuns open receipt")
             self.receipt_capability_available = capability
+            self._writer_file = writer_file_identity(self.db_path)
+            if self._writer_file is None:
+                from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+                raise RecoveryRequired("profile_writer_database_changed")
         # After super().__init__: the agent_runs table exists (base_db ran
         # _initialize_schema) and self.is_memory_db is set. Reconcile once per
         # file per process so a crash mid-run doesn't leave a 'running' row

@@ -109,14 +109,18 @@ os._exit(7)
 
 def test_stock_writer_preserves_atomic_steps_and_settings(monkeypatch, tmp_path):
     from Tests.Backup_Recovery.test_agent_runs_recovery_schema import legacy
-    from tldw_chatbook import config
     from tldw_chatbook.DB import profile_writer
 
     profile = tmp_path
     path = profile / "agent_runs.db"
-    monkeypatch.setattr(config, "get_chachanotes_db_path", lambda: profile / "notes.db")
-    monkeypatch.setattr(config, "get_user_data_dir", lambda: profile)
-    monkeypatch.setattr(profile_writer, "in_profile_writer", lambda: True)
+    monkeypatch.setattr(profile_writer._execution, "active", True, raising=False)
+    monkeypatch.setattr(profile_writer._execution, "selection", (), raising=False)
+    monkeypatch.setattr(
+        profile_writer._execution,
+        "repository",
+        (profile, "db.agent_runs"),
+        raising=False,
+    )
     run = commands.execute_profile_writer_command
     legacy(path, version=18)
     run(profile, "agent_runs.open", {})
@@ -193,7 +197,7 @@ def test_two_profile_instances_can_write_during_a_live_run_and_writer_restart():
         # A freshly launched Settings instance opens its normal profile
         # repository and requests orphan repair while the Console is paused.
         program = """
-import json, sys
+import asyncio, json, sys
 from pathlib import Path
 from types import SimpleNamespace
 sys.path.insert(0, sys.argv[1])
@@ -201,6 +205,7 @@ from Tests.windows_private_fixture_runner import user_fixture_default_owner
 with user_fixture_default_owner():
     from tldw_chatbook import config
     from tldw_chatbook.Agents.agent_models import AgentDefinition
+    from tldw_chatbook.DB.base_db import run_owned_db_call
     from tldw_chatbook.Widgets.settings_agents_panel import _derive_runs_db
     selected = config.get_user_data_dir()
     assert selected == Path(sys.argv[2])
@@ -210,7 +215,7 @@ with user_fixture_default_owner():
         database.reconcile_orphaned_runs()
         assert database.get_run(sys.argv[3])["status"] == "running"
         definition = AgentDefinition("check-" + sys.argv[3], instructions="Read the file.")
-        chosen = database.create_agent_definition(definition)
+        chosen = asyncio.run(run_owned_db_call(database, database.create_agent_definition, definition))
         database.insert_steps_at_indices(sys.argv[3], [(1, {"index": 1, "kind": "other-instance"})])
         print(json.dumps(chosen), flush=True)
     finally:
@@ -249,3 +254,58 @@ with user_fixture_default_owner():
             db.close()
         finally:
             drain_profile_writer(profile)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="native Windows stock selector")
+def test_warm_repository_selection_revalidates_without_reentering_config_owner(
+    monkeypatch,
+):
+    from tldw_chatbook import config
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+    from tldw_chatbook.DB.profile_writer import _selection
+    from tldw_chatbook.DB.profile_writer_selection import (
+        require_writer_repository,
+        writer_repository_profile,
+    )
+
+    profile = config.get_user_data_dir()
+    path = profile / "agent_runs.db"
+    assert writer_repository_profile(path, "db.agent_runs") == profile
+    facts = _selection(profile)[1]
+    entered = []
+    getter_codes = {
+        config.get_user_data_dir.__wrapped__.__code__,
+        config.get_chachanotes_db_path.__code__,
+    }
+
+    def observe(frame, event, _argument):
+        if event == "call" and frame.f_code in getter_codes:
+            entered.append(frame.f_code.co_name)
+
+    previous = sys.getprofile()
+    try:
+        sys.setprofile(observe)
+        assert require_writer_repository(profile, "db.agent_runs", facts=facts) == facts
+    finally:
+        sys.setprofile(previous)
+    assert entered == []
+    stale = [facts[0], facts[1] + 1, *facts[2:]]
+    with pytest.raises(RecoveryRequired):
+        require_writer_repository(profile, "db.agent_runs", facts=stale)
+    with monkeypatch.context() as changed:
+        changed.setattr(config, "get_chachanotes_db_path", lambda: path)
+        assert writer_repository_profile(path, "db.agent_runs") is None
+        with pytest.raises(RecoveryRequired):
+            require_writer_repository(profile, "db.agent_runs", facts=facts)
+    with monkeypatch.context() as changed:
+        changed.setitem(
+            config._CONFIG_CACHE["database"],
+            "chachanotes_db_path",
+            str(profile.parent / "elsewhere.db"),
+        )
+        with pytest.raises(RecoveryRequired):
+            require_writer_repository(profile, "db.agent_runs", facts=facts)
+    assert (
+        writer_repository_profile(profile.parent / "agent_runs.db", "db.agent_runs")
+        is None
+    )

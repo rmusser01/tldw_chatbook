@@ -597,6 +597,9 @@ class ChatbookManifest:
     language: str = "en"
     license: str | None = None
     canvas_archive: CanvasArchiveManifest | None = None
+    # Local review receipt. An archive cannot supply it through from_dict,
+    # and to_dict never publishes it into a subsequent export.
+    reviewed_archive_sha256: str | None = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if self.version in {ChatbookVersion.V3, ChatbookVersion.V4}:

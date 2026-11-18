@@ -1316,53 +1316,48 @@ def test_definitions_survive_reopen_and_migration_is_idempotent(request, tmp_pat
 
 
 def _seed_v18_definitions(path):
-    """Build the complete production schema, seed prior data, then restore v18."""
-    database = AgentRunsDB(path, client_id="build-v18-predecessor")
-    try:
-        live_id = database.create_agent_definition(_defn(name="live-agent"))
-        disabled_id = database.create_agent_definition(
-            _defn(name="disabled-agent", enabled=False)
-        )
-        deleted_id = database.create_agent_definition(_defn(name="deleted-agent"))
-        database.soft_delete_agent_definition(deleted_id)
-        with database.transaction() as conn:
-            conn.execute(
-                """INSERT INTO automatic_work_chains
-                   (id, conversation_id, root_submission_id, limits_json,
-                    status, created_at, last_observed_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                ("chain", "migration-conversation", "root", "{}", "active", 1.0, 1.0),
-            )
-            conn.execute(
-                """INSERT INTO automatic_work_runtime_owner(singleton, owner_id)
-                   VALUES (?, ?)""",
-                (1, "migration-owner"),
-            )
-        run_id = database.create_run(
-            conversation_id="migration-conversation",
-            agent_kind="primary",
-            work_chain_id="chain",
-        )
-        database.append_steps(
-            run_id, [{"index": 0, "kind": "model", "summary": "existing"}]
-        )
-    finally:
-        database.close()
+    """Seed the exact historical catalog before opening it with current code."""
+    from tldw_chatbook.DB.recovery_operations import _AGENT_RUNS_SCHEMA
 
+    catalog = next(catalog for version, catalog in _AGENT_RUNS_SCHEMA if version == 18)
     conn = sqlite3.connect(path)
     try:
-        conn.execute("ALTER TABLE agent_definitions DROP COLUMN max_wall_seconds")
-        conn.execute("DELETE FROM schema_version WHERE version >= ?", (19,))
-        conn.execute("DROP TABLE agent_worktrees")
+        for sql in sorted(catalog, key=lambda statement: not statement.startswith("CREATE TABLE")):
+            if not sql.startswith("CREATE TABLE sqlite_sequence"):
+                conn.execute(sql)
+        conn.executemany(
+            "INSERT INTO schema_version(version) VALUES (?)",
+            [(version,) for version in range(4, 19)],
+        )
+        conn.executemany(
+            """INSERT INTO agent_definitions
+               (id, name, instructions, enabled, deleted, created_at, updated_at)
+               VALUES (?, ?, 'Read the file.', ?, ?, 'then', 'then')""",
+            [("live", "live-agent", 1, 0), ("disabled", "disabled-agent", 0, 0),
+             ("deleted", "deleted-agent", 1, 1)],
+        )
+        conn.execute(
+            """INSERT INTO automatic_work_chains
+               (id, conversation_id, root_submission_id, limits_json, status, created_at, last_observed_at)
+               VALUES ('chain', 'migration-conversation', 'root', '{}', 'active', 1, 1)"""
+        )
+        conn.execute("INSERT INTO automatic_work_runtime_owner VALUES (1, 'migration-owner')")
+        conn.execute(
+            """INSERT INTO agent_runs
+               (id, conversation_id, agent_kind, status, work_chain_id, created_at, updated_at)
+               VALUES ('run', 'migration-conversation', 'primary', 'done', 'chain', 'then', 'then')"""
+        )
+        conn.executemany(
+            "INSERT INTO agent_run_steps VALUES ('run', ?, ?, 'then')",
+            [(0, '{"index":0,"kind":"model","summary":"existing"}'),
+             (1, '{"index":1,"kind":"agent_run_completed"}')],
+        )
         conn.commit()
-        columns = {
+        assert "max_wall_seconds" not in {
             row[1] for row in conn.execute("PRAGMA table_info(agent_definitions)")
         }
-        assert "max_wall_seconds" not in columns
-        assert (
-            conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 18
-        )
-        return live_id, disabled_id, deleted_id, _snapshot_v18_data(conn)
+        assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 18
+        return "live", "disabled", "deleted", _snapshot_v18_data(conn)
     finally:
         conn.close()
 
@@ -1377,12 +1372,21 @@ def _snapshot_v18_data(conn):
                    FROM agent_definitions ORDER BY id"""
             )
         ],
-        "agent_runs": [tuple(row) for row in conn.execute("SELECT * FROM agent_runs")],
+        "agent_runs": [tuple(row) for row in conn.execute(
+            """SELECT id, conversation_id, parent_run_id, agent_kind, task, status, steps, result,
+                      budget, created_at, updated_at, assistant_message_id, agent_definition,
+                      definition_fingerprint, wake_delivered_at, resumed_from_run_id,
+                      spawn_event_id, budget_tokens, work_chain_id FROM agent_runs"""
+        )],
         "agent_run_steps": [
             tuple(row) for row in conn.execute("SELECT * FROM agent_run_steps")
         ],
         "automatic_work_chains": [
-            tuple(row) for row in conn.execute("SELECT * FROM automatic_work_chains")
+            tuple(row) for row in conn.execute(
+                """SELECT id, conversation_id, root_submission_id, limits_json, status, pause_reason,
+                          created_at, started_at, deadline_at, clock_owner_id, started_monotonic,
+                          last_observed_at FROM automatic_work_chains"""
+            )
         ],
         "automatic_work_runtime_owner": [
             tuple(row)

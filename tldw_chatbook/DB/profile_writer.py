@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import re
@@ -10,7 +11,8 @@ import subprocess
 import sys
 import threading
 import time
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
+from functools import lru_cache
 from pathlib import Path
 from uuid import uuid4
 
@@ -24,10 +26,11 @@ if os.name == "nt":
 _CONNECTION_SECONDS = 30
 _IO_SECONDS = 10
 _IDLE_SECONDS = 5
-_VERSION = 1
+_VERSION = 2
 _REQUEST_ID = re.compile(r"[0-9a-f]{32}\Z")
 _OPERATION = re.compile(r"[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+\Z")
 _execution = threading.local()
+_enrollment_generation = 0
 _host_elects = False
 
 
@@ -38,6 +41,16 @@ class ProfileWriterOutcomeUnknown(StoreMutationOutcomeUnknown):
 def in_profile_writer() -> bool:
     """Return whether this thread is executing the elected writer's domain handler."""
     return getattr(_execution, "active", False)
+
+
+def executing_writer_repository(profile: Path, owner: str) -> bool:
+    """Whether the elected command has checked this exact installed store."""
+    return in_profile_writer() and getattr(_execution, "repository", None) == (profile, owner)
+
+
+def current_profile_writer_selection() -> tuple:
+    """Return the current command's verified directory and configuration generation."""
+    return _execution.selection
 
 
 def use_host_profile_writer() -> None:
@@ -83,6 +96,27 @@ def _require_selected(profile: Path) -> None:
         raise RecoveryRequired("profile_writer_selection_changed")
 
 
+@lru_cache(maxsize=32)
+def _named_address(profile: Path, device: int, inode: int) -> str:
+    """Cache the routing name only; admission always uses fresh repository facts."""
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+    address, facts = _selection(profile)
+    if facts[:2] != [device, inode]:
+        raise RecoveryRequired("profile_writer_selection_changed")
+    return address
+
+
+def _repository(profile: Path, operation: str):
+    from tldw_chatbook.Backup_Recovery.profile_paths import database_leaf
+
+    if operation.startswith("agent_runs."):
+        return profile / "agent_runs.db", "db.agent_runs"
+    if operation.startswith("chacha."):
+        return profile / database_leaf("chachanotes_db_path"), "db.chachanotes.primary"
+    return profile, None
+
+
 def _encode(value: dict) -> bytes:
     from tldw_chatbook.Utils.input_validation import (
         STRICT_JSON_MAX_DEPTH, STRICT_JSON_MAX_NODES, _strict_json_within_limits,
@@ -92,10 +126,15 @@ def _encode(value: dict) -> bytes:
         value, max_depth=STRICT_JSON_MAX_DEPTH, max_nodes=STRICT_JSON_MAX_NODES
     ):
         raise ValueError("invalid profile writer data")
-    body = json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode()
-    if len(body) > pipe.MAX_FRAME_BYTES:
-        raise ValueError("profile writer frame length out of bounds")
-    return body
+    output = io.BytesIO()
+    encoder = json.JSONEncoder(ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+    for part in encoder.iterencode(value):
+        for offset in range(0, len(part), 65536):
+            chunk = part[offset:offset + 65536].encode()
+            if output.tell() + len(chunk) > pipe.MAX_MESSAGE_BYTES:
+                raise ValueError("profile writer message length out of bounds")
+            output.write(chunk)
+    return output.getvalue()
 
 
 def _decode(body: bytes) -> dict:
@@ -143,10 +182,14 @@ def _connect(stack, profile, address, *, missing_ok):
         except FileNotFoundError:
             if missing_ok:
                 return None
+            if candidate is not None:
+                status = candidate.poll()
+                if status == 0:
+                    candidate = None  # A losing candidate already retired.
+                elif status is not None:
+                    raise RuntimeError("profile writer failed to start") from None
             if candidate is None and not _host_elects:
                 candidate = _launch(profile)
-            if candidate is not None and candidate.poll() not in (None, 0):
-                raise RuntimeError("profile writer failed to start") from None
             time.sleep(.025)
         except OSError as error:
             if error.winerror != _winapi.ERROR_PIPE_BUSY:
@@ -217,70 +260,210 @@ def call_profile_writer(profile: Path, operation: str, arguments: dict):
     Raises:
         ProfileWriterOutcomeUnknown: Delivery/commit or physical retirement is uncertain.
     """
-    from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+    return call_bound_profile_writer(None, profile, operation, arguments)
+
+
+def call_bound_profile_writer(database, profile: Path, operation: str, arguments: dict):
+    """Send a stock operation against the same physical file its opener enrolled."""
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+    from tldw_chatbook.Backup_Recovery.participants import repository_participant
+    from .profile_writer_selection import require_writer_repository, writer_file_identity
 
     if os.name != "nt" or in_profile_writer():
         raise RuntimeError("a Windows profile writer client is required")
     if type(operation) is not str or not _OPERATION.fullmatch(operation) or type(arguments) is not dict:
         raise ValueError("invalid profile writer operation")
     profile = Path(profile)
-    with acquire_storage(profile):
-        _require_selected(profile)
-        return _exchange(profile, "call", {"operation": operation, "arguments": arguments})
+    target, participant = _repository(profile, operation)
+    core = getattr(storage._operation_local, "operation", None)
+    proof = None
+    if core is not None:
+        # The producer retained its original file operation. It confers no
+        # authority over a sibling repository or the enclosing directory.
+        proof = storage._check_operation(core, target)
+        if core.participant.owner_id != participant or core.participant.read_only:
+            raise RecoveryRequired("profile_writer_repository_scope_changed")
+    elif storage.local_pause_active():
+        raise RecoveryRequired("storage_locally_paused")
+    if participant is not None:
+        # This caller has no SQLite work. Validate the selected DB and any
+        # retained producer, then let the writer acquire its own native custody.
+        facts = require_writer_repository(profile, participant)
+        endpoint = _named_address(profile, *facts[:2]), facts
+        identity = writer_file_identity(target)
+    else:
+        endpoint = _selection(profile)
+        with storage.acquire_storage(target):
+            _require_selected(profile)
+        identity = None
+    if database is not None:
+        installed = repository_participant(database)
+        if (installed.path != target or installed.owner_id != participant or installed.read_only
+            or (core is not None and core.participant is not installed)
+            or identity is None or database._writer_file != identity):
+            raise RecoveryRequired("profile_writer_database_changed")
+    if proof is not None:
+        with storage._lock:
+            proof.require_current()
+    return _exchange(profile, "call", {
+        "operation": operation, "arguments": arguments, "database": list(identity) if identity else None,
+    }, target=endpoint)
 
 
-def _retire_command() -> None:
-    """Release this isolated command's startup enrollment, then verify physical drain."""
+def _require_retired(startup) -> None:
+    """A completed command leaves exactly its revocable process enrollment, if any."""
     from tldw_chatbook.Backup_Recovery import raw_participants as raw
     from tldw_chatbook.Backup_Recovery import storage_admission as storage
 
-    storage._shutdown()
     with storage._lock:
-        if any((
-            storage._startups, storage._pending_acquisitions, storage._operations,
-            storage._raw_operations, raw._states, storage._live_leases, storage._holds,
-            storage._retiring_holds,
-        )):
+        leases = {startup} if startup is not None else set()
+        keys = {startup._key} if startup is not None and startup._key is not None else set()
+        if (
+            set(storage._startups.values()) != leases or storage._live_leases != leases
+            or storage._holds.keys() != keys or storage._pending_acquisitions or storage._operations
+            or storage._raw_operations or raw._states or storage._retiring_holds
+            or any(hold.count != 1 or not hold.ready.is_set() or hold.stop.is_set()
+                   or hold.error is not None or not hold.thread.is_alive() for hold in storage._holds.values())
+        ):
             raise ProfileWriterOutcomeUnknown("profile writer resources did not retire")
 
 
-def _command(profile, facts, payload, previous_stamp):
+class _WriterEnrollment:
+    """A serial command and the idle maintenance observer share one startup lease."""
+
+    def __init__(self):
+        self.startup = None
+        self.created = {}
+        self.lock = threading.Lock()
+        self.stop = threading.Event()
+        self.watcher = threading.Thread(target=self._monitor, name="profile-writer-maintenance", daemon=True)
+        self.watcher.start()
+
+    def _release(self):
+        global _enrollment_generation
+        from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+        _require_retired(self.startup)
+        if self.startup is not None:
+            storage._shutdown()
+            self.startup = None
+            _enrollment_generation += 1
+            self.created.clear()
+        _require_retired(None)
+
+    def _yield_if_requested(self):
+        from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+        if self.startup is not None and storage._local_pause_requested():
+            self._release()
+            return True
+        return False
+
+    def _monitor(self):
+        from tldw_chatbook.Backup_Recovery.runtime_maintenance import MAINTENANCE_PROBE_INTERVAL_SECONDS
+
+        while not self.stop.wait(MAINTENANCE_PROBE_INTERVAL_SECONDS):
+            with self.lock:
+                try:
+                    self._yield_if_requested()
+                except BaseException:
+                    # A failed native probe or uncertain release cannot
+                    # authorize another operation in this elected generation.
+                    os._exit(1)
+
+    @contextmanager
+    def command(self, profile):
+        from tldw_chatbook.Backup_Recovery import storage_admission as storage
+        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+        with self.lock:
+            if self._yield_if_requested():
+                raise RecoveryRequired("profile_writer_maintenance_pause")
+            try:
+                if self.startup is None:
+                    # Acquire the *current* native group, refusing a closed
+                    # maintenance gate before startup can wait behind its caller.
+                    with storage.acquire_profile_writer_storage(profile):
+                        storage.admit_startup()
+                        self.startup, = storage._startups.values()
+                yield
+            finally:
+                _require_retired(self.startup)
+
+    def drain(self):
+        with self.lock:
+            self._release()
+
+    def close(self):
+        self.stop.set()
+        self.watcher.join()
+        try:
+            self.drain()
+        except BaseException:
+            os._exit(1)
+
+
+def _command(profile, facts, payload, previous_stamp, enrollment):
     from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
-    from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+    from .profile_writer_commands import encode_profile_writer_error, execute_profile_writer_command
+    from .profile_writer_selection import require_writer_repository, writer_file_identity
 
     if (
-        type(payload) is not dict or set(payload) != {"operation", "arguments"}
+        type(payload) is not dict or set(payload) != {"operation", "arguments", "database"}
         or type(payload["operation"]) is not str or not _OPERATION.fullmatch(payload["operation"])
         or type(payload["arguments"]) is not dict
     ):
-        raise ValueError("invalid writer command")
+        return "error", encode_profile_writer_error(ValueError("invalid writer command"))
     try:
-        with acquire_storage(profile):
+        with enrollment.command(profile):
             from tldw_chatbook import config
 
-            if _selection(profile)[1] != facts:
-                raise RecoveryRequired("profile_writer_selection_changed")
-            # The normal CLI cache throttles external file stat calls. A changed
-            # native generation must refresh before selecting a write destination.
-            if previous_stamp != facts[-1] and not config._load_cli_config_bootstrap(force_reload=True).succeeded:
-                raise RecoveryRequired("profile_writer_configuration_unavailable")
-            _require_selected(profile)
-            if _selection(profile)[1] != facts:
-                raise RecoveryRequired("profile_writer_selection_changed")
-            from .profile_writer_commands import encode_profile_writer_error, execute_profile_writer_command
-
+            operation = payload["operation"]
+            path, owner = _repository(profile, operation)
+            if owner is not None:
+                require_writer_repository(profile, owner, facts=facts)
+                current = writer_file_identity(path)
+                expected = payload["database"]
+                if expected is None:
+                    if operation not in ("agent_runs.open", "chacha.initialize") or (
+                        current is not None and enrollment.created.get(owner) != current
+                    ):
+                        raise RecoveryRequired("profile_writer_database_changed")
+                elif (type(expected) is not list or len(expected) != 2
+                      or any(type(item) is not int for item in expected) or tuple(expected) != current):
+                    raise RecoveryRequired("profile_writer_database_changed")
+            else:
+                if _selection(profile)[1] != facts:
+                    raise RecoveryRequired("profile_writer_selection_changed")
+                if payload["database"] is not None:
+                    raise RecoveryRequired("profile_writer_database_changed")
+                if previous_stamp != facts[-1] and not config._load_cli_config_bootstrap(force_reload=True).succeeded:
+                    raise RecoveryRequired("profile_writer_configuration_unavailable")
+                _require_selected(profile)
             _execution.active = True
+            _execution.repository = (profile, owner)
+            _execution.selection = (*facts[:-1], tuple(facts[-1]), _enrollment_generation)
             try:
                 result = execute_profile_writer_command(profile, payload["operation"], payload["arguments"])
+                status = "ok"
             except (ProfileWriterOutcomeUnknown, RecoveryRequired):
                 raise
             except Exception as error:
-                return "error", encode_profile_writer_error(error)
+                status, result = "error", encode_profile_writer_error(error)
             finally:
+                del _execution.repository
+                del _execution.selection
                 del _execution.active
             if _selection(profile)[1] != facts:
                 raise ProfileWriterOutcomeUnknown("profile changed during mutation")
-            return "ok", result
+            if owner is not None:
+                after = writer_file_identity(path)
+                if current is None and after is not None:
+                    enrollment.created[owner] = after
+                elif current != after:
+                    raise ProfileWriterOutcomeUnknown("database changed during mutation")
+            return status, result
     except RecoveryRequired as error:
         return "recovery", str(error)
     except SystemExit as error:
@@ -290,8 +473,6 @@ def _command(profile, facts, payload, previous_stamp):
         if not isinstance(error.code, str) or not error.code.startswith(prefix):
             raise
         return "recovery", error.code[len(prefix):]
-    finally:
-        _retire_command()
 
 
 def _process_running(process: int) -> bool:
@@ -393,6 +574,8 @@ def _serve(profile: Path) -> int:
             if error.winerror in (5, 231):  # Another process already owns the one instance.
                 return 0
             raise
+        enrollment = _WriterEnrollment()
+        owner.callback(enrollment.close)
         while True:
             try:
                 pipe.accept(handle, _IDLE_SECONDS)
@@ -427,19 +610,19 @@ def _serve(profile: Path) -> int:
                         _winapi.CloseHandle(hosts.pop(payload)[1])
                         stop = not hosts
                     data = stop
-                elif facts != _selection(profile)[1]:
-                    status, data = "recovery", "profile_writer_selection_changed"
-                elif facts[:4] != original[:4]:
-                    status, data, stop = "recovery", "profile_writer_selection_changed", True
-                elif intent == "call":
+                elif intent == "call" and type(facts) is list and facts[:4] == original[:4]:
                     try:
-                        status, data = _command(profile, facts, payload, previous_stamp)
+                        status, data = _command(profile, facts, payload, previous_stamp, enrollment)
                         if status == "ok":
                             previous_stamp = facts[-1]
                     except BaseException:
                         # Retain the kernel election until the entire process
                         # exits; no successor may execute alongside an uncertain owner.
                         status, data, fatal = "unknown", None, True
+                elif facts != _selection(profile)[1]:
+                    status, data = "recovery", "profile_writer_selection_changed"
+                elif facts[:4] != original[:4]:
+                    status, data, stop = "recovery", "profile_writer_selection_changed", True
                 elif intent == "join" and type(payload) is str and _REQUEST_ID.fullmatch(payload):
                     _prune_hosts(hosts)
                     pid = pipe.client_pid(handle)
@@ -450,6 +633,7 @@ def _serve(profile: Path) -> int:
                     data = False
                 elif intent == "drain" and payload is None:
                     _prune_hosts(hosts)
+                    enrollment.drain()
                     data = stop = not hosts
                 else:
                     raise ValueError("invalid writer intent")
@@ -461,7 +645,8 @@ def _serve(profile: Path) -> int:
                     reply.update(status="unknown", data=None)
                     body = _encode(reply)
                 pipe.write_frame(handle, body, _IO_SECONDS)
-                pipe.read_frame(handle, _IO_SECONDS)
+                if pipe.read_frame(handle, _IO_SECONDS, maximum=len(b"received")) != b"received":
+                    raise ValueError("invalid writer receipt acknowledgment")
             except (ValueError, EOFError, OSError):
                 pass  # Dropped, late or malformed peer; never replay its command.
             finally:

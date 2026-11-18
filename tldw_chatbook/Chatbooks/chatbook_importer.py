@@ -8,13 +8,14 @@ Chatbook Importer
 Handles the import and validation of chatbooks into the application.
 """
 
-from tldw_chatbook.Backup_Recovery.local_content_lifetime import call as content_call, own_database
+from tldw_chatbook.Backup_Recovery.local_content_lifetime import call as content_call, operation as content_operation, own_database
 
 import base64
 import binascii
 import codecs
 import hashlib
 import heapq
+import io
 import json
 import os
 import re
@@ -25,7 +26,7 @@ import tempfile
 import unicodedata
 import uuid
 import zipfile
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from pathlib import Path, PurePosixPath
 from typing import Any, BinaryIO, Callable, Dict, List, Mapping, Optional, Tuple
 
@@ -99,6 +100,7 @@ _MAX_ARCHIVE_PATH_COMPONENT_BYTES = 255
 _ARCHIVE_COPY_CHUNK_BYTES = 64 * 1024
 _ARCHIVE_LIMIT_ERROR = "Chatbook archive exceeds safety limits."
 _ARCHIVE_SOURCE_PATH_ERROR = "Invalid chatbook source path."
+_ARCHIVE_CHANGED = "The selected chatbook changed. Preview the archive again before importing."
 _MAX_V2_GRAPH_MESSAGES = 10_000
 _MAX_V2_MESSAGE_ID_CHARS = 256
 _MAX_V2_TOTAL_ID_CHARS = 1024 * 1024
@@ -167,21 +169,54 @@ _PROFILE_IMPORT_STORES = {
 }
 
 
+@contextmanager
+def _archive_source(path, data=None, *, snapshot=False, reviewed_sha256=None):
+    """Read the selected ZIP once and bind preview or handoff to those exact bytes."""
+    if data is None:
+        with path.open("rb") as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode):
+                raise ValueError(_ARCHIVE_SOURCE_PATH_ERROR)
+            if info.st_size > _MAX_ARCHIVE_CONTAINER_BYTES:
+                raise ValueError(_ARCHIVE_LIMIT_ERROR)
+            if not snapshot and reviewed_sha256 is None:
+                yield stream
+                return
+            # Read at most the measured size and probe for growth without
+            # reserving the entire maximum for small archives.
+            data = stream.read(info.st_size)
+            after = os.fstat(stream.fileno())
+            if len(data) != info.st_size or stream.read(1) or after.st_mtime_ns != info.st_mtime_ns:
+                raise ValueError(_ARCHIVE_CHANGED)
+    if len(data) > _MAX_ARCHIVE_CONTAINER_BYTES:
+        raise ValueError(_ARCHIVE_LIMIT_ERROR)
+    if reviewed_sha256 is not None and hashlib.sha256(data).hexdigest() != reviewed_sha256:
+        raise ValueError(_ARCHIVE_CHANGED)
+    with io.BytesIO(data) as stream:
+        yield stream
+
+
 def _execute_profile_import(profile: Path, arguments: dict) -> dict:
     """Import the selected archive with the stock preflight and per-item transactions."""
     from ..Backup_Recovery.profile_paths import database_leaf
     from .database_paths import get_chatbook_database_paths
 
-    if set(arguments) != {"stores", "archive", "selections", "resolution", "prefix", "media", "status"}:
+    if set(arguments) != {"stores", "zip_base64", "selections", "resolution", "prefix", "media", "status"}:
         raise ValueError("Invalid Chatbook import command.")
     stores = arguments["stores"]
     if (
         type(stores) is not list or not all(type(key) is str for key in stores)
         or "ChaChaNotes" not in stores or not set(stores) <= _PROFILE_IMPORT_STORES.keys()
-        or type(arguments["archive"]) is not str or not Path(arguments["archive"]).is_absolute()
+        or type(arguments["zip_base64"]) is not str
         or type(arguments["prefix"]) is not bool or type(arguments["media"]) is not bool
     ):
         raise ValueError("Invalid Chatbook import destination or options.")
+    encoded = arguments["zip_base64"]
+    if len(encoded) > 4 * ((_MAX_ARCHIVE_CONTAINER_BYTES + 2) // 3):
+        raise ValueError(_ARCHIVE_LIMIT_ERROR)
+    archive = base64.b64decode(encoded, validate=True)
+    if len(archive) > _MAX_ARCHIVE_CONTAINER_BYTES:
+        raise ValueError(_ARCHIVE_LIMIT_ERROR)
     current = get_chatbook_database_paths()
     if any(Path(current[key]) != profile / database_leaf(_PROFILE_IMPORT_STORES[key]) for key in stores):
         raise ValueError("Chatbook import destination changed.")
@@ -195,10 +230,11 @@ def _execute_profile_import(profile: Path, arguments: dict) -> dict:
     status = ImportStatus()
     status._adopt_writer_status(arguments["status"])
     importer = ChatbookImporter({key: current[key] for key in stores})
-    success, message = importer.import_chatbook(
-        Path(arguments["archive"]), selections, ConflictResolution(arguments["resolution"]),
-        arguments["prefix"], arguments["media"], status,
-    )
+    with content_operation((*importer.db_paths.values(), importer.temp_dir)):
+        success, message = importer._import_archive(
+            None, selections, ConflictResolution(arguments["resolution"]),
+            arguments["prefix"], arguments["media"], status, archive_data=archive,
+        )
     return {"success": success, "message": message, "status": status.to_dict()}
 
 
@@ -936,19 +972,18 @@ class ChatbookImporter:
                     None,
                     "Unsupported chatbook format. Only ZIP files are supported.",
                 )
-            with chatbook_path.open("rb") as archive_source:
-                if (
-                    os.fstat(archive_source.fileno()).st_size
-                    > _MAX_ARCHIVE_CONTAINER_BYTES
-                ):
-                    raise ValueError(_ARCHIVE_LIMIT_ERROR)
+            handoff = self._profile_writer_target() is not None
+            with _archive_source(chatbook_path, snapshot=handoff) as archive_source:
+                reviewed_sha256 = hashlib.sha256(archive_source.getvalue()).hexdigest() if handoff else None
                 with zipfile.ZipFile(archive_source, "r") as archive:
                     self._preflight_archive(archive)
                     extract_dir = self._create_extract_dir("preview_")
                     self._extract_private_archive(archive, extract_dir)
             with (extract_dir / "manifest.json").open("r", encoding="utf-8") as handle:
                 manifest_data = json.load(handle)
-            return ChatbookManifest.from_dict(manifest_data), None
+            manifest = ChatbookManifest.from_dict(manifest_data)
+            manifest.reviewed_archive_sha256 = reviewed_sha256
+            return manifest, None
 
         except Exception as e:
             error_text = _bounded_error_text(e)
@@ -1177,6 +1212,7 @@ class ChatbookImporter:
         prefix_imported: bool = False,
         import_media: bool = True,
         import_status: Optional[ImportStatus] = None,
+        *, reviewed_archive_sha256: str | None = None,
     ) -> Tuple[bool, str]:
         """
         Import a chatbook into the application.
@@ -1194,39 +1230,29 @@ class ChatbookImporter:
             prefix_imported: Whether to prefix imported content titles
             import_media: Whether to import media files
             import_status: Optional status object populated with item-level results
+            reviewed_archive_sha256: Content digest from the user's archive preview.
 
         Returns:
             Tuple of (success, message)
         """
-        status = import_status if import_status else ImportStatus()
+        return self._import_archive(
+            chatbook_path, content_selections, conflict_resolution, prefix_imported, import_media,
+            import_status or ImportStatus(), reviewed_archive_sha256=reviewed_archive_sha256,
+        )
+
+    def _import_archive(
+        self, chatbook_path, content_selections, conflict_resolution, prefix_imported, import_media, status,
+        *, archive_data=None, reviewed_archive_sha256=None,
+    ):
         extract_dir: Optional[Path] = None
 
         try:
-            try:
-                chatbook_path = validate_path_simple(
-                    chatbook_path, probe_existing=False
-                )
-            except ValueError:
-                status.add_error(_ARCHIVE_SOURCE_PATH_ERROR)
-                return False, _ARCHIVE_SOURCE_PATH_ERROR
-
-            profile = self._profile_writer_target()
-            if profile is not None and type(status) is ImportStatus:
-                from ..DB.profile_writer import call_profile_writer
-
-                reply = call_profile_writer(profile, "chatbook.import", {
-                    "stores": list(self.db_paths),
-                    "archive": str(chatbook_path.absolute()),
-                    "selections": None if content_selections is None else {
-                        key.value: list(ids) for key, ids in content_selections.items()
-                    },
-                    "resolution": conflict_resolution.value,
-                    "prefix": prefix_imported,
-                    "media": import_media,
-                    "status": status.to_dict(),
-                })
-                status._adopt_writer_status(reply["status"])
-                return reply["success"], reply["message"]
+            if archive_data is None:
+                try:
+                    chatbook_path = validate_path_simple(chatbook_path, probe_existing=False)
+                except ValueError:
+                    status.add_error(_ARCHIVE_SOURCE_PATH_ERROR)
+                    return False, _ARCHIVE_SOURCE_PATH_ERROR
 
             logger.info(
                 f"ChatbookImporter.import_chatbook: Starting import of {chatbook_path}"
@@ -1251,16 +1277,30 @@ class ChatbookImporter:
                 )
                 return False, error_msg
 
-            if chatbook_path.suffix != ".zip":
+            if archive_data is None and chatbook_path.suffix != ".zip":
                 error_msg = "Unsupported chatbook format. Only ZIP files are supported."
                 status.add_error(error_msg)
                 return False, error_msg
-            with chatbook_path.open("rb") as archive_source:
-                if (
-                    os.fstat(archive_source.fileno()).st_size
-                    > _MAX_ARCHIVE_CONTAINER_BYTES
-                ):
-                    raise ValueError(_ARCHIVE_LIMIT_ERROR)
+            profile = self._profile_writer_target() if archive_data is None and type(status) is ImportStatus else None
+            with _archive_source(
+                chatbook_path, archive_data, snapshot=profile is not None, reviewed_sha256=reviewed_archive_sha256,
+            ) as archive_source:
+                if profile is not None:
+                    from ..DB.profile_writer import call_profile_writer
+
+                    reply = call_profile_writer(profile, "chatbook.import", {
+                        "stores": list(self.db_paths),
+                        "zip_base64": base64.b64encode(archive_source.getvalue()).decode("ascii"),
+                        "selections": None if content_selections is None else {
+                            key.value: list(ids) for key, ids in content_selections.items()
+                        },
+                        "resolution": conflict_resolution.value,
+                        "prefix": prefix_imported,
+                        "media": import_media,
+                        "status": status.to_dict(),
+                    })
+                    status._adopt_writer_status(reply["status"])
+                    return reply["success"], reply["message"]
                 with zipfile.ZipFile(archive_source, "r") as archive:
                     manifest, manifest_data = self._preflight_archive(archive)
                     extract_dir = self._create_extract_dir("import_")

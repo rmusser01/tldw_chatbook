@@ -27,7 +27,6 @@ if TYPE_CHECKING:
 
 from loguru import logger
 
-from tldw_chatbook.DB.store_errors import StoreMutationOutcomeUnknown
 from tldw_chatbook.Provider_Contract.provider_continuation import (
     EPHEMERAL_ORIGIN_KEY,
     ContinuationRestoreTarget,
@@ -704,6 +703,9 @@ class LoopDeps:
     # supplies the restore call identity outside model-controlled arguments.
     search_archived_conversations: Callable[[dict], ToolResult] | None = None
     request_conversation_restore: Callable[..., ToolResult] | None = None
+    # A durable observer can explicitly signal that its submitted effect may
+    # have committed. Continuing the loop could repeat that mutation.
+    fatal_observation_errors: tuple[type[Exception], ...] = ()
 
 
 def _continuation_calls_match(
@@ -1386,11 +1388,9 @@ def run_agent_loop(
         if counts_toward_budget:
             budget_steps += 1
         # The service composes incremental durability with live UI here.
-        # Either callback may fail, but observation is never load-bearing
-        # for the run itself.
         try:
             deps.on_step(step)
-        except StoreMutationOutcomeUnknown:
+        except deps.fatal_observation_errors:
             raise
         except Exception:  # noqa: BLE001 — best-effort observation only
             pass
@@ -1429,7 +1429,7 @@ def run_agent_loop(
         trace_steps += 1
         try:
             deps.on_trace_step(step)
-        except StoreMutationOutcomeUnknown:
+        except deps.fatal_observation_errors:
             raise
         except Exception:  # noqa: BLE001 — best-effort observation only
             pass

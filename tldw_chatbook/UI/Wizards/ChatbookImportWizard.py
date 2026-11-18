@@ -1305,6 +1305,7 @@ class ImportProgressStep(WizardStep):
                 prefix_imported=options.get("prefix_imported", False),
                 import_media=options.get("import_media", True),
                 import_status=self.import_status,
+                reviewed_archive_sha256=getattr(manifest, "reviewed_archive_sha256", None),
             )
 
             # Update progress based on actual results

@@ -117,6 +117,7 @@ from .sql_validation import (
     validate_column_name,
 )
 from .sql_logging import preview_params
+from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 from tldw_chatbook.Backup_Recovery.participants import (
     core_cached_connection,
     core_closing,
@@ -145,7 +146,7 @@ from tldw_chatbook.Utils.fts5_match_forms import (
     build_phrase_match_query,
     quote_fts5_prefix,
 )
-from tldw_chatbook.DB.store_errors import StoreConflictError, StoreInputError, StoreSchemaError
+from tldw_chatbook.DB.store_errors import StoreConflictError, StoreInputError, StoreMutationOutcomeUnknown, StoreSchemaError
 #
 ########################################################################################################################
 #
@@ -2940,7 +2941,7 @@ DELETE FROM keywords
                 f"CharactersRAGDB initialization completed successfully "
                 f"db_sha256={self._db_diagnostic_ref}"
             )
-        except SchemaError:
+        except (SchemaError, RecoveryRequired, StoreMutationOutcomeUnknown):
             self.close_connection()
             raise
         except (CharactersRAGDBError, sqlite3.Error) as exc:
@@ -3067,9 +3068,15 @@ DELETE FROM keywords
 
             if not conn:
                 try:
+                    writer_identity = None
+                    if getattr(self, "_profile_writer_profile", None) is not None:
+                        from tldw_chatbook.Utils.platform_files import os as native_files
+
+                        writer_identity = native_files.stat(self.db_path, follow_symlinks=False)
                     conn = connect_private_sqlite(
                         "db.chachanotes.primary",
                         self.db_path_str,
+                        **({"expected_identity": writer_identity} if writer_identity is not None else {}),
                         detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
                         check_same_thread=False,  # Required for threading.local approach
                         timeout=15
@@ -3165,6 +3172,8 @@ DELETE FROM keywords
                         conn.execute("PRAGMA busy_timeout = 15000")
                     self._connection_quiescence.register(conn)
                     self._local.conn = conn
+                    if writer_identity is not None:
+                        self._local.profile_writer_file_identity = (writer_identity.st_dev, writer_identity.st_ino)
                     logger.debug(
                         f"Opened/Reopened SQLite connection "
                         f"db_sha256={self._db_diagnostic_ref} "

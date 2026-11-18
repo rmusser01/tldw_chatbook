@@ -20,34 +20,6 @@ from typing import get_type_hints
 _RUN_METHODS = {}
 
 
-def agent_runs_writer_profile(path: str | Path) -> Path | None:
-    """Enroll only the active profile's stock AgentRuns sibling on Windows."""
-    if sys.platform != "win32" or Path(path).name.lower() != "agent_runs.db":
-        return None
-    from .profile_writer import in_profile_writer
-
-    if in_profile_writer():
-        return None
-    from tldw_chatbook.Backup_Recovery import profile_paths
-
-    selected = profile_paths.lexical_path(path)
-    config = sys.modules.get("tldw_chatbook.config")
-    # An explicit/custom database may be usable while ordinary profile
-    # selection is unavailable. Consult its selector only for a possible
-    # profile path. This lexical prefilter grants no writer authority.
-    if config is None or selected.parent != profile_paths.user_data_dir(
-        config._CONFIG_CACHE or {}
-    ):
-        return None
-    profile = config.get_user_data_dir()
-    if (
-        selected != profile / "agent_runs.db"
-        or config.get_chachanotes_db_path().parent != profile
-    ):
-        return None
-    return profile
-
-
 def encode_agent_definition(definition) -> dict:
     from tldw_chatbook.Agents.agent_models import AgentDefinition
 
@@ -100,7 +72,10 @@ def profile_run_mutation(method):
                 # AgentRuns transaction; an independent RPC could commit it.
                 return method(database, *args, **kwargs)
         from tldw_chatbook.Backup_Recovery.participants import core_access
-        from .profile_writer import ProfileWriterOutcomeUnknown, call_profile_writer
+        from .profile_writer import (
+            ProfileWriterOutcomeUnknown,
+            call_bound_profile_writer,
+        )
 
         core_access(database)
         if database.db_path != profile / "agent_runs.db" or database.db_path_str != str(
@@ -120,7 +95,9 @@ def profile_run_mutation(method):
             run_id = arguments["run_id"] = arguments.get("run_id") or uuid.uuid4().hex
             claim_run(profile, run_id)
             try:
-                result = call_profile_writer(profile, "agent_runs." + name, arguments)
+                result = call_bound_profile_writer(
+                    database, profile, "agent_runs." + name, arguments
+                )
             except BaseException:
                 # The caller has no accepted live run. A committed row can
                 # subsequently be reconciled, without replaying the request.
@@ -128,7 +105,9 @@ def profile_run_mutation(method):
                 raise
         else:
             try:
-                result = call_profile_writer(profile, "agent_runs." + name, arguments)
+                result = call_bound_profile_writer(
+                    database, profile, "agent_runs." + name, arguments
+                )
             except ProfileWriterOutcomeUnknown:
                 # This executor cannot continue an unacknowledged mutation.
                 # Once unwound, a later opener can repair a still-running row.
@@ -142,6 +121,10 @@ def profile_run_mutation(method):
                 json.dumps(result, allow_nan=False), strict=True
             )
         except (ValueError, TypeError) as error:
+            if arguments.get("run_id"):
+                from .profile_writer_run_presence import release_run
+
+                release_run(profile, arguments["run_id"])
             raise ProfileWriterOutcomeUnknown(
                 "Invalid AgentRuns mutation receipt"
             ) from error
@@ -159,31 +142,28 @@ def profile_run_mutation(method):
 _last_database = None
 
 
-def _file_identity(path: Path):
-    from tldw_chatbook.Utils.platform_files import os
-
-    try:
-        info = os.lstat(path)
-    except FileNotFoundError:
-        return None
-    return info.st_dev, info.st_ino
-
-
 def _writer_database(path: Path, *, opening: bool):
     """Reuse the schema-initialized repository, with no handle held between calls."""
     global _last_database
     from .AgentRuns_DB import AgentRunsDB
+    from .profile_writer import current_profile_writer_selection
+    from .profile_writer_selection import writer_file_identity
 
+    selection = current_profile_writer_selection()
     if not opening and _last_database is not None:
-        database, identity = _last_database
-        if database.db_path == path and _file_identity(path) == identity:
+        database, identity, generation = _last_database
+        if (
+            database.db_path == path
+            and generation == selection
+            and writer_file_identity(path) == identity
+        ):
             return database
     database = AgentRunsDB(path, reconcile_on_init=False)
     try:
-        identity = _file_identity(path)
+        identity = writer_file_identity(path)
         if identity is None:
             raise RuntimeError("AgentRuns file disappeared during initialization")
-        _last_database = database, identity
+        _last_database = database, identity, selection
         return database
     except BaseException:
         database.close()
@@ -220,15 +200,10 @@ def execute_profile_writer_command(profile: Path, operation: str, arguments: dic
         except (TypeError, ValueError) as error:
             raise ValueError("Invalid AgentRuns command arguments") from error
 
-    from tldw_chatbook import config
     from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
-    from .profile_writer import ProfileWriterOutcomeUnknown, in_profile_writer
+    from .profile_writer import ProfileWriterOutcomeUnknown, executing_writer_repository
 
-    if (
-        not in_profile_writer()
-        or config.get_user_data_dir() != profile
-        or config.get_chachanotes_db_path().parent != profile
-    ):
+    if not executing_writer_repository(profile, "db.agent_runs"):
         raise RecoveryRequired("agent_runs_writer_selection_changed")
     if name == "create_run" and sys.platform == "win32":
         from .profile_writer_run_presence import run_is_live

@@ -1988,10 +1988,22 @@ def acquire_storage(
     return _acquire_ordinary(path, related_paths=related_paths)
 
 
-def _acquire_ordinary(path=None, *, related_paths=(), startup=False):
+def acquire_profile_writer_storage(path: Path) -> StorageLease:
+    """Admit an independent writer, refusing an already closed native gate.
+
+    Its client can be waiting inside an enrolled repository operation.
+    Maintenance needs that client to receive a refusal and physically drain.
+    """
+    return _acquire_ordinary(path, refuse_waiting_maintenance=True)
+
+
+def _acquire_ordinary(path=None, *, related_paths=(), startup=False, refuse_waiting_maintenance=False):
     attempt = _Acquisition()
     try:
-        return _acquire_storage(path, attempt, related_paths=related_paths, startup=startup)
+        return _acquire_storage(
+            path, attempt, related_paths=related_paths, startup=startup,
+            refuse_waiting_maintenance=refuse_waiting_maintenance,
+        )
     except bootstrap.RecoveryRequired:
         raise
     except (OSError, ValueError, RuntimeError) as error:
@@ -2005,6 +2017,7 @@ def _acquire_ordinary(path=None, *, related_paths=(), startup=False):
 def _acquire_storage(
     path: Path | None, attempt: _Acquisition, *,
     related_paths: tuple[Path, ...] = (), startup: bool = False,
+    refuse_waiting_maintenance: bool = False,
 ) -> StorageLease:
     """Check fixed evidence and hold declared scope before any owned open/write.
 
@@ -2112,6 +2125,8 @@ def _acquire_storage(
     # them, and another acquiring thread must share this same native hold.
     try:
         while not hold.ready.wait(0.01):
+            if refuse_waiting_maintenance and authority.pause_requested(names):
+                raise bootstrap.RecoveryRequired("profile_writer_maintenance_pause")
             with checked():
                 pass
         if hold.error is not None:

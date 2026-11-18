@@ -192,6 +192,7 @@ def test_the_local_importer_takes_no_embeddings_option():
         "prefix_imported",
         "import_media",
         "import_status",
+        "reviewed_archive_sha256",
     }
 
 
@@ -278,6 +279,7 @@ async def test_the_local_call_passes_only_real_parameters(monkeypatch):
         description="Bundle",
     )
     manifest.total_conversations = 1
+    manifest.reviewed_archive_sha256 = "a" * 64
 
     step = ImportProgressStep(
         wizard=_fake_wizard(
@@ -336,7 +338,9 @@ async def test_the_local_call_passes_only_real_parameters(monkeypatch):
         "prefix_imported",
         "import_media",
         "import_status",
+        "reviewed_archive_sha256",
     }, sorted(recorded)
+    assert recorded["reviewed_archive_sha256"] == manifest.reviewed_archive_sha256
     assert "import_embeddings" not in recorded
 
 
