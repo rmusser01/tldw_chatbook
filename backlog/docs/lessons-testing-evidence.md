@@ -25997,3 +25997,9 @@ opens. A follow-up trace caught layout and control refresh in the same loop
 gap while the activation was already suspended. The exact-source repeat
 passed all 12. Measure the longest loop gap and Return-to-paint separately,
 and keep the first run and repeat beside the instrumented comparison.
+
+## An unlink checkpoint must select a file (TASK-41564, 2026-11-18)
+
+**Incident.** Hosted comprehensive core shard 2 failed `test_remove_target_worktree_real_git_resumes_namespace_checkpoints[admin_content_removed]` because its injected `KeyboardInterrupt` never fired. The fixture selected the first Git administration entry except `gitdir`; that can be the `logs` directory, which cleanup removes with `rmdir`, while the injection watches `unlink`. The unchanged node passed natively. Reordering only the private fixture's `Path.iterdir` directory-first selected real `logs` and reproduced the failure; production filesystem calls stayed unchanged. Selecting existing `HEAD` with a regular-file `lstat` assertion passed that control and all six checkpoints. Hosted entry ordering was not recorded, so the Git version alone does not establish its cause.
+
+**What to do.** Pick a fixture object of the exact kind the injected operation handles. Keep filesystem enumeration order out of the fault target, and exercise the alternate ordering before blaming platform cleanup.

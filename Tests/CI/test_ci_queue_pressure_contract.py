@@ -946,6 +946,7 @@ ADMISSION_2_TARGETS = (
     "Tests/UI/test_console_modal_dismissal.py::test_settings_redirected_select_click_uses_real_mro_dispatch",
     "Tests/UI/test_console_modal_dismissal.py::test_task4_shared_modal_cancel_sources_return_exact_result",
     "Tests/UI/test_console_modal_dismissal.py::test_task2_contract_selector_exists_and_escape_returns_cancel_result",
+    "Tests/UI/test_console_modal_dismissal.py::test_held_tool_slots_cancel_preserves_capacity",
     "Tests/UI/test_console_modal_dismissal.py::test_task3_contract_selector_exists_and_escape_returns_cancel_result",
     # TASK-33666 (Phase 9 fix): a Stop keeps the chat start's automatic slot
     # until the provider worker, and the bridge worker, exit (bootstrap_profile).
