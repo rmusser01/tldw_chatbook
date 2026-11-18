@@ -59,6 +59,8 @@ from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleTranscript,
 )
 
+pytestmark = pytest.mark.bootstrap_profile
+
 
 class _ActivityHarness(ConsolidatedCSSApp):
     """A bare mounted transcript -- the same surface the Console mounts."""
@@ -1060,6 +1062,48 @@ async def test_a_ticking_elapsed_alone_repaints_the_transcript():
 
 
 @pytest.mark.asyncio
+async def test_a_line_no_row_can_show_never_reopens_the_pipeline():
+    """A ticking line that no row is eligible to show must not run the
+    message pipeline once a second (TASK-41313)."""
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    screen, _transcript = _sync_stub("⚙ read_file · 4s", effective="")
+    await ChatScreen._sync_native_console_transcript(screen)
+    screen._agent.console_turn_activity.return_value = "⚙ read_file · 5s"
+    await ChatScreen._sync_native_console_transcript(screen)
+
+    assert screen._message._native_console_messages.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_the_line_shows_on_the_tick_its_row_first_arrives():
+    """The gate's apply sees the previous rows; the apply after
+    ``set_messages`` must hand the line to a row that arrives on this tick."""
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    line = "⚙ read_file · 4s"
+    screen, transcript = _sync_stub(line)
+    screen._console_send_ack = None  # push the projected rows through as-is
+    rows = []
+    transcript.set_messages.side_effect = lambda messages, *_a, **_k: rows.extend(
+        messages
+    )
+    transcript.apply_turn_activity.side_effect = lambda activity, **_k: (
+        activity if rows else ""
+    )
+    await ChatScreen._sync_native_console_transcript(screen)
+    assert transcript.refresh_messages.await_count == 1
+
+    screen._change_review_projection.project.return_value = [
+        SimpleNamespace(id="assistant-1")
+    ]
+    await ChatScreen._sync_native_console_transcript(screen, force=True)
+
+    assert transcript.apply_turn_activity.call_args.args == (line,)
+    assert transcript.refresh_messages.await_count == 2
+
+
+@pytest.mark.asyncio
 async def test_published_token_usage_repaints_once_per_changed_scalar():
     """Repeated chunk observations cannot churn the DOM until publication changes."""
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
@@ -1068,6 +1112,8 @@ async def test_published_token_usage_repaints_once_per_changed_scalar():
     await ChatScreen._sync_native_console_transcript(screen)
     await ChatScreen._sync_native_console_transcript(screen)
     assert transcript.refresh_messages.await_count == 1
+    # The unchanged line kept the gate shut: the pipeline ran once, not twice.
+    assert screen._message._native_console_messages.call_count == 1
 
     changed = "Generating… · 2s · ~11 local output tok"
     screen._agent.console_turn_activity.return_value = changed

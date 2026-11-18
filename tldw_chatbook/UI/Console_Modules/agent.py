@@ -728,6 +728,28 @@ def _viewed_reply_is_streaming(controller: Any, session_id: Any) -> bool:
     return False
 
 
+def _memoized_reply_is_streaming(owner: Any, controller: Any, session_id: Any) -> bool:
+    """``_viewed_reply_is_streaming``, read again only when the transcript moved.
+
+    The 0.2s tick asks on every pass and the read copies the whole session,
+    so the answer is kept per (store, session, display revision): most
+    transcript-visible store changes advance that revision (TASK-41313). A
+    ~3 s time bucket re-reads it anyway, like the transcript gate's forced
+    pass, for the changes that do not (a resumed attempt, an empty chunk).
+    """
+    try:
+        store = controller.store
+        revision = store.display_projection_revision(session_id)
+        key = (id(store), session_id, revision, int(time.monotonic() // 3))
+    except Exception:  # noqa: BLE001 - store double or unknown session: no memo
+        return _viewed_reply_is_streaming(controller, session_id)
+    memo = getattr(owner, "_console_reply_streaming_memo", None)
+    if memo is None or memo[0] != key:
+        memo = (key, _viewed_reply_is_streaming(controller, session_id))
+        vars(owner)["_console_reply_streaming_memo"] = memo
+    return memo[1]
+
+
 #: TASK-34100.5 AC#5: the first-token wait copy and when it replaces
 #: "Generating…" (a warm model answers well inside this).
 _FIRST_TOKEN_HINT_AFTER_SECONDS = 15.0
@@ -1284,7 +1306,7 @@ class ConsoleAgentController:
             reply_streaming=(
                 getattr(snapshot, "status", "idle") == "idle"
                 and now - seen[1] >= _FIRST_TOKEN_HINT_AFTER_SECONDS
-                and _viewed_reply_is_streaming(controller, viewed)
+                and _memoized_reply_is_streaming(self, controller, viewed)
             ),
         )
 
