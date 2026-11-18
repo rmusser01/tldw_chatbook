@@ -11,7 +11,12 @@ from typing import Literal
 from unicodedata import category
 from urllib.parse import urlparse, urlsplit, urlunparse, urlunsplit
 
-from tldw_chatbook.provider_registry import ALL_RECORDS, CUSTOM_HOSTED, ProviderRecord
+from tldw_chatbook.provider_registry import (
+    ALL_RECORDS,
+    CUSTOM_HOSTED,
+    RECORDS_BY_KEY,
+    ProviderRecord,
+)
 
 EndpointForm = Literal[
     "origin",
@@ -80,6 +85,16 @@ _ENGINE_PRESETS = {
     for record in ALL_RECORDS
     if record.engine_driven and record.key != "custom-hosted"
 }
+#: TASK-41700 (owner decision 2026-11-18, "Allow gateway paths"): a
+#: first-party cloud adapter appends its route to its configured base, so a
+#: base whose ``v1`` is not last (a Cloudflare AI Gateway
+#: ``/v1/<account>/<gateway>/openai``, DeepInfra's ``/v1/openai``) is read
+#: as its API base, as the custom-hosted engine reads one.
+_CLOUD_BASE_KEYS = frozenset(
+    key
+    for key, record in RECORDS_BY_KEY.items()
+    if record.classification == "cloud" and not record.engine_driven
+)
 
 
 #: TASK-34100.6 (review provider-20 / task-33621.32): a preset whose saved base
@@ -319,7 +334,7 @@ def _resolve_provider_endpoint(
         suffix = (suffix[0], "chat_url") if suffix and suffix[1] == "origin" else None
     if (
         suffix is None
-        and provider_key == "custom_hosted"
+        and (provider_key == "custom_hosted" or provider_key in _CLOUD_BASE_KEYS)
         and not _names_a_route(segments)
     ):
         # TASK-40300, owner decision 2026-11-13: an OpenAI-compatible custom
@@ -328,6 +343,7 @@ def _resolve_provider_endpoint(
         # read as its custom-hosted engine reads it. A route is not a base
         # (chat would post to .../completions/chat/completions) and stays
         # refused.
+        # TASK-41700: so is a first-party cloud provider's gateway base.
         return _engine_preset_resolution(
             CUSTOM_HOSTED, provider_key, scheme, netloc, canonical_host, segments
         )
@@ -858,6 +874,10 @@ def _display_resolution(value: str):
     resolution = resolve_provider_endpoint("custom", value)
     if resolution.persisted_endpoint is None:
         resolution = resolve_provider_endpoint("koboldcpp", value)
+    if resolution.persisted_endpoint is None:
+        # TASK-41700: a gateway base (``/v1/<account>/<gateway>/openai``)
+        # displays as itself, not "invalid endpoint".
+        resolution = resolve_provider_endpoint("custom_hosted", value)
     return resolution
 
 

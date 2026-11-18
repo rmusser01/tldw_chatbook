@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-17 05:27
-updated_date: 2026-11-18 03:55
+updated_date: 2026-11-18 04:56
 labels:
 - follow-up
 - security
@@ -63,7 +63,7 @@ Every first-party cloud adapter now checks the base URL it is about to send to, 
 
 **Other checks.** `Tests/Architecture/test_module_size_ratchet.py` and `test_screen_size_ratchet.py` 232 passed (LLM_API_Calls.py row 5189 -> 5202, the change's own +13, owner rule). `Tests/Performance` boot budgets: the first-send warm-up (95 > 94) and UI-ready census (1041 > 1040) fail identically with base sources (modules from dev: `RAG_Search.scope_evidence`, `DB.character_conversation_search`, `Provider_Contract.provider_setup_facts`); the pre-import LOC pass is green. `ruff_gate.py` OK. Preflight passed.
 
-**Behaviour change.** A non-Console caller with a cloud base the contract refuses is now refused, as Console already refused it since TASK-40300; for example OpenAI behind a Cloudflare AI Gateway (`https://gateway.ai.cloudflare.com/v1/<acct>/<gw>/openai`, "Endpoint path has ambiguous API suffixes.").
+**Behaviour change.** A non-Console caller with a cloud base the contract refuses is now refused, as Console already refused it since TASK-40300; for example OpenAI behind a Cloudflare AI Gateway (`https://gateway.ai.cloudflare.com/v1/<acct>/<gw>/openai`, "Endpoint path has ambiguous API suffixes."). Superseded by TASK-41700 (owner decision 2026-11-18): a cloud provider's gateway base is now accepted, in Console and everywhere else.
 
 Files: `tldw_chatbook/LLM_Calls/hosted_chat.py`, `LLM_API_Calls.py`, `qwencloud.py`, `LLM_API_Calls_Local.py` and `Provider_Contract/provider_endpoint_contract.py` (docstrings), `Docs/Architecture/llm-providers.md` (gotcha 6), `Tests/Chat/test_local_server_discovery.py`, `Tests/LLM_Calls/test_hosted_chat.py`, `Tests/Architecture/test_module_size_ratchet.py`.
 
