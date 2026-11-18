@@ -936,6 +936,7 @@ def test_navigation_completion_releases_callback_before_invocation() -> None:
 @pytest.mark.parametrize("switch", ["replace", "reject", "overlay"])
 async def test_settings_transfer_ends_process_console_visit_before_mount(monkeypatch, switch):
     """A completed turn's trailing refresh cannot own the outgoing Settings visit."""
+    from textual.screen import Screen
     from tldw_chatbook.Chat.console_execution_process import ConsoleExecutionClient
     from tldw_chatbook.Chat.console_execution_projection_view import ConsoleProjectionView
     from tldw_chatbook.UI.Console_Modules import execution_state
@@ -954,10 +955,11 @@ async def test_settings_transfer_ends_process_console_visit_before_mount(monkeyp
     monkeypatch.setattr(execution_state, "ChatScreen", SimpleNamespace)
     monkeypatch.setattr(type(app), "screen", property(lambda self: self._screen_stack[-1]))
 
-    class SettingsTarget:
+    class SettingsTarget(Screen):
         screen_name = "settings"
 
         def __init__(self, app_instance):
+            super().__init__()
             self.app_instance = app_instance
 
     def switch_before_textual_suspend(target):
