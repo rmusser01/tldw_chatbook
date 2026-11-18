@@ -1409,22 +1409,27 @@ def plan_restore(
         ["owner_setup_required:" + owner for owner in sorted(deferred_selected)]
         + sorted(set(projection_issues)),
     )
-    if local_snapshot is None:
-        from tldw_chatbook.Personal_Context.recovery import restore_plan_issue
+    from tldw_chatbook.Personal_Context.recovery import restore_plan_issue
 
-        owners_by_id = {row.logical_id: row.owner_id for row in doc.files}
-        # TASK-40135/40136: how each restored repository ends, said first.
-        issues += [
-            issue
-            for key, path in plan.restore
-            if owners_by_id.get(key) == "personal_context.repository"
-            and (
-                issue := restore_plan_issue(
-                    archive, doc, key, path, isolated=mode == "isolated"
-                )
+    owners_by_id = {row.logical_id: row.owner_id for row in doc.files}
+    # TASK-40135/40136: how each restored repository ends, said first. A later
+    # rollback names a new account only when its own is gone (TASK-41122).
+    issues += [
+        issue
+        for key, path in plan.restore
+        if owners_by_id.get(key) == "personal_context.repository"
+        and (
+            issue := restore_plan_issue(
+                archive,
+                doc,
+                key,
+                path,
+                isolated=mode == "isolated",
+                rollback=local_snapshot is not None,
             )
-            is not None
-        ]
+        )
+        is not None
+    ]
     restored_ids = {key for key, _ in restore}
     for record in records:
         if record.logical_id not in restored_ids:

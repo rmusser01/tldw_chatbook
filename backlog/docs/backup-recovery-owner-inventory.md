@@ -4119,6 +4119,19 @@ owner decision 2026-11-13). Confirming **Review restored profile** in Settings >
 Personal Context first re-encrypts the profile under a fresh key
 (`PersonalContextService.reencrypt_after_restore`, TASK-40140; owner decision
 2026-11-13), then approves; a failed re-encryption approves nothing.
+Re-encryption keeps the old account while a recovery copy may name it (TASK-41120):
+it writes a durable `personal-context-kept-<hex>.json` record (account, database
+path, the copies listed then) into the recovery control root, and
+`delete_recovery_copy` calls `recovery.forget_kept_keys`, which deletes the
+account once none of those copies remains, no copy's evidence is unreadable, and
+neither the recorded database (a missing one may have moved, so it counts) nor
+the current default database names it. The copy list is frozen at re-encryption:
+a later copy usually names the new account; if a later rollback revived the kept
+account, the TASK-41122 reinstall covers it, since a later rollback to a copy
+whose account is gone reinstalls the key that copy escrowed
+(`restore_key(rollback=True)` plans
+`personal_context_restore_readable` only then, and the restore path installs it
+into a fresh `recovery_` account), so later copies need no record.
 Detached import refuses the repository by name
 (`detached_owner_unavailable:personal_context.repository`): it carries no key.
 Manual (inert) extraction never offers or writes credential material.
@@ -4135,4 +4148,6 @@ Manual (inert) extraction never offers or writes credential material.
 | tldw_chatbook/Personal_Context/recovery.py | _archived_key | connect_private_sqlite | 1 | qualified | personal_context.repository; in-memory image only, no file (TASK-40135) |
 | tldw_chatbook/Personal_Context/recovery.py | verify_restored_key | connect_private_sqlite | 1 | qualified | personal_context.repository; read-only check of the published copy (TASK-40135) |
 | tldw_chatbook/Personal_Context/recovery.py | stored_restore_marker | connect_private_sqlite | 1 | qualified | personal_context.repository; read-only peek at a restore marker when no secure keyring exists (TASK-40136) |
+| tldw_chatbook/Personal_Context/recovery.py | _names_account | connect_private_sqlite | 1 | qualified | personal_context.repository; read-only check whether a live database still names a kept account (TASK-41120) |
+| tldw_chatbook/Personal_Context/recovery.py | forget_kept_keys | os.unlink | 1 | generic_boundary | backup_control |
 

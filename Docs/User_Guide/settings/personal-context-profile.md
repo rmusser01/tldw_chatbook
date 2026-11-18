@@ -173,6 +173,12 @@ Each record has two independent controls:
 
 Authority is runtime-local and configured separately for every scope:
 
+- **Off** gives agents no access to the scope: no context and no tools. A chat
+  in a workspace whose authority is Off gets no profile context at all, global
+  records included, and Off on the global scope withholds profile context from
+  every chat. You can choose Off for any scope and change it back
+  the same way. A restored profile whose setting for a scope was damaged gets
+  Off for that scope.
 - **Read only** permits bounded context plus search/get tools.
 - **Propose changes** also lets an agent create a reviewable proposal. This is
   the default.
@@ -365,7 +371,10 @@ Personal Context merge or resolution action in Settings.
   review says first whether it will be readable or locked, and why. Its key goes
   into a new keyring entry; no existing keyring entry is changed, so a later
   rollback still opens your previous profile with its own key, even after the
-  restored profile is linked or removed. The key comes from the backup when it
+  restored profile is linked or removed. If this device's keyring has lost that
+  key by the time you roll back, the rollback puts the copy of it saved in its
+  recovery copy into a new keyring entry and opens the profile with that. The
+  key comes from the backup when it
   includes credentials, or else from this device if it still holds it. If no key
   opens the restored profile, or this device has no secure keyring, Personal
   Context is restored but stays locked, its data is kept, and the review asks
@@ -377,7 +386,9 @@ Personal Context merge or resolution action in Settings.
   off, and a restored profile never resumes its old link. Settings > Personal
   Context says sync is off because the profile was restored and shows **Review
   restored profile**. Confirming it re-encrypts the profile under a new key in
-  the background, so the key in the backup no longer reads it, then confirms the
+  the background, so the key in the backup no longer reads it (the old key's
+  keyring entry stays while a recovery copy may need it, and is deleted when you
+  delete the last such copy), then confirms the
   profile on this device and, when the restore brought back the old link, forgets
   it, so **Link to home server** starts a fresh first link. If re-encrypting
   fails, nothing is confirmed, the profile stays readable, and you can review it
@@ -389,10 +400,22 @@ Personal Context merge or resolution action in Settings.
   **Advanced / Diagnostics**, choose **Switch Source / Server**, then **Activate
   Server** with the same server. Until then
   Settings > Personal Context keeps saying sync is off and names that step. Link
-  to home server waits for both reviews. If some records were damaged so that no
-  key can read them, **Review restored profile** first says how many, and
-  confirming removes them while it re-encrypts the rest. When the review cannot
-  be read, Settings says sync stays off and why.
+  to home server waits for both reviews. If some records or other stored items
+  (proposals, older versions, queued sync changes, undo entries, record links,
+  workspace mappings or agent access settings) were damaged so that no key can
+  read them, **Review restored profile** first says how many of each kind, and
+  confirming removes them while it re-encrypts the rest. A removed workspace
+  mapping can be set again. A removed agent access setting is replaced by
+  **Off**: agents get no access to that scope until you choose its authority
+  again. A damaged scope is rebuilt instead, and the review says so with the
+  number of its records, which are kept: the global scope stays global, a
+  workspace keeps its mapping and its name (one without a name becomes
+  "Recovered scope"), and the scope keeps its agent authority (Off stays Off)
+  unless that setting was damaged too, in which case it is Off. If several
+  damaged scopes can't be told apart, the review says so and the profile can't
+  be confirmed: restore Personal Context again from another backup, or roll the
+  restore back in Backup & Restore > Recovery copies. When the review cannot be
+  read, Settings says sync stays off and why.
 - Encryption does not hide all metadata, such as object counts and update
   timing. Under `server_trusted_v1`, the authorized home server can decrypt
   syncable content and re-encrypt it with its own keys. HTTPS protects that

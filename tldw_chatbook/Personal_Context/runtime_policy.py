@@ -12,6 +12,9 @@ GLOBAL_POLICY_ID = "personal-context-global-policy"
 
 
 class AgentAuthority(StrEnum):
+    # TASK-41121, owner decision 2026-11-16: an agent access setting lost to
+    # damage reverts to Off, no access until the user sets it again.
+    OFF = "off"
     READ_ONLY = "read_only"
     PROPOSE = "propose"
     DIRECT_WRITE = "direct_write"
@@ -38,6 +41,7 @@ class PersonalContextAuthorityError(PermissionError):
 
 
 _AUTHORITY_RANK = {
+    AgentAuthority.OFF: 0,
     AgentAuthority.READ_ONLY: 1,
     AgentAuthority.PROPOSE: 2,
     AgentAuthority.DIRECT_WRITE: 3,

@@ -28,6 +28,7 @@ rebuilds each.
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import zipfile
 from contextlib import closing, suppress
@@ -363,13 +364,17 @@ def _stored_value(protector, account: str):
         raise ValueError(KEYRING_READ_FAILED) from None
 
 
-def restore_key(connection, *, record_value, target: Path, protector):
+def restore_key(connection, *, record_value, target: Path, protector, rollback=False):
     """Pick the key a restore may install: ``(value, None)`` or ``(None, reason)``.
 
     Candidates are the archive's record, then the account the archived copy
     names on this device (the target path's legacy account for an empty
     reference). A value counts only once it authenticates this copy. A copy
     with no live profile holds no key: ``(None, None)``.
+
+    A later rollback (TASK-41122) keeps the account its copy names:
+    ``(None, None)``, unless that account holds nothing on this device and the
+    rollback copy's escrowed record authenticates the copy.
     """
     from .repository_keys import KEY_ACCOUNT, profile_key_opens
 
@@ -391,6 +396,13 @@ def restore_key(connection, *, record_value, target: Path, protector):
         )
         if account is not None:
             candidates.append((account, _stored_value(protector, account)))
+    if rollback:
+        lost = protector is not None and account is not None and candidates[-1][1] is None
+        if lost and record_value is not None and profile_key_opens(
+            connection, stored, record_value
+        ):
+            return record_value, None
+        return None, None
     for account, value in candidates:
         if value is not None and profile_key_opens(connection, account, value):
             if protector is None:
@@ -437,7 +449,9 @@ def restore_account(candidate: Path, logical_id: str) -> str:
     return _RECOVERY_ACCOUNT + hashlib.sha256(seed).hexdigest()[:32]
 
 
-def _archived_key(archive, doc, logical_id: str, target: Path, *, isolated=False):
+def _archived_key(
+    archive, doc, logical_id: str, target: Path, *, isolated=False, rollback=False
+):
     """``restore_key`` against the sealed archive's own copy and record."""
     row = next(row for row in doc.files if row.logical_id == logical_id)
     with zipfile.ZipFile(archive.path) as container:
@@ -468,18 +482,30 @@ def _archived_key(archive, doc, logical_id: str, target: Path, *, isolated=False
         # An in-memory image cannot be in WAL mode; the bytes on disk are untouched.
         connection.deserialize(data[:18] + b"\x01\x01" + data[20:])
         found = restore_key(
-            connection, record_value=record, target=target, protector=_device_protector()
+            connection,
+            record_value=record,
+            target=target,
+            protector=_device_protector(),
+            rollback=rollback,
         )
     return _isolated(record, *found) if isolated else found
 
 
 def restore_plan_issue(
-    archive, doc, logical_id: str, target: Path, *, isolated: bool = False
+    archive,
+    doc,
+    logical_id: str,
+    target: Path,
+    *,
+    isolated: bool = False,
+    rollback: bool = False,
 ) -> str | None:
     """What the plan says before a restore runs: readable or locked, and why."""
     try:
         return _issue(
-            *_archived_key(archive, doc, logical_id, target, isolated=isolated),
+            *_archived_key(
+                archive, doc, logical_id, target, isolated=isolated, rollback=rollback
+            ),
             logical_id,
         )
     except (OSError, KeyError, sqlite3.Error, zipfile.BadZipFile, json.JSONDecodeError):
@@ -495,13 +521,14 @@ def stamp_restored_key(
     planned: str | None,
     account: str,
     isolated: bool = False,
+    rollback: bool = False,
 ) -> None:
     """Rewrite a staged copy's key reference; nothing is written to the keyring.
 
     Readable: the copy names ``account``, which must be unused. Locked: the
     copy names the marker. A removed profile names nothing. Only
     ``key_account`` changes. A result other than the reviewed plan's refuses
-    before any write.
+    before any write. A later rollback that keeps its account writes nothing.
     """
     from tldw_chatbook.DB.private_sqlite import open_recovery_validation
 
@@ -510,13 +537,19 @@ def stamp_restored_key(
         OWNER, candidate, writable=True, with_restrictions=True
     ) as (connection, restrictions):
         value, reason = restore_key(
-            connection, record_value=record_value, target=target, protector=protector
+            connection,
+            record_value=record_value,
+            target=target,
+            protector=protector,
+            rollback=rollback,
         )
         if isolated:
             value, reason = _isolated(record_value, value, reason)
         if _issue(value, reason, logical_id) != planned:
             raise ValueError("personal_context_restore_changed")
         if value is None and reason is None:
+            if rollback:
+                return  # TASK-41122: the copy keeps the account it names
             reference = ""
         elif reason is not None:
             reference = MARKER + reason
@@ -547,7 +580,9 @@ def install_restored_keys(archive, doc, plan, candidate: Path) -> None:
     for key, target in plan.restore:
         if RESTORE_READABLE + ":" + key not in plan.issues:
             continue
-        value, reason = _archived_key(archive, doc, key, target)
+        value, reason = _archived_key(
+            archive, doc, key, target, rollback=plan.local_snapshot is not None
+        )
         if reason is not None or value is None:
             raise ValueError("personal_context_restore_changed")
         protector = _device_protector()
@@ -664,24 +699,150 @@ def verify_restored_keys(plan) -> tuple[str, ...]:
     )
 
 
-def reencrypt_profile(repository, *, expected_damaged: int = 0) -> str:
+def reencrypt_profile(repository, *, expected_damaged=None) -> str:
     """TASK-40140: re-encrypt a profile so an old archive's key reads no live row.
 
     Owner decision 2026-11-13: confirming "Review restored profile" calls this
-    (``PersonalContextService.reencrypt_after_restore``). Owner decision
-    2026-11-14: the ``expected_damaged`` unreadable record versions the review
-    showed are removed in the same transaction; a different count refuses. The
-    old account stays while any recovery copy exists: a retained copy may name
-    it, and its later rollback would then open nothing (ADR-126 decision 8).
+    (``PersonalContextService.reencrypt_after_restore``). Owner decisions
+    2026-11-14 and 2026-11-15: the unreadable versions the review showed, by
+    kind in ``expected_damaged``, are removed in the same transaction; other
+    counts refuse. The old account stays while a recovery copy may name it: its
+    later rollback would then open nothing (ADR-126 decision 8). TASK-41120
+    records it, and deleting the last such copy deletes it.
     """
-    from tldw_chatbook.Backup_Recovery.recovery_copies import list_recovery_copies
     from tldw_chatbook.Backup_Recovery.service_storage import default_control_root
 
-    try:
-        retained = bool(list_recovery_copies(default_control_root()))
-    except Exception:  # noqa: BLE001 - unreadable copies count as retained
-        retained = True
+    control = default_control_root()
+    listed = _listed(control)
+    copies = None if listed is None else _copies_naming(listed)
+
+    def kept(account: str) -> None:
+        with suppress(Exception):  # unrecorded, the entry only stays (as before)
+            _record_kept(control, account, repository.db_path, copies)
+
     return repository.reencrypt_profile(
-        keep_old_account=retained, expected_damaged=expected_damaged
+        keep_old_account=copies is None or bool(copies),
+        expected_damaged=expected_damaged,
+        on_kept=kept if copies else None,
     )
 
+
+# TASK-41120: an account re-encryption kept for recovery copies is recorded in
+# the recovery control root with those copies, and goes with the last of them.
+_KEPT = re.compile(r"personal-context-kept-[0-9a-f]{32}\.json")
+
+
+def _listed(control_root: Path):
+    """The listed recovery copies, or None when they cannot be listed."""
+    from tldw_chatbook.Backup_Recovery.recovery_copies import list_recovery_copies
+
+    try:
+        return list_recovery_copies(control_root)
+    except Exception:  # noqa: BLE001 - unreadable copies count as naming it
+        return None
+
+
+def _copies_naming(copies) -> frozenset[str]:
+    """Recovery copies that may name a Personal Context account.
+
+    Copies are encrypted, so which account one names cannot be read. One whose
+    ciphertext is gone (deleted) or that captured no Personal Context
+    repository names none; one whose evidence cannot be read may.
+    """
+    return frozenset(
+        copy.operation_id
+        for copy in copies
+        if copy.status != "missing"
+        and (
+            copy.status == "recovery_required"
+            or any(key.split(":")[2:3] == [OWNER] for key, _ in copy.coverage)
+        )
+    )
+
+
+def _record_kept(control_root: Path, account: str, database, copies) -> None:
+    from tldw_chatbook.Backup_Recovery.control_records import _write
+
+    record = {
+        "version": 1,
+        "account": account,
+        "database": str(Path(database).absolute()),
+        "copies": sorted(copies),
+    }
+    name = "personal-context-kept-" + os.urandom(16).hex() + ".json"
+    _write(control_root, name, json.dumps(record, sort_keys=True).encode())
+
+
+def _names_account(database: Path, account: str) -> bool:
+    """Whether a live database may name ``account``: the recorded one, or the
+    current default one. A missing recorded database may have moved, so it
+    counts (review r15pc-rev1); so does any read that cannot tell."""
+    from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+
+    from .paths import get_personal_context_db_path
+
+    if not database.exists():
+        return True
+    try:
+        paths = dict.fromkeys((database, get_personal_context_db_path()))
+        for path in paths:
+            if not path.exists():
+                continue
+            with closing(
+                connect_private_sqlite(
+                    "recovery.personal_context.repository", path, read_only=True
+                )
+            ) as connection:
+                if connection.execute(
+                    "SELECT 1 FROM profile_meta WHERE key_account = ?", (account,)
+                ).fetchone():
+                    return True
+    except Exception:  # noqa: BLE001 - could not tell: keep the account
+        return True
+    return False
+
+
+def forget_kept_keys(control_root: Path) -> None:
+    """After a recovery copy is deleted, delete each kept account that no
+    remaining copy may name and no live database names (TASK-41120).
+
+    A record lists the copies that existed at re-encryption. A copy made later
+    usually names the new account; if a later rollback revived the kept
+    account, the TASK-41122 reinstall covers it (a rollback to a copy whose
+    account is gone puts that copy's escrowed key into a fresh account), so
+    later copies need no record. While any copy's evidence
+    cannot be read (its listed id is not the one recorded), nothing is deleted.
+    Never raises: the copy is already gone, and an entry left behind holds
+    only an old key that reads no live row.
+    """
+    from tldw_chatbook.Backup_Recovery.bootstrap import _read
+    from tldw_chatbook.Backup_Recovery.native_files import pinned_directory
+    from tldw_chatbook.Utils.platform_files import os as native_os
+
+    from .repository_keys import KEY_ACCOUNT
+
+    with suppress(Exception):
+        listed = _listed(control_root)
+        protector = _device_protector()
+        if (
+            listed is None
+            or protector is None
+            or any(copy.status == "recovery_required" for copy in listed)
+        ):
+            return
+        remaining = _copies_naming(listed)
+        with pinned_directory(control_root) as parent:
+            for name in sorted(native_os.listdir(parent)):
+                if not _KEPT.fullmatch(name):
+                    continue
+                with suppress(Exception):
+                    record = _read(parent, name)
+                    account = record["account"]
+                    if (
+                        not KEY_ACCOUNT.fullmatch(account)
+                        or remaining & set(record["copies"])
+                        or _names_account(Path(record["database"]), account)
+                    ):
+                        continue
+                    protector.delete(account)
+                    native_os.unlink(name, dir_fd=parent)
