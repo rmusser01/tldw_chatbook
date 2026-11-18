@@ -136,22 +136,24 @@ async def test_one_unbound_owner_does_not_abort_the_other_owners(app, monkeypatc
         _assert_closed(connection)
 
 
-async def test_chat_retirement_does_not_block_the_loop_on_another_writer(app):
-    """PR #3536 review I3: the Chat close ran `wal_checkpoint(TRUNCATE)` on the
-    loop and waited out the 15 s busy_timeout while another writer held the DB."""
-    import time
-
+async def test_chat_retirement_skips_the_wal_truncation_on_the_loop(app):
+    """PR #3536 review I3: the Chat close runs on the loop, so it issues no
+    `wal_checkpoint(TRUNCATE)`; while another handle holds the WAL that would
+    backfill on the loop (before TASK-41115 it also waited out the holder's
+    busy_timeout). Timing cannot tell the two apart since that change, so
+    assert the statements."""
     connection = app.chachanotes_db._local.conn
+    assert connection.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
+    statements = []
+    connection.set_trace_callback(statements.append)
     holder = sqlite3.connect(app.chachanotes_db.db_path_str, isolation_level=None)
     holder.execute("BEGIN IMMEDIATE")
     try:
-        started = time.monotonic()
         await LifecycleMixin._retire_app_sqlite_handles(app)
-        took = time.monotonic() - started
     finally:
         holder.rollback()
         holder.close()
-    assert took < 1.0, took
+    assert not any("wal_checkpoint" in sql.lower() for sql in statements), statements
     _assert_closed(connection)
 
 
