@@ -32,6 +32,9 @@ from textual.worker import WorkerState
 
 from tldw_chatbook.Library.ingest_analysis import NO_ANALYSIS_PROVIDER_NEXT_STEP
 from tldw_chatbook.Library.library_media_reader_state import set_mode, set_more_open
+from tldw_chatbook.UI.Library_Modules import (
+    library_media_controller as library_media_controller_module,
+)
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.Library.library_media_state import (
     library_media_int_backing_id,
@@ -1290,7 +1293,7 @@ async def test_escape_labels_are_one_of_five():
         seen: dict[str, str] = {}
 
         def record(state: str) -> None:
-            label = screen._library_media_escape_label()
+            label = screen._media_controller._library_media_escape_label()
             seen[state] = label
             assert label in _ESCAPE_LABELS or label == "", (state, label)
 
@@ -1470,7 +1473,7 @@ async def test_find_is_disabled_with_a_reason_when_the_analysis_tab_has_nothing_
         assert find.disabled is True
         assert "No analysis" in str(find.tooltip)
         # Belt and braces: the handler itself refuses.
-        screen.handle_library_media_reader_find(SimpleNamespace(stop=lambda: None))
+        screen._media_controller.handle_library_media_reader_find(SimpleNamespace(stop=lambda: None))
         await pilot.pause()
         await pilot.pause()
         assert screen._media_state.find_open is False
@@ -3448,7 +3451,7 @@ _VIEWER_RECOMPOSE_ANCHOR = re.compile(
 
 def _screen_pump_follow_ups_after_a_viewer_recompose(
     window: int = 14,
-) -> list[tuple[int, str]]:
+) -> list[tuple[str, int, str]]:
     """The task-31950 census: a viewer recompose, then ``screen.call_after_refresh``.
 
     The brief's ``awk`` rule, in Python so it can fail a test: any
@@ -3456,18 +3459,26 @@ def _screen_pump_follow_ups_after_a_viewer_recompose(
     hands the rebuild to the VIEWER's message pump. Those two pumps have no
     ordering, so a follow-up queued that way runs against whichever tree it
     happens to find.
+
+    TASK-36952.3.1: reads the media controller too. The media bodies this
+    census guards are moving there (11 of the screen's 21 anchors moved in
+    that slice alone), and a screen-only read would stay green while
+    checking none of them.
     """
-    source = Path(library_screen_module.__file__).read_text(encoding="utf-8")
-    anchor: int | None = None
-    hits: list[tuple[int, str]] = []
-    for number, line in enumerate(source.splitlines(), start=1):
-        if _VIEWER_RECOMPOSE_ANCHOR.search(line):
-            anchor = number
-            continue
-        if anchor is None or number - anchor > window:
-            continue
-        if "self.call_after_refresh(" in line:
-            hits.append((number, line.strip()))
+    hits: list[tuple[str, int, str]] = []
+    for module in (library_screen_module, library_media_controller_module):
+        path = Path(module.__file__)
+        anchor: int | None = None
+        for number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            if _VIEWER_RECOMPOSE_ANCHOR.search(line):
+                anchor = number
+                continue
+            if anchor is None or number - anchor > window:
+                continue
+            if "self.call_after_refresh(" in line:
+                hits.append((path.name, number, line.strip()))
     return hits
 
 
@@ -3839,7 +3850,7 @@ async def test_viewer_sync_follow_up_chains_the_restore_when_its_target_is_gone(
         screen._media_state.reader_session = set_more_open(
             screen._media_state.reader_session, True
         )
-        screen._after_library_media_viewer_sync("#library-media-reader-absent")
+        screen._media_controller._after_library_media_viewer_sync("#library-media-reader-absent")
         await _wait_for_selector(screen, pilot, "#library-media-reader-more-actions")
 
         await _settle_focus_on(
@@ -4124,7 +4135,7 @@ async def test_raising_follow_up_still_runs_the_queued_focus_restore():
             raise RuntimeError("follow-up blew up")
 
         with pytest.raises(RuntimeError, match="follow-up blew up"):
-            screen._after_library_media_viewer_sync(boom)
+            screen._media_controller._after_library_media_viewer_sync(boom)
             chained = viewer._post_recompose_callback
             assert chained is not None
             chained()

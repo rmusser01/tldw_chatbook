@@ -754,7 +754,7 @@ async def _walk_size(
                 viewer_back.focus()
                 await pilot.press("enter")
             else:
-                screen._exit_library_media_viewer()
+                screen._media_controller._exit_library_media_viewer()
             await _wait_for_condition(
                 pilot,
                 lambda: (

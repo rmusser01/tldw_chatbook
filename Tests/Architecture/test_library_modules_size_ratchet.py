@@ -497,7 +497,19 @@ _BUDGETS: dict[str, int] = {
     # and checks the route: 5308 -> 5307.
     # 2026-11-13 restack: TASK-40327's in-place Find bar (+6 on its own base)
     # stacked on TASK-40293's landing: 5307 -> 5313 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5313,
+    # 2026-11-15, TASK-36952.3.1 (architecture review F2, media body move
+    # slice 1 of 8; a sanctioned move, recipe SS1): 5275 -> 6015, the file
+    # 5267 -> 6015 (+748): 19 bodies byte-for-byte with their separators and
+    # a section comment (+729), 7 callbacks out (-42), 5 shell-helper
+    # bindings and the `notify` service in (+34), imports (+15), prose (+12).
+    # 2026-11-15, TASK-36952.3.1 rebased onto dev cc6006fcf5 (dev's row 5313,
+    # the file 5313): the same +748, measured 6061.
+    # 2026-11-15, TASK-36952.3.1 fix round 1: 6015 -> 6021 (+6). The module
+    # docstring's binding counts are re-measured (93 pinned names; 16
+    # framework services; 29 group-(a) helpers; 37 group-(e) callables).
+    # 2026-11-15, rebased onto dev cc6006fcf5: 6061 -> 6067 (the same +6),
+    # measured; the binding counts above re-measured unchanged.
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 6067,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only

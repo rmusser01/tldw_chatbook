@@ -181,7 +181,6 @@ from ...Library.library_ingest_state import (
     parse_keywords,
 )
 from ...Library.library_media_viewer_state import (
-    analysis_find_unavailable_reason,
     detail_analysis_text,
 )
 from ...Library.library_media_state import (
@@ -388,12 +387,6 @@ from ...Workspaces.eligibility import (
     LIBRARY_GENERIC_WORKSPACE_BLOCK,
     linkable_ineligibility_label,
 )
-from ...Workspaces.link_on_use import (
-    UnlinkOutcome,
-    decide_link_on_use,
-    registry_unavailable_copy,
-    unlink_item_from_workspace,
-)
 from ...Workspaces.registry_service import WorkspaceRegistryServiceError
 from ...Widgets.destination_rail import (
     RAIL_SECTION_TOGGLE_PREFIX,
@@ -520,10 +513,7 @@ from ..Library_Modules.library_conversations_state import LibraryConversationsSt
 from ..Library_Modules.library_export_controller import LibraryExportController
 from ..Library_Modules.library_export_state import LibraryExportState
 from ..Library_Modules.library_ingest_state import LibraryIngestState
-from ..Library_Modules.library_media_state import (
-    LibraryMediaLinkReceipt,
-    LibraryMediaState,
-)
+from ..Library_Modules.library_media_state import LibraryMediaState
 from ..Library_Modules.library_notes_state import LibraryNotesState
 from ..Library_Modules import library_notes_sync_attention as notes_sync_attention
 from ..Library_Modules.library_notes_work_session import (
@@ -3185,6 +3175,9 @@ class LibraryScreen(BaseAppScreen):
             arm_library_list_entry_focus=(
                 lambda *a, **k: self._arm_library_list_entry_focus(*a, **k)
             ),
+            close_open_library_choice_strip=(
+                lambda *a, **k: self._close_open_library_choice_strip(*a, **k)
+            ),
             disarm_library_list_entry_focus=(
                 lambda *a, **k: self._disarm_library_list_entry_focus(*a, **k)
             ),
@@ -3194,8 +3187,20 @@ class LibraryScreen(BaseAppScreen):
             focus_library_list_entry=(
                 lambda *a, **k: self._focus_library_list_entry(*a, **k)
             ),
+            focus_library_rail_action=(
+                lambda *a, **k: self._focus_library_rail_action(*a, **k)
+            ),
+            invalidate_library_workspace_depth_state=(
+                lambda *a, **k: self._invalidate_library_workspace_depth_state(*a, **k)
+            ),
             library_entry_route_key=(
                 lambda *a, **k: self._library_entry_route_key(*a, **k)
+            ),
+            library_open_choice_strip=(
+                lambda *a, **k: self._library_open_choice_strip(*a, **k)
+            ),
+            library_workspace_depth_state=(
+                lambda *a, **k: self._library_workspace_depth_state(*a, **k)
             ),
             open_library_export_canvas=(
                 lambda *a, **k: self._open_library_export_canvas(*a, **k)
@@ -3249,9 +3254,6 @@ class LibraryScreen(BaseAppScreen):
             ),
             # -- named late-binding callables for the media exclusions a
             #    MOVER still calls internally.
-            after_library_media_viewer_sync=(
-                lambda *a, **k: self._after_library_media_viewer_sync(*a, **k)
-            ),
             arm_library_media_return_settlement=(
                 lambda *a, **k: self._arm_library_media_return_settlement(*a, **k)
             ),
@@ -3269,9 +3271,6 @@ class LibraryScreen(BaseAppScreen):
                     *a, **k
                 )
             ),
-            close_library_media_find=(
-                lambda *a, **k: self._close_library_media_find(*a, **k)
-            ),
             commit_library_media_return=(
                 lambda *a, **k: self._commit_library_media_return(*a, **k)
             ),
@@ -3280,9 +3279,6 @@ class LibraryScreen(BaseAppScreen):
             ),
             exit_library_media_trash=(
                 lambda *a, **k: self._exit_library_media_trash(*a, **k)
-            ),
-            exit_library_media_viewer=(
-                lambda *a, **k: self._exit_library_media_viewer(*a, **k)
             ),
             library_media_analysis_provider_reason=(
                 lambda *a, **k: self._library_media_analysis_provider_reason(*a, **k)
@@ -3310,9 +3306,6 @@ class LibraryScreen(BaseAppScreen):
             library_media_list_unselectable=(
                 lambda *a, **k: self._library_media_list_unselectable(*a, **k)
             ),
-            library_media_reader_exit_available=(
-                lambda *a, **k: self._library_media_reader_exit_available(*a, **k)
-            ),
             library_media_return_candidate=(
                 lambda *a, **k: self._library_media_return_candidate(*a, **k)
             ),
@@ -3339,14 +3332,6 @@ class LibraryScreen(BaseAppScreen):
             library_media_viewer_state_cached=(
                 lambda *a, **k: self._library_media_viewer_state_cached(*a, **k)
             ),
-            open_selected_media_handoff=(
-                lambda *a, **k: self._open_selected_media_handoff(*a, **k)
-            ),
-            queue_after_library_media_viewer_recompose=(
-                lambda *a, **k: self._queue_after_library_media_viewer_recompose(
-                    *a, **k
-                )
-            ),
             reconcile_library_media_stage_presentation=(
                 lambda *a, **k: self._reconcile_library_media_stage_presentation(
                     *a, **k
@@ -3357,9 +3342,6 @@ class LibraryScreen(BaseAppScreen):
             ),
             request_library_media_browse=(
                 lambda *a, **k: self._request_library_media_browse(*a, **k)
-            ),
-            reset_library_media_search_on_mode_change=(
-                lambda *a, **k: self._reset_library_media_search_on_mode_change(*a, **k)
             ),
             restore_library_media_loaded_progress=(
                 lambda *a, **k: self._restore_library_media_loaded_progress(*a, **k)
@@ -32809,175 +32791,8 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_media_back(self, event: Button.Pressed) -> None:
         return self._media_controller.handle_library_media_back(event)
 
-    def _exit_library_media_viewer(self) -> None:
-        """Shared Back exit: return the media canvas from viewer to list.
-
-        Shared by the "‹ Back to list" button and the viewer's Escape
-        binding (``action_library_media_viewer_back``, task-2856 AC2) so
-        both exits run the identical reset sequence -- one seam, not a
-        parallel key-driven path that could drift from the button's. Runs
-        regardless of the viewer's confirming-delete sub-state, mirroring
-        the "‹ Back to list" button itself, which renders (and is
-        reachable) in every sub-state -- except (TASK-34000.22, ADR-055
-        Pattern D) that an authoring form holding unsaved text refuses it,
-        out loud, like every other exit from that form.
-        """
-        if self._library_media_editor_dirty():
-            self._notify_media_editor_dirty_veto()
-            return
-        self._cancel_library_media_selection_settlement()
-        self._media_state.reader_session = leave_external_detail(
-            self._media_state.reader_session
-        )
-        self._media_state.view = "list"
-        # TASK-34000.18 fix round 2: the list is the stage again.
-        self._media_state.highlight_held_by_reader = False
-        self._media_state.editing = False
-        self._media_state.edit_draft = None
-        self._media_state.confirming_delete = False
-        self._media_state.editing_analysis = False
-        self._media_state.analysis_draft = None
-        self._close_library_media_find()
-        self._media_state.content_mode = "raw"
-        self._load_library_media_list_if_needed()
-        # task-21116: the exit is a canvas-child swap (viewer -> list), not
-        # a whole-screen rebuild. Scheduled via ``call_next`` because this
-        # seam is synchronous (Button handler + Escape action) while the
-        # child replacement awaits its unmount/mount; the task-2856 AC1
-        # entry-focus arm rides the same continuation so its immediate
-        # attempt runs against the MOUNTED list rows.
-        media_return = self._media_state.viewer_return
-        self._media_state.viewer_return = None
-        if media_return is not None and media_return.final_focus_policy == "row":
-            # The focused Back control is about to be removed. Clear it before
-            # the child swap so Textual cannot choose the replacement semantic
-            # row as an implicit successor ahead of exact scroll settlement.
-            self.set_focus(None)
-        self.call_next(self._apply_library_media_list_return, media_return)
-
     def action_library_media_viewer_back(self) -> None:
-        """Escape: step back ONE level in the media viewer (task-2856 AC2).
-
-        ``check_action`` gates this to the media canvas genuinely showing
-        its viewer sub-view, so it only ever fires there.
-
-        Review round 2: Escape mirrors each sub-state's OWN Cancel
-        affordance -- ``#library-media-edit-cancel`` / ``#library-media-
-        delete-cancel`` / ``#library-media-analysis-cancel`` -- and lands
-        back on the plain read-only viewer, never past it. Jumping straight
-        to the list -- ``_exit_library_media_viewer()`` -- only happens from
-        that plain viewer, with no sub-state active to discard.
-
-        TASK-34000.22 (ADR-055 Pattern D): the two authoring forms now carry
-        a draft (``edit_draft`` / ``analysis_draft``), so a form whose typed
-        text differs from the saved value REFUSES this key -- the toast
-        names the unsaved work and the footer chip already read "esc save
-        or discard first" (``_library_media_escape_label``). Only the form's
-        own "Discard changes" press (the relabelled Cancel) drops the text.
-        A clean form closes in one step exactly as before; the delete
-        confirm has nothing typed and is never vetoed -- fix round 1 (M-5):
-        it is cancelled FIRST, so an armed confirm over a dirty form steps
-        back to the form rather than answering with the unsaved copy.
-        """
-        if self._media_state.bulk_delete_in_flight:
-            return
-        if self._media_state.confirming_delete:
-            self._media_state.confirming_delete = False
-            self._sync_library_media_viewer_or_recompose()
-            return
-        if self._library_media_editor_dirty():
-            self._notify_media_editor_dirty_veto()
-            return
-        if self._media_state.editing:
-            self._media_state.editing = False
-            self._media_state.edit_draft = None
-            self._sync_library_media_viewer_or_recompose()
-            return
-        if self._media_state.editing_analysis:
-            self._media_state.editing_analysis = False
-            self._media_state.analysis_draft = None
-            self._sync_library_media_viewer_or_recompose()
-            return
-        focused = self.focused
-        # task-31271 seam (a): same seam as the footer's escape label, so
-        # the chip and this key can never describe different outcomes.
-        find_open, find_controls = self._library_media_find_state()
-        if (
-            find_controls is not None
-            and focused is not None
-            and (focused is find_controls or find_controls in focused.ancestors)
-        ):
-            self._close_library_media_find()
-            self._after_library_media_viewer_sync("#library-media-reader-find")
-            return
-        if self._media_state.reader_session.more_open:
-            self._media_state.reader_session = set_more_open(
-                self._media_state.reader_session, False
-            )
-            self._after_library_media_viewer_sync("#library-media-reader-more")
-            return
-        # task-31272: the Items pane's own type/sort strips open over the
-        # three-pane Reader too, and this action owns Escape there (the
-        # list canvas's ``library_list_focus_rail`` is gated to the "list"
-        # view). Close the strip first, exactly as its "esc cancel" chip
-        # promises -- the same one-transient-at-a-time shape as Find/More.
-        if self._close_open_library_choice_strip():
-            return
-        try:
-            shell = self.query_one(".library-media-route", LibraryBrowseReaderShell)
-        except (NoMatches, QueryError):
-            self._exit_library_media_viewer()
-            return
-        layout = shell.effective_layout
-        if focused is not None and (
-            focused is shell.items or shell.items in focused.ancestors
-        ):
-            if layout.library_open:
-                # task-31272 (critique #4, A cap 20): the ACTIVE RAIL ROW,
-                # never "#library-search-input" -- landing in the rail's
-                # text field made the NEXT Escape (and every letter after
-                # it) typing, so leaving the Reader took three presses and
-                # the middle one was invisible.
-                self._focus_library_rail_action(
-                    f"#library-row-{LIBRARY_ROW_BROWSE_MEDIA}"
-                )
-                self._register_footer_shortcuts()
-            else:
-                self._exit_library_media_viewer()
-            return
-        if focused is not None and (
-            focused is shell.library or shell.library in focused.ancestors
-        ):
-            # task-31272: in the three-pane shell the rail row is the
-            # ladder's terminus. Exiting from here used to set
-            # ``_library_media_view = "list"`` while the Reader kept
-            # painting the document (that layout's Items pane already shows
-            # the list, so the flip changed no pixels) -- and every Reader
-            # binding is gated on that flag, so Escape, ] and [ all died on
-            # identical pixels (critique #4, A cap 25/31/39, and the
-            # "close more" that did nothing at B cap_106).
-            # ``_library_media_escape_label`` returns "" there so the
-            # footer advertises no chip for a key that does nothing.
-            if self._library_media_reader_exit_available(layout):
-                self._exit_library_media_viewer()
-            return
-        # Qodo on #2367: an open Find bar is a reader substate regardless
-        # of where focus sits INSIDE the reader region (F6 to the content
-        # pane must not leave the bar stranded) -- Escape closes it first,
-        # and _library_media_escape_label advertises exactly that. The
-        # items/library-pane branches above stay untouched: their Escape
-        # never consumes the reader's find state.
-        if find_open:
-            self._close_library_media_find()
-            self._after_library_media_viewer_sync("#library-media-reader-find")
-            return
-        if layout.items_open:
-            self._focus_library_media_items_pane()
-        elif layout.library_open:
-            self._focus_library_rail_action(f"#library-row-{LIBRARY_ROW_BROWSE_MEDIA}")
-        else:
-            self._exit_library_media_viewer()
-        self._register_footer_shortcuts()
+        return self._media_controller.action_library_media_viewer_back()
 
     def _library_media_adjacent_row(self, direction: int) -> tuple[str, str] | None:
         return self._media_controller._library_media_adjacent_row(direction)
@@ -34046,145 +33861,13 @@ class LibraryScreen(BaseAppScreen):
     def _focus_library_media_items_pane(self) -> None:
         return self._media_controller._focus_library_media_items_pane()
 
-    def _library_media_find_state(self) -> tuple[bool, Widget | None]:
-        """Whether the content Find bar is OPEN, plus its widget if mounted.
-
-        task-31271 seam (a): openness is the screen's own state -- the DOM
-        is one refresh behind it in both directions, so reading widget
-        presence let Escape and the footer chip that describes Escape
-        disagree (the chip promised "close find" over a bar the recompose
-        had already removed). The state test mirrors the viewer's own
-        render condition (``find_open or content_query``), so the two agree
-        at rest; the widget is returned only for focus-containment tests,
-        which need the real node.
-
-        Returns:
-            ``(find_open, controls)`` -- ``controls`` is ``None`` when the
-            bar is closed or has not been mounted yet.
-        """
-        find_open = bool(self._media_state.find_open or self._media_state.content_query)
-        if not find_open:
-            return False, None
-        try:
-            return True, self.query_one("#library-media-content-search-controls")
-        except (NoMatches, QueryError):
-            return True, None
-
-    def _library_media_reader_exit_available(
-        self, layout: MediaReaderEffectiveLayout | None = None
-    ) -> bool:
-        """Whether a "back to list" exit means anything in this layout.
-
-        task-31272: the three-pane shell shows the media list in its Items
-        pane at all times, so ``_library_media_view = "list"`` changes no
-        pixels there -- it only revokes every Reader binding gated on that
-        flag (Escape, ] and [ died on identical pixels: critique #4, A cap
-        25/31/39). Every other layout genuinely returns focus to a visible
-        list, so its exit -- the "‹ Back" control, which composes exactly
-        where this is True, and Escape's compact branch -- is unchanged.
-
-        Args:
-            layout: Effective shell layout to judge; read from the mounted
-                shell (falling back to the screen's own copy) when omitted.
-
-        Returns:
-            True when the Reader has a real exit to offer.
-        """
-        if layout is None:
-            try:
-                layout = self.query_one(
-                    ".library-media-route", LibraryBrowseReaderShell
-                ).effective_layout
-            except (NoMatches, QueryError):
-                layout = self._media_state.reader_layout
-        return not (layout.library_open and layout.items_open)
-
     def _library_media_list_surface_active(self, *, require_focus: bool = True) -> bool:
         return self._media_controller._library_media_list_surface_active(
             require_focus=require_focus
         )
 
     def _library_media_escape_label(self) -> str:
-        """Describe the action Escape will take from the current effective role.
-
-        task-31272: exactly four words -- "close" (find bar, More menu, or
-        an armed delete/edit cancel), "focus Items", "focus Library" and
-        "back" (the compact exit) -- plus "" where Escape does nothing and
-        the footer must therefore advertise nothing. Critique #4 counted
-        eight distinct ``esc …`` chips live.
-        """
-        session = self._media_state.reader_session
-        # Qodo on PR #2583 (task-32222): mirror the FIRST THREE branches of
-        # ``action_library_media_viewer_back`` -- it closes the metadata-edit
-        # and analysis-edit forms exactly as it closes a delete confirm, but
-        # this label checked only the delete, so the footer advertised "focus
-        # Items" over a form Escape would merely close. That is the same
-        # chip-vs-key drift task-31272 closed at four other seams, and
-        # LIBRARY_MEDIA_SUBSTATE_BACK_SHORTCUTS already promised all three
-        # sub-states this one word.
-        if (
-            self._media_state.editing
-            or self._media_state.confirming_delete
-            or self._media_state.editing_analysis
-        ):
-            # TASK-34000.22 fix round 2 (R2-5): the key cancels an armed
-            # delete confirm FIRST (``action_library_media_viewer_back``),
-            # so over one the chip says that, dirty form or not.
-            if self._media_state.confirming_delete:
-                return "cancel"
-            # TASK-34000.22: while an authoring form holds unsaved text the
-            # key refuses (``action_library_media_viewer_back``), so the
-            # chip names the blocker in the Prompts editor's own words
-            # rather than promising a close it will not make (task-32393).
-            if self._library_media_editor_dirty():
-                return LIBRARY_PROMPT_DIRTY_ESCAPE_CHIP
-            return "close"
-        if session.more_open:
-            return "close"
-        # Qodo on #2386: an Items strip opened over the Reader is a
-        # transient this Escape closes (see the matching branch in
-        # ``action_library_media_viewer_back``), wherever focus sits.
-        if self._library_open_choice_strip() is not None:
-            return "close"
-        focused = self.focused
-        try:
-            shell = self.query_one(".library-media-route", LibraryBrowseReaderShell)
-        except (NoMatches, QueryError):
-            return "back"
-        # task-31271 seam (a): the bar's LIVE state, not its DOM presence
-        # (critique #4, A cap 08/23, B cap_21) -- and the same seam Escape
-        # itself reads, so the chip and the key can never disagree.
-        find_open, find_controls = self._library_media_find_state()
-        if (
-            find_controls is not None
-            and focused is not None
-            and (focused is find_controls or find_controls in focused.ancestors)
-        ):
-            return "close"
-        if focused is not None and (
-            focused is shell.items or shell.items in focused.ancestors
-        ):
-            return "focus Library" if shell.effective_layout.library_open else "back"
-        if focused is not None and (
-            focused is shell.library or shell.library in focused.ancestors
-        ):
-            # task-31272: no chip where Escape is inert (see the matching
-            # branch in ``action_library_media_viewer_back``).
-            return (
-                "back"
-                if self._library_media_reader_exit_available(shell.effective_layout)
-                else ""
-            )
-        # Qodo on #2367: with the Find bar open, a reader-region Escape
-        # closes it first (see action_library_media_viewer_back) -- the
-        # label says so even when focus has left the bar (F6 to content).
-        if find_open:
-            return "close"
-        if shell.effective_layout.items_open:
-            return "focus Items"
-        if shell.effective_layout.library_open:
-            return "focus Library"
-        return "back"
+        return self._media_controller._library_media_escape_label()
 
     @on(Button.Pressed, "#library-media-edit")
     def handle_library_media_edit(self, event: Button.Pressed) -> None:
@@ -34781,23 +34464,6 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_media_reader_mode(self, event: Button.Pressed) -> None:
         return self._media_controller.handle_library_media_reader_mode(event)
 
-    def _reset_library_media_search_on_mode_change(self, new_mode: str) -> None:
-        """Drop the in-item search when the Reader actually changes tab.
-
-        task-28026: each Reader tab searches its own corpus (the analysis
-        text vs the transcript), so a real mode transition clears the active
-        query, its match index, and the one-slot match memo rather than
-        carrying one tab's highlights -- and a possibly out-of-range match
-        index -- onto the other tab's text. A no-op re-press of the current
-        mode leaves the search intact.
-
-        Args:
-            new_mode: The Reader mode being switched to.
-        """
-        if new_mode != self._media_state.reader_session.mode:
-            self._close_library_media_find()
-            self._media_state.content_match_memo = None
-
     def _capture_library_media_loaded_progress(self) -> None:
         """Snapshot and queue persistence of the local content body's offset.
 
@@ -34999,28 +34665,10 @@ class LibraryScreen(BaseAppScreen):
         settle(8, _MEDIA_PROGRESS_RESTORE_LAYOUT_SIGNALS)
 
     def _close_library_media_find(self) -> None:
-        """Reset the content Find bar: collapsed, no query, first match.
-
-        task-31237: one seam for every reset path (item open, viewer exit,
-        rail switch, delete, mode change, Escape) so a stale ``find_open``
-        can never hold the bar open across a context the query reset
-        already abandoned.
-        """
-        self._media_state.find_open = False
-        self._media_state.content_query = ""
-        self._media_state.content_match_index = 0
+        return self._media_controller._close_library_media_find()
 
     def _library_media_find_unavailable_reason(self) -> str:
-        """Why Find cannot open on the current Reader tab, or "" (Qodo on #2378)."""
-        detail = self._media_state.detail
-        analysis = detail_analysis_text(detail) if isinstance(detail, Mapping) else ""
-        return analysis_find_unavailable_reason(
-            mode=self._media_state.reader_session.mode,
-            analysis=analysis,
-            generating=self._media_state.generating_analysis,
-            editing=self._media_state.editing_analysis,
-            external=self._media_state.reader_session.external_detail,
-        )
+        return self._media_controller._library_media_find_unavailable_reason()
 
     def _library_media_analysis_provider_reason(self) -> str:
         """Why the Reader's Generate cannot run, or "" when it can.
@@ -35039,23 +34687,10 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-media-reader-find")
     def handle_library_media_reader_find(self, event: Button.Pressed) -> None:
-        """Open (or close) the Find bar for the tab being read.
-
-        Args:
-            event: The Find button press.
-        """
-        event.stop()
-        self._toggle_library_media_find()
+        return self._media_controller.handle_library_media_reader_find(event)
 
     def action_library_media_reader_find(self) -> None:
-        """Open (or close) the Reader's Find bar from the keyboard (task-32348).
-
-        The same gesture the Find button performs -- one implementation, so
-        the key can never diverge from the control (the ``check_action``
-        gate is the same reason string the button's own disabled state
-        reads).
-        """
-        self._toggle_library_media_find()
+        return self._media_controller.action_library_media_reader_find()
 
     @on(Button.Pressed, "#library-media-take-note")
     def handle_library_media_take_note(self, event: Button.Pressed) -> None:
@@ -35146,36 +34781,6 @@ class LibraryScreen(BaseAppScreen):
     def _focus_library_note_caret_for_create(self) -> None:
         return self._notes_controller._focus_library_note_caret_for_create()
 
-    def _toggle_library_media_find(self) -> None:
-        """Open the Find bar for the tab being read, or close an open one."""
-        if self._media_state.find_open:
-            # task-31269 AC4: Find is a toggle -- a second press closes the
-            # bar (live: it did nothing while the bar was open).
-            self._close_library_media_find()
-            self._sync_library_media_viewer_or_recompose()
-            return
-        reason = self._library_media_find_unavailable_reason()
-        if reason:
-            # Qodo on #2378: nothing to mount on this tab -- never arm
-            # find_open silently (the button is already disabled with the
-            # same reason; this guards the action path).
-            self.notify(reason, severity="warning")
-            return
-        # task-31269: Find searches the tab you are reading. The Analysis
-        # tab's bar is gated exactly like Read's now, so Find no longer
-        # jumps Analysis -> Read (task-28026's transition predates the
-        # collapsed bar). A same-mode reset is a no-op by design.
-        self._reset_library_media_search_on_mode_change(
-            self._media_state.reader_session.mode
-        )
-        # task-31237: the bar is collapsed until this gesture opens it; the
-        # token below is what lets its mount take focus -- once.
-        self._media_state.find_open = True
-        self._media_state.find_focus_pending = True
-        self._after_library_media_viewer_sync(
-            self._focus_library_media_content_search_input
-        )
-
     @on(Button.Pressed, "#library-media-open-original")
     def handle_library_media_open_original(self, event: Button.Pressed) -> None:
         return self._media_controller.handle_library_media_open_original(event)
@@ -35192,104 +34797,7 @@ class LibraryScreen(BaseAppScreen):
     def _after_library_media_viewer_sync(
         self, follow_up: str | Callable[[], object]
     ) -> None:
-        """Sync the media viewer, then run ``follow_up`` against its NEW children.
-
-        task-31633 / Qodo High on #2470 ("Readers lose keys after escape").
-        A viewer-scoped sync rebuilds the Reader on the VIEWER's message pump,
-        and ``screen.call_after_refresh`` queues onto the SCREEN's -- two
-        pumps with no ordering. Measured on 43b0a7440 with the screen seam:
-        Escape from inside the More disclosure focused the control the
-        recompose was about to detach, Textual re-picked focus for the pruned
-        widget, and task-31567's restore (its captured identity gone with the
-        rest of the children) fell back to the media list row -- focus out of
-        the Reader entirely, so the next Escape acted on the list.
-
-        So the follow-up rides the viewer's own post-recompose hook, and is
-        CHAINED behind whatever is already queued there rather than replacing
-        it: ``queue_after_recompose`` replaces, and the sync above just
-        queued task-31567's restore on that same one slot (that is how
-        task-31567 lost a receipt's "land on Undo"). Order inside the chain:
-        our ``_focus_library_control`` DEFERS (``Widget.focus`` goes through
-        ``app.call_later``), so when the chained restore runs, focus is still
-        wherever the recompose left it and the restore does its own landing
-        (the captured identity, else the list entry); the deferred focus then
-        lands on the target and wins. The transient is benign -- the list
-        entry is focused with ``scroll_visible=False`` and the programmatic
-        marker armed -- and when the target is not composed at all the focus
-        call no-ops and the restore's landing stands.
-
-        Args:
-            follow_up: A Library control selector to focus once the sync has
-                landed (``"#library-media-reader-more"``), or a zero-argument
-                callable to run there instead.
-
-        Returns:
-            None.
-        """
-        self._sync_library_media_viewer_or_recompose()
-        self._queue_after_library_media_viewer_recompose(
-            partial(self._focus_library_control, follow_up)
-            if isinstance(follow_up, str)
-            else follow_up
-        )
-
-    def _queue_after_library_media_viewer_recompose(
-        self,
-        callback: Callable[[], object],
-        viewer: LibraryMediaViewer | None = None,
-    ) -> None:
-        """Run ``callback`` against the viewer's NEW children.
-
-        Split out of ``_after_library_media_viewer_sync`` for task-31950:
-        ``_sync_library_media_viewer_state``'s own tail queues follow-ups
-        too -- the edit-Save mutation gate and the load path's progress
-        restore -- and both read children the rebuild it just asked for is
-        about to replace. On the screen's pump they took the same race,
-        only quieter: measured, the gate flushed before the recomposed Save
-        mounted, returned on ``NoMatches``, and the edit form came up with
-        a live Save on top of an unsettled write.
-
-        Args:
-            callback: Zero-argument follow-up to run once the rebuild lands.
-            viewer: The viewer being synced, when the caller already holds
-                it (the sync's tail does); looked up otherwise.
-
-        Returns:
-            None.
-        """
-        if viewer is None:
-            viewer = self._mounted_library_media_viewer()
-        # ``refresh(recompose=True)`` arms this flag synchronously and only
-        # ``_check_recompose`` (on the viewer's pump) clears it, before
-        # awaiting ``recompose()``; read here with no await in between it is
-        # the honest
-        # answer to "did THIS sync hand the rebuild to the viewer's pump?".
-        # False covers both cases where the hook would swallow the follow-up
-        # instead of ordering it: the no-change short-circuit (nothing is
-        # rebuilt, so nothing ever fires the hook and the target is still
-        # mounted anyway) and the whole-screen fallback (the screen's pump
-        # owns the ordering, and this viewer is the one being torn down).
-        if viewer is None or not getattr(viewer, "_recompose_required", False):
-            self.call_after_refresh(callback)
-            return
-        pending = viewer._post_recompose_callback
-
-        def callback_then_pending() -> None:
-            # Qodo on #2473: ``finally``, not a bare sequence. A raising
-            # follow-up (the scroll-progress restore is one) used to take
-            # task-31567's focus restore down with it and strand focus on a
-            # pane grip -- the exact defect that restore exists to prevent.
-            # The exception still propagates; only the ordering guarantee
-            # changes. (If ``pending()`` itself raises inside the ``finally``,
-            # its exception replaces the follow-up's -- accepted: the restore
-            # is the invariant, and both surface in the log either way.)
-            try:
-                callback()
-            finally:
-                if pending is not None:
-                    pending()
-
-        viewer.queue_after_recompose(callback_then_pending)
+        return self._media_controller._after_library_media_viewer_sync(follow_up)
 
     def _sync_library_media_viewer_mutation_gate(self) -> None:
         return self._media_controller._sync_library_media_viewer_mutation_gate()
@@ -35400,26 +34908,13 @@ class LibraryScreen(BaseAppScreen):
         return self._media_controller._start_library_media_read_later_toggle()
 
     def action_library_media_read_later(self) -> None:
-        """Keyboard 'l': toggle read-it-later for the open item (task-28027)."""
-        self._start_library_media_read_later_toggle()
+        return self._media_controller.action_library_media_read_later()
 
     def action_library_media_use_in_console(self) -> None:
-        """Keyboard 'c': hand the open item to Console (task-28027)."""
-        self._open_selected_media_handoff()
+        return self._media_controller.action_library_media_use_in_console()
 
     def action_library_media_move_to_trash(self) -> None:
-        """Keyboard 't': arm the inline delete confirmation (task-28027).
-
-        Mirrors ``handle_library_media_delete`` -- arming only; the actual
-        trash write still needs the confirm affordance.
-        """
-        # TASK-34000.22 fix round 2 (R2-5): same refusal as the button.
-        if self._library_media_editor_dirty():
-            self._notify_media_editor_dirty_veto()
-            return
-        self._media_state.confirming_delete = True
-        self._media_state.delete_receipt_ids = ()
-        self._sync_library_media_viewer_or_recompose()
+        return self._media_controller.action_library_media_move_to_trash()
 
     @on(Button.Pressed, "#library-media-analysis-edit")
     def handle_library_media_analysis_edit(self, event: Button.Pressed) -> None:
@@ -37717,213 +37212,9 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         self.open_chunking_lab(use_selected=True)
 
-    def _open_selected_media_handoff(self) -> None:
-        """Stage the media item open in the viewer into Console, linking it on use.
-
-        TASK-34000.24: the per-item workspace gate used to refuse every
-        media item on a fresh profile with a sentence naming an action that
-        does not exist for media ("Copy or link this media into workspace
-        workspace-default …"). Notes (task-32536) and conversations
-        (task-32107) already link on use; media now takes the same path
-        through the shared seam's ONE decision (``decide_link_on_use``,
-        fix round 1 I-2): a block a LINK can resolve -- or an item the
-        depth state never sampled (I-1: the sample holds the first 50 local
-        media) -- is resolved by linking the item into the active workspace,
-        then staging, with a receipt ("Linked to Local Default · staged in
-        Console") and an Undo in the Reader; only a sampled row whose block a
-        link cannot resolve refuses, with its own sentence; no active
-        workspace is the global scope (task-15120) and stages as-is; a server
-        detail stages as-is. An item already in the workspace stages with the
-        "Already linked" receipt. The notes rule holds: Console's availability
-        is read BEFORE the write, and a membership this press added is
-        unlinked again if Console refuses the hand-off -- which
-        ``open_chat_with_handoff`` now reports (fix round 1, M-1), so the
-        receipt never claims "staged" for a refused stage.
-        """
-        # TASK-34000.22 fix round 2 (R2-3): refused BEFORE any link or
-        # stage -- the navigation veto alone came after the membership row
-        # and the "staged in Console" receipt had been written, and the
-        # stale hand-off then applied on the next Console visit.
-        if self._library_media_editor_dirty():
-            self._notify_media_editor_dirty_veto()
-            return
-        workspace_state = self._library_workspace_depth_state()
-        payload = self._selected_media_handoff_payload()
-        notify = getattr(self.app_instance, "notify", None)
-
-        def say(message: str, severity: str = "warning") -> None:
-            if callable(notify):
-                notify(message, severity=severity, markup=False)
-
-        if payload is None:
-            say("Open a media item before using it in Console.")
-            return
-        open_chat_with_handoff = getattr(
-            self.app_instance, "open_chat_with_handoff", None
-        )
-        # Read BEFORE the link below: a hand-off that cannot succeed must
-        # not write a membership (the notes hand-off's rule).
-        if not callable(open_chat_with_handoff):
-            say("Console handoff is unavailable for Library Media.")
-            return
-        item_id = str(payload.source_id or "")
-        registry = getattr(self.app_instance, "workspace_registry_service", None)
-        decision = decide_link_on_use(
-            workspace_state.source_rows,
-            registry,
-            item_type=payload.item_type,
-            item_id=item_id,
-            title=payload.title,
-            local=not self._media_state.reader_session.external_detail,
-        )
-        if decision.kind == "refuse":
-            say(decision.copy)
-            return
-        link = decision.result
-        if link is not None and link.written:
-            # The cached eligibility that sent us here is stale now; without
-            # this the rail and the next press would still call the item
-            # blocked.
-            self._invalidate_library_workspace_depth_state()
-        try:
-            staged = open_chat_with_handoff(payload, action_label="Use in Console")
-        except Exception:
-            logger.opt(exception=True).warning("Library media Console handoff failed.")
-            staged = False
-            failure = (
-                "Can't use this media in Console — Console could not take it. "
-                "Next: try again."
-            )
-        else:
-            # ``None`` is a caller that does not report (a test double, an
-            # older seam): treat it as staged, as before; only an explicit
-            # ``False`` is a refusal -- and that one has already notified.
-            failure = ""
-        if staged is False:
-            if link is not None and link.written:
-                outcome = unlink_item_from_workspace(
-                    registry,
-                    link.workspace_id,
-                    item_type=payload.item_type,
-                    item_id=item_id,
-                )
-                self._invalidate_library_workspace_depth_state()
-                if outcome is UnlinkOutcome.FAILED:
-                    say(
-                        "Can't use this media in Console — Console could not take "
-                        f"it, and the media stayed linked to {link.workspace_name}. "
-                        "Next: try again."
-                    )
-                    return
-            if failure:
-                say(failure)
-            return
-        if link is not None:
-            self._set_library_media_link_receipt(
-                workspace_id=link.workspace_id,
-                workspace_name=link.workspace_name,
-                item_id=item_id,
-                written=link.written,
-            )
-
-    def _set_library_media_link_receipt(
-        self,
-        *,
-        workspace_id: str,
-        workspace_name: str,
-        item_id: str,
-        written: bool,
-    ) -> None:
-        """Record the workspace the last "Use in Console" press linked into.
-
-        The id is stored beside the NAME because Undo has to remove the
-        membership a press here added, not whatever is active by the time
-        it is pressed (the conversation reader's review fix round 1). An
-        "Already linked" press keeps the Undo of an earlier press on the
-        same item and workspace: the membership is still the one this
-        session wrote.
-
-        Args:
-            workspace_id: The linked workspace's id.
-            workspace_name: Its display name, for the receipt line.
-            item_id: The media membership id the receipt names.
-            written: Whether THIS press inserted the membership.
-        """
-        prior = self._media_state.link_receipt
-        undo_offered = written or (
-            prior is not None
-            and prior.undo_offered
-            and prior.item_id == item_id
-            and prior.workspace_id == workspace_id
-        )
-        self._media_state.link_receipt = LibraryMediaLinkReceipt(
-            workspace_id=workspace_id,
-            workspace_name=workspace_name,
-            item_id=item_id,
-            written=written,
-            undo_offered=undo_offered,
-        )
-        self._sync_library_media_viewer_or_recompose()
-
     @on(Button.Pressed, "#library-media-link-undo")
     def handle_library_media_link_undo(self, event: Button.Pressed) -> None:
-        """Remove the membership the last "Use in Console" press added.
-
-        The exact inverse of the link in ``_open_selected_media_handoff``:
-        the RECEIPT's workspace by id (never the active one), the receipt
-        cleared, the cached eligibility invalidated, the Reader re-synced.
-
-        Fix round 1: a press that lands after the workspace moved elsewhere
-        (switched from Console, say) must not remove a membership of a
-        workspace that is no longer active -- it says so once and re-syncs
-        the Reader so the dead control disappears (M-3); and a membership
-        that is already gone is the outcome the user wanted, so the receipt
-        clears instead of looping on "could not be undone" (M-4).
-
-        Args:
-            event: The Undo button press.
-        """
-        event.stop()
-        receipt = self._media_state.link_receipt
-        payload = self._selected_media_handoff_payload()
-        open_item_id = str(payload.source_id or "") if payload is not None else ""
-        notify = getattr(self.app_instance, "notify", None)
-
-        def say(message: str) -> None:
-            if callable(notify):
-                notify(message, severity="warning", markup=False)
-
-        block = self._media_controller.library_media_link_receipt_block(open_item_id)
-        if receipt is None or not open_item_id or block in ("no_receipt", "other_item"):
-            self._sync_library_media_viewer_or_recompose()
-            return
-        if block == "registry_unavailable":
-            # Fix round 2 (item 4): a registry that is missing or cannot be
-            # read is not a workspace that moved -- say which (the M-6
-            # sentence) and withhold the control.
-            say(registry_unavailable_copy("media"))
-            self._sync_library_media_viewer_or_recompose()
-            return
-        if block == "workspace_inactive" or not receipt.undo_offered:
-            say(
-                "This link was made in a workspace that is no longer active, "
-                "so it can't be undone from here."
-            )
-            self._sync_library_media_viewer_or_recompose()
-            return
-        registry = getattr(self.app_instance, "workspace_registry_service", None)
-        outcome = unlink_item_from_workspace(
-            registry,
-            receipt.workspace_id,
-            item_type="media",
-            item_id=receipt.item_id,
-        )
-        if outcome is UnlinkOutcome.FAILED:
-            say("This link could not be undone. Try again.")
-            return
-        self._media_state.link_receipt = None
-        self._invalidate_library_workspace_depth_state()
-        self._sync_library_media_viewer_or_recompose()
+        return self._media_controller.handle_library_media_link_undo(event)
 
     @on(Button.Pressed, "#library-media-use-in-chat")
     def use_media_in_chat(self, event: Button.Pressed) -> None:

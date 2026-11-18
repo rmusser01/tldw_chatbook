@@ -1212,7 +1212,7 @@ async def test_old_media_deadline_cannot_cancel_new_prompts_list_focus_arm() -> 
         await _wait_for_selector(screen, pilot, "#library-media-viewer-content")
         # task-31272: "‹ Back" is not composed in this three-pane layout;
         # the exit seam it shares with Escape is what this test drives.
-        screen._exit_library_media_viewer()
+        screen._media_controller._exit_library_media_viewer()
         await _wait_for_condition(
             pilot,
             lambda: screen._media_state.last_settlement_outcome is not None

@@ -529,7 +529,7 @@ async def test_external_detail_without_original_exposes_no_empty_more_menu():
 
         # task-31272: "‹ Back" is not composed in the three-pane shell,
         # so drive the exit seam the button and Escape both share.
-        screen._exit_library_media_viewer()
+        screen._media_controller._exit_library_media_viewer()
         await _wait_for_condition(
             pilot,
             lambda: not screen._media_state.reader_session.external_detail,
@@ -1441,7 +1441,7 @@ def _escape_fake(
     )
     # task-31237: Escape's find branch routes through the shared close seam.
     fake._close_library_media_find = MethodType(
-        LibraryScreen._close_library_media_find, fake
+        LibraryMediaController._close_library_media_find, fake
     )
     # PR H2: and every "sync, then focus this control" follow-up routes
     # through ONE seam, so the fake exercises the real ordering logic. No
@@ -1449,21 +1449,21 @@ def _escape_fake(
     # the same ``sync`` then ``focus`` pair the branches recorded before.
     fake._mounted_library_media_viewer = lambda: None
     fake._after_library_media_viewer_sync = MethodType(
-        LibraryScreen._after_library_media_viewer_sync, fake
+        LibraryMediaController._after_library_media_viewer_sync, fake
     )
     # PR L (task-31950): the seam's ordering half is its own method now, so
     # the fakes bind it too and keep exercising the real logic.
     fake._queue_after_library_media_viewer_recompose = MethodType(
-        LibraryScreen._queue_after_library_media_viewer_recompose, fake
+        LibraryMediaController._queue_after_library_media_viewer_recompose, fake
     )
     # task-31271 seam (a): Escape and its footer label read one seam now.
     fake._library_media_find_state = MethodType(
-        LibraryScreen._library_media_find_state, fake
+        LibraryMediaController._library_media_find_state, fake
     )
     # task-31272: both the Escape ladder and its chip ask whether a "back
     # to list" exit exists in this layout.
     fake._library_media_reader_exit_available = MethodType(
-        LibraryScreen._library_media_reader_exit_available, fake
+        LibraryMediaController._library_media_reader_exit_available, fake
     )
     return fake, calls, shell, find
 
@@ -1478,16 +1478,16 @@ def test_escape_and_its_label_read_the_same_find_state():
     fake, calls, _shell, _find = _escape_fake(
         region="reader", find_mounted=True, find_open=False
     )
-    assert LibraryScreen._library_media_escape_label(fake) != "close"
-    LibraryScreen.action_library_media_viewer_back(fake)
+    assert LibraryMediaController._library_media_escape_label(fake) != "close"
+    LibraryMediaController.action_library_media_viewer_back(fake)
     assert calls[:1] == [("items-pane",)]  # graduated panes, did not close find
 
     # Open, but the bar is not mounted yet (the window right after Find).
     fake, calls, _shell, _find = _escape_fake(
         region="reader", find_mounted=False, find_open=True
     )
-    assert LibraryScreen._library_media_escape_label(fake) == "close"
-    LibraryScreen.action_library_media_viewer_back(fake)
+    assert LibraryMediaController._library_media_escape_label(fake) == "close"
+    LibraryMediaController.action_library_media_viewer_back(fake)
     assert fake._media_state.find_open is False
     assert calls == ["sync", ("focus", "#library-media-reader-find")]
 
@@ -1498,10 +1498,11 @@ class _MoreHandlerControllerFake:
     (wave-7 merge) ``handle_library_media_reader_more`` moved to
     ``LibraryMediaController``; the screen keeps a one-line delegator, which
     the tests no longer call (TASK-36952.2). The controller reaches the
-    session through its GENERATED state shim and
-    ``_after_library_media_viewer_sync`` through its group-(e) late-binding
-    property, so both are reproduced here -- the REAL controller body still
-    runs, against this file's own screen fake. The alternative (reverting the
+    session through its GENERATED state shim and calls its own
+    ``_after_library_media_viewer_sync`` (a controller method since
+    TASK-36952.3.1; the fake reads the screen fake's bound copy of it), so
+    both are reproduced here -- the REAL controller bodies still run, against
+    this file's own screen fake. The alternative (reverting the
     mover because a post-cleanup test fixtures it) would have re-shaped the
     wave's pinned 140-mover set inside a merge commit; retargeting the
     fixture is recipe SS3's own sanctioned fix for this shape, and it is what
@@ -1559,12 +1560,12 @@ def test_more_toggle_chains_the_restore_already_queued_on_the_viewer():
         call_after_refresh=lambda *args: calls.append("call_after_refresh"),
     )
     fake._after_library_media_viewer_sync = MethodType(
-        LibraryScreen._after_library_media_viewer_sync, fake
+        LibraryMediaController._after_library_media_viewer_sync, fake
     )
     # PR L (task-31950): the seam's ordering half is its own method now, so
     # the fakes bind it too and keep exercising the real logic.
     fake._queue_after_library_media_viewer_recompose = MethodType(
-        LibraryScreen._queue_after_library_media_viewer_recompose, fake
+        LibraryMediaController._queue_after_library_media_viewer_recompose, fake
     )
     # TASK-36952.2: the handler lives on the controller, so the test calls it
     # there rather than through the screen's one-line delegator.
@@ -1647,12 +1648,12 @@ def test_more_toggle_without_a_viewer_falls_back_to_the_screen_seam():
         call_after_refresh=lambda callback, *args: calls.append(("after", callback)),
     )
     fake._after_library_media_viewer_sync = MethodType(
-        LibraryScreen._after_library_media_viewer_sync, fake
+        LibraryMediaController._after_library_media_viewer_sync, fake
     )
     # PR L (task-31950): the seam's ordering half is its own method now, so
     # the fakes bind it too and keep exercising the real logic.
     fake._queue_after_library_media_viewer_recompose = MethodType(
-        LibraryScreen._queue_after_library_media_viewer_recompose, fake
+        LibraryMediaController._queue_after_library_media_viewer_recompose, fake
     )
     # TASK-36952.2: the handler lives on the controller, so the test calls it
     # there rather than through the screen's one-line delegator.
@@ -1688,10 +1689,10 @@ def test_viewer_sync_seam_skips_the_hook_when_no_recompose_was_armed():
         call_after_refresh=lambda callback, *args: calls.append(("after", callback)),
     )
     fake._queue_after_library_media_viewer_recompose = MethodType(
-        LibraryScreen._queue_after_library_media_viewer_recompose, fake
+        LibraryMediaController._queue_after_library_media_viewer_recompose, fake
     )
 
-    LibraryScreen._after_library_media_viewer_sync(fake, "#library-media-reader-more")
+    LibraryMediaController._after_library_media_viewer_sync(fake, "#library-media-reader-more")
 
     assert calls[0] == "sync"
     # The follow-up went to the screen seam, and the viewer's own slot is
@@ -1705,30 +1706,30 @@ def test_viewer_sync_seam_skips_the_hook_when_no_recompose_was_armed():
 def test_escape_closes_more_find_confirmation_before_leaving_reader():
     """Every Reader transient consumes Escape before outward graduation."""
     fake, calls, _shell, _find = _escape_fake(region="reader", more_open=True)
-    LibraryScreen.action_library_media_viewer_back(fake)
+    LibraryMediaController.action_library_media_viewer_back(fake)
     assert fake._media_state.reader_session.more_open is False
     assert calls == ["sync", ("focus", "#library-media-reader-more")]
 
     fake, calls, _shell, _find = _escape_fake(region="find")
-    LibraryScreen.action_library_media_viewer_back(fake)
+    LibraryMediaController.action_library_media_viewer_back(fake)
     assert fake._media_state.content_query == ""
     assert calls == ["sync", ("focus", "#library-media-reader-find")]
 
     fake, calls, _shell, _find = _escape_fake(region="reader")
     fake._media_state.confirming_delete = True
-    LibraryScreen.action_library_media_viewer_back(fake)
+    LibraryMediaController.action_library_media_viewer_back(fake)
     assert fake._media_state.confirming_delete is False
     assert calls == ["sync"]
 
     fake, calls, _shell, _find = _escape_fake(region="reader")
     fake._media_state.editing = True
-    LibraryScreen.action_library_media_viewer_back(fake)
+    LibraryMediaController.action_library_media_viewer_back(fake)
     assert fake._media_state.editing is False
     assert calls == ["sync"]
 
     fake, calls, _shell, _find = _escape_fake(region="reader")
     fake._media_state.editing_analysis = True
-    LibraryScreen.action_library_media_viewer_back(fake)
+    LibraryMediaController.action_library_media_viewer_back(fake)
     assert fake._media_state.editing_analysis is False
     assert calls == ["sync"]
 
@@ -1741,34 +1742,34 @@ def test_escape_closes_an_open_find_bar_from_anywhere_in_the_reader():
     Escape graduates panes. Items/Library-pane Escapes are unaffected.
     """
     fake, calls, _shell, _find = _escape_fake(region="reader", find_mounted=True)
-    LibraryScreen.action_library_media_viewer_back(fake)
+    LibraryMediaController.action_library_media_viewer_back(fake)
     assert fake._media_state.content_query == ""
     assert fake._media_state.find_open is False
     assert calls == ["sync", ("focus", "#library-media-reader-find")]
 
     # An Items-pane Escape never consumes the reader's find bar.
     fake, calls, shell, _find = _escape_fake(region="items", find_mounted=True)
-    LibraryScreen.action_library_media_viewer_back(fake)
+    LibraryMediaController.action_library_media_viewer_back(fake)
     assert calls == [("rail", "#library-row-browse-media"), "footer"]
 
 
 def test_escape_label_names_close_find_while_the_bar_is_open():
     """The footer label matches the widened close (Qodo #2367 finding 4)."""
     fake, _calls, _shell, _find = _escape_fake(region="reader", find_mounted=True)
-    assert LibraryScreen._library_media_escape_label(fake) == "close"
+    assert LibraryMediaController._library_media_escape_label(fake) == "close"
 
 
 def test_escape_moves_reader_to_items_then_library_then_screen_back():
     """One outward handler graduates through the effective pane hierarchy."""
     fake, calls, shell, _find = _escape_fake(region="reader")
-    LibraryScreen.action_library_media_viewer_back(fake)
+    LibraryMediaController.action_library_media_viewer_back(fake)
     # task-28004: the Items landing is the loaded row (falling back to the
     # filter only on an empty list), so Escape-then-Down keeps working.
     assert calls[:1] == [("items-pane",)]
 
     fake.focused = SimpleNamespace(ancestors=(shell.items,))
     calls.clear()
-    LibraryScreen.action_library_media_viewer_back(fake)
+    LibraryMediaController.action_library_media_viewer_back(fake)
     # task-31272: the ACTIVE RAIL ROW, never the rail's search Input --
     # the old target made the next Escape (and every letter) typing.
     assert calls == [("rail", "#library-row-browse-media"), "footer"]
@@ -1778,12 +1779,12 @@ def test_escape_moves_reader_to_items_then_library_then_screen_back():
     # painting the document, revoking Escape / ] / [ on identical pixels.
     fake.focused = SimpleNamespace(ancestors=(shell.library,))
     calls.clear()
-    LibraryScreen.action_library_media_viewer_back(fake)
+    LibraryMediaController.action_library_media_viewer_back(fake)
     assert calls == []
 
     # With the Items pane collapsed the exit is real again, so it stays.
     shell.effective_layout.items_open = False
-    LibraryScreen.action_library_media_viewer_back(fake)
+    LibraryMediaController.action_library_media_viewer_back(fake)
     assert calls == ["back"]
 
 
@@ -1791,12 +1792,12 @@ def test_escape_skips_responsively_collapsed_panes():
     """Collapsed intermediate roles are absent from outward graduation."""
     fake, calls, shell, _find = _escape_fake(region="reader")
     shell.effective_layout.items_open = False
-    LibraryScreen.action_library_media_viewer_back(fake)
+    LibraryMediaController.action_library_media_viewer_back(fake)
     assert calls[:1] == [("rail", "#library-row-browse-media")]
 
     calls.clear()
     shell.effective_layout.library_open = False
-    LibraryScreen.action_library_media_viewer_back(fake)
+    LibraryMediaController.action_library_media_viewer_back(fake)
     assert calls == ["back", "footer"]
 
 
@@ -1824,11 +1825,11 @@ async def test_hidden_panes_have_no_focusable_descendants_but_grips_remain_reach
 def test_footer_advertises_only_working_current_actions():
     """The Escape hint names the currently effective focus destination."""
     fake, _calls, shell, _find = _escape_fake(region="reader")
-    assert LibraryScreen._library_media_escape_label(fake) == "focus Items"
+    assert LibraryMediaController._library_media_escape_label(fake) == "focus Items"
     fake.focused = SimpleNamespace(ancestors=(shell.items,))
-    assert LibraryScreen._library_media_escape_label(fake) == "focus Library"
+    assert LibraryMediaController._library_media_escape_label(fake) == "focus Library"
     shell.effective_layout.library_open = False
-    assert LibraryScreen._library_media_escape_label(fake) == "back"
+    assert LibraryMediaController._library_media_escape_label(fake) == "back"
 
 
 class CountingProgressMediaService(ControlledDetailMediaService):
@@ -2036,32 +2037,32 @@ def test_find_from_analysis_opens_the_bar_on_the_analysis_tab():
         _focus_library_media_content_search_input=lambda: None,
     )
     fake._reset_library_media_search_on_mode_change = MethodType(
-        LibraryScreen._reset_library_media_search_on_mode_change, fake
+        LibraryMediaController._reset_library_media_search_on_mode_change, fake
     )
     fake._close_library_media_find = MethodType(
-        LibraryScreen._close_library_media_find, fake
+        LibraryMediaController._close_library_media_find, fake
     )
     # PR H2: the focus follow-up rides the shared post-sync seam; no viewer
     # is mounted in this fake, so it takes the screen fallback.
     fake._mounted_library_media_viewer = lambda: None
     fake._after_library_media_viewer_sync = MethodType(
-        LibraryScreen._after_library_media_viewer_sync, fake
+        LibraryMediaController._after_library_media_viewer_sync, fake
     )
     # PR L (task-31950): the seam's ordering half is its own method now, so
     # the fakes bind it too and keep exercising the real logic.
     fake._queue_after_library_media_viewer_recompose = MethodType(
-        LibraryScreen._queue_after_library_media_viewer_recompose, fake
+        LibraryMediaController._queue_after_library_media_viewer_recompose, fake
     )
     # Qodo on #2378: the handler refuses when the tab has nothing to search.
     fake._library_media_find_unavailable_reason = MethodType(
-        LibraryScreen._library_media_find_unavailable_reason, fake
+        LibraryMediaController._library_media_find_unavailable_reason, fake
     )
     # task-32348: the button handler and the ctrl+f action share one
     # implementation, so the fake binds that too.
     fake._toggle_library_media_find = MethodType(
-        LibraryScreen._toggle_library_media_find, fake
+        LibraryMediaController._toggle_library_media_find, fake
     )
-    LibraryScreen.handle_library_media_reader_find(
+    LibraryMediaController.handle_library_media_reader_find(
         fake, SimpleNamespace(stop=lambda: None)
     )
     assert fake._media_state.reader_session.mode == "analysis"
@@ -2346,7 +2347,7 @@ def test_t_key_arms_delete_confirmation():
     )
     # TASK-34000.22: `t` refuses while a Media form is dirty; a clean one.
     fake._library_media_editor_dirty = lambda: ""
-    LibraryScreen.action_library_media_move_to_trash(fake)
+    LibraryMediaController.action_library_media_move_to_trash(fake)
     assert fake._media_state.confirming_delete is True
     assert fake._media_state.delete_receipt_ids == ()
     assert fake._synced == 1
@@ -2356,7 +2357,7 @@ def test_c_key_opens_console_handoff():
     """task-28027: 'c' routes to the same Use-in-Console handoff as the button."""
     calls = []
     fake = SimpleNamespace(_open_selected_media_handoff=lambda: calls.append(1))
-    LibraryScreen.action_library_media_use_in_console(fake)
+    LibraryMediaController.action_library_media_use_in_console(fake)
     assert calls == [1]
 
 
@@ -2366,7 +2367,7 @@ def test_l_key_starts_read_later_toggle():
     fake = SimpleNamespace(
         _start_library_media_read_later_toggle=lambda: started.append(1)
     )
-    LibraryScreen.action_library_media_read_later(fake)
+    LibraryMediaController.action_library_media_read_later(fake)
     assert started == [1]
 
 
@@ -2426,7 +2427,7 @@ async def test_c_key_in_reader_opens_console_handoff_end_to_end(monkeypatch):
 
         calls = []
         monkeypatch.setattr(
-            screen, "_open_selected_media_handoff", lambda: calls.append(1)
+            screen._media_controller, "_open_selected_media_handoff", lambda: calls.append(1)
         )
         screen.query_one("#library-media-reader-find", Button).focus()
         await pilot.pause()
@@ -2539,7 +2540,7 @@ async def test_find_input_keeps_focus_through_a_reader_recompose(size):
             # The action is invoked rather than typed because the focused
             # Find Input swallows the "t" key -- this is the exact method
             # that binding fires.
-            screen.action_library_media_move_to_trash()
+            screen._media_controller.action_library_media_move_to_trash()
             await _wait_for_selector(screen, pilot, "#library-media-delete-cancel")
             await _settle(pilot)
         finally:

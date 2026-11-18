@@ -16,6 +16,9 @@ from textual.widgets import Button, Static
 
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.Media import LocalMediaReadingService, MediaReadingScopeService
+from tldw_chatbook.UI.Library_Modules.library_media_controller import (
+    LibraryMediaController,
+)
 from tldw_chatbook.UI.Library_Modules.library_media_state import LibraryMediaState
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
@@ -99,7 +102,7 @@ def _bind_media_mutation_seams(fake):
     # one ``_close_library_media_find`` seam (collapsed, no query, first
     # match) instead of poking the two query attributes directly.
     fake._close_library_media_find = types.MethodType(
-        LibraryScreen._close_library_media_find, fake
+        LibraryMediaController._close_library_media_find, fake
     )
     if fake._media_state.bulk_delete_in_flight:
         fake._begin_library_media_mutation()
