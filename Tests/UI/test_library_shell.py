@@ -13229,33 +13229,43 @@ async def test_library_media_complete_facets_commit_during_initial_recovery(
             opener.press()
             # TASK-41532: CI run 43917600414 saw no chooser for 30 s here
             # ([loading-All]). Once locally (load ~31) a background canvas
-            # recompose pruned the opener before its Pressed message was
-            # handled, and Textual drops that message. Press the live
-            # replacement then; any other miss fails with the opener's state.
+            # recompose pruned the opener and its press never reached the
+            # handler (TASK-41703). A pruned opener's press is usually still
+            # delivered late, so drain every pump from the canvas up to the
+            # screen first, and re-press the live replacement only if the
+            # strip is still closed; a re-press can then never toggle it twice.
             pressed = [opener]
 
-            def strip_opened() -> bool:
-                if screen._media_state.type_choices_visible:
-                    return True
-                if pressed[-1].parent is None or pressed[-1]._pruning:
-                    live = screen.query("#library-media-type-filter")
-                    if live and live.first() is not pressed[-1]:
-                        pressed.append(live.first())
-                        pressed[-1].press()
-                return False
+            async def drain_canvas_pumps() -> None:
+                canvas = screen.query_one("#library-media-canvas")
+                for node in (canvas, *canvas.ancestors):
+                    done = asyncio.Event()
+                    if node.call_later(done.set):
+                        await asyncio.wait_for(done.wait(), 5)
+                    if node is screen:
+                        break
 
-            await _wait_for_condition(
-                pilot,
-                strip_opened,
-                timeout=30.0,
-                message=lambda: (
+            deadline = time.monotonic() + 30.0
+            while not screen._media_state.type_choices_visible:
+                assert time.monotonic() < deadline, (
                     f"{len(pressed)} type opener press(es) never opened the "
                     f"strip: last opener disabled={pressed[-1].disabled}, "
                     f"display={pressed[-1].display}, "
                     f"pruning={pressed[-1]._pruning}, "
                     f"parent={pressed[-1].parent!r}, focused={screen.focused!r}."
-                ),
-            )
+                )
+                if pressed[-1].parent is None or pressed[-1]._pruning:
+                    await drain_canvas_pumps()
+                    live = screen.query("#library-media-type-filter")
+                    if (
+                        not screen._media_state.type_choices_visible
+                        and live
+                        and live.first() is not pressed[-1]
+                        and not live.first()._pruning
+                    ):
+                        pressed.append(live.first())
+                        pressed[-1].press()
+                await pilot.pause(0.02)
             chooser = await _wait_for_selector(
                 screen, pilot, "#library-media-type-choices"
             )
