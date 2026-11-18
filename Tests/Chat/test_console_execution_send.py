@@ -23,7 +23,7 @@ async def test_selected_original_enter_reaches_provider_and_durable_terminal(
         _ACCEPTED_REPLY,
         _ObservedStderr,
     )
-    from Tests.UI.test_destination_shells import _wait_for_selector
+    from Tests.Chat.console_execution_mount_wait import wait_for_selected_composer
     from tldw_chatbook import config
     from tldw_chatbook.app import TldwCli
     from tldw_chatbook.Chat.console_execution_process import ConsoleExecutionClient
@@ -86,13 +86,7 @@ async def test_selected_original_enter_reaches_provider_and_durable_terminal(
                     await app._console_execution_start_task
                     async with asyncio.timeout(10):
                         await app.handle_screen_navigation(NavigateToScreen(TAB_CHAT))
-                        await _wait_for_selector(
-                            app, pilot, "#console-native-composer", timeout=10
-                        )
-                        while not getattr(
-                            app.screen, "_console_process_surface_reconciled", False
-                        ):
-                            await pilot.pause()
+                        await wait_for_selected_composer(app)
                     screen = app.screen
                     assert type(screen) is ChatScreen and app.console_runtime is None
                     held_store = screen._console_chat_store

@@ -617,7 +617,12 @@ async def test_footer_renders_chips_and_citation_notice():
 @pytest.mark.asyncio
 async def test_link_policy_http_opens_browser_other_schemes_do_not(monkeypatch):
     opened = []
-    monkeypatch.setattr(webbrowser, "open", lambda url: opened.append(url))
+
+    def open_browser(url):
+        opened.append(url)
+        return True
+
+    monkeypatch.setattr(webbrowser, "open", open_browser)
     app = MarkdownHarness()
     async with app.run_test() as pilot:
         transcript = app.query_one(ConsoleTranscript)
@@ -629,10 +634,12 @@ async def test_link_policy_http_opens_browser_other_schemes_do_not(monkeypatch):
         row = transcript.query_one("#console-message-a1")
 
         row._open_link(SimpleNamespace(href="https://example.com", stop=lambda: None))
+        await app.workers.wait_for_complete([worker for worker in app.workers if worker.name == "open-link"])
         assert opened == ["https://example.com"]
 
         row._open_link(SimpleNamespace(href="file:///etc/passwd", stop=lambda: None))
         row._open_link(SimpleNamespace(href="javascript:alert(1)", stop=lambda: None))
+        await app.workers.wait_for_complete([worker for worker in app.workers if worker.name == "open-link"])
         assert opened == ["https://example.com"]  # nothing else opened
 
 

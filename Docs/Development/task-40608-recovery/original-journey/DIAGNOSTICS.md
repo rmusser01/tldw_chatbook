@@ -82,8 +82,12 @@ verifier failure and does not supply approval-paint evidence.
 `g34f` uses the separate `46ff4b` bundle with foreground/approval observation and
 the first-error observer. The optional source-predicate probe rejected changed
 bytecode before the workload started and was omitted. That probe's rejection
-is not a product failure. No `g34f` quantity or completion outcome is recorded
-here before its runner exits; it must not inherit `997b33`'s compatibility pins.
+  is not a product failure. The runner exited 1 after 66.984 s of original fixture
+  time during Workspace setup, before either Send. ApplySourceRevision was
+  refused at admission in `_require_rail_publication:294`. UI observer summaries
+  closed cleanly with no tool/approval observations; backend closing summaries
+  are absent. No per-tool comparison or retirement proof follows from this
+  incomplete run. It must not inherit `997b33`'s compatibility pins.
 
 See the [timing tracker](../windows-journey-timings.md) for source receipt names
 and the distinct clean `q31c1` final-code-paint failure. Failed journey receipts

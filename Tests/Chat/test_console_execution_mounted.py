@@ -59,7 +59,7 @@ def _pilot_barrier_at_failure(error, pilot, current_pumps):
 async def test_selected_process_home_to_chat_composes_original_surface(request):
     from Tests.Chat.test_console_control_trace import _observe
     from Tests.Chat.test_console_execution_backend_process import _ObservedStderr
-    from Tests.UI.test_destination_shells import _wait_for_selector
+    from Tests.Chat.console_execution_mount_wait import wait_for_selected_composer
     from tldw_chatbook import config
     from tldw_chatbook.app import TldwCli
     from tldw_chatbook.Chat.console_execution_process import ConsoleExecutionClient
@@ -130,9 +130,7 @@ async def test_selected_process_home_to_chat_composes_original_surface(request):
                     try:
                         async with asyncio.timeout(10):
                             await app.handle_screen_navigation(NavigateToScreen(TAB_CHAT))
-                            await _wait_for_selector(app, pilot, "#console-native-composer", timeout=10)
-                            while not getattr(app.screen, "_console_process_surface_reconciled", False):
-                                await pilot.pause()
+                            await wait_for_selected_composer(app)
                     except BaseException as error:
                         import inspect
 

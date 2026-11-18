@@ -165,7 +165,7 @@ def test_selected_resize_waits_for_the_current_visit_publication(monkeypatch):
     from tldw_chatbook.UI.Console_Modules import execution_state
 
     client = SimpleNamespace(_visit=4, _readiness_deadline=10.0)
-    screen = SimpleNamespace()
+    screen = SimpleNamespace(app_instance=SimpleNamespace(console_execution_client=client))
     monkeypatch.setattr(execution_state, "selected_client", lambda _screen: client)
     monkeypatch.setattr(execution_state, "time", SimpleNamespace(monotonic=lambda: 10.0))
     refreshes = []

@@ -40,6 +40,7 @@ On the earlier `g25` run, Send to first request took **14.267 s**. The interval 
 | `g31` | Same product, with parent and backend configuration writers observed on `f9c9e964cc` | 10.938 s | 0.461 s | 1.324 s | 12.723 s | README passed at 30.589 s raw and 28.367 s adjusted. The manual unread reminder read the store before the resumed Chat received its current display. The edit did not reach Send. |
 | `g32f` | Foreground and corrected approval v3 observers on frozen `997b3339ff` | 10.530 s | — | — | — | Project disclosure painted; no click or provider request. ReadProjection failed at application in `require_retired_context_change:861`. No completed journey or tool-approval measurement. |
 | `g33p` | Separate readiness predicate diagnostic on the same `997b3339ff` product | 11.847 s | 0.420 s | 1.397 s | 13.663 s | README passed all original checks at 30.786 s raw and 29.241 s adjusted. Returning from Settings failed at `_require_selected_publication:75`, before edit Send. The readiness verifier failure from `g32f` did not recur. |
+| `g34f` | Separately reviewed foreground/approval v3 candidate on `46ff4b9ed8` | — | — | — | — | Workspace setup stopped before Send. ApplySourceRevision was refused at admission in `_require_rail_publication:294`; neither journey started. |
 
 The 2.318 s difference in time to first request between `g21` and `g25` is an observation across two diagnostic runs. Several code and instrumentation changes separate them.
 
@@ -404,3 +405,29 @@ helper produces `fgv3b1-diagnostic-numeric.json` locally; source-only arithmetic
 tests distinguish region delivery from fixed-label paint and refuse intervals
 across changed card/visit scope. The portable v3 archive and its checksum remain
 unchanged by this execution.
+
+## Incomplete candidate diagnostic: `g34f`
+
+The separately pinned `46ff4b9ed88d71d0e9390fb57fd8406d220bd702` candidate
+failed during Workspace setup after 66.984 s of original fixture time (runner
+exit 1; pytest 78.60 s). Neither README nor edit reached Send. The first backend
+failure was `RuntimeError` at `console_execution_backend._require_rail_publication:294`
+during **ApplySourceRevision admission**, where the captured requested rail
+change is compared with the reloaded configuration. Later parent callbacks
+reported `ConsoleChannelLost`; they are not evidence of a second tool failure.
+
+UI foreground and approval observers closed without errors, source refusals,
+unfinished work or truncation, but recorded zero approvals and zero tool
+executions. The two backend streams have registration records and **no closing
+summary**. Their observation completeness and resource retirement are therefore
+unproven. There is no candidate per-tool cost or approval interval to compare
+with completed baseline `fgv3b1`.
+
+The optional source-predicate observer rejected changed bytecode before the run
+and was omitted. The executed variant kept foreground/approval v3 and first-error
+observation; original QA and product source checks remained enabled. Source
+receipts are `original-journey-46ff4bfg/replay-runs/g34f/{timings,run-metadata}.json`,
+`progress.jsonl`, `first-exception-*.jsonl` and
+`lab-observer/backend-failure-3860.jsonl` plus its four tool-observer streams.
+This is an incomplete nonqualifying diagnostic, not a measured speedup or a
+five-second result.

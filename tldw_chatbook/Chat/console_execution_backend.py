@@ -284,12 +284,17 @@ class ConsoleExecutionBackend:
             or publication.original_result.settings_view is not publication.sources.configuration
         ):
             raise RuntimeError("Console rail publication source changed")
-        for previous, current in (
-            (prior_raw, publication.selection_cache),
-            (prior_settings, publication.sources.configuration),
+        for previous, current, normalized in (
+            (prior_raw, publication.selection_cache, False),
+            (prior_settings, publication.sources.configuration, True),
         ):
             expected = deepcopy(previous)
-            expected.setdefault("console", {}).setdefault("rail_state", {})[update["key"]] = dict(update["value"])
+            # The original settings builder keeps a separate complete raw
+            # mirror as well as its normalized Console table. Both expose this
+            # same requested leaf; every other value must still match exactly.
+            views = (expected, expected["COMPREHENSIVE_CONFIG_RAW"]) if normalized else (expected,)
+            for view in views:
+                view.setdefault("console", {}).setdefault("rail_state", {})[update["key"]] = dict(update["value"])
             if expected != current:
                 raise RuntimeError("Console rail publication contains another change")
 
@@ -448,6 +453,7 @@ from tldw_chatbook.Utils.definition_records import capture_definitions
 
 _PROFILE_SELECTION = _definition(ConsoleBackendProfile.selection_is_current)
 _RAIL_DEFINITIONS = capture_definitions((
+    (_profile_source.config, "_load_settings_uncached", _profile_source.config._load_settings_uncached),
     (_profile_source, "_selection_facts", _profile_source._selection_facts),
     (_rail_source, "serialize_console_rail_stored_preferences", _rail_source.serialize_console_rail_stored_preferences),
 ))

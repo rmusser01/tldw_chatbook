@@ -68,28 +68,116 @@ async def test_external_original_rail_save_invalidates_backend_selection(request
         await profile.aclose()
 
 
-async def _external_rail_save(path, directory, key, value, *, extra=False):
+async def _external_rail_save(path, directory, key, value, *, extra=False, marker=False):
     result = await asyncio.to_thread(
         subprocess.run,
         [sys.executable, "-c", (
-            "import sys,json; from pathlib import Path; "
+            "import sys,json,tomllib; from pathlib import Path; "
             "from tldw_chatbook import config; "
             "assert config.get_cli_config_path() == Path(sys.argv[1]); "
             "assert config.get_user_data_dir() == Path(sys.argv[2]); "
             "assert config.save_setting_to_cli_config("
             "'console.rail_state', sys.argv[3], json.loads(sys.argv[4])); "
             "assert sys.argv[5] == 'False' or config.save_setting_to_cli_config("
-            "'console.rail_state', 'unrequested-record', {'left_open': False})"
-        ), str(path), str(directory), key, json.dumps(value), str(extra)],
+            "'console.rail_state', 'unrequested-record', {'left_open': False}); "
+            "assert sys.argv[6] == 'False' or config.replace_cli_config({"
+            "**tomllib.loads(config.read_cli_config_serialized()), '_first_run': True})"
+        ), str(path), str(directory), key, json.dumps(value), str(extra), str(marker)],
         env={**os.environ, "TLDW_CONFIG_PATH": str(path)},
         capture_output=True, check=False,
     )
     assert result.returncode == 0, "Original external rail save failed"
 
 
+def _rail_comparison_note(backend, publication):
+    """Report allowlisted product keys and shapes, never values or paths."""
+    from copy import deepcopy
+
+    command, _profile, raw, normalized, _facts = backend._rail_refresh
+    update = command.rail_update
+
+    def changed(value):
+        result = deepcopy(value)
+        result.setdefault("console", {}).setdefault("rail_state", {})[update["key"]] = dict(update["value"])
+        return result
+
+    original_expected = changed(normalized)
+    complete_expected = deepcopy(original_expected)
+    mirror = complete_expected.get("COMPREHENSIVE_CONFIG_RAW")
+    if type(mirror) is dict:
+        complete_expected["COMPREHENSIVE_CONFIG_RAW"] = changed(mirror)
+
+    # Literal product schema names only. Unknown/user-defined names are counted
+    # together; neither their spelling nor any setting value is emitted.
+    allowed = frozenset("""
+        API_COMPONENT_ROOT APP_DATABASE_CONFIG APP_MODE_STR APP_RAG_SEARCH_CONFIG
+        APP_TTS_CONFIG COMPREHENSIVE_CONFIG_RAW DATABASE_URL LOG_LEVEL OPENAI_API_KEY
+        PROJECT_ROOT Prompts SINGLE_USER_API_KEY SINGLE_USER_FIXED_ID SINGLE_USER_MODE
+        STT_settings SearchEngines SearchSettings USERS_DB_CONFIGURED USERS_NAME acp
+        agents analysis_defaults anthropic_api aphrodite_api api_endpoints api_settings
+        appearance auto_save briefings_feed_server caching canvas character_defaults
+        chat chat_defaults chat_dictionaries chunking chunking_config cohere_api
+        config_schema_version confluence console console_ssh custom_openai_api
+        custom_openai_api_2 database deepseek_api diarization dictation elevenlabs_api
+        embedding_config first_run general github groq_api hooks huggingface_api
+        image_generation kobold_api legacy_api_key_providers library llama_cpp_api
+        llamacpp_snapshots llm_api_settings llm_management local_ingestion logging mcp
+        media_cleanup media_processing meetings metrics mistral_api model_capabilities
+        model_catalog network notes ollama_api ooba_api openai_api openrouter_api _first_run
+        output_path permission_summary persona_buddy processing_choice prompts providers
+        rag rag_citations rag_search scheduling search_engine_specific_settings
+        search_engines_keys search_settings_general session_summary skills splash_screen
+        subscriptions sync system_preferences tabby_api tamagotchi tldw_api tools
+        transcription tts_settings video_generation vllm_api web_scraper_settings
+        web_security web_server webfetch webhooks rail_state rail_layout_scope
+        agent_open workspace_open context_open left_open right_open width left_width
+        right_width enabled model models api_key api_url base_url default_model
+    """.split())
+    missing = object()
+
+    def shape(value):
+        names = {dict: "dict", list: "list", tuple: "tuple", str: "str", bool: "bool",
+                 int: "int", float: "float", type(None): "none"}
+        return {
+            "type": "missing" if value is missing else names.get(type(value), "other"),
+            "items": len(value) if type(value) in (dict, list, tuple) else None,
+        }
+
+    def differences(previous, current, path, depth=0):
+        if previous == current:
+            return []
+        row = {
+            "key": path, "before": shape(previous), "after": shape(current),
+            "direction": "added" if previous is missing else "removed" if current is missing else "changed",
+        }
+        if type(previous) is not dict or type(current) is not dict or depth == 4:
+            return [row]
+        changed_keys = {item for item in previous.keys() | current.keys()
+                        if previous.get(item, missing) != current.get(item, missing)}
+        row["changed_count"] = len(changed_keys)
+        known = changed_keys & allowed
+        row["unknown_count"] = len(changed_keys - known)
+        result = [row]
+        for item in sorted(known):
+            result.extend(differences(previous.get(item, missing), current.get(item, missing),
+                                      f"{path}.{item}", depth + 1))
+        return result
+
+    return json.dumps({
+        "raw_matches_requested": changed(raw) == publication.selection_cache,
+        "normalized_matches_single_projection": original_expected == publication.sources.configuration,
+        "normalized_has_original_raw_mirror": type(mirror) is dict,
+        "normalized_matches_both_projections": complete_expected == publication.sources.configuration,
+        "differences": (
+            differences(changed(raw), publication.selection_cache, "raw")
+            + differences(complete_expected, publication.sources.configuration, "normalized")
+        )[:100],
+    }, sort_keys=True)
+
+
 @private_profile_test
 @pytest.mark.asyncio
-@pytest.mark.parametrize("outcome", ["accepted", "partial", "extra", "refresh_failure"])
+@pytest.mark.parametrize("outcome", ["accepted", "partial", "extra", "persisted_marker", "refresh_failure"])
 async def test_exact_rail_publication_reassociates_only_after_retired_refresh(request, outcome):
     import inspect
     from contextlib import nullcontext
@@ -108,6 +196,12 @@ async def test_exact_rail_publication_reassociates_only_after_retired_refresh(re
     )
 
     path, directory, *_ = _settled_profile()
+    # Provisioning above can create the first file and annotate that creator's
+    # cache with _first_run. The real child opens an already-created profile
+    # after App setup. Read that existing file through the original loader
+    # before capturing this fixture's backend authority, just as the child does.
+    config.load_settings(force_reload=True)
+    assert "_first_run" not in config._CONFIG_CACHE
     profile = open_console_backend_profile(expected_config_path=path, expected_data_directory=directory)
     backend = ConsoleExecutionBackend(profile, profile_epoch="rail-profile", service_epoch="rail-service")
     channel = _SentFrames()
@@ -140,7 +234,10 @@ async def test_exact_rail_publication_reassociates_only_after_retired_refresh(re
         actual = dict(value)
         if outcome == "partial":
             actual.pop("agent_open")
-        await _external_rail_save(path, directory, key, actual, extra=outcome == "extra")
+        await _external_rail_save(
+            path, directory, key, actual,
+            extra=outcome == "extra", marker=outcome == "persisted_marker",
+        )
         assert profile._selection_cache is config._CONFIG_CACHE is before
 
         observation = (
@@ -163,11 +260,49 @@ async def test_exact_rail_publication_reassociates_only_after_retired_refresh(re
                 backend.require_sources()
             with pytest.raises(RuntimeError, match="not issued"):
                 backend._require_rail_publication(replace(publication))
+            if outcome == "persisted_marker":
+                # An actual persisted marker remains an unrelated write. The
+                # verifier must not strip it just because initial provisioning
+                # uses the same name for a transient bootstrap annotation.
+                assert "_first_run" not in before
+                assert publication.selection_cache["_first_run"] is True
+                with pytest.raises(RuntimeError, match="another change"):
+                    backend._require_rail_publication(publication)
+            if outcome == "accepted":
+                # The original normalizer publishes separate Console and raw
+                # mirror tables. Exact requested values belong in both; an
+                # incomplete mirror or any unrelated key still must refuse.
+                from copy import deepcopy
+
+                note = _rail_comparison_note(backend, publication)
+                predicates = json.loads(note)
+                predicates.pop("differences")
+                assert predicates == {
+                    "raw_matches_requested": True,
+                    "normalized_matches_single_projection": False,
+                    "normalized_has_original_raw_mirror": True,
+                    "normalized_matches_both_projections": True,
+                }, note
+                settings = publication.sources.configuration
+                mirror = settings["COMPREHENSIVE_CONFIG_RAW"]
+                try:
+                    settings["COMPREHENSIVE_CONFIG_RAW"] = deepcopy(mirror)
+                    settings["COMPREHENSIVE_CONFIG_RAW"]["console"]["rail_state"][key].pop("agent_open")
+                    with pytest.raises(RuntimeError, match="another change"):
+                        backend._require_rail_publication(publication)
+                    settings["COMPREHENSIVE_CONFIG_RAW"] = deepcopy(mirror)
+                    settings["COMPREHENSIVE_CONFIG_RAW"]["console"]["rail_state"]["unrequested-record"] = {}
+                    with pytest.raises(RuntimeError, match="another change"):
+                        backend._require_rail_publication(publication)
+                finally:
+                    settings["COMPREHENSIVE_CONFIG_RAW"] = mirror
             applied = service.accept(command(3, "ApplySourceRevision", {"publication_request_id": "rail-2"}, 1))
             if applied is not None:
                 await applied
             if outcome == "accepted":
-                assert [row.kind for row in replies(3)] == ["received", "applied", "retired"]
+                actual = [row.kind for row in replies(3)]
+                if actual != ["received", "applied", "retired"]:
+                    pytest.fail("Original rail publication refused: " + _rail_comparison_note(backend, publication))
                 assert replies(3)[-1].payload["retired"] is True
                 backend.require_sources()
                 assert backend.profile is profile and profile._cleanup is original_cleanup
@@ -282,6 +417,7 @@ async def test_original_parent_rail_worker_publishes_to_same_contained_backend(r
     """Exercise original writer, actual child replies and separate native proof."""
     import threading
 
+    from Tests.Chat.console_execution_mount_wait import wait_for_selected_composer
     from Tests.Chat.test_console_control_trace import _observe
     from tldw_chatbook import config
     from tldw_chatbook.app import TldwCli
@@ -289,6 +425,8 @@ async def test_original_parent_rail_worker_publishes_to_same_contained_backend(r
     from tldw_chatbook.Chat.console_rail_state import (
         build_console_rail_preference_key, serialize_console_rail_stored_preferences,
     )
+    from tldw_chatbook.Constants import TAB_CHAT, TAB_HOME
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     assert config.save_settings_to_cli_config({
@@ -312,8 +450,19 @@ async def test_original_parent_rail_worker_publishes_to_same_contained_backend(r
         client = app.console_execution_client
         assert app.console_runtime is None and client._view is None
         original_process, original_tree = client._process, client._tree
+        # A real suspended screen retains its DOM link to the app. A
+        # never-mounted ChatScreen cannot issue a Textual thread callback.
+        await app.handle_screen_navigation(NavigateToScreen(TAB_CHAT))
+        async with asyncio.timeout(30):
+            await wait_for_selected_composer(app)
+        screen = app.screen
+        assert type(screen) is ChatScreen
+        await app.handle_screen_navigation(NavigateToScreen(TAB_HOME))
+        async with asyncio.timeout(30):
+            while client._view is not None:
+                await asyncio.sleep(0.01)
+        assert app.current_tab == TAB_HOME and screen.app is app
         original_revision = client._source_revision
-        screen = ChatScreen(app_instance=app)
         key = build_console_rail_preference_key(layout_scope="global").value
         value = serialize_console_rail_stored_preferences({"workspace_open": True})
         with _observe(rail._write_rail_preference.__code__, sys.monitoring.events.PY_START, writer_entered):
