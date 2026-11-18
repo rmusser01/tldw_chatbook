@@ -81,6 +81,8 @@ The [installed hook-member grouping amendment](../decisions/126-complete-local-b
 
 The [newest-primary-run decision](../decisions/126-complete-local-backup-and-recovery.md#newest-primary-run-in-a-conversation) addresses the measured history scan in mounted log availability. Amend ADR-126 and append AgentRuns schema 32. Check the original row and ordering, bounded query work with a long history, upgrade of schema 31, recovery of earlier archives and refusal of unexpected schema objects. The fresh README and edit journeys retain their separate timing gate.
 
+Qualify the [pre-acknowledgement refusal path](../decisions/230-console-send-preparation-and-io-ownership.md#refusal-of-the-display-check-before-a-commit-acknowledgement). Exercise a positively retired display refusal with a real pending reservation. Verify exact cancellation, draft custody, native retirement, and refusal of a late acknowledgement or an uncertain outcome.
+
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes

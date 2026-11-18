@@ -391,3 +391,20 @@ it is not a fake App. Parent attachment/visit checks remain actual parent facts,
 backend source/native checks remain actual backend checks, and no physical lease
 spans a checkpoint transport wait. Task62 implementation and whole-path evidence
 remain required before any production selector or performance acceptance.
+
+### Refusal of the display check before a commit acknowledgement
+
+The parent must run the original presentation check before acknowledging a
+planned commit. The backend waits for that acknowledgement while it owns the
+reservation. When the current visit receives a verified, positively retired
+refusal of that display read, cancel the exact still-pending turn through
+the existing `CancelTurn` protocol. Join the cancellation and original turn
+receipts, including the terminal custody callback and positive retirement,
+before reporting that the draft was kept. The original check still refuses.
+The writer must never start on this path.
+
+This settlement requires the original client, source revision, visit,
+session, incarnation, retained plan and an unsent acknowledgement. An
+acknowledgement that may have reached the writer, channel loss, or missing
+retirement evidence leaves the outcome uncertain. The client cannot infer
+success from any of these conditions. No plan or action is replayed.

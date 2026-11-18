@@ -442,6 +442,17 @@ competing thread does different work from a Console turn. The completed
 numeric receipt has SHA-256
 `4bb0595f5c6f213e960c4a69515bff2a334d8d09d1d4b83f975e4cca61da9745`.
 
+With the interpreter interval fixed at 1 ms, a second mirrored comparison on
+Windows 10 build 19045 changed only the test process's Windows timer
+resolution. Under the same arithmetic load, stock-resolution samples were
+7.175 and 11.232 s. With a 1 ms Windows timer request they were 1.165 and
+1.356 s. Quiet samples were 19.06 and 11.86 ms at stock resolution and
+11.65 and 12.24 ms with the request. All eight timed acquisitions retained
+their independent checks. The timer request ended, the interpreter setting
+was restored and the native owner retired. The result motivates the matched
+original-journey experiment above. Its numeric receipt has SHA-256
+`3a2e2f24eeb4db9b42adf0b767419e779aa64d5e9edde8b17c2b37b185fac297`.
+
 The subsequent local-parent change on `cae5d57fea` was measured separately
 on Windows Server 2022. Each arm used two warmups and 21 timed complete warm
 lease acquisitions and closes in a fresh interpreter. The six alternating
