@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-12 19:36
-updated_date: '2026-11-15 02:25'
+updated_date: '2026-11-15 19:40'
 labels:
 - follow-up
 - tests
@@ -153,3 +153,11 @@ Found in round 13 of the 2026-10-23 burn-down (send stream, TASK-38948's coverin
 - Stock skill-trust `[send_enter]` / `[send_button]` ("Cold Send did not reach original configuration SQL"): the behaviour TASK-34563.35 implements (a stock cold Send received before trust construction), so they wait on it.
 - The stock `Select` exit-fence exposure found in review r14ti-rev1: TASK-41141.
 Close this task when those land and the lanes' first CI runs are read.
+
+**2026-11-15 (round 15): stays In Progress.** The reds TASK-41139 and TASK-41140 owned are re-pinned and on PR lanes:
+- TASK-41139 (1e71a80d65): `test_enter_with_popup_closed_sends_normally` is drift from 3e618d7119 (the Send's `submit_draft` runs in runtime custody, not a Textual worker); both visit-dispatch nodes are drift from 524de00360 / 11150b849d (question and decision remounts push task-resume state) plus the test's pushed screen landing under the app's own Console on a loaded host. All three are on the UI census.
+- TASK-41140 (68f64fc37b): held-pointer `[skill]` is test timing (the read left was the constructor's attention refresh from 2e6d7f64e8, not the trust read); the managed received custody bound is set to 30 s from measurements (15.7-21.0 s at load 63-81, the trace-settlement connection 0.12-0.15 s of it); the genuine-capture file is re-pinned to `runtime_producer_lifetime`. `[skill]` and the managed received file joined the recovered-suites lane.
+
+Still open:
+- AC#2: the stock skill-trust `[send_enter]` / `[send_button]` cases stay red; TASK-34563.35 implements that behaviour.
+- AC#1's CI half: no CI run of these lanes has finished. The round-14 PR runs that carry them (for example fu/r14-testinfra, 43698643389 and 43742729513) are still queued, and the last completed derived-artifacts run that was not cancelled is dev ecad404bd4 (2026-11-15 00:58Z), from before the lanes landed.
