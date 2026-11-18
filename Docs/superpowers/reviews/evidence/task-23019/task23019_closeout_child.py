@@ -36,6 +36,7 @@ _SCRATCH = ""
 _READ_ROOTS: tuple[str, ...] = ()
 _READ_FILES: frozenset[str] = frozenset()
 _METADATA_ONLY_PATHS: frozenset[str] = frozenset()
+_STAT_ONLY_PATHS: frozenset[str] = frozenset()
 _ENUMERATION_DIRS: frozenset[str] = frozenset()
 _OPEN_FDS: dict[int, tuple[str, bool, bool, tuple[int, int, int, tuple[str, int]]]] = {}
 _RESOLVING_PATH = threading.local()
@@ -502,7 +503,15 @@ def _guarded_metadata_read(name: str, path: object, *args: object, **kwargs: obj
         )
     )
     if resolved is None or not (
-        _read_allowed(resolved) or traversal_stat or named_nofollow_ancestor
+        _read_allowed(resolved)
+        or traversal_stat
+        or named_nofollow_ancestor
+        or (
+            name == "stat"
+            and sys.platform == "linux"
+            and bool(_SCRATCH)
+            and resolved in _STAT_ONLY_PATHS
+        )
     ):
         _contain(FILESYSTEM_READ_DENIED)
     return _REAL_METADATA_READ_APIS[name](frozen_path, *args, **kwargs)
@@ -652,7 +661,7 @@ def _runtime_metadata_ancestors(scratch: str) -> frozenset[str]:
 
 def _install_boundary(checkout: str, scratch: str) -> None:
     global _ATTEMPT_FD, _ENUMERATION_DIRS, _METADATA_ONLY_PATHS
-    global _READ_FILES, _READ_ROOTS, _SCRATCH
+    global _READ_FILES, _READ_ROOTS, _SCRATCH, _STAT_ONLY_PATHS
     global TASK_BASELINE, THREAD_BASELINE
 
     _SCRATCH = _REAL_OS_REALPATH(scratch)
@@ -683,6 +692,21 @@ def _install_boundary(checkout: str, scratch: str) -> None:
     _ATTEMPT_FD = _REAL_OS_OPEN(attempts_path, open_flags, 0o600)
     _READ_ROOTS, _READ_FILES = _runtime_authority(checkout_root, _SCRATCH)
     _METADATA_ONLY_PATHS = _runtime_metadata_ancestors(_SCRATCH)
+    _STAT_ONLY_PATHS = (
+        frozenset(
+            _REAL_OS_REALPATH(path)
+            for path in (
+                *(
+                    _PROCESS_PROC_ROOT + "/" + name
+                    for name in ("smaps", "smaps_rollup", "io")
+                ),
+                "/sys/devices/system/cpu/cpufreq/policy0",
+                "/sys/devices/system/cpu/cpu0/cpufreq",
+            )
+        )
+        if sys.platform == "linux"
+        else frozenset()
+    )
     _ENUMERATION_DIRS = frozenset({_REAL_OS_REALPATH("/dev/fd")})
     sys.addaudithook(_audit)
 
@@ -793,6 +817,7 @@ def _write_json(path: Path, payload: object) -> bool:
 
 
 def _run_pytest(target: Path, scratch: Path) -> int:
+    (scratch / "automated-results.json").unlink(missing_ok=True)
     import pytest
 
     pytest_config = scratch / "pytest.ini"
@@ -829,6 +854,8 @@ def _run_pytest(target: Path, scratch: Path) -> int:
             plugins=[recorder],
         )
     )
+    if returncode == pytest.ExitCode.USAGE_ERROR:
+        return returncode
     results_written = _write_json(scratch / "automated-results.json", recorder.results)
     return returncode if results_written else 2
 

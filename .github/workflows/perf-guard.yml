@@ -1,5 +1,5 @@
 name: Perf Guard
-run-name: Light CI containment repair probe (not qualification)
+run-name: Light CI Linux stat-only repair probe (not qualification)
 on:
   workflow_dispatch:
 permissions:
@@ -13,7 +13,7 @@ env:
   PYTHONUNBUFFERED: 1
 jobs:
   containment-diagnostic:
-    name: Linux containment repair and refusal controls
+    name: Linux stat-only repair and refusal controls
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -40,6 +40,10 @@ jobs:
           python -m pytest \
             Tests/Live/test_library_adaptive_reader_closeout.py::test_child_settles_one_real_catalogue_selector \
             Tests/Live/test_library_adaptive_reader_closeout.py::test_real_hermetic_child_runs_declared_async_curated_selector \
+            Tests/Live/test_library_adaptive_reader_closeout.py::test_real_hermetic_child_still_runs_declared_synchronous_selector \
+            Tests/Live/test_library_adaptive_reader_closeout.py::test_child_psutil_capability_probes_are_linux_stat_only \
+            Tests/Live/test_library_adaptive_reader_closeout.py::test_child_imports_psutil_after_containment_without_reading_probe_contents \
+            Tests/Live/test_library_adaptive_reader_closeout.py::test_child_psutil_stat_probes_grant_no_other_access \
             Tests/Live/test_library_adaptive_reader_closeout.py::test_child_own_mountinfo_has_no_related_or_write_authority \
             Tests/Live/test_library_adaptive_reader_closeout.py::test_child_fdinfo_requires_current_tracked_scratch_directory \
             Tests/Live/test_library_adaptive_reader_closeout.py::test_child_reads_linux_mount_metadata_for_tracked_scratch_directory \
