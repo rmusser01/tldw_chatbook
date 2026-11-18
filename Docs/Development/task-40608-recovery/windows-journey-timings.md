@@ -631,3 +631,49 @@ The loop's checked preparation and settlement used 20 storage admissions.
 The provider workers used 15. These are nested costs inside the model calls.
 The original test reached the fifth response and then failed in a display
 read before verifying the reply. Its README and edit have no completion times.
+
+### How the work scales
+
+The original project has three files. A slow run on that fixture does not
+establish a repository-size bottleneck. The baseline `fs_edit` trace instead
+places 17.4580 s in 36 storage admissions before executor entry, on the same
+tool thread. Each event can revisit the same Windows profile paths. The
+lexical part of admission also revisited every ancestor for every supplied
+path, even when the input already contained all those ancestors. On a single
+chain of depth `d`, that loop visited roughly `d(d+1)/2` prefixes. The
+follow-up on `c99b4a9889` stops at the first previously checked full spelling
+and builds the native traversal's set of nodes the same way. Each distinct
+prefix is inserted once per observation. Full component validation, native
+opens, access checks and bottom-up identity verification still run.
+
+Project-index status has a separate cost that depends on the number of
+entries in the *index cache*. The original `binding_bytes` walks cache
+directories, checks each entry and caps traversal at 4,096 entries. No
+measurement here attributes the journey's total time to that walk. In the
+successful run the optional index database was 106,496 bytes; creating and
+opening that database is distinct from scanning the user's source files.
+
+## Clean Windows pair attempt q8
+
+The driver stopped after the first baseline and candidate on `33470fe57d`.
+Its ledger records zero eligible pairs. The original edit assertion waited
+600 seconds for the expected transcript row. The reply had already persisted.
+
+| Side | Journey | First HTTP | Send to persisted reply | Measured disclosure and approvals | Adjusted | Verified |
+|---|---|---:|---:|---:|---:|---|
+| Baseline | README | 94.8256 s | 302.7484 s | 7.4297 s | 295.3187 s | Yes |
+| Baseline | Edit | 94.1889 s | 419.6515 s | 14.0763 s | 405.5752 s | Yes |
+| Candidate | README | 11.4368 s | 26.8948 s | 1.4726 s | 25.4222 s | Yes |
+| Candidate | Edit | 12.2075 s | 38.0666 s | 2.0266 s | 36.0400 s | No, painted row timed out |
+
+The candidate reached five README and six edit requests. The three edit Once
+approvals were for `fs_read`, `fs_edit` and `git_diff`. The UI worker raised
+`command_failed (applied)` on a background projection read. The original
+traceback shows its physical retirement succeeded. The first workspace tray
+duplicate-widget error followed 29 seconds later and recurred during the wait.
+The edit's 777 parent storage admissions include this wait and cannot be
+assigned to the 38.0666-second interval.
+
+The original Windows receipts are in `q81b1` and `q81c1`. Their SHA-256
+digests are `290567b597776e6d89970cc1b5c8617dc4f4f73613eacefec3041f26f1173bf2`
+and `c4fb2aaf95dc6bf201f04898b8ece884fc99de04ce4971b5485f00cdbf32948f`.

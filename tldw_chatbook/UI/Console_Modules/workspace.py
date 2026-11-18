@@ -1163,7 +1163,7 @@ class ConsoleWorkspaceController:
             for binding in bindings
         )
         def index_status(binding):
-            from ...Workspaces.project_index.runtime import get_project_index_service, project_index_key
+            from ...Workspaces.project_index.runtime import get_project_index_service, project_index_key, project_index_management_snapshot_for_display
             from ...Widgets.Settings_Widgets.project_index_binding_card import index_status_copy
 
             scope = binding.scope
@@ -1173,7 +1173,7 @@ class ConsoleWorkspaceController:
             with service.registry_connection_scope():
                 key = project_index_key(self.app_instance, inspected_workspace_id,
                                         binding.binding_id, Path(scope.canonical_root))
-                status, _, requires_upgrade = get_project_index_service(self.app_instance).management_snapshot(key)
+                status, _, requires_upgrade = project_index_management_snapshot_for_display(service, key)
                 return index_status_copy(status, requires_upgrade)
 
         def index_settings():

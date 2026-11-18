@@ -140,6 +140,9 @@ class ProjectIndexScope:
     key: ProjectIndexKey
     epoch: int
     processing_revision: int
+    # A passive observation cannot write the initial durable authority witness.
+    # Explicit management resolves this additional CAS under its original fence.
+    absence_authority_revision: int | None = field(default=None, kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)

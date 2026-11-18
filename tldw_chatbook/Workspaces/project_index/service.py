@@ -292,12 +292,57 @@ class ProjectIndexService:
     ) -> tuple[ProjectIndexStatus, ProjectIndexPolicy, bool]:
         """Read exact management state without upgrading a validated legacy cache."""
         with self._store(key, cleanup_only=True) as store:
-            status = self._status_from_store(store, key)
-            with self._admitted(store, key) as authority:
+            return self._management_snapshot_from_store(store, key)
+
+    def _management_snapshot_from_store(self, store, key):
+        status = self._status_from_store(store, key)
+        with self._admitted(store, key) as authority:
+            if authority is None:
+                raise ValueError("authority_unavailable")
+            policy = store.policy(status.scope)
+        return status, policy, store.schema_version < store._CURRENT_SCHEMA_VERSION
+
+    def _console_management_snapshot(self, key, missing_base, require_current):
+        with self._store(key, cleanup_only=True, missing_base=missing_base) as store:
+            if store is not None:
+                return self._management_snapshot_from_store(store, key)
+            with self._fence(key) as authority:
+                require_current()
                 if authority is None:
                     raise ValueError("authority_unavailable")
-                policy = store.policy(status.scope)
-            return status, policy, store.schema_version < store._CURRENT_SCHEMA_VERSION
+                scope = ProjectIndexScope(
+                    key,
+                    0,
+                    0,
+                    absence_authority_revision=authority.authority_revision,
+                )
+                return (
+                    ProjectIndexStatus(scope, "Off", 0, 0, 0, None, None, 0, 0),
+                    ProjectIndexPolicy((), ()),
+                    False,
+                )
+
+    @staticmethod
+    def _management_scope(store, key, scope, authority):
+        """Resolve only the observed initial scope, never adopt a newer scope."""
+        if (
+            type(scope) is not ProjectIndexScope
+            or scope.absence_authority_revision is None
+        ):
+            return scope
+        if (
+            scope.key != key
+            or scope.epoch != 0
+            or scope.processing_revision != 0
+            or type(scope.absence_authority_revision) is not int
+            or authority is None
+            or authority.authority_revision != scope.absence_authority_revision
+        ):
+            raise ValueError("stale_scope")
+        original = ProjectIndexScope(key, 0, 0)
+        if store.load_status(key).scope != original:
+            raise ValueError("stale_scope")
+        return original
 
     def _status_from_store(self, store, key):
         with self._admitted(store, key):
@@ -549,6 +594,9 @@ class ProjectIndexService:
                     store.assert_native_lifetime()
                     if authority is None:
                         raise ValueError("authority_unavailable")
+                    expected_scope = self._management_scope(
+                        store, key, expected_scope, authority
+                    )
                     self._claim_contract(store.read_claim(expected_scope), key)
                     store.configure(
                         key, policy, enabled=True, expected_scope=expected_scope
@@ -575,6 +623,9 @@ class ProjectIndexService:
                     raise ValueError("authority_unavailable")
                 if authority is not None:
                     store.reconcile_authority(key, authority.authority_revision)
+                expected_scope = self._management_scope(
+                    store, key, expected_scope, authority
+                )
                 revoked = store.revoke(key, clear=False, expected_scope=expected_scope)
                 affected = tuple(
                     run for run in self._runs.values() if run.claim.scope.key == key
@@ -1379,6 +1430,10 @@ _CONSOLE_STATUS_READERS = tuple(
         "_retain",
         "_bind",
         "_console_status",
+        "management_snapshot",
+        "_management_snapshot_from_store",
+        "_console_management_snapshot",
+        "_management_scope",
     )
     for method in (getattr(ProjectIndexService, name),)
     for body in (getattr(method, "__wrapped__", method),)

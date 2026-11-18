@@ -19,6 +19,7 @@ from tldw_chatbook.Workspaces.project_index.models import (
 from tldw_chatbook.Workspaces.project_index.runtime import (
     get_project_index_service,
     project_index_key,
+    project_index_management_snapshot_for_display,
 )
 
 DEFAULT_POLICY = ProjectIndexPolicy((), ())
@@ -198,7 +199,7 @@ class ProjectIndexBindingCard(Vertical):
         key = project_index_key(
             app, self.workspace_id, self.binding_id, Path(self.root)
         )
-        return service.management_snapshot(key)
+        return project_index_management_snapshot_for_display(service, key)
 
     def reload_status(self) -> None:
         if self.is_mounted and self.available and self.supported and not self._pending:

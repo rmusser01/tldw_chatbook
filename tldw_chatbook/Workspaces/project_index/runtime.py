@@ -14,7 +14,10 @@ import threading
 import sys
 from types import MethodType
 
-from tldw_chatbook.Utils.definition_records import capture_definitions
+from tldw_chatbook.Utils.definition_records import (
+    capture_definitions,
+    definitions_current,
+)
 from tldw_chatbook.Backup_Recovery.activation import execution_scope
 from tldw_chatbook.Backup_Recovery.isolated_restore import verified_data_identity
 from tldw_chatbook.Backup_Recovery.profile_paths import effective_config_path
@@ -33,6 +36,7 @@ from .models import (
     MAX_CACHE_BYTES,
     OWNER_ID,
     ProjectIndexKey,
+    ProjectIndexPolicy,
     ProjectIndexStatus,
     ProjectIndexRetirementUnproven,
     locator_fingerprint,
@@ -659,6 +663,40 @@ def project_index_status_for_console(
     return service._console_status(
         key, lambda pin: _console_missing_index_base(service, key, pin, source)
     )
+
+
+def project_index_management_snapshot_for_display(
+    service: ProjectIndexService, key: ProjectIndexKey
+) -> tuple[ProjectIndexStatus, ProjectIndexPolicy, bool]:
+    """Show a proven unused index without provisioning it on a passive visit."""
+    source = getattr(service, "_console_preparation_source", None)
+
+    def current():
+        return (
+            _CONSOLE_NATIVE_READERS
+            and _console_source_current(service, source)
+            and definitions_current(_MANAGEMENT_INITIAL_DEFINITIONS)
+        )
+
+    if not current():
+        return service.management_snapshot(key)
+
+    def require_current():
+        if not current():
+            raise ValueError("index_preparation_source_changed")
+
+    return service._console_management_snapshot(
+        key,
+        lambda pin: _console_missing_index_base(service, key, pin, source),
+        require_current,
+    )
+
+
+# The absent display mirrors these exact original initial-state semantics.
+_MANAGEMENT_INITIAL_DEFINITIONS = capture_definitions(
+    (WorkspaceProjectIndexDB, name, getattr(WorkspaceProjectIndexDB, name))
+    for name in ("_control", "load_status", "policy", "reconcile_authority")
+)
 
 
 _CONSOLE_CHAIN_READER = capture_directory_chain, capture_directory_chain.__code__
