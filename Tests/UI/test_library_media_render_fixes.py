@@ -743,10 +743,10 @@ async def test_pressing_analyze_leaves_select_mode_and_paints_its_receipt():
             analyzed.append(media_id)
             return True
 
-        screen._analyze_one_library_media_item = _one
+        screen._media_controller._analyze_one_library_media_item = _one
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(
-                library_screen_module,
+                library_media_controller_module,
                 "analysis_unavailable_reason",
                 lambda *_a, **_k: "",
             )
@@ -804,14 +804,14 @@ async def test_analyze_run_that_dies_with_the_screen_says_where_it_stopped():
                 raise
             return True
 
-        screen._analyze_one_library_media_item = _one
+        screen._media_controller._analyze_one_library_media_item = _one
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(
-                library_screen_module,
+                library_media_controller_module,
                 "analysis_unavailable_reason",
                 lambda *_a, **_k: "",
             )
-            screen._start_library_media_analyze(("a", "b", "c"), overwrite=True)
+            screen._media_controller._start_library_media_analyze(("a", "b", "c"), overwrite=True)
         worker = next(
             candidate
             for candidate in host.workers
@@ -855,14 +855,14 @@ async def test_analyze_run_cancelled_before_a_total_is_known_says_so_honestly():
             await release.wait()
             return media_ids
 
-        screen._library_media_unanalyzed_ids = _blocked_unanalyzed
+        screen._media_controller._library_media_unanalyzed_ids = _blocked_unanalyzed
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(
-                library_screen_module,
+                library_media_controller_module,
                 "analysis_unavailable_reason",
                 lambda *_a, **_k: "",
             )
-            screen._start_library_media_analyze(("a", "b"), overwrite=False)
+            screen._media_controller._start_library_media_analyze(("a", "b"), overwrite=False)
         worker = next(
             candidate
             for candidate in host.workers
@@ -896,7 +896,7 @@ async def test_analyze_bulk_action_follows_the_selection_in_place():
         screen = await _open_media_list(host, pilot)
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(
-                library_screen_module,
+                library_media_controller_module,
                 "analysis_unavailable_reason",
                 lambda *_a, **_k: "",
             )
@@ -917,7 +917,7 @@ async def test_analyze_bulk_action_follows_the_selection_in_place():
             # And the provider gate wins over the count: an unready
             # provider keeps it off with its own reason.
             mp.setattr(
-                library_screen_module,
+                library_media_controller_module,
                 "analysis_unavailable_reason",
                 lambda *_a, **_k: "No analysis provider is configured.",
             )
@@ -1845,7 +1845,7 @@ async def test_reprojection_skips_rows_the_page_does_not_retain():
         # The selection spans both pages, exactly as a bulk Analyze over a
         # "select all" does.
         for media_id in [*on_page, *off_page]:
-            await screen._reproject_library_media_analysis_row(media_id)
+            await screen._media_controller._reproject_library_media_analysis_row(media_id)
 
         extra = service.search_calls[searches_before:]
         assert len(extra) == len(on_page), extra
@@ -1991,8 +1991,8 @@ async def test_generate_is_disabled_with_its_reason_when_no_provider_is_configur
         assert str(generate.tooltip) == _NO_PROVIDER_REASON
         # Belt and braces: the handler refuses with the same sentence.
         warnings: list[str] = []
-        screen._notify_library_media_analysis_warning = warnings.append
-        screen.handle_library_media_analysis_generate(
+        screen._media_controller._notify_library_media_analysis_warning = warnings.append
+        screen._media_controller.handle_library_media_analysis_generate(
             SimpleNamespace(stop=lambda: None)
         )
         await pilot.pause()
@@ -2036,7 +2036,7 @@ async def test_reader_generate_reason_line_is_absent_when_a_provider_is_ready():
         screen = await _open_media_list(host, pilot)
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(
-                library_screen_module,
+                library_media_controller_module,
                 "analysis_unavailable_reason",
                 lambda *_a, **_k: "",
             )
@@ -2210,7 +2210,7 @@ async def test_select_mode_analyze_reason_refreshes_on_resume():
         with pytest.MonkeyPatch.context() as mp:
             # A provider is configured mid-session (Library was suspended).
             mp.setattr(
-                library_screen_module,
+                library_media_controller_module,
                 "analysis_unavailable_reason",
                 lambda *_a, **_k: "",
             )
@@ -2239,7 +2239,7 @@ async def test_the_analysis_provider_is_resolved_only_on_the_tab_that_shows_it(
     event loop for every Reader gesture. Only ``_compose_analysis`` consumes
     the reason, so only the Analysis tab pays for it."""
     from tldw_chatbook.Library.ingest_analysis import IngestAnalysisResolution
-    from tldw_chatbook.UI.Screens import library_screen as library_screen_module
+    from tldw_chatbook.UI.Library_Modules import library_media_controller as library_media_controller_module
 
     calls: list[object] = []
     not_ready = IngestAnalysisResolution(
@@ -2255,7 +2255,7 @@ async def test_the_analysis_provider_is_resolved_only_on_the_tab_that_shows_it(
         return not_ready
 
     monkeypatch.setattr(
-        library_screen_module,
+        library_media_controller_module,
         "resolve_ingest_analysis_provider",
         _recording_resolver,
     )
@@ -2288,10 +2288,10 @@ async def test_generate_is_live_when_the_configured_provider_is_ready(monkeypatc
     """The counterpart: a ready resolution leaves the action untouched --
     no marker, no tooltip, no disabled state."""
     from tldw_chatbook.Library.ingest_analysis import IngestAnalysisResolution
-    from tldw_chatbook.UI.Screens import library_screen as library_screen_module
+    from tldw_chatbook.UI.Library_Modules import library_media_controller as library_media_controller_module
 
     monkeypatch.setattr(
-        library_screen_module,
+        library_media_controller_module,
         "resolve_ingest_analysis_provider",
         lambda _config: IngestAnalysisResolution(
             provider="OpenAI",

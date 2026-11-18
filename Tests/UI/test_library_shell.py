@@ -11097,7 +11097,7 @@ async def test_library_shell_media_analysis_cancel_discards():
 @pytest.mark.asyncio
 async def test_library_media_generate_analysis_dispatches_and_persists():
     """task-28006: Generate resolves the provider, dispatches, and saves the result."""
-    import tldw_chatbook.UI.Screens.library_screen as library_screen_module
+    import tldw_chatbook.UI.Library_Modules.library_media_controller as library_media_controller_module
     from tldw_chatbook.Library.ingest_analysis import IngestAnalysisResolution
 
     app = _build_test_app()
@@ -11134,11 +11134,11 @@ async def test_library_media_generate_analysis_dispatches_and_persists():
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(
-                library_screen_module,
+                library_media_controller_module,
                 "resolve_ingest_analysis_provider",
                 lambda *a, **k: ready,
             )
-            mp.setattr(library_screen_module, "chat_api_call", _fake_dispatch)
+            mp.setattr(library_media_controller_module, "chat_api_call", _fake_dispatch)
             # task-28007 AC#5: the action is composed disabled while no
             # provider resolves, so the patched-ready resolution has to
             # reach the viewer before the press can land.
@@ -11169,7 +11169,7 @@ async def test_library_media_generate_analysis_dispatches_and_persists():
 @pytest.mark.asyncio
 async def test_library_media_generate_analysis_without_provider_notifies_and_skips():
     """task-28006: with no ready provider, Generate warns and never dispatches or saves."""
-    import tldw_chatbook.UI.Screens.library_screen as library_screen_module
+    import tldw_chatbook.UI.Library_Modules.library_media_controller as library_media_controller_module
     from tldw_chatbook.Library.ingest_analysis import (
         IngestAnalysisResolution,
         NO_ANALYSIS_PROVIDER_REASON,
@@ -11205,12 +11205,12 @@ async def test_library_media_generate_analysis_without_provider_notifies_and_ski
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(
-                library_screen_module,
+                library_media_controller_module,
                 "resolve_ingest_analysis_provider",
                 lambda *a, **k: not_ready,
             )
             mp.setattr(
-                library_screen_module,
+                library_media_controller_module,
                 "chat_api_call",
                 lambda **k: dispatched.append(k) or "should not run",
             )
@@ -11226,7 +11226,7 @@ async def test_library_media_generate_analysis_without_provider_notifies_and_ski
                 "No analysis provider is configured "
                 "· Set one in Settings ▸ Providers & Models."
             )
-            screen.handle_library_media_analysis_generate(
+            screen._media_controller.handle_library_media_analysis_generate(
                 SimpleNamespace(stop=lambda: None)
             )
             await pilot.pause()

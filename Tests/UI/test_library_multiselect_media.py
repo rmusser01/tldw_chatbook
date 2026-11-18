@@ -2532,12 +2532,12 @@ def _analyze_fake(
     fake.app_instance.app_config = {}
     resolution = SimpleNamespace(ready=True)
     monkeypatch.setattr(
-        library_screen_module,
+        library_media_controller_module,
         "resolve_ingest_analysis_provider",
         lambda config: resolution,
     )
     monkeypatch.setattr(
-        library_screen_module, "analysis_unavailable_reason", lambda _resolution: ""
+        library_media_controller_module, "analysis_unavailable_reason", lambda _resolution: ""
     )
     for name in (
         "_start_library_media_analyze",
@@ -2546,7 +2546,7 @@ def _analyze_fake(
         "_library_media_unanalyzed_ids",
         "_clear_library_media_analyze_receipt",
     ):
-        setattr(fake, name, types.MethodType(getattr(LibraryScreen, name), fake))
+        setattr(fake, name, types.MethodType(getattr(LibraryMediaController, name), fake))
 
     async def _detail(media_id, *, include_content):
         return {
@@ -2584,7 +2584,7 @@ async def test_analyze_selected_snapshots_browse_order_and_starts_one_worker(
 ):
     """AC#4: one exclusive worker in its own group, over the browse order."""
     fake = _analyze_fake(monkeypatch)
-    _press(fake, LibraryScreen.handle_library_media_analyze_selected)
+    _press(fake, LibraryMediaController.handle_library_media_analyze_selected)
 
     assert len(fake._worker_calls) == 1
     coro, kwargs = fake._worker_calls[0]
@@ -2609,7 +2609,7 @@ async def test_analyze_selected_arms_the_overwrite_choice_when_any_item_is_analy
 ):
     """AC#3: an analysed item is never overwritten without an explicit choice."""
     fake = _analyze_fake(monkeypatch, analysed=("1",))
-    _press(fake, LibraryScreen.handle_library_media_analyze_selected)
+    _press(fake, LibraryMediaController.handle_library_media_analyze_selected)
     await fake._worker_calls[0][0]
 
     assert fake._generated == []
@@ -2622,10 +2622,10 @@ async def test_analyze_selected_arms_the_overwrite_choice_when_any_item_is_analy
 async def test_analyze_choice_skip_runs_only_the_unanalysed_ids(monkeypatch):
     """AC#3: "Skip them" analyses exactly the items with no analysis."""
     fake = _analyze_fake(monkeypatch, analysed=("1",))
-    _press(fake, LibraryScreen.handle_library_media_analyze_selected)
+    _press(fake, LibraryMediaController.handle_library_media_analyze_selected)
     await fake._worker_calls[0][0]
 
-    _press(fake, LibraryScreen.handle_library_media_analyze_skip)
+    _press(fake, LibraryMediaController.handle_library_media_analyze_skip)
     assert len(fake._worker_calls) == 2
     await fake._worker_calls[1][0]
     assert fake._generated == ["3", "2"]
@@ -2637,10 +2637,10 @@ async def test_analyze_choice_skip_runs_only_the_unanalysed_ids(monkeypatch):
 async def test_analyze_choice_overwrite_runs_every_selected_id(monkeypatch):
     """AC#3: "Overwrite" is the explicit choice that includes analysed items."""
     fake = _analyze_fake(monkeypatch, analysed=("1",))
-    _press(fake, LibraryScreen.handle_library_media_analyze_selected)
+    _press(fake, LibraryMediaController.handle_library_media_analyze_selected)
     await fake._worker_calls[0][0]
 
-    _press(fake, LibraryScreen.handle_library_media_analyze_overwrite)
+    _press(fake, LibraryMediaController.handle_library_media_analyze_overwrite)
     await fake._worker_calls[1][0]
     assert fake._generated == ["3", "1", "2"]
     assert fake._media_state.analyze_total == 3
@@ -2657,7 +2657,7 @@ async def test_analyze_per_item_failure_counts_and_never_aborts_the_run(monkeypa
         return media_id != "2"
 
     fake = _analyze_fake(monkeypatch, generate=_generate)
-    _press(fake, LibraryScreen.handle_library_media_analyze_selected)
+    _press(fake, LibraryMediaController.handle_library_media_analyze_selected)
     await fake._worker_calls[0][0]
 
     assert fake._generated == ["3", "1", "2"]
@@ -2673,11 +2673,11 @@ async def test_second_analyze_press_while_running_is_a_no_op_with_a_notice(
 ):
     """AC#4: one run at a time -- the second press says so instead of racing."""
     fake = _analyze_fake(monkeypatch)
-    _press(fake, LibraryScreen.handle_library_media_analyze_selected)
+    _press(fake, LibraryMediaController.handle_library_media_analyze_selected)
     assert len(fake._worker_calls) == 1
 
     fake._media_state.select_mode = True
-    _press(fake, LibraryScreen.handle_library_media_analyze_selected)
+    _press(fake, LibraryMediaController.handle_library_media_analyze_selected)
     assert len(fake._worker_calls) == 1
     assert fake._notified[-1][0] == "Analysis already running"
 
@@ -2688,12 +2688,12 @@ async def test_second_analyze_press_while_running_is_a_no_op_with_a_notice(
 async def test_retry_failed_reruns_only_the_failed_ids(monkeypatch):
     """AC#4: the receipt's Retry is scoped to what actually failed."""
     fake = _analyze_fake(monkeypatch, generate=lambda mid: mid == "3")
-    _press(fake, LibraryScreen.handle_library_media_analyze_selected)
+    _press(fake, LibraryMediaController.handle_library_media_analyze_selected)
     await fake._worker_calls[0][0]
     assert fake._media_state.analyze_failed_ids == ("1", "2")
 
     fake._generated.clear()
-    _press(fake, LibraryScreen.handle_library_media_analyze_retry)
+    _press(fake, LibraryMediaController.handle_library_media_analyze_retry)
     await fake._worker_calls[1][0]
     assert fake._generated == ["1", "2"]
     assert fake._media_state.analyze_total == 2
@@ -2707,7 +2707,7 @@ def test_analyze_receipt_dismiss_clears_every_receipt_field(monkeypatch):
     fake._media_state.analyze_failed_ids = ("1", "2")
     fake._media_state.analyze_choice = (("1",), ())
 
-    _press(fake, LibraryScreen.handle_library_media_analyze_receipt_dismiss)
+    _press(fake, LibraryMediaController.handle_library_media_analyze_receipt_dismiss)
 
     assert fake._media_state.analyze_total == 0
     assert fake._media_state.analyze_done == 0
@@ -2721,11 +2721,11 @@ async def test_analyze_skip_with_nothing_left_to_run_retires_the_choice(monkeypa
     """AC#3: when EVERY selected item is analysed, "Skip them" means skip
     all of them -- the row must retire, not stay armed and inert."""
     fake = _analyze_fake(monkeypatch, ids=("1", "2"), analysed=("1", "2"))
-    _press(fake, LibraryScreen.handle_library_media_analyze_selected)
+    _press(fake, LibraryMediaController.handle_library_media_analyze_selected)
     await fake._worker_calls[0][0]
     assert fake._media_state.analyze_choice == (("1", "2"), ())
 
-    _press(fake, LibraryScreen.handle_library_media_analyze_skip)
+    _press(fake, LibraryMediaController.handle_library_media_analyze_skip)
     assert len(fake._worker_calls) == 1  # nothing to run
     assert fake._media_state.analyze_choice is None
     assert fake._generated == []
@@ -2739,7 +2739,7 @@ def test_analyze_press_repaints_the_canvas_when_it_leaves_select_mode(monkeypatc
     fake = _analyze_fake(monkeypatch)
     assert fake._syncs == []
 
-    _press(fake, LibraryScreen.handle_library_media_analyze_selected)
+    _press(fake, LibraryMediaController.handle_library_media_analyze_selected)
 
     assert fake._media_state.select_mode is False
     assert fake._syncs, "leaving select mode must repaint the canvas at once"
@@ -2763,7 +2763,7 @@ async def test_bulk_run_never_touches_reader_state_and_counts_a_failed_save(
         "_save_library_media_analysis",
         "_notify_library_media_analysis_warning",
     ):
-        setattr(fake, name, types.MethodType(getattr(LibraryScreen, name), fake))
+        setattr(fake, name, types.MethodType(getattr(LibraryMediaController, name), fake))
     # id "1" returns nothing (the viewer-recompose path); the others reach
     # the save, which fails (the swallowed-failure path).
     fake._dispatch_library_media_analysis = lambda content, resolution: (
@@ -2790,7 +2790,7 @@ async def test_bulk_run_never_touches_reader_state_and_counts_a_failed_save(
         save_analysis_version=lambda **_kwargs: None
     )
 
-    _press(fake, LibraryScreen.handle_library_media_analyze_selected)
+    _press(fake, LibraryMediaController.handle_library_media_analyze_selected)
     await fake._worker_calls[0][0]
 
     assert recomposes == [], "a bulk item must never recompose the Reader"
@@ -2808,10 +2808,10 @@ async def test_reader_generate_keeps_its_own_state_and_warning(monkeypatch):
     Reader's own Generate still clears its flag, recomposes, and warns."""
     fake = _analyze_fake(monkeypatch)
     fake._generate_library_media_analysis = types.MethodType(
-        LibraryScreen._generate_library_media_analysis, fake
+        LibraryMediaController._generate_library_media_analysis, fake
     )
     fake._notify_library_media_analysis_warning = types.MethodType(
-        LibraryScreen._notify_library_media_analysis_warning, fake
+        LibraryMediaController._notify_library_media_analysis_warning, fake
     )
     fake._dispatch_library_media_analysis = lambda content, resolution: ""
     recomposes = []
@@ -3382,7 +3382,7 @@ def test_analysis_generate_targets_the_reader_item_not_the_selection(monkeypatch
     """TASK-34000.18 fix round 1, I-3: Generate reads the loaded detail's
     content, so its save must target the Reader's item -- the selection can
     name another row during a pending window or an off-page open."""
-    from tldw_chatbook.UI.Screens import library_screen as module
+    from tldw_chatbook.UI.Library_Modules import library_media_controller as module
 
     monkeypatch.setattr(module, "resolve_ingest_analysis_provider", lambda _cfg: object())
     monkeypatch.setattr(module, "analysis_unavailable_reason", lambda _res: "")
@@ -3402,7 +3402,7 @@ def test_analysis_generate_targets_the_reader_item_not_the_selection(monkeypatch
         run_worker=lambda coro, **k: workers.append(coro),
     )
 
-    LibraryScreen.handle_library_media_analysis_generate(
+    LibraryMediaController.handle_library_media_analysis_generate(
         fake, SimpleNamespace(stop=lambda: None)
     )
 

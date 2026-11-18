@@ -366,3 +366,10 @@ f1d9f2b9b7cfab0388b45cf16a171be4d6705a86
 # LibraryScreen.<static> calls now naming the controller (ruling R2b). Test
 # edits are receiver-only, AST-proven against the parent.
 a96b35d5e886ec26b7deb5e882662d308f32375b
+
+# TASK-36952.3.5, 2026-11-15 -- media body move slice 5 of 8. Seventeen
+# LibraryScreen analysis bodies (the Reader's provider gate, Generate,
+# dispatch and save, and the bulk Analyze run with its receipt actions) moved
+# byte-for-byte into LibraryMediaController with no token edit. Test edits
+# are receiver-only, AST-proven against the parent.
+9400251cce5a8fdca042a55130935951942802ab

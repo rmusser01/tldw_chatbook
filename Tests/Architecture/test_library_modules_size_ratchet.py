@@ -537,7 +537,13 @@ _BUDGETS: dict[str, int] = {
     # imports (+6), prose (+18).
     # 2026-11-16, TASK-36952.3.4 rebased onto 3.3's rebase onto dev
     # cc6006fcf5: 7912 -> 8503 (the same +591), measured.
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 8503,
+    # 2026-11-15, TASK-36952.3.5 (media body move slice 5 of 8, the same
+    # sanctioned move): 8455 -> 9137 (+682): 17 bodies byte-for-byte with
+    # their separators and a section comment (+662), 2 callbacks out (-12),
+    # 1 shell helper in (+6), imports (+8), prose (+18).
+    # 2026-11-16, TASK-36952.3.5 rebased onto 3.4's rebase onto dev
+    # cc6006fcf5: 8503 -> 9185 (the same +682), measured.
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 9185,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only
