@@ -157,6 +157,57 @@ def test_resume_does_not_accept_mixed_or_unrelated_publications(monkeypatch, cha
         execution_state.selected_client(screen)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("changed", [None, "navigation", "marks", "source", "visit", "session"])
+async def test_explicit_return_waits_for_this_visits_checked_display(monkeypatch, changed):
+    from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
+
+    screen, client, app = _resumed_publication(monkeypatch)
+    app.conversation_local_marks_service = object()
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+    controller._screen = screen
+    controller.app_instance = app
+    controller._manual_navigation_generation = 5
+    reads = []
+
+    def store():
+        # This is the original g31 failure when the return races the mount.
+        reads.append(execution_state.selected_client(screen))
+        return SimpleNamespace(active_session_id=None)
+
+    controller._chat_store_accessor = store
+    await controller.acknowledge_explicit_console_return()
+    assert not reads
+
+    async def mount(current_screen, *, checkpoint):
+        assert current_screen is screen and checkpoint == "mount"
+        client._projection.source_revision = client.projection_view.source_revision = client._source_revision
+        return True
+
+    work = []
+    screen._console_process_view_started = True
+    screen._console_credential_poll_timer = object()
+    screen.run_worker = lambda callback, **options: work.append((callback, options))
+    monkeypatch.setattr(execution_state, "refresh_selected_view", mount)
+    await execution_state.reconcile_selected_view(screen)
+    assert screen._console_pending_manual_return is None
+    (resume, options), = work
+    assert options == {"group": "console-manual-read-return", "exclusive": True}
+    if changed == "navigation":
+        controller._manual_navigation_generation += 1
+    elif changed == "marks":
+        app.conversation_local_marks_service = object()
+    elif changed == "source":
+        client._source_revision += 1
+    elif changed == "visit":
+        client._visit += 1
+    elif changed == "session":
+        row = client.projection_view.session("chat")
+        row.incarnation_id = client._projection.incarnation_id = client.session_composition.incarnation_id = "another"
+    await resume()
+    assert reads == ([client] if changed is None else [])
+
+
 def test_only_actual_modal_coverage_or_ended_visit_defers_refresh(monkeypatch):
     screen, client, app = _visit(monkeypatch)
     assert not execution_state._defer_selected_refresh(screen, client, 1)

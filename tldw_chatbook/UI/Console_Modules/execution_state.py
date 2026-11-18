@@ -578,6 +578,10 @@ async def reconcile_selected_view(screen: ChatScreen) -> None:
         client.require_view(screen, visit)
         screen._console_process_mounted_visit = visit
         screen._console_process_surface_reconciled = True
+        after_mount = getattr(screen, "_console_pending_manual_return", None)
+        if after_mount is not None:
+            screen._console_pending_manual_return = None
+            screen.run_worker(after_mount, group="console-manual-read-return", exclusive=True)
         _require_methods(screen, _MOUNT_UI_METHODS)
         if not getattr(screen, "_console_process_view_started", False):
             # Existing UI restoration does not own backend execution. The

@@ -8541,6 +8541,12 @@ class ConsoleAgentBridge:
         an ongoing probe before the next chunk. No bodies are retained.
         """
         owner = self._owning_run_id_for_log(run_id)
+        return self._run_log_available_for_owner(run_id, owner, cancelled=cancelled)
+
+    def _run_log_available_for_owner(
+        self, run_id: str, owner: str, *, cancelled: Callable[[], bool] | None = None
+    ) -> bool:
+        """Probe the resolved log owner after its metadata DB scope retires."""
         authority = self._run_log_authority_for(owner)
         cursor = None
         while True:
@@ -9880,6 +9886,7 @@ _RUN_LOG_PROBE_SOURCE = (
                 "latest_primary_run_id",
                 "_owning_run_id_for_log",
                 "run_log_available",
+                "_run_log_available_for_owner",
                 "_run_log_authority_for",
                 "_read_run_log_page",
             )
@@ -9908,6 +9915,7 @@ _RUN_LOG_PROBE_SOURCE = (
                     "latest_primary_run_id",
                     "_owning_run_id_for_log",
                     "run_log_available",
+                    "_run_log_available_for_owner",
                     "_run_log_authority_for",
                     "_read_run_log_page",
                 )

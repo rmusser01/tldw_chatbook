@@ -3250,6 +3250,40 @@ class ConsoleSessionController:
 
         Only the app's successful destination-navigation route calls this.
         """
+        client = getattr(self.app_instance, "console_execution_client", None)
+        if client is not None:
+            from .execution_state import _resumed_source_refresh, selected_client
+
+            screen = self._screen
+            if _resumed_source_refresh(screen, client):
+                # The workspace fence left this visit waiting for its mount
+                # publication. The mount already owns the necessary DB read.
+                visit, revision = client._visit, client._source_revision
+                session, incarnation = client._projection.session_id, client._projection.incarnation_id
+                generation = self._manual_navigation_generation
+                marks = self.app_instance.conversation_local_marks_service
+
+                async def after_mount() -> None:
+                    if (
+                        not screen.is_current or client._view is not screen
+                        or self.app_instance.console_execution_client is not client
+                        or client._visit != visit or client._source_revision != revision
+                        or self._manual_navigation_generation != generation
+                        or self.app_instance.conversation_local_marks_service is not marks
+                    ):
+                        return
+                    # Obtain the current checked selection before allowing any
+                    # reminder read or acknowledgement for this conversation.
+                    selected_client(screen)
+                    frame = client._projection
+                    if (frame.session_id, frame.incarnation_id) == (session, incarnation):
+                        await self._acknowledge_current_console_return()
+
+                screen._console_pending_manual_return = after_mount
+                return
+        await self._acknowledge_current_console_return()
+
+    async def _acknowledge_current_console_return(self) -> None:
         store = self._ensure_console_chat_store()
         if store.active_session_id:
             visit = await self.begin_manual_read_visit(

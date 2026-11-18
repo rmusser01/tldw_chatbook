@@ -584,8 +584,30 @@ class ConsoleBackendReadiness:
                     from ..UI.Console_Modules.run_log_probe_scope import finite_stock_probe
 
                     def log_probe():
-                        run_id = bridge.resolve_run_log_target(conversation_id, None)
-                        return bool(run_id and bridge.run_log_available(run_id))
+                        from ..DB.base_db import operation_owned_connection
+                        from ..Backup_Recovery.participants import core_operation
+
+                        database = agent_owners[0]
+                        current()
+                        if any(
+                            getattr_static(bridge, name, None) is not record[0]
+                            or not _definition_current(record)
+                            for name, record in _LOG_METADATA_METHODS
+                        ):
+                            # Keep original dynamic dispatch for nonstock
+                            # metadata readers, without extending their lifetime.
+                            run_id = bridge.resolve_run_log_target(conversation_id, None)
+                            return bool(run_id and bridge.run_log_available(run_id))
+                        # Both original metadata readers use this same database.
+                        # Keep their transactions/checks, retiring only a handle
+                        # this finite probe opened; other handles remain owned.
+                        with operation_owned_connection(database), core_operation(database):
+                            run_id = bridge.resolve_run_log_target(conversation_id, None)
+                            owner = bridge._owning_run_id_for_log(run_id) if run_id else None
+                        current()
+                        # Paging may reacquire leases repeatedly. It must not
+                        # retain this metadata connection or native admission.
+                        return bool(run_id and bridge._run_log_available_for_owner(run_id, owner))
 
                     try:
                         log_available = finite_stock_probe(bridge, log_probe)
@@ -845,6 +867,9 @@ _DEFINITIONS = tuple(
     for name, value in vars(ConsoleBackendReadiness).items()
     if type(value) is FunctionType
 )
+from ..DB import base_db as _workspace_database
+from ..Backup_Recovery import participants as _log_participants
+
 _READ_SOURCES = tuple(
     (owner, name, _definition(getattr(owner, name)))
     for owner, names in (
@@ -854,6 +879,8 @@ _READ_SOURCES = tuple(
         (settings_source, ("build_console_settings_readiness",)),
         (endpoint_source, ("with_provider_endpoint",)),
         (ProviderConnectionEvidence, ("evidence_for", "publish")),
+        (_workspace_database, ("operation_owned_connection", "_operation_owned_connection")),
+        (_log_participants, ("core_operation",)),
     )
     for name in names
 )
@@ -886,7 +913,7 @@ _CONTEXT_METHODS = tuple(
     for owner, names in (
         (ConsoleChatController, ("run_state_for", "_submit_tasks_for_session", "_seeded_greeting_text", "_context_content_for", "context_breakdown_accounting", "_resolve_submit_prefill", "_pinned_prefill_for_session", "fleet_summary_counts", "unattributed_fleet_tokens", "payload_fingerprint_baseline", "compute_current_fingerprint", "cache_ttl_snapshot", "_lightweight_provider_message_rows", "resolve_turn_configuration_snapshot")),
         (ConsoleRuntime, ("response_rule_usage",)),
-        (ConsoleAgentBridge, ("run_log_target_token", "historical_snapshot", "_derive_historical_snapshot", "resolve_run_log_target", "run_log_available", "live_snapshot", "fleet_snapshot", "live_run_snapshot", "live_primary_run_id", "subagent_history_page")),
+        (ConsoleAgentBridge, ("run_log_target_token", "historical_snapshot", "_derive_historical_snapshot", "resolve_run_log_target", "run_log_available", "_run_log_available_for_owner", "live_snapshot", "fleet_snapshot", "live_run_snapshot", "live_primary_run_id", "subagent_history_page")),
         (ConsoleFleetWakeCoordinator, ("pause_reason", "has_pending")),
         (PromptHistory, ("load", "_load_locked", "_file_job", "_history_io", "entry_texts")),
         (ConsoleChatStore, ("payload_revision", "display_projection_revision", "read_only_messages_for_session", "dispatch_recovery_for_session", "preparation_for_session", "session_thinking_history_policy", "pending_attachments")),
@@ -982,9 +1009,12 @@ _HISTORY_INIT = _definition(PromptHistory.__init__)
 _HISTORY_RETIREMENT_DESCRIPTOR = getattr_static(FileJob, "native_retired")
 _HISTORY_RETIREMENT_BODY = _definition(_HISTORY_RETIREMENT_DESCRIPTOR.fget)
 _CONTEXT_GUARD = _definition(_require_context_readers)
+_LOG_METADATA_METHODS = tuple(
+    (name, _definition(getattr(ConsoleAgentBridge, name)))
+    for name in ("latest_primary_run_id", "_owning_run_id_for_log")
+)
 
 from tldw_chatbook.UI.Console_Modules.agent import ConsoleAgentController
-from ..DB import base_db as _workspace_database
 from ..Utils.definition_records import definitions_current as _workspace_definitions_current
 from . import console_change_review_read as _workspace_marker_read
 
