@@ -4,7 +4,7 @@ title: "RAG's own Review recovery never approves rag.definitions, rag.projection
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-17 05:27
-updated_date: 2026-11-18 03:14
+updated_date: 2026-11-18 04:03
 labels:
 - follow-up
 - backup
@@ -58,4 +58,9 @@ Found in the bkreview fix round (round 15) once the test's line-121 failure was 
 - `[rebuild]` and the whole file: 11 passed at `-n 4` (174 s, load 56-98): approve, the eight boundaries, rebuild (the index is searchable afterwards) and ordinary.
 - `test_activation_rag.py -k review`: 4 passed (the review dialog built from a real `RAGRecoveryReview`).
 
-**Lane.** `test_rag_model_recovery_controls.py` runs on no PR lane (nightly-deep only); proposed to the coordinator as a follow-up rather than edited into `derived-artifacts.yml`, which this brief did not cover.
+**Lane.** `test_rag_model_recovery_controls.py` stays on no PR lane (nightly-deep only), by the coordinator's decision: its children import torch, transformers and chromadb, and the PR lanes install no extras.
+
+### Review r16rs-rev1, fix round 1
+
+- **Minor 1.** `Docs/User_Guide/settings/rag.md`'s "After a restore" no longer says each of the three buttons only reviews: the first two review or approve, and **Reconcile / rebuild** loads the model and rebuilds.
+- **Minor 2.** `_run_ui` asserts both strings it replaces are in `_ISOLATED` before replacing them (control: with `timeout=26)` as the budget string, both nodes failed at that assert), and its comment says the 240 s backstop counts from the outer child's start, so the outer setup also comes out of it. `-k "rebuild or cancel"`: 3 passed.

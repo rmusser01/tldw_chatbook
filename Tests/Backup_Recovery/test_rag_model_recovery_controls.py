@@ -216,10 +216,14 @@ def test_settings_model_review_boundaries(tmp_path, mode):
 def _run_ui(tmp_path, mode):
     # TASK-41513: the mounted Settings child outgrows the isolated child's
     # 25 s budget at load 30 and up ([rebuild] timed out at base, load 31-33).
-    # Below _run's 240 s backstop; _run's idle check still catches a hang.
+    # _run's 240 s backstop counts from the outer child's start, so the outer
+    # setup before this child also comes out of it; _run's 60 s idle check
+    # still catches a hang. Both edits must apply, or the run is not this one.
+    loop, budget = "for mode in ('approve','reopen'):", "timeout=25)"
+    assert loop in _ISOLATED and budget in _ISOLATED
     script = "CHILD=" + repr(_UI) + "\n" + _ISOLATED.replace(
-        "for mode in ('approve','reopen'):", "for mode in (sys.argv[1],):"
-    ).replace("timeout=25)", "timeout=200)")
+        loop, "for mode in (sys.argv[1],):"
+    ).replace(budget, "timeout=200)")
     _run(tmp_path, mode, "local", script=script, timeout=60)
 
 
