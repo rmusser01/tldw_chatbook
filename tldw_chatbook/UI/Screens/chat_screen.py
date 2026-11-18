@@ -18818,6 +18818,14 @@ class ChatScreen(BaseAppScreen):
         if self._console_pending_image_attachment() is None:
             return ""
         effective_settings, _readiness = self._active_console_settings_readiness()
+        from ..Console_Modules.execution_state import selected_client
+
+        client = selected_client(self)
+        if client is not None and client.session_composition.vision_capable is not None:
+            return vision_block_reason(
+                effective_settings.provider, effective_settings.model,
+                is_capable=lambda _provider, _model: client.session_composition.vision_capable,
+            ) or ""
         return (
             vision_block_reason(effective_settings.provider, effective_settings.model)
             or ""
@@ -21867,6 +21875,15 @@ class ChatScreen(BaseAppScreen):
         workbench_state = self._build_console_workbench_state(control_state)
         self._push_console_control_state_if_changed(control_state, workbench_state)
         self._sync_console_transcript_guidance()
+        self._sync_console_inspector_and_rail(rail_state)
+        # Cost and cache TTL can move independently of Workbench state.
+        self._sync_console_cost_chip()
+        self._console_auto_speak.sync_controls()
+
+    def _sync_console_inspector_and_rail(
+        self, rail_state: ConsoleRailState | None = None,
+    ) -> None:
+        """Publish the full Inspector to the rail, Send summary and composer."""
         # TASK-251 (audit P1 B1) -- DEVIATION FROM THE BRIEF, documented in
         # the task-251 report: the brief's Change 3 asked to skip this
         # build+push entirely while the right rail is hidden. Measured
@@ -21896,10 +21913,20 @@ class ChatScreen(BaseAppScreen):
             )
         except QueryError:
             authority_summary = None
-        pending_owner = inspector_data._console_pending_display_owner(self)
+        selected = getattr(getattr(self, "app_instance", None), "console_execution_client", None)
+        pending_owner = (
+            inspector_data._console_pending_display_owner(self) if selected is None else None
+        )
         inspector_state = self._build_console_inspector_state(
             self._pending_console_launch_context
         )
+        if selected is not None:
+            from ..Console_Modules.execution_state import ConsoleDisplayExpired, selected_client
+
+            if selected_client(self) is not selected:
+                raise RuntimeError("Console Inspector presentation owner changed")
+            if time.monotonic() >= selected._readiness_deadline:
+                raise ConsoleDisplayExpired("Console Inspector presentation expired")
         if inspector is not None:
             # Strict ownership validates the complete snapshot before the
             # resilient pinned projection publishes any part of it.
@@ -21921,15 +21948,6 @@ class ChatScreen(BaseAppScreen):
                 inspector_state=inspector_state
             )
         self._sync_console_rail_visibility_if_changed(rail_state)
-        # Cost-ticker PR3 (task-5): deliberately OUTSIDE the
-        # `control_state_changed or workbench_state_changed` guard above
-        # (same reasoning as the unconditional inspector build) -- cost/
-        # cache state changes independently of whether the control labels
-        # did, e.g. every streamed token grows the running total, and the
-        # cache TTL counts down with no control-state change at all.
-        # `_sync_console_cost_chip` owns its own equality guard.
-        self._sync_console_cost_chip()
-        self._console_auto_speak.sync_controls()
 
     def _push_console_control_state_if_changed(
         self,
@@ -22358,11 +22376,13 @@ class ChatScreen(BaseAppScreen):
         ephemeral-session accessor (task-9 review F1).
         """
         from tldw_chatbook.Chat.console_parent_settings import parent_settings_render
+        from ..Console_Modules.execution_state import selected_client, selected_queue_presentation
 
-        with parent_settings_render(self):
+        client = selected_client(self)
+        with (contextlib.nullcontext() if client is not None else parent_settings_render(self)):
             from ...Chat.console_parent_settings import defer_parent_settings_render
 
-            if defer_parent_settings_render(self):
+            if client is None and defer_parent_settings_render(self):
                 return
             try:
                 composer = self.query_one(
@@ -22376,17 +22396,27 @@ class ChatScreen(BaseAppScreen):
             dispatch_recovery_blocked = False
             controller = self._console_chat_controller
             queue_presentation = None
+            queue_values = None
             if controller is not None:
-                run_state = getattr(controller, "run_state", None)
-                run_active = bool(getattr(run_state, "is_stop_allowed", False))
-                send_blocked = not bool(getattr(run_state, "is_send_allowed", True))
                 active_id = controller.store.active_session_id or ""
-                run_active = run_active or controller._chat_start.is_accepted(active_id)
-                if active_id:
-                    queue_presentation = self._prompt_queue.presentation_for(
-                        active_id,
-                        composer_collapsed=composer.collapsed,
+                if client is not None:
+                    ack = getattr(self, "_console_send_ack", None)
+                    queue_values, queue_presentation = selected_queue_presentation(
+                        self, sending=bool(ack and ack.active_for(active_id)),
+                        collapsed=composer.collapsed,
                     )
+                    run_active = queue_values.run_stop_allowed or queue_values.chat_start_accepted
+                else:
+                    run_state = getattr(controller, "run_state", None)
+                    run_active = bool(getattr(run_state, "is_stop_allowed", False))
+                    send_blocked = not bool(getattr(run_state, "is_send_allowed", True))
+                    run_active = run_active or controller._chat_start.is_accepted(active_id)
+                if active_id:
+                    if client is None:
+                        queue_presentation = self._prompt_queue.presentation_for(
+                            active_id,
+                            composer_collapsed=composer.collapsed,
+                        )
                     # TASK-22000/ADR-098: queue presentation owns Send availability.
                     # Recombining it with raw run status regressed live-turn Queue:
                     # since
@@ -22404,7 +22434,9 @@ class ChatScreen(BaseAppScreen):
                     # predicate stays in the `or` and still refuses for a genuinely
                     # unresolved owner (see `dispatch_recovery_blocks_submission`).
                     dispatch_recovery_blocked = (
-                        controller.store.dispatch_recovery_blocks_submission(active_id)
+                        queue_values.dispatch_recovery_blocks_submission
+                        if queue_values is not None
+                        else controller.store.dispatch_recovery_blocks_submission(active_id)
                     )
                     send_blocked = (
                         not queue_presentation.send_enabled or dispatch_recovery_blocked
@@ -22431,9 +22463,8 @@ class ChatScreen(BaseAppScreen):
                     else:
                         recovery_region.sync_recovery(
                             active_id,
-                            controller.store.dispatch_recovery_for_presentation(
-                                active_id
-                            ),
+                            client.session_composition.recovery.dispatch if client is not None
+                            else controller.store.dispatch_recovery_for_presentation(active_id),
                         )
             # task-3401.5: an in-flight video generation shows the same Stop
             # affordance (it sets the adapter's cooperative cancel event).
@@ -22498,9 +22529,8 @@ class ChatScreen(BaseAppScreen):
                 # task-15862 AC#3: mid-wake, the queue tooltip above rode the
                 # setup slot and painted as "finish provider setup"; the flag
                 # makes the composer name the wake instead.
-                wake_turn_active=self._fleet._console_wake_turn_active(
-                    active_session_id
-                ),
+                wake_turn_active=(queue_values.wake_turn_active if queue_values is not None
+                    else self._fleet._console_wake_turn_active(active_session_id)),
             )
             run_controls.sync_stop_affordances(self)
             run_controls.sync_dictation_presentation(self, composer)

@@ -357,6 +357,50 @@ def derive_prompt_queue_presentation(
     )
 
 
+def with_prompt_queue_start_state(
+    presentation: ConsolePromptQueuePresentation, *, received_preparing: bool,
+    prepared: bool, accepted: bool,
+) -> ConsolePromptQueuePresentation:
+    """Apply the original received/start precedence to a queue display."""
+    if received_preparing:
+        return replace(
+            presentation, send_label="Preparing...", send_enabled=False,
+            send_tooltip=QUEUE_REASON_RECEIVED_PREPARING,
+        )
+    if prepared:
+        return replace(
+            presentation, send_label="Send", send_enabled=True,
+            send_tooltip="Send this draft and withdraw the prepared background start.",
+        )
+    if accepted:
+        return replace(presentation, send_label="Running", send_enabled=False, send_tooltip="")
+    return presentation
+
+
+def read_queue_recovery_turn(store, session_id: str, *, action: str) -> ConsoleQueueRecoveryTurn | None:
+    """Select the original newest retry target from the resident transcript."""
+    statuses = _RECOVERY_TURN_STATUSES.get(action)
+    if statuses is None:
+        return None
+    target = None
+    try:
+        for item in store.iter_messages_newest_first(session_id):
+            if target is None:
+                if item.role is not ConsoleMessageRole.ASSISTANT:
+                    continue
+                if str(item.status) not in statuses:
+                    return None
+                target = item
+            elif item.role is ConsoleMessageRole.USER:
+                return ConsoleQueueRecoveryTurn(
+                    target.id,
+                    make_prompt_preview(item.content, cell_budget=RECOVERY_TURN_PREVIEW_CELLS),
+                )
+    except KeyError:
+        return None
+    return None if target is None else ConsoleQueueRecoveryTurn(target.id, "")
+
+
 class ConsolePromptQueueRegion(Widget):
     """Always-mounted one-row queue shelf directly above the composer."""
 
@@ -870,28 +914,15 @@ class ConsolePromptQueueUIController:
             ),
         )
         runtime = getattr(controller, "_hooks_v2_runtime", None)
-        if runtime is not None and runtime.has_received_intents(
-            session_id, unpromoted_only=True
-        ):
-            return replace(
-                presentation,
-                send_label="Preparing...",
-                send_enabled=False,
-                send_tooltip=QUEUE_REASON_RECEIVED_PREPARING,
-            )
-        if controller._chat_start.is_prepared(session_id):
-            return replace(
-                presentation,
-                send_label="Send",
-                send_enabled=True,
-                send_tooltip="Send this draft and withdraw the prepared background start.",
-            )
-        if controller._chat_start.is_accepted(session_id):
-            # Native starts own no FIFO chain; they have already been accepted.
-            return replace(
-                presentation, send_label="Running", send_enabled=False, send_tooltip=""
-            )
-        return presentation
+        received = runtime is not None and runtime.has_received_intents(
+            session_id, unpromoted_only=True,
+        )
+        prepared = not received and controller._chat_start.is_prepared(session_id)
+        return with_prompt_queue_start_state(
+            presentation,
+            received_preparing=received, prepared=prepared,
+            accepted=not received and not prepared and controller._chat_start.is_accepted(session_id),
+        )
 
     def recovery_turn(
         self, session_id: str, *, action: str
@@ -915,33 +946,14 @@ class ConsolePromptQueueUIController:
             status ``action`` can retry.
         """
 
-        statuses = _RECOVERY_TURN_STATUSES.get(action)
-        if statuses is None:
+        if action not in _RECOVERY_TURN_STATUSES:
             return None
-        target = None
         try:
-            messages = (
-                self._chat_controller_accessor().store.iter_messages_newest_first(
-                    session_id
-                )
+            return read_queue_recovery_turn(
+                self._chat_controller_accessor().store, session_id, action=action,
             )
-            for item in messages:
-                if target is None:
-                    if item.role is not ConsoleMessageRole.ASSISTANT:
-                        continue
-                    if str(item.status) not in statuses:
-                        return None
-                    target = item
-                elif item.role is ConsoleMessageRole.USER:
-                    return ConsoleQueueRecoveryTurn(
-                        target.id,
-                        make_prompt_preview(
-                            item.content, cell_budget=RECOVERY_TURN_PREVIEW_CELLS
-                        ),
-                    )
         except KeyError:
             return None
-        return None if target is None else ConsoleQueueRecoveryTurn(target.id, "")
 
     def snapshot(self, session_id: str) -> PromptQueueSnapshot:
         """Return the immutable body-free snapshot for a pinned session."""

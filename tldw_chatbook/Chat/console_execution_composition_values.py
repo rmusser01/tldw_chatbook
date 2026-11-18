@@ -24,6 +24,8 @@ from .console_display_state import ConsoleProjectInstructionState, ConsoleRetrie
 from .console_execution_project_values import project_instruction_status
 from .rag_scope import SessionScopeHolder
 from .console_execution_recovery_values import ConsoleRecoveryDisplay, recovery_display
+from .console_execution_queue_values import ConsoleQueueDisplay, queue_display
+from .console_execution_inspector_values import ConsoleInspectorScopes, inspector_scopes
 
 
 if TYPE_CHECKING:
@@ -97,6 +99,9 @@ class ConsoleSessionComposition:
     runtime_backend: str
     project_instruction_status: ConsoleProjectInstructionState
     recovery: ConsoleRecoveryDisplay
+    inspector_scope: ConsoleInspectorScopes | None = None
+    queue: ConsoleQueueDisplay | None = None
+    vision_capable: bool | None = None
 
 
 _COMPOSITION = {
@@ -133,6 +138,9 @@ _COMPOSITION = {
     "project_instruction_status": project_instruction_status,
     "runtime_backend": _text,
     "recovery": recovery_display,
+    "queue": _optional(queue_display),
+    "vision_capable": _optional(_boolean),
+    "inspector_scope": _optional(inspector_scopes),
 }
 
 
@@ -157,6 +165,9 @@ def encode_session_composition(
     evidence_sent_notice: int | None,
     project_status: ConsoleProjectInstructionState,
     recovery: ConsoleRecoveryDisplay,
+    inspector_scope: ConsoleInspectorScopes | None = None,
+    queue: ConsoleQueueDisplay | None = None,
+    vision_capable: bool | None = None,
 ) -> dict:
     """Capture only named fields of the original session and its policy snapshot."""
     from .console_chat_store import ConsoleChatSession
@@ -192,7 +203,7 @@ def encode_session_composition(
         tools_published, builtin_tool_count, mcp_tool_count,
         mcp_not_connected_count, selected_tool_count,
         staged_evidence_present, staged_evidence_revision, evidence_sent_notice,
-        session.runtime_backend, project_status, recovery,
+        session.runtime_backend, project_status, recovery, inspector_scope, queue, vision_capable,
     )
     return _record(value, ConsoleSessionComposition, _COMPOSITION, False)
 
@@ -206,6 +217,9 @@ def decode_session_composition(
     from .console_execution_protocol import ConsoleProtocolError
 
     result = _record(value, ConsoleSessionComposition, _COMPOSITION, True)
+    if (result.inspector_scope is not None
+        and result.inspector_scope.conversation_id != row.persisted_conversation_id):
+        raise ConsoleProtocolError("projection_inspector_scope_changed")
     if type(row) is not ConsoleSessionView or (
         result.session_id,
         result.incarnation_id,
@@ -213,6 +227,8 @@ def decode_session_composition(
     ) != (row.id, row.incarnation_id, row.settings_revision):
         raise ConsoleProtocolError("projection_composition_session_changed")
     trace = result.recovery.trace
+    if result.queue is not None and result.queue.snapshot.session_id != result.session_id:
+        raise ConsoleProtocolError("projection_queue_session_changed")
     if (trace is not None and trace.context_hold is not None
         and trace.context_hold.session_id != result.session_id):
         raise ConsoleProtocolError("projection_recovery_session_changed")

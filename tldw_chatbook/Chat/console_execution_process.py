@@ -725,7 +725,7 @@ class ConsoleExecutionClient:
 
     async def read_projection(
         self, session_id: str, incarnation_id: str, *, _preparation=None,
-        _checkpoint: str | None = None, _run_history=None,
+        _checkpoint: str | None = None, _run_history=None, _inspector_refresh: str | None = None,
     ):
         """Serialize actual reads through their positive physical retirement."""
         view, visit, source = self._view, self._visit, self._source_revision
@@ -749,6 +749,7 @@ class ConsoleExecutionClient:
                     session_id, incarnation_id, _preparation=_preparation,
                     _checkpoint=_checkpoint,
                     _run_history=_run_history,
+                    _inspector_refresh=_inspector_refresh,
                 )
 
         task = asyncio.create_task(read(), name="console_execution_projection")
@@ -786,7 +787,7 @@ class ConsoleExecutionClient:
 
     async def _read_projection_locked(
         self, session_id: str, incarnation_id: str, *, _preparation=None,
-        _checkpoint: str | None = None, _run_history=None,
+        _checkpoint: str | None = None, _run_history=None, _inspector_refresh: str | None = None,
     ):
         """Adopt one exact retired projection without constructing a local store."""
         requested_at = time.monotonic()
@@ -815,6 +816,8 @@ class ConsoleExecutionClient:
         payload["known_marker_revision"] = previous.marker_revision if known is not None else None
         if _run_history is not None:
             payload["run_history"] = _run_history
+        if _inspector_refresh is not None:
+            payload["inspector_refresh"] = _inspector_refresh
         if _checkpoint is not None:
             if view is None or _checkpoint not in {"mount", "visible"}:
                 raise ConsoleChannelLost("Console visible checkpoint requires its view")

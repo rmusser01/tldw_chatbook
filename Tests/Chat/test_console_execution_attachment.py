@@ -24,6 +24,9 @@ def test_coalesced_controls_use_current_selected_publication(monkeypatch, entry)
         _sync_console_selected_recovery=lambda: updates.append("recovery"),
         _active_console_settings_readiness=lambda: "readiness",
         _apply_console_transcript_guidance=lambda value: updates.append(value),
+        _sync_console_pending_delete_confirmation=lambda: updates.append("delete confirmation"),
+        _sync_console_inspector_and_rail=lambda: updates.append("inspector"),
+        _sync_console_cost_chip=lambda: updates.append("cost"),
         _sync_console_command_popup=lambda: updates.append("popup"),
     )
     monkeypatch.setattr(execution_state, "selected_client", lambda receiver: client)
@@ -34,7 +37,10 @@ def test_coalesced_controls_use_current_selected_publication(monkeypatch, entry)
 
     sync = getattr(ChatScreen, entry)
     assert sync(screen)
-    assert updates == [("control", "workbench"), "settings", "recovery", "readiness"]
+    assert updates == [
+        ("control", "workbench"), "settings", "recovery", "readiness",
+        "delete confirmation", "inspector", "cost",
+    ]
     updates.clear()
     ChatScreen._sync_console_workbench_actions_from_draft(screen)
     assert updates == [("control", "workbench"), "popup"]
@@ -85,6 +91,40 @@ def test_selected_guidance_keeps_blocking_modal_on_original_readiness(monkeypatc
     monkeypatch.setattr(execution_state, "settings_readiness", expired)
     ChatScreen._sync_console_transcript_guidance(screen)
     assert values == ["current", "refresh"]
+
+
+def test_full_selected_inspector_drives_summary_composer_and_rail(monkeypatch):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Console_Modules import execution_state
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    client = SimpleNamespace(_readiness_deadline=float("inf"))
+    state = SimpleNamespace(can_save_chatbook=True)
+    rendered = []
+    screen = SimpleNamespace(
+        app_instance=SimpleNamespace(console_execution_client=client),
+        _pending_console_launch_context=None,
+        _build_console_inspector_state=lambda _: state,
+        query_one=lambda selector, _: SimpleNamespace(
+            sync_state=lambda value: rendered.append((selector, value)),
+        ),
+        _console_chatbook_action_available=lambda: False,
+        _sync_console_composer_action_state=lambda *, can_save_chatbook: rendered.append(("composer", can_save_chatbook)),
+        _current_console_rail_state=lambda *, inspector_state: ("rail", inspector_state),
+        _sync_console_rail_visibility_if_changed=rendered.append,
+    )
+    monkeypatch.setattr(execution_state, "selected_client", lambda _: client)
+    ChatScreen._sync_console_inspector_and_rail(screen)
+    assert rendered == [
+        ("#console-run-inspector-state", state), ("#console-send-authority-summary", state),
+        ("composer", False), ("rail", state),
+    ]
+    rendered.clear()
+    client._readiness_deadline = 0.0
+    with pytest.raises(execution_state.ConsoleDisplayExpired):
+        ChatScreen._sync_console_inspector_and_rail(screen)
+    assert not rendered
 
 
 @pytest.mark.asyncio

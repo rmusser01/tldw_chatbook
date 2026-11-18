@@ -51,6 +51,7 @@ class ConsoleBackendReadiness:
         self.context_summary = None
         self.context_key = None
         self._context_facts = None
+        self.vision_capability = None
         from .console_backend_cost import ConsoleBackendCost
 
         self.cost = ConsoleBackendCost(backend)
@@ -482,6 +483,7 @@ class ConsoleBackendReadiness:
         # Failed or cancelled replacement reads cannot leave a reusable partial
         # input set. Publish the next one only after the effect retires below.
         self._context_facts = None
+        self.vision_capability = None
         effect = backend.controls._begin_effect("display_readiness", self, source)
         observations = []
         self.pending = True
@@ -535,6 +537,7 @@ class ConsoleBackendReadiness:
                     if tokenizer_ready and settings.model else None
                 )
                 caps = None
+                vision_capability = None
                 if not settings.provider.startswith("custom-ep:"):
                     try:
                         capabilities = get_model_capabilities().get_model_capabilities(
@@ -543,6 +546,9 @@ class ConsoleBackendReadiness:
                         caps = (
                             positive_token_cap(capabilities, "max_input_tokens", "input_token_limit", "provider_input_cap"),
                             positive_token_cap(capabilities, "max_output_tokens", "output_token_limit", "provider_output_cap"),
+                        )
+                        vision_capability = (
+                            settings.provider, settings.model, bool(capabilities.get("vision", False)),
                         )
                     except Exception:
                         pass  # Original optional local-capability display policy.
@@ -569,7 +575,7 @@ class ConsoleBackendReadiness:
                 current()
                 if preparation is not None and not tokenizer_display.preparation_current(preparation):
                     raise RuntimeError("Console tokenizer preparation changed")
-                return loaded, tokenizer_ready, window, caps, history, log_available, preparation
+                return loaded, tokenizer_ready, window, caps, history, log_available, preparation, vision_capability
 
         task = asyncio.current_task()
         history_retired = False
@@ -623,7 +629,7 @@ class ConsoleBackendReadiness:
                 ],
             }
             history_key = self._history_key()
-            loaded, tokenizer_ready, window, caps, history, log_available, preparation = await run_preparation_read(
+            loaded, tokenizer_ready, window, caps, history, log_available, preparation, vision_capability = await run_preparation_read(
                 read,
                 creator=self,
                 session_id=session.id,
@@ -699,6 +705,7 @@ class ConsoleBackendReadiness:
             )
         if not settings.model or tokenizer_ready and preparation is not None:
             self._context_facts = context_facts
+        self.vision_capability = vision_capability
         return value
 
 

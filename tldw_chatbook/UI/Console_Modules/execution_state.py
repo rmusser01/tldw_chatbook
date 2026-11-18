@@ -18,7 +18,7 @@ from ...Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsReadiness,
 )
-from ..Screens.chat_screen import ChatScreen
+from ..Screens.chat_screen import ChatScreen, _workspace_build_scope
 from .execution_projection import _definition, _require_methods, _require_sources
 
 _CLIENT_METHODS = (("require_view", _definition(ConsoleExecutionClient.require_view)),)
@@ -380,7 +380,7 @@ def sync_selected_controls(screen: ChatScreen, *, draft_only: bool = False) -> b
     if time.monotonic() < client._readiness_deadline:
         _require_methods(screen, _REFRESH_METHODS)
         try:
-            with screen._console_derivation_scope():
+            with screen._console_derivation_scope(), _workspace_build_scope(screen):
                 control = screen._build_console_control_state(screen._pending_console_launch_context)
                 workbench = screen._build_console_workbench_state(control)
                 if time.monotonic() >= client._readiness_deadline:
@@ -391,6 +391,9 @@ def sync_selected_controls(screen: ChatScreen, *, draft_only: bool = False) -> b
                     screen._sync_console_selected_recovery()
                     readiness = screen._active_console_settings_readiness()
                     screen._apply_console_transcript_guidance(readiness)
+                    screen._sync_console_pending_delete_confirmation()
+                    screen._sync_console_inspector_and_rail()
+                    screen._sync_console_cost_chip()
             if time.monotonic() >= client._readiness_deadline:
                 raise ConsoleDisplayExpired("Console control presentation expired")
             return True
@@ -430,6 +433,8 @@ _REFRESH_METHODS = tuple(
         "_console_derivation_scope", "_build_console_control_state",
         "_build_console_workbench_state", "_push_console_control_state_if_changed",
         "_sync_console_workbench_state", "_apply_console_workbench_state",
+        "_sync_console_pending_delete_confirmation", "_sync_console_inspector_and_rail",
+        "_sync_console_cost_chip",
         "_sync_console_settings_summary", "_sync_console_rail_system_line",
         "_sync_console_agent_section",
         "_sync_console_selected_recovery", "_console_settings_failure_display",
@@ -738,3 +743,36 @@ async def bind_selected_session_draft(screen: ChatScreen) -> None:
         if getattr(screen, "_console_process_draft_switch", None) is transition:
             screen._console_process_draft_switch = None
     await _join_selected_switch_entries(client, receipts)
+
+
+from ...Chat import console_execution_queue_values as _queue_values
+from . import prompt_queue as _queue_display
+
+_QUEUE_PRESENTATION = _definition(_queue_values.queue_presentation)
+_QUEUE_DISPLAY_SOURCES = tuple(
+    (name, _definition(getattr(_queue_display, name)))
+    for name in ("derive_prompt_queue_presentation", "with_prompt_queue_start_state")
+)
+
+
+def selected_queue_presentation(screen: ChatScreen, *, sending: bool, collapsed: bool):
+    """Combine captured original queue facts with this view's ACK and collapse."""
+    from ...Chat.console_domain_services import _definition_current
+
+    client = selected_client(screen)
+    if client is None:
+        raise RuntimeError("Console queue presentation requires its selected owner")
+    if time.monotonic() >= client._readiness_deadline:
+        raise ConsoleDisplayExpired("Console queue presentation expired")
+    value = client.session_composition.queue
+    if (
+        type(value) is not _queue_values.ConsoleQueueDisplay
+        or value.snapshot.session_id != client.session_composition.session_id
+        or value.activity.session_id != value.snapshot.session_id
+        or _queue_values.queue_presentation is not _QUEUE_PRESENTATION[0]
+        or not _definition_current(_QUEUE_PRESENTATION)
+        or any(getattr(_queue_display, name) is not record[0] or not _definition_current(record)
+               for name, record in _QUEUE_DISPLAY_SOURCES)
+    ):
+        raise RuntimeError("Console queue presentation changed")
+    return value, _QUEUE_PRESENTATION[0](value, sending=sending, collapsed=collapsed)

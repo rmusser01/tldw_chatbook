@@ -483,6 +483,10 @@ class ConsoleRetrievalController:
 
     async def refresh_active_dictionaries_summary(self) -> None:
         """Refresh the DB-backed dictionary summary cache off the UI loop."""
+        from .execution_inspector_scopes import refresh_selected_inspector_scopes
+
+        if await refresh_selected_inspector_scopes(self, "dictionary"):
+            return
         conversation_id, character_id = self._active_console_dictionary_scope_ids()
         service = self._dictionary_scope_service()
         if service is None or (conversation_id is None and character_id is None):
@@ -530,29 +534,14 @@ class ConsoleRetrievalController:
 
     def _console_dictionary_inspector_rows(self) -> tuple[ConsoleDisplayRow, ...]:
         """Project cached dictionary data into inspector rows without I/O."""
+        from .execution_inspector_scopes import selected_inspector_scopes
+        from .inspector_scope_display import dictionary_rows
+
+        selected = selected_inspector_scopes(self)
+        if selected is not None:
+            return selected.dictionary_rows
         conversation_id, character_id = self._active_console_dictionary_scope_ids()
-        if conversation_id is None and character_id is None:
-            return (ConsoleDisplayRow("No active chat", ""),)
-        dictionaries = (self._active_dictionaries_summary or {}).get(
-            "dictionaries"
-        ) or []
-        if not dictionaries:
-            return (ConsoleDisplayRow("No dictionaries in play", ""),)
-        rows = []
-        for entry in dictionaries:
-            if not isinstance(entry, dict):
-                continue
-            value = (
-                "from conversation"
-                if entry.get("source") == "conversation"
-                else "from character"
-            )
-            if entry.get("shadowed"):
-                value += " (shadowed)"
-            if not entry.get("enabled", True):
-                value += " (disabled)"
-            rows.append(ConsoleDisplayRow(str(entry.get("name") or "Unnamed"), value))
-        return tuple(rows)
+        return dictionary_rows(conversation_id, character_id, self._active_dictionaries_summary)
 
     def _active_console_world_book_scope_ids(self) -> tuple[str | None]:
         """Return the active native conversation's world-book scope."""
@@ -560,6 +549,10 @@ class ConsoleRetrievalController:
 
     async def refresh_active_world_books_summary(self) -> None:
         """Refresh the DB-backed world-book summary cache off the UI loop."""
+        from .execution_inspector_scopes import refresh_selected_inspector_scopes
+
+        if await refresh_selected_inspector_scopes(self, "world_book"):
+            return
         conversation_id = self._current_conversation_id()
         db = getattr(self.app_instance, "chachanotes_db", None)
         if not conversation_id or db is None:
@@ -600,67 +593,38 @@ class ConsoleRetrievalController:
 
     def _console_world_book_inspector_rows(self) -> tuple[ConsoleDisplayRow, ...]:
         """Project cached world-book data into inspector rows without I/O."""
-        if self._current_conversation_id() is None:
-            return (ConsoleDisplayRow("No active chat", ""),)
-        books = (self._active_world_books_summary or {}).get("world_books") or []
-        if not books:
-            return (ConsoleDisplayRow("No world books in play", ""),)
-        rows = []
-        for entry in books:
-            if not isinstance(entry, dict):
-                continue
-            count = entry.get("entry_count")
-            value = f"{count} entries" if isinstance(count, int) else "0 entries"
-            if not entry.get("enabled", True):
-                value += " (disabled)"
-            rows.append(ConsoleDisplayRow(str(entry.get("name") or "Unnamed"), value))
-        return tuple(rows)
+        from .execution_inspector_scopes import selected_inspector_scopes
+        from .inspector_scope_display import world_book_rows
+
+        selected = selected_inspector_scopes(self)
+        if selected is not None:
+            return selected.world_book_rows
+        return world_book_rows(self._current_conversation_id(), self._active_world_books_summary)
 
     def _console_dictionary_inspector_actions(
         self,
     ) -> tuple[ConsoleInspectorAction, ...]:
         """Build dictionary attach/detach actions from cached state."""
+        from .execution_inspector_scopes import selected_inspector_scopes
+        from .inspector_scope_display import dictionary_actions
+
+        selected = selected_inspector_scopes(self)
+        if selected is not None:
+            return selected.dictionary_actions
         conversation_id, _ = self._active_console_dictionary_scope_ids()
-        dictionaries = (self._active_dictionaries_summary or {}).get(
-            "dictionaries"
-        ) or []
-        has_attached = any(
-            isinstance(entry, dict) and entry.get("source") == "conversation"
-            for entry in dictionaries
-        )
-        return (
-            ConsoleInspectorAction(
-                "console-inspector-dictionaries-attach",
-                "Attach dictionary…",
-                enabled=bool(conversation_id),
-                disabled_reason="Start or load a conversation first",
-            ),
-            ConsoleInspectorAction(
-                "console-inspector-dictionaries-detach",
-                "Detach dictionary…",
-                enabled=has_attached,
-            ),
-        )
+        return dictionary_actions(conversation_id, self._active_dictionaries_summary)
 
     def _console_world_book_inspector_actions(
         self,
     ) -> tuple[ConsoleInspectorAction, ...]:
         """Build world-book attach/detach actions from cached state."""
-        conversation_id = self._current_conversation_id()
-        has_attached = bool((self._active_world_books_summary or {}).get("world_books"))
-        return (
-            ConsoleInspectorAction(
-                "console-inspector-worldbooks-attach",
-                "Attach world book…",
-                enabled=bool(conversation_id),
-                disabled_reason="Start or load a conversation first",
-            ),
-            ConsoleInspectorAction(
-                "console-inspector-worldbooks-detach",
-                "Detach world book…",
-                enabled=has_attached,
-            ),
-        )
+        from .execution_inspector_scopes import selected_inspector_scopes
+        from .inspector_scope_display import world_book_actions
+
+        selected = selected_inspector_scopes(self)
+        if selected is not None:
+            return selected.world_book_actions
+        return world_book_actions(self._current_conversation_id(), self._active_world_books_summary)
 
     def _console_library_rag_scope_label(self) -> str:
         """Return the readiness card's normalized Library source summary."""

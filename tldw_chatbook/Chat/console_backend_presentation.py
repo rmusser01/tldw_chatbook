@@ -44,6 +44,9 @@ class ConsoleBackendPresentation:
         from .console_backend_tool_counts import ConsoleBackendToolCounts
 
         self.tool_counts = ConsoleBackendToolCounts(self)
+        from .console_backend_inspector_scopes import ConsoleBackendInspectorScopes
+
+        self.inspector_scopes = ConsoleBackendInspectorScopes(backend)
 
     def admit_view_checkpoint(self, message):
         """Register one closed parent lifecycle request before its task can await."""
@@ -103,7 +106,18 @@ class ConsoleBackendPresentation:
 
     async def prepare_readiness(self, identity) -> None:
         """Join the fixed readiness read while its original command owns intake."""
+        from .console_backend_inspector_scopes import ConsoleBackendInspectorScopes, _SOURCES
+        from .console_domain_services import _definition_current
+
         self.require_association(self.association)
+        if type(self.inspector_scopes) is not ConsoleBackendInspectorScopes or any(
+            getattr_static(self.inspector_scopes, name, None) is not descriptor
+            or not _definition_current(record)
+            for owner, name, descriptor, record in _SOURCES
+            if owner is ConsoleBackendInspectorScopes
+        ):
+            raise RuntimeError("Console Inspector scope producer changed")
+        await self.inspector_scopes.warm(identity)
         await self.readiness.warm_workspace_counts(identity)
         await self.readiness.warm(identity)
 
@@ -401,7 +415,12 @@ class ConsoleBackendPresentation:
         from .console_agent_bridge import ConsoleAgentBridge
         from .console_chat_models import FEEDBACK_ACTIVE_RUN_STATUSES
         from .console_execution_composition_values import encode_session_composition
+        from .console_control_dispatch import require_control_source
         from .console_domain_services import _definition_current
+        from .console_prompt_queue import ConsolePromptQueueRegistry, PromptQueueMode, PromptQueuePauseReason
+        from .console_prompt_queue_coordinator import ConsolePromptQueueCoordinator
+        from .console_fleet_wake import ConsoleFleetWakeCoordinator
+        from .console_execution_queue_values import ConsoleQueueDisplay
 
         self.require_association(self.association)
         self.backend._require_owner_loop()
@@ -416,6 +435,12 @@ class ConsoleBackendPresentation:
             or controller._chat_start._controller is not controller
             or type(controller._agent_bridge) is not ConsoleAgentBridge
             or controller._agent_bridge is not self.backend.runtime.agent_bridge
+            or type(controller.prompt_queue_registry) is not ConsolePromptQueueRegistry
+            or type(controller.prompt_queue_coordinator) is not ConsolePromptQueueCoordinator
+            or controller.prompt_queue_coordinator.registry is not controller.prompt_queue_registry
+            or type(controller._fleet_wake) is not ConsoleFleetWakeCoordinator
+            or controller._fleet_wake._controller is not controller
+            or (controller._hooks_v2_runtime is not None and controller._hooks_v2_runtime is not self._runtime)
         ):
             raise RuntimeError("Console composition owner changed")
         for receiver, names in (
@@ -423,6 +448,9 @@ class ConsoleBackendPresentation:
             (controller.store, _COMPOSITION_STORE_METHODS),
             (controller._chat_start, _COMPOSITION_START_METHODS),
             (self._runtime, _COMPOSITION_RUNTIME_METHODS),
+            (controller.prompt_queue_registry, _QUEUE_REGISTRY_METHODS),
+            (controller.prompt_queue_coordinator, _QUEUE_COORDINATOR_METHODS),
+            (controller._fleet_wake, _QUEUE_WAKE_METHODS),
         ):
             for name, record in names:
                 bound = getattr(receiver, name, None)
@@ -474,6 +502,31 @@ class ConsoleBackendPresentation:
             if getattr(module, name) is not record[0] or not _definition_current(record):
                 raise RuntimeError("Console run display source changed")
         run_state = controller.run_state_for(session.id)
+        for name, record in _QUEUE_HELPERS:
+            if getattr(_queue_display, name) is not record[0] or not _definition_current(record):
+                raise RuntimeError("Console queue display source changed")
+        queue_snapshot = controller.prompt_queue_registry.snapshot(session.id)
+        recoveries = self._runtime.recoveries_for_session(session.id)
+        failed_turn = (
+            _queue_display.read_queue_recovery_turn(controller.store, session.id, action="retry-failed")
+            if queue_snapshot.mode is PromptQueueMode.PAUSED
+            and queue_snapshot.pause_reason is PromptQueuePauseReason.FAILED else None
+        )
+        queue = ConsoleQueueDisplay(
+            queue_snapshot, activity,
+            controller.prompt_queue_coordinator.dispatch_recovery_blocks_queue(session.id),
+            controller.store.dispatch_recovery_blocks_submission(session.id),
+            recoveries[0].turn_id if recoveries else None,
+            recoveries[0].reason if recoveries else "",
+            failed_turn.preview if failed_turn is not None else None,
+            bool(controller._hooks_v2_runtime is not None and self._runtime.has_received_intents(
+                session.id, unpromoted_only=True,
+            )),
+            controller._chat_start.is_prepared(session.id),
+            controller._chat_start.is_accepted(session.id),
+            run_state.is_stop_allowed,
+            session.id in controller._fleet_wake.delivering_session_ids(),
+        )
         feedback = _run_display.console_send_activity_copy(run_state)
         if run_state.status.value == "streaming":
             bridge_read = controller._agent_bridge.live_snapshot
@@ -493,6 +546,8 @@ class ConsoleBackendPresentation:
             binding_label=control.working_folder_binding_id or "",
             activation_events=controller.project_instruction_activation_events(session.id),
         )
+        effective = self.readiness.value[0]
+        vision = self.readiness.vision_capability
         return encode_session_composition(
             session,
             pending_approval_count=controller.pending_round_count(session.id),
@@ -524,6 +579,12 @@ class ConsoleBackendPresentation:
             evidence_sent_notice=sent_notice,
             project_status=project_status,
             recovery=recovery,
+            queue=queue,
+            vision_capable=(vision[2] if vision is not None
+                and vision[:2] == (effective.provider, effective.model) else None),
+            inspector_scope=self.inspector_scopes.current_value(
+                require_control_source(self._runtime).identity
+            ),
         )
 
     def projection_view(self, identity, projection) -> dict:
@@ -780,7 +841,10 @@ _COMPOSITION_CONTROLLER_METHODS = tuple(
         "project_instruction_activation_events",
     )
 )
-_COMPOSITION_START_METHODS = (("is_prepared", _definition(_CompositionStart.is_prepared)),)
+_COMPOSITION_START_METHODS = tuple(
+    (name, _definition(getattr(_CompositionStart, name)))
+    for name in ("is_prepared", "is_accepted")
+)
 _COMPOSITION_PROPERTIES = tuple(
     (owner, name, descriptor, _definition(descriptor.fget))
     for owner, name in (
@@ -833,6 +897,7 @@ _COMPOSITION_RUNTIME_METHODS = tuple(
     (name, _definition(getattr(_CompositionRuntime, name)))
     for name in (
         "snapshot_console_staged_evidence", "_staged_evidence_state", "has_custodied_turns",
+        "recoveries_for_session", "has_received_intents",
     )
 )
 
@@ -857,7 +922,21 @@ _RECOVERY_CAPTURE = _definition(_recovery_values.capture_recovery_display)
 _COMPOSITION_STORE_METHODS = tuple(
     (name, _definition(getattr(_CompositionStore, name)))
     for name in ("dispatch_recovery_for_presentation", "dispatch_recovery_for_session",
-                 "provider_continuation_recovery_message", "has_live_reply_output")
+                 "provider_continuation_recovery_message", "has_live_reply_output",
+                 "dispatch_recovery_blocks_submission", "iter_messages_newest_first")
+)
+
+from .console_prompt_queue import ConsolePromptQueueRegistry as _QueueRegistry
+from .console_prompt_queue_coordinator import ConsolePromptQueueCoordinator as _QueueCoordinator
+from .console_fleet_wake import ConsoleFleetWakeCoordinator as _QueueWake
+from ..UI.Console_Modules import prompt_queue as _queue_display
+
+_QUEUE_REGISTRY_METHODS = (("snapshot", _definition(_QueueRegistry.snapshot)),)
+_QUEUE_COORDINATOR_METHODS = (("dispatch_recovery_blocks_queue", _definition(_QueueCoordinator.dispatch_recovery_blocks_queue)),)
+_QUEUE_WAKE_METHODS = (("delivering_session_ids", _definition(_QueueWake.delivering_session_ids)),)
+_QUEUE_HELPERS = tuple(
+    (name, _definition(getattr(_queue_display, name)))
+    for name in ("read_queue_recovery_turn", "derive_prompt_queue_presentation", "with_prompt_queue_start_state")
 )
 
 from .response_rules.runtime import ResponseRuleRuntime as _ResponseRuleRuntime
