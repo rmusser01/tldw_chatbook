@@ -38,6 +38,27 @@ The 2.318 s difference in time to first request between `g21` and `g25` is an ob
 | 4.831 s and 49 inclusive storage admissions | `g25`, backend agent-reply invocation | The model call took 1.388 s within this invocation. This covers work around the first provider call and supplies no exclusive cost for the pre-disclosure gap. |
 | 623 README / 620 edit admissions before first HTTP | `q2`, first baseline | Whole turns incurred 2,042 / 2,561 storage admissions. These counts describe the baseline. |
 
+## Where the 400-plus seconds went on the completed baseline
+
+Both original journeys finished on `q21b1`. The arrows below partition raw elapsed time at the first and last requests **received** by the loopback server. They include the human waits shown separately in the table. This baseline and the shorter, partial candidate traces above have different endpoints.
+
+```mermaid
+flowchart LR
+    RS["README Send"] -->|"124.26 s"| R1["Request 1"]
+    R1 -->|"326.78 s"| R5["Request 5"]
+    R5 -->|"30.74 s"| RD["README reply persisted"]
+    ES["Edit Send"] -->|"139.99 s"| E1["Request 1"]
+    E1 -->|"447.48 s"| E6["Request 6"]
+    E6 -->|"6.75 s"| ED["Edit reply persisted"]
+```
+
+| Original Windows baseline | Raw Send to reply | Measured human waits | Application time | Total inside loopback handlers |
+|---|---:|---:|---:|---:|
+| README | 481.77 s | 3.80 s disclosure + 7.45 s approvals | 470.52 s | 0.197 s |
+| Approved edit | 594.22 s | 19.14 s approvals | 575.08 s | 0.020 s |
+
+After removing the measured waits, the interval **between the first and last provider requests alone** accounts for 319.33 s on README and 428.34 s on edit. That interval includes tool review, execution, persistence, display, and preparation for subsequent requests. For scale, the edit's `fs_edit` took 56.37 s from the first tool-start event to success. The workspace executor took 7.58 s inside that interval, and its worker reported 0.172 s. The trace locates substantial application time outside the worker without assigning it all to one cause. Source receipts are `original-journey-win10-before-guarded/replay-runs/q21b1/{progress.jsonl,timings.json}` under `test-snapshots`.
+
 ## Qualifying pairs
 
 | Batch | Pair | README baseline / candidate | Approved edit baseline / candidate | State |
