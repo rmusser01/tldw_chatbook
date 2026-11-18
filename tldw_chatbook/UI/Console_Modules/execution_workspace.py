@@ -21,23 +21,49 @@ async def create_selected_chat(
     client = selected_client(screen)
     if client is None:
         raise RuntimeError("Console New Chat requires its selected owner")
-    if client._workspace_operations:
+    previous = client._workspace_chat_tail
+    if client._workspace_operations and previous is None:
         raise RuntimeError("Console workspace operation is already pending")
-    task = asyncio.create_task(
-        _create_selected_chat(
+    if previous is not None:
+        visit, source = client._visit, client._source_revision
+        origin = client.projection_view.session(client.projection_view.active_session_id)
+
+    async def open_chat():
+        if previous is not None:
+            if not await asyncio.shield(previous):
+                return False
+            client.require_view(screen, visit)
+            row = client.projection_view.session(client.projection_view.active_session_id)
+            if (
+                selected_client(screen) is not client or client._source_revision != source
+                or (row.id, row.incarnation_id, row.workspace_id)
+                != (origin.id, origin.incarnation_id, origin.workspace_id)
+            ):
+                return False
+        return await _create_selected_chat(
             screen, client, workspace_id=workspace_id, title=title, ephemeral=ephemeral,
-        ), name="console-workspace-new-chat",
+        )
+
+    def finished(task):
+        client._workspace_operations.discard(task)
+        if client._workspace_chat_tail is task:
+            client._workspace_chat_tail = None
+        if not task.cancelled():
+            task.exception()
+
+    task = asyncio.create_task(
+        open_chat(), name="console-workspace-new-chat",
     )
+    client._workspace_chat_tail = task
     client._workspace_operations.add(task)
-    task.add_done_callback(client._workspace_operations.discard)
-    task.add_done_callback(
-        lambda finished: None if finished.cancelled() else finished.exception()
-    )
+    task.add_done_callback(finished)
     return await asyncio.shield(task)
 
 
 async def _create_selected_chat(screen, client, *, workspace_id, title, ephemeral):
     """Join the actual attach, then preserve the original composer transition."""
+    from .execution_sessions import apply_console_process_sessions
+
     await asyncio.sleep(0)
     if selected_client(screen) is not client:
         raise RuntimeError("Console New Chat owner changed")
@@ -57,6 +83,13 @@ async def _create_selected_chat(screen, client, *, workspace_id, title, ephemera
             screen, workspace_id=workspace_id or old.workspace_id, title=title,
             ephemeral=ephemeral,
             new_chat_default_generation=owner._console_new_chat_default_generation(),
+        )
+        client.require_view(screen, visit)
+        # OpenSession has already produced the new tab rows. Install them
+        # before publishing the new composer, so the next click targets the
+        # workspace's current strip while the full refresh is in flight.
+        await apply_console_process_sessions(
+            screen, client, client.session_surface, visit=visit,
         )
         client.require_view(screen, visit)
         await bind_selected_session_draft(screen)

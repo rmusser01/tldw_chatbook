@@ -211,6 +211,58 @@ async def test_middle_click_on_tab_presses_its_close_button() -> None:
 
 
 @pytest.mark.asyncio
+async def test_appended_sessions_keep_existing_buttons_focus_and_actions() -> None:
+    app = TabStripHost()
+    async with app.run_test(size=(160, 24)) as pilot:
+        surface = app.query_one(ConsoleSessionSurface)
+        sessions = _sessions(3)
+        await surface.sync_sessions(sessions=sessions[:2], active_session_id="s1")
+        await pilot.pause()
+        strip = surface.query_one(ConsoleSessionTabStrip)
+        original = {child.id: child for child in strip.children}
+        new_tab = original["console-new-chat-tab"]
+        temporary = original["console-new-temporary-tab"]
+        temporary.focus()
+        await pilot.pause()
+        assert app.focused is temporary
+
+        await surface.sync_sessions(
+            sessions=sessions,
+            active_session_id="s3",
+            run_markers={"s1": ConsoleRunMarker.RUNNING},
+            queue_counts={"s1": 2},
+        )
+        await pilot.pause()
+        assert [child.id for child in strip.children] == [
+            "console-session-tab-s1", "console-close-session-tab-s1",
+            "console-session-tab-s2", "console-close-session-tab-s2",
+            "console-session-tab-s3", "console-close-session-tab-s3",
+            "console-new-chat-tab", "console-new-temporary-tab",
+        ]
+        assert all(surface.query_one(f"#{name}") is child and child.is_mounted
+                   for name, child in original.items())
+        assert app.focused is temporary
+        assert str(original["console-session-tab-s1"].label).startswith("Q2 ●")
+        assert "agent running" in _rendered_tooltip(original["console-session-tab-s1"])
+        assert surface.highlighted_session_id() == "s3"
+        assert await pilot.click(new_tab)
+        assert await pilot.click(temporary)
+        assert await pilot.click("#console-session-tab-s3", button=2)
+        await pilot.pause()
+        assert app.pressed_ids == [
+            "console-new-chat-tab", "console-new-temporary-tab",
+            "console-close-session-tab-s3",
+        ]
+
+        # Reordering is not append-only and retains the original rebuild path.
+        await surface.sync_sessions(sessions=sessions[::-1], active_session_id="s3")
+        await pilot.pause()
+        assert strip.children[0].id == "console-session-tab-s3"
+        assert surface.query_one("#console-new-chat-tab") is not new_tab
+        assert all(not child.is_attached for child in original.values())
+
+
+@pytest.mark.asyncio
 async def test_active_tab_is_scrolled_into_view() -> None:
     app = TabStripHost()
     async with app.run_test(size=(80, 24)) as pilot:

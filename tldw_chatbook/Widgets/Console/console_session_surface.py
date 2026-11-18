@@ -922,14 +922,39 @@ class ConsoleSessionSurface(Vertical):
                 )
                 return
 
-            removed_count = len(tab_strip.children)
-            mounted_count = (len(sessions) * 2) + 2
-            # Each removal or mount can yield to navigation or app shutdown.
-            for child in list(tab_strip.children):
-                await finish_removal(child.remove())
-                if not self._session_strip_is_attached(tab_strip):
-                    return
-            for session in sessions:
+            append_only = (
+                2 <= len(existing_ids) < len(desired_ids)
+                and len(existing_ids) % 2 == 0
+                and existing_ids[-2:] == desired_ids[-2:]
+                and existing_ids[:-2] == desired_ids[:len(existing_ids) - 2]
+                and all(
+                    isinstance(child, Button) and child.is_mounted and child.is_attached
+                    and not child._closing and not child._closed and not child._pruning
+                    for child in tab_strip.children
+                )
+            )
+            before = tab_strip.children[-2] if append_only else None
+            sessions_to_mount = sessions[(len(existing_ids) - 2) // 2:] if append_only else sessions
+            removed_count = 0 if append_only else len(tab_strip.children)
+            mounted_count = (len(sessions_to_mount) * 2) + (0 if append_only else 2)
+            if append_only:
+                # Keep live actions and focus while adding the new session's
+                # controls before the two existing New buttons.
+                self._update_existing_tab_strip(
+                    tab_strip=tab_strip,
+                    sessions=sessions,
+                    active_session_id=active_session_id,
+                    streaming_session_id=streaming_session_id,
+                    run_markers=run_markers,
+                    queue_counts=queue_counts,
+                )
+            else:
+                # Each removal or mount can yield to navigation or app shutdown.
+                for child in list(tab_strip.children):
+                    await finish_removal(child.remove())
+                    if not self._session_strip_is_attached(tab_strip):
+                        return
+            for session in sessions_to_mount:
                 is_active = session.id == active_session_id
                 marker = self._resolve_tab_marker(
                     session.id,
@@ -942,21 +967,23 @@ class ConsoleSessionSurface(Vertical):
                         active=is_active,
                         marker=marker,
                         queued_count=(queue_counts or {}).get(session.id, 0),
-                    )
+                    ),
+                    before=before,
                 )
                 if not self._session_strip_is_attached(tab_strip):
                     return
-                await tab_strip.mount(self._build_close_tab_button(session))
+                await tab_strip.mount(self._build_close_tab_button(session), before=before)
                 if not self._session_strip_is_attached(tab_strip):
                     return
             if not self._session_strip_is_attached(tab_strip):
                 return
-            await tab_strip.mount(self._build_new_tab_button())
-            if not self._session_strip_is_attached(tab_strip):
-                return
-            await tab_strip.mount(self._build_new_temporary_tab_button())
-            if not self._session_strip_is_attached(tab_strip):
-                return
+            if not append_only:
+                await tab_strip.mount(self._build_new_tab_button())
+                if not self._session_strip_is_attached(tab_strip):
+                    return
+                await tab_strip.mount(self._build_new_temporary_tab_button())
+                if not self._session_strip_is_attached(tab_strip):
+                    return
             self._record_mount_churn(mounted=mounted_count, removed=removed_count)
         # TASK-28028: mounted/removed tabs change what is hidden past each
         # edge even when scroll_x does not move; refresh the ‹ › hints once

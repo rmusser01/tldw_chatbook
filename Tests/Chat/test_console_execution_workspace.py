@@ -52,6 +52,42 @@ def _retired(client, receipt, retired=True):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("origin_changed", [False, True])
+async def test_new_chat_waits_for_the_preceding_workspace_chat(monkeypatch, origin_changed):
+    from tldw_chatbook.UI.Console_Modules import execution_workspace as workspace
+
+    client = _client()
+    screen = object()
+    row = SimpleNamespace(id="first", incarnation_id="first-incarnation", workspace_id="workspace")
+    client.projection_view = SimpleNamespace(active_session_id=row.id, session=lambda _: row)
+    started, release = asyncio.Event(), asyncio.Event()
+    opened = []
+
+    async def create(_screen, _client, *, title, **kwargs):
+        opened.append(title)
+        if title == "workspace":
+            started.set()
+            await release.wait()
+        return True
+
+    monkeypatch.setattr(workspace, "selected_client", lambda _: client)
+    monkeypatch.setattr(workspace, "_create_selected_chat", create)
+    monkeypatch.setattr(client, "require_view", lambda view, visit: None)
+    first = asyncio.create_task(workspace.create_selected_chat(screen, title="workspace"))
+    await started.wait()
+    second = asyncio.create_task(workspace.create_selected_chat(screen, title="button"))
+    await _until(lambda: len(client._workspace_operations) == 2)
+    assert opened == ["workspace"]
+    if origin_changed:
+        client._source_revision += 1
+    release.set()
+    assert await first
+    assert await second is (not origin_changed)
+    assert opened == (["workspace"] if origin_changed else ["workspace", "button"])
+    assert not client._workspace_operations and client._workspace_chat_tail is None
+
+
+@pytest.mark.asyncio
 async def test_workspace_transport_waits_for_retirement_despite_observer_cancel():
     from tldw_chatbook.Chat.console_execution_workspace import (
         set_workspace_binding_access,

@@ -270,6 +270,7 @@ class ConsoleExecutionClient:
         self._view_preparation = None
         self._opening_sessions: set[asyncio.Task] = set()
         self._workspace_operations: set[asyncio.Task] = set()
+        self._workspace_chat_tail: asyncio.Task | None = None
 
     def attach_view(self, view: Any) -> int:
         """Bind the actual screen visit without constructing a parent graph."""
