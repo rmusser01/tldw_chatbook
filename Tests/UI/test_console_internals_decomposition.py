@@ -4218,7 +4218,7 @@ async def test_console_rag_action_falls_back_to_default_top_k_when_profile_unava
         ]
 
 
-def test_console_evidence_display_state_sanitizes_markup_fields():
+def test_console_evidence_display_state_keeps_fields_literal():
     launch = ConsoleLiveWorkLaunch.from_values(
         source="Library Search/RAG",
         title="Grounded answer",

@@ -5,6 +5,7 @@ import gc
 import hashlib
 import logging
 import threading
+import time
 import weakref
 from copy import deepcopy
 from dataclasses import fields, replace
@@ -13981,12 +13982,24 @@ async def test_console_discovery_identity_is_canonical_and_each_request_is_monot
         assert second.draft_generation == first.draft_generation + 1
 
         endpoint = modal.query_one("#console-settings-base-url", Input)
+
+        async def _until_endpoint_handled(value: str) -> None:
+            # TASK-41633: one pause() did not always deliver Input.Changed at
+            # load ~90. Wait until the handler bound the draft, so both
+            # assertions below read its result, not a not-yet-run handler.
+            deadline = time.monotonic() + 10.0
+            while modal._endpoint_draft.value != value:
+                assert time.monotonic() < deadline, (
+                    f"endpoint change to {value!r} never reached the modal"
+                )
+                await pilot.pause(0.01)
+
         endpoint.value = "http://localhost/"
-        await pilot.pause()
+        await _until_endpoint_handled("http://localhost/")
         assert modal._model_discovery_generation == second.draft_generation
 
         endpoint.value = "http://localhost:81"
-        await pilot.pause()
+        await _until_endpoint_handled("http://localhost:81")
         assert modal._model_discovery_generation == second.draft_generation + 1
 
 

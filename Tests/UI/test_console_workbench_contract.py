@@ -413,13 +413,9 @@ async def test_console_control_bar_renders_visible_state_chips():
         # instead of showing the "not loaded" lazy-loading placeholder.
         assert not strip.segment_visible("tools")
 
-        # ConsoleStatusText.update() takes a markup string, so read the
-        # rendered line, as the chip-strip tests do.
-        line_text = (
-            line.renderable.plain
-            if hasattr(line.renderable, "plain")
-            else str(line.render())
-        )
+        # ConsoleStatusText.update() takes a markup string (c5ceca1247), so
+        # read the rendered line.
+        line_text = str(line.render())
         assert line_text.count("Provider:") == 1
         assert line_text.count("Model:") == 1
         assert line_text.count("Assistant:") == 1

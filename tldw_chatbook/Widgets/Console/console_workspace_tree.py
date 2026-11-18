@@ -729,7 +729,9 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
             if data.action_class:
                 # TASK-41648: Tree measures row widths through render_label, and
                 # the left rail syncs in compose, before styles are applied.
-                # The fallback is uncached, so painted rows get the real style.
+                # Applying styles calls notify_style_update, which clears the
+                # rich-style cache and (Tree) the line cache, so painted rows
+                # get the real style.
                 action_style = self.get_component_rich_style(
                     data.action_class, default=base_style
                 )
