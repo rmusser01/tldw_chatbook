@@ -346,6 +346,7 @@ class ConsoleSpeculativeVoiceSession:
         self._pump_task: asyncio.Task[None] | None = None
         self._close_task: asyncio.Task[None] | None = None
         self._resource_cleanup_task: asyncio.Task[None] | None = None
+        self._resource_cleanup_started = asyncio.Event()
         self._transport_failure_report_task: asyncio.Task[None] | None = None
         self._close_lock = asyncio.Lock()
 
@@ -1083,6 +1084,7 @@ class ConsoleSpeculativeVoiceSession:
                 name="console-speculative-voice-resource-cleanup",
             )
             self._resource_cleanup_task.add_done_callback(_consume_task_result)
+            self._resource_cleanup_started.set()
             # Native observation runs independently of provider/transcription
             # cleanup, and the transport retains its checked operation owner.
             try:
