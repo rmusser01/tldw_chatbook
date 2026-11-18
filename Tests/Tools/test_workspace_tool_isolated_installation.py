@@ -30,7 +30,18 @@ def test_no_site_backend_executes_fixed_file_worker_from_same_installation(tmp_p
     core = repository / "packages" / "tldw_profile_core" / "src"
     if (core / "tldw_profile_core" / "__init__.py").is_file():
         roots.append(str(core))
-    roots.extend(str(Path(path).resolve()) for path in sys.path if path and Path(path).name == "site-packages")
+    # Match ConsoleExecutionClient._launch: pywin32 installs actual import
+    # roots below site-packages, which the no-site parent must also receive.
+    package_roots = tuple(
+        Path(path).resolve()
+        for path in sys.path
+        if path and Path(path).name == "site-packages"
+    )
+    roots.extend(
+        str(Path(path).resolve())
+        for path in sys.path
+        if path and any(Path(path).resolve().is_relative_to(item) for item in package_roots)
+    )
     probe = "import sys\nsys.path[:0]=" + repr(roots) + "\n" + r'''
 import json
 from pathlib import Path

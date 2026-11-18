@@ -369,6 +369,9 @@ def _install_fake_launch(
     return WorkspaceToolExecutor(root), captured, events, process
 
 
+# The fake transport leaves the real sensitive-path/config admission intact.
+# Preserve its collection-bound private profile before exercising the spawn.
+@pytest.mark.bootstrap_profile
 def test_executor_uses_fixed_private_launch_and_admits_before_stdin(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
