@@ -236,8 +236,9 @@ async def test_original_backend_runs_in_one_contained_process_and_retires(reques
 
 @private_profile_test
 @pytest.mark.asyncio
+@pytest.mark.parametrize("input_capture", ["direct-submit", "retained-press"])
 async def test_actual_process_projection_reference_and_original_pre_ack_cancel(
-    request, accepted_process_provider
+    request, accepted_process_provider, input_capture
 ):
     from Tests.Chat.test_console_execution_profile import _settled_profile
     from Tests.Chat.test_console_first_send_atomicity import _until
@@ -256,6 +257,7 @@ async def test_actual_process_projection_reference_and_original_pre_ack_cancel(
         ConsoleProcessProfile,
     )
     from tldw_chatbook.Chat.console_execution_projection_values import _settings
+    from tldw_chatbook.Chat.console_execution_protocol import _detach
     from tldw_chatbook.Chat.console_session_settings import (
         default_console_session_settings,
     )
@@ -468,6 +470,12 @@ async def test_actual_process_projection_reference_and_original_pre_ack_cancel(
         assert row.settings is not None
         assert current_inputs["settings"] == _settings(row.settings, False)
         assert current_inputs["settings_revision"] == row.settings_revision
+        # The UI freezes these values at the press, before ACK painting and
+        # the UpdateInputs/ReadProjection waits. Keep the direct-submit case
+        # below as well: a newly read input sidecar cannot cover that ordering.
+        retained_inputs = _detach(
+            current_inputs, "pressed_inputs", 0, set(), thaw=True
+        )
         # This is a new parent-authored identity, not a guessed backend revision.
         authored_token = [2, 1]
         next_update = client.submit(
@@ -514,6 +522,24 @@ async def test_actual_process_projection_reference_and_original_pre_ack_cancel(
             **selected["workspace_context"],
             "active_workspace_id": row.workspace_id,
         }
+        selection = {
+            **payload["selection"],
+            "provider_selection": next_selected,
+            "skill_workspace_id": row.workspace_id,
+        }
+        if input_capture == "retained-press":
+            retained_inputs["draft"] = _ACCEPTED_DRAFT
+            retained_inputs["authored_token"] = authored_token
+            # This read must not silently replace the press's settings,
+            # attachments or prefill. Diagnose only differing field names.
+            assert not [
+                name for name in retained_inputs
+                if retained_inputs[name] != pressed[name]
+            ]
+            pressed = retained_inputs
+            selection = _detach(
+                client.send_selection, "selection", 0, set(), thaw=True
+            )
         accepted_started = time.monotonic()
         accepted = client.submit(
             "ReceiveTurn",
@@ -523,11 +549,7 @@ async def test_actual_process_projection_reference_and_original_pre_ack_cancel(
                 "expected_settings_revision": pressed["settings_revision"],
                 "expected_attachment_revision": pressed["attachment_revision"],
                 "expected_prefill_revision": pressed["prefill_revision"],
-                "selection": {
-                    **payload["selection"],
-                    "provider_selection": next_selected,
-                    "skill_workspace_id": row.workspace_id,
-                },
+                "selection": selection,
                 "pressed_inputs": pressed,
             },
             session_id=sid,
