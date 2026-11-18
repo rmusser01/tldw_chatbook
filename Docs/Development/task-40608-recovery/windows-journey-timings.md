@@ -4,6 +4,25 @@ TASK-40608 measures from Send to the persisted reply, subtracting only the origi
 
 ## Where the time goes
 
+The first complete pair on the contained backend, `q91c1`, provides these raw intervals on the original Send clock. Approval time is included in the arrows. The application-time gate uses the fixture’s separately recorded disclosure and approval waits. Exact `fs_edit` invocation and approval stages from the instrumented run are [below](#completed-instrumented-windows-journeys-g47d).
+
+```mermaid
+flowchart LR
+    RS["README Send"] -->|"0.091 s"| RF["Sending painted"]
+    RF -->|"10.400 s, includes disclosure"| RH["First HTTP"]
+    RH -->|"12.366 s, two approvals"| RL["Fifth HTTP"]
+    RL -->|"1.609 s"| RR["README persisted"]
+    RR -->|"1.262 s"| RV["Verified"]
+    ES["Edit Send"] -->|"4.361 s"| EF["Sending painted"]
+    EF -->|"3.566 s"| EH["First HTTP"]
+    EH -->|"12.637 s, includes read approval"| EA["fs_edit approval observed"]
+    EA -->|"1.333 s"| EC["Once clicked"]
+    EC -->|"2.813 s"| EN["Fifth HTTP"]
+    EN -->|"5.216 s, includes diff approval"| EL["Sixth HTTP"]
+    EL -->|"2.864 s"| ER["Edit reply persisted"]
+    ER -->|"0.477 s"| EV["Verified"]
+```
+
 On `g29` (`50e868df9f`), the README journey passed every original assertion. The arrows use adjacent timestamps on the original journey clock. The last two events happen after the timed reply.
 
 ```mermaid
@@ -195,6 +214,7 @@ Batch `q5` started its first clean baseline on Windows 10 at 07:59 UTC on Novemb
 |---|---|---|---|---|
 | `q9` | 1 | 294.9706 s / 23.2802 s | 416.4471 s / 30.0985 s | Both sides passed every original check and shutdown. Candidate first HTTP arrived at 10.4910 s and 7.9268 s (baseline 89.0301 s and 110.7063 s). Both miss five seconds. |
 | `q9` | 2, first attempt | — / 27.0388 s to persisted reply | — / — | Candidate `q91c2` painted the README answer. Verification of completed run history raised `ConsoleReadinessExpired` after the database returned the rows. The driver stopped before edit Send or the second baseline. |
+| `q9` | 2, resumed | — / — | — / — | On the identical frozen candidate, `q92c2` waited 300 s for the workspace name field. Textual reported an uncaught `ConsoleDisplayExpired` from the deferred rail resize callback. Neither Send ran. The ledger retained pair 1 and pairs 2–3 remain incomplete. |
 | `q9` | 3 | Pending | Pending | Frozen candidate `72f36054ea`, configuration SHA-256 `9ee7d9a18ab6bdec4083d192d47a41d7eb2bd2006882f6fc5e2ba4be2e6a84bd`. |
 | `q8` | 1 | 295.3187 s / 25.4222 s | 405.5752 s / 36.0400 s to persisted reply only | Baseline passed. The candidate verified README, then timed out painting the edit reply after all six edit requests. Zero eligible pairs. |
 | `q8` | 2–3 | — / — | — / — | The driver stopped. Frozen candidate `33470fe57d`, configuration SHA-256 `176e09ef967e1c4bbd5d74f2ccf5af15c36f7d40282d9184d9596eef5cde8b35`. |
@@ -208,6 +228,8 @@ Batch `q5` started its first clean baseline on Windows 10 at 07:59 UTC on Novemb
 Times in the pair table use the benchmark's original adjusted duration. A dash means there is no measurement for that cell. With each new Windows result, append its run ID and commit, retain failed rows and update the diagram to the latest measured path. For a performance claim, record the comparable before/after boundary, wall-time delta, available work count and source receipt. Publish qualifying pair rows separately from instrumented replays.
 
 On q91c2 the original history reader requested a full display projection for its database rows. The frame had 93 ms of display readiness left at capture. By the time the parent tried to adopt it the deadline had passed by 16 ms. The first README HTTP request arrived at 12.8151 s and the answer persisted at 28.5004 s. The receipt SHA-256 is `b633501f1d5e89b05cbe9dd55ee6f8d31c61b84db60c26821cc73c3561698e11`. Pair 1 remains the only completed pair in this attempt.
+
+The q92c2 original receipt SHA-256 is `7027813f75d3b7cdab7842af85a8b6fd4ebbb9c17dd5cf08dad3de36c67f98b7`. Its source hashes matched and the failed fixture took 381.031 s. That duration is setup and failure handling. It yields no journey latency.
 
 The local Windows verification directory stores the diagnostic receipts under `test-snapshots/original-journey-<snapshot>/replay-runs/<run>/`. The tables use `progress.jsonl` and `timings.json`. The `g25` subspans use `send-state-25000.jsonl` and `lab-observer/agent-prefix-12312.jsonl`. Batch order and eligibility come from the batch's `order.jsonl`.
 

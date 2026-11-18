@@ -289,6 +289,14 @@ class ReadDecisionHead:
 
 
 @dataclass(frozen=True, slots=True)
+class ReadRunHistory:
+    identity: ControlIdentity
+    attachment_id: str
+    visit: int
+    request: dict
+
+
+@dataclass(frozen=True, slots=True)
 class ConsoleProjection:
     source_revision: int
     session_id: str
@@ -1484,6 +1492,7 @@ class ConsoleLocalControls:
             ArchiveSendCheckpointAck,
             ReadProjection,
             ReadDecisionHead,
+            ReadRunHistory,
         ):
             raise TypeError("Unsupported local Console command")
         self._require_graph()
@@ -1690,6 +1699,24 @@ class ConsoleLocalControls:
             receipt.applied.set_result(owner.read_head(
                 identity, command.attachment_id, command.visit,
             ))
+            return receipt
+        if type(command) is ReadRunHistory:
+            from .console_backend_presentation import ConsoleBackendPresentation, _RUN_HISTORY_METHODS
+            from .console_domain_services import _definition_current
+            from inspect import getattr_static
+
+            presentation = self._domain.presentation
+            if (
+                type(presentation) is not ConsoleBackendPresentation
+                or any(getattr_static(presentation, name, None) is not definition[0]
+                       or not _definition_current(definition)
+                       for name, definition in _RUN_HISTORY_METHODS)
+            ):
+                raise RuntimeError("Console history reader source changed")
+            receipt.retired = self._loop.create_future()
+            self._retain_control_work(
+                receipt, presentation.read_run_history(command), before_entry=lambda: None,
+            )
             return receipt
         if type(command) is ArchiveSendCheckpointAck:
             from . import console_backend_archive_send as archive_send

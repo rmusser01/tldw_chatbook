@@ -1195,23 +1195,64 @@ class ConsoleExecutionClient:
 
     async def read_run_history(self, request):
         """Join one original history read for the currently published chat."""
-        from .console_backend_run_history import _REQUEST, decode_run_history
+        from .console_execution_run_history_values import _REQUEST, decode_run_history
         from .console_execution_protocol import _detach
 
         frozen = _detach(request, "run_history", 0, set(), thaw=False)
         _REQUEST(frozen, "run_history")
         request = _detach(frozen, "run_history", 0, set(), thaw=True)
-        view = self.store_reader._current()
-        row = view.session(view.active_session_id)
+        published = self.store_reader._current()
+        row = published.session(published.active_session_id)
         if row.persisted_conversation_id != request["conversation_id"]:
             raise ConsoleChannelLost("Console run history conversation changed")
-        frame = await self.read_projection(row.id, row.incarnation_id, _run_history=request)
-        if frame.run_history is None:
-            raise ConsoleChannelLost("Console original run history is unavailable")
-        values = decode_run_history(list(frame.run_history))
-        if any(value["conversation_id"] != request["conversation_id"] for value in values):
-            raise ConsoleChannelLost("Console run history ownership changed")
-        return values
+        view, visit = self._view, self._visit
+        source, attachment = self._source_revision, self._attachment_id
+        session_id, incarnation = row.id, row.incarnation_id
+        self._queued_projection = None
+
+        def current():
+            self.require_view(view, visit)
+            selected = self.store_reader._current()
+            if (
+                self._source_revision != source or self._attachment_id != attachment
+                or self._view_preparation is not None
+                or selected.active_session_id != session_id
+                or selected.session(session_id).incarnation_id != incarnation
+                or selected.session(session_id).persisted_conversation_id != request["conversation_id"]
+            ):
+                raise ConsoleChannelLost("Console run history scope changed")
+
+        async def read():
+            current()
+            receipt = self.submit("ReadRunHistory", {
+                "attachment_id": attachment, "visit": visit, "request": request,
+            }, session_id=session_id, incarnation_id=incarnation)
+            try:
+                payload = await asyncio.shield(receipt.applied)
+            finally:
+                admission_refused = False
+                try:
+                    await asyncio.shield(receipt.received)
+                except ConsoleRemoteFailure as error:
+                    admission_refused = error.stage == "admission"
+                    if admission_refused:
+                        receipt.applied.exception()
+                if not admission_refused and await asyncio.shield(receipt.retired) is not True:
+                    error = ConsoleChannelLost("Console run history retirement is unproven")
+                    self._fail(error)
+                    raise error
+            current()
+            if (payload["attachment_id"], payload["visit"]) != (attachment, visit):
+                raise ConsoleChannelLost("Console run history visit changed")
+            values = decode_run_history(_detach(payload["run_history"], "run_history", 0, set(), thaw=True))
+            if any(value["conversation_id"] != request["conversation_id"] for value in values):
+                raise ConsoleChannelLost("Console run history ownership changed")
+            return values
+
+        task = asyncio.create_task(read(), name="console_execution_run_history")
+        self._projection_reads.add(task)
+        task.add_done_callback(self._projection_read_finished)
+        return await asyncio.shield(task)
 
     async def refresh_prompt_history(self, history) -> None:
         """Retry the original backend load through this view's named projection."""

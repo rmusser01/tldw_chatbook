@@ -233,6 +233,7 @@ class _BackendCommandAdapter:
             "CloseSession": controls.CloseSession,
             "ProjectDecisionPresentation": controls.ProjectDecisionPresentation,
             "ReadDecisionHead": controls.ReadDecisionHead,
+            "ReadRunHistory": controls.ReadRunHistory,
             "ArchiveSendCheckpointAck": controls.ArchiveSendCheckpointAck,
             "CancelTurn": controls.CancelTurn,
             "FenceSource": controls.FenceSource,

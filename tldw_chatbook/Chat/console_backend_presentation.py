@@ -51,7 +51,7 @@ class ConsoleBackendPresentation:
     def admit_view_checkpoint(self, message):
         """Register one closed parent lifecycle request before its task can await."""
         self.require_association(self.association)
-        if message.operation != "ReadProjection":
+        if message.operation not in {"ReadProjection", "ReadRunHistory"}:
             return None
         value = message.payload.get("view_checkpoint")
         if value is None:
@@ -70,6 +70,12 @@ class ConsoleBackendPresentation:
             ):
                 raise RuntimeError("Console display checkpoint capture changed")
             checkpoint = record[0](lifecycle)
+            if message.operation == "ReadRunHistory" and (
+                checkpoint is None
+                or (checkpoint.attachment_id, checkpoint.visit)
+                != (message.payload["attachment_id"], message.payload["visit"])
+            ):
+                raise RuntimeError("Console history requires its current visible visit")
             if checkpoint is None:
                 current = self.view_lifecycle._current
                 if current is not None and current.action == "hidden":
@@ -166,16 +172,17 @@ class ConsoleBackendPresentation:
         await self.readiness.warm_workspace_counts(identity)
         await self.readiness.warm(identity)
 
-    async def prepare_run_history(self, identity):
+    async def prepare_run_history(self, identity, *, checkpoint=None):
         """Read original run metadata only for this explicit projection request."""
         from .console_execution_protocol import encode_message
         from .console_domain_services import _definition_current
 
         self.require_association(self.association)
         message = self.backend.adapter._receipts[identity.request_id][0]
-        if message.operation != "ReadProjection":
+        if message.operation not in {"ReadProjection", "ReadRunHistory"}:
             raise RuntimeError("Console history request owner changed")
-        request = encode_message(message)["payload"].get("run_history")
+        payload = encode_message(message)["payload"]
+        request = payload.get("run_history") if message.operation == "ReadProjection" else payload["request"]
         if request is None:
             return None
         if (
@@ -187,7 +194,19 @@ class ConsoleBackendPresentation:
             )
         ):
             raise RuntimeError("Console original history producer changed")
-        return await _HistoryRead(self, identity, request).run()
+        return await _HistoryRead(self, identity, request, checkpoint=checkpoint).run()
+
+    async def read_run_history(self, command):
+        """Join only the existing native history read under its captured visit."""
+        checkpoint = await self.prepare_view_checkpoint(command.identity)
+        if checkpoint is None or self.parent_attachment != (command.attachment_id, command.visit):
+            raise RuntimeError("Console history visit changed")
+        self.require_view_checkpoint(checkpoint)
+        rows = await self.prepare_run_history(command.identity, checkpoint=checkpoint)
+        self.require_view_checkpoint(checkpoint)
+        if rows is None:
+            raise RuntimeError("Console original history result is unavailable")
+        return rows
 
     def _require_marker_projection(self, identity, projection) -> None:
         from types import MethodType
@@ -978,6 +997,10 @@ from . import console_backend_run_history as _history_module
 
 _HistoryRead = _history_module.ConsoleBackendRunHistoryRead
 _HISTORY_METHODS = _history_module._METHODS
+_RUN_HISTORY_METHODS = tuple(
+    (name, _definition(getattr(ConsoleBackendPresentation, name)))
+    for name in ("read_run_history", "prepare_run_history", "prepare_view_checkpoint", "require_view_checkpoint")
+)
 
 from . import console_execution_recovery_values as _recovery_values
 from .console_chat_store import ConsoleChatStore as _CompositionStore

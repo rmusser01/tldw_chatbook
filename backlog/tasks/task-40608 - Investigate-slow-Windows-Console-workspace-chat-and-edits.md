@@ -173,6 +173,8 @@ The first attempt at q9 pair 2 stopped after the README answer persisted and pai
 
 Both callers can now await a single full display read while it is still queued for the same view, source, session and attachment. Each caller performs its own presentation work. The original read retains physical custody through retirement. In Windows run g53q9nav all 35 targeted checks passed, including the real mounted rail configuration writer. The q9 pair driver uses its earlier frozen candidate and measures no speedup attributable to this change.
 
+The contained run-history reader now executes the original scoped AgentRuns query independently. History still verifies the published session, conversation, source and visit and waits for positive retirement. Reading completed history issues zero full-display requests. All 30 selected Windows checks passed in g54historyq9, including a real private-profile query with original filters, limits and steps. A second q9 attempt on the earlier frozen code stopped in workspace setup with an expired resize presentation. Both attempts are retained in the [timing record](../../Docs/Development/task-40608-recovery/windows-journey-timings.md#qualifying-pairs).
+
 <!-- SECTION:NOTES:END -->
 
 Measured follow-up under the same [ADR-126 bounded configuration-read amendment](../decisions/126-complete-local-backup-and-recovery.md#task-40608--bounded-sensitive-database-path-configuration-reads): qualify the original sensitive container-reader cohort, then group its admissions without changing readers, overrides or refusal checks. The measured 0.218-second component is separate from the unresolved planning delay; final three-pair acceptance remains open.

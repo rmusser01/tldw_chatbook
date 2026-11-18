@@ -730,6 +730,22 @@ def _decision_head_result(value, path):
     decode_decision_head(_detach(value, path, 2, set(), thaw=True))
 
 
+def _run_history_request(value, path):
+    from .console_execution_run_history_values import _REQUEST
+
+    _record(attachment_id=_REFERENCE, visit=_SEQUENCE, request=_REQUEST)(value, path)
+
+
+def _run_history_result(value, path):
+    from .console_execution_run_history_values import validate_run_history
+
+    _record(
+        source_revision=_REVISION, session_id=_REFERENCE, incarnation_id=_REFERENCE,
+        attachment_id=_REFERENCE, visit=_SEQUENCE, run_history=_array(_object),
+    )(value, path)
+    validate_run_history(_detach(value["run_history"], path, 2, set(), thaw=True))
+
+
 def _source_fence_request(value, path):
     _object(value, path)
     fields = {"source": _SOURCE}
@@ -770,6 +786,7 @@ _COMMANDS = {
     ),
     "ReadProjection": _projection_request,
     "ReadDecisionHead": _record(attachment_id=_REFERENCE, visit=_SEQUENCE),
+    "ReadRunHistory": _run_history_request,
     "CancelTurn": _record(turn_id=_TURN_ID),
     "PermissionAction": _record(operation=_PERMISSION),
     "FenceSource": _source_fence_request,
@@ -1130,6 +1147,7 @@ _APPLIED = {
     "ArchiveSendCheckpointAck": _APPLIED_BOOL,
     "ReadProjection": _projection_result,
     "ReadDecisionHead": _decision_head_result,
+    "ReadRunHistory": _run_history_result,
     "UpdateInputs": _record(draft_revision=_REVISION),
     "ReceiveTurn": _record(turn_id=_TURN_ID),
     "ApplySettings": _LIVE_COMMIT,
@@ -1237,7 +1255,7 @@ def _validate_message(identity, kind, operation, payload):
     check(payload, "payload")
     if (
         kind == "applied"
-        and operation in {"ReadProjection", "ReadDecisionHead"}
+        and operation in {"ReadProjection", "ReadDecisionHead", "ReadRunHistory"}
         and (
             payload["source_revision"] != identity.source_revision
             or payload["session_id"] != identity.session_id

@@ -180,6 +180,7 @@ _OPERATIONS = {
     controls.ResolveDecision: "ResolveDecision",
     controls.ProjectDecisionPresentation: "ProjectDecisionPresentation",
     controls.ReadDecisionHead: "ReadDecisionHead",
+    controls.ReadRunHistory: "ReadRunHistory",
     controls.ArchiveSendCheckpointAck: "ArchiveSendCheckpointAck",
     controls.CancelTurn: "CancelTurn",
     controls.CommitPlanAck: "CommitPlanAck",
@@ -234,6 +235,17 @@ def encode_control_applied(
         payload = encode_decision_head(result)
         if (result.attachment_id, result.visit) != (command.attachment_id, command.visit):
             _fail("decision head does not match original visit")
+    elif type(command) is controls.ReadRunHistory:
+        _exact(result, tuple)
+        if any(row["conversation_id"] != command.request["conversation_id"] for row in result):
+            _fail("run history does not match original conversation")
+        payload = {
+            "source_revision": command.identity.source_revision,
+            "session_id": command.identity.session_id,
+            "incarnation_id": command.identity.incarnation_id,
+            "attachment_id": command.attachment_id, "visit": command.visit,
+            "run_history": list(result),
+        }
     elif type(command) is controls.UpdateInputs:
         _exact(result, int)
         payload = {"draft_revision": result}
