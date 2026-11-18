@@ -196,19 +196,7 @@ async def test_retired_stale_display_keeps_the_original_pressed_composer(monkeyp
         # This test isolates dispatch/transport, not attachment qualification.
         monkeypatch.setattr(execution_send, "selected_client", lambda _: client)
         monkeypatch.setattr(execution_state, "selected_client", lambda _: client)
-        captured = execution_send._SelectedPress(
-            client,
-            screen,
-            7,
-            client._source_revision,
-            row.id,
-            row.incarnation_id,
-            stash,
-            (stash.text, stash.generation, stash.edit_serial),
-            client.pressed_inputs,
-            (),
-        )
-        captured.registration = (captured, client, screen)
+        captured = execution_send.capture_inputs(screen, row.id, stash)
         token = object()
         screen._console_pending_send = SimpleNamespace(
             token=token,
@@ -224,7 +212,9 @@ async def test_retired_stale_display_keeps_the_original_pressed_composer(monkeyp
                     pending_send_token=token,
                 )
             )
-            await _until(lambda: len(client._channel.messages) == 2)
+            await _until(lambda: task.done() or len(client._channel.messages) == 2)
+            if task.done():
+                pytest.fail(f"Send returned before the projection read: {task.result()!r}")
             receipts = list(client._requests.values())
             update, read = receipts
             assert (update.operation, read.operation) == (
