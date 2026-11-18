@@ -1616,3 +1616,45 @@ async def test_collapsed_workspace_explains_hidden_attention_without_duplicate_m
         await pilot.pause()
         assert "Unread" not in tree.render_line(node.line).text
         assert "✉" in tree.render_line(tree.conversation_nodes["c"].line).text
+
+
+class _RunningStyleHarness(_TreeHarness):
+    CSS = (
+        _TreeHarness.CSS
+        + "ConsoleWorkspaceTree .conversation-attention-running { color: #00ff00; }"
+    )
+
+
+async def test_running_chat_synced_before_mount_gets_running_style_once_styled() -> (
+    None
+):
+    """TASK-41648: the left rail syncs the tree in ``compose``, before Textual
+    applies its styles. A running chat's row then asked for its component style
+    while the row widths were measured and raised ``KeyError: No
+    'conversation-attention-running' key in COMPONENT_CLASSES``, so the Console
+    failed to compose while a chat held a run."""
+
+    workspace = _workspace("w", "Work", ("c", "Busy"))
+    workspace = replace(
+        workspace,
+        conversations=(
+            replace(
+                workspace.conversations[0],
+                attention=(ConversationAttentionFact("running", "Running"),),
+            ),
+        ),
+    )
+    tree = ConsoleWorkspaceTree()
+    tree.sync_projection((workspace,), expanded_workspace_ids={"w"})
+    app = _RunningStyleHarness(tree)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        node = tree.conversation_nodes["c"]
+        icon = node.data.action_icon
+        painted = [
+            segment
+            for segment in tree.render_line(node.line)
+            if icon in segment.text
+        ]
+        assert painted, f"no {icon!r} segment in the running row"
+        assert painted[0].style.color.triplet == (0, 255, 0)

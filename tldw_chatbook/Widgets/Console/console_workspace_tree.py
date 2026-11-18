@@ -727,7 +727,12 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
             label.append(" " * max(0, content_budget - label.cell_len), base_style)
             action_style = base_style
             if data.action_class:
-                action_style = self.get_component_rich_style(data.action_class)
+                # TASK-41648: Tree measures row widths through render_label, and
+                # the left rail syncs in compose, before styles are applied.
+                # The fallback is uncached, so painted rows get the real style.
+                action_style = self.get_component_rich_style(
+                    data.action_class, default=base_style
+                )
             elif data.action_color:
                 action_style = Style(color=data.action_color)
             label.append(affordance, action_style)
