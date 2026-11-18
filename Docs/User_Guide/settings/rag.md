@@ -119,9 +119,9 @@ language; per-item error detail lands in the log, never in the toast.
 
 ### After a restore
 
-Below **Backfill**, three buttons serve a profile restored from a backup. Each
-only reviews or approves; none loads a model or touches the index until you
-choose **Reconcile / rebuild**.
+Below **Backfill**, three buttons serve a profile restored from a backup. The
+first two only review or approve; neither loads a model or touches the index.
+**Reconcile / rebuild** does that.
 
 - **Review local model** records a review of the active profile's local
   embedding model files ("Record review").
