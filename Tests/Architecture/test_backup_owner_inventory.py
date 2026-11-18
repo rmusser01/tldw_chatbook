@@ -1934,6 +1934,7 @@ def test_personas_shows_the_interrupted_import_notice_after_recovery():
         app.actor_pack_recovery_error = "actor_pack_recovery_blocked"
         async with app.run_test(size=(235, 52)) as pilot:
             await pilot.pause()
+            app._ensure_screen_owned_css("personas")  # Production loads it before the push.
             screen = PersonasScreen(app)
             await app.push_screen(screen)
             for _ in range(40):

@@ -439,8 +439,9 @@ def _permission_payload(tree):
 
 def _capture_maximum(tree, *, hook_read=None):
     """Project stock declared effects; live composition may only narrow them."""
-    # Resident once the Console is built (its agent bridge loads it), so a
-    # module-scope import would only inflate the ADR-097 first-send census.
+    # Its owner loads it lazily (ConsoleRuntime.worktree_activity, reached from
+    # Agents/ordinary_tree.py); a module-scope import would only inflate the
+    # ADR-097 first-send census.
     from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint, WorktreeScope
     from tldw_chatbook.Agents.persona_policy import (
         evaluate_tool_policy,
