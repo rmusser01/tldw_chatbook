@@ -147,6 +147,10 @@ This candidate retains existing tab buttons during append-only session changes a
 
 The first baseline of `q2` passed both original journeys. README took 481.774592 s from Send to completed reply, including 11.256854 s of measured human wait, for 470.517738 s of application time. Edit took 594.215726 s including 19.136928 s of measured human wait, for 575.078798 s of application time. The first loopback requests arrived at 124.2454 s and 139.9863 s. The Windows receipt SHA-256 is `5c8fb8b3fa1f3288a1396b809a2e2172c38d51d59479f51b0d8ec2928546de61`.
 
+In the first baseline of `q2`, Windows storage admission ran 2,042 times for README and 2,561 times for edit. The first provider requests followed 623 and 620 admissions respectively. The first frozen candidate painted Sending in 0.093299 s. The original disclosure did not appear within its 1,800 s deadline. The driver marked C1 ineligible and stopped with zero completed pairs. The edit did not run on this candidate.
+
+On the later saved-session correction, the real archive reservation, generation race, archived-chat refusal and positive release test passed on hosted Windows. The broader hosted run passed 52 tests and reported three failures, including the existing mount and Enter deadlines. The worktree also restores the real backend workspace registry in project instruction dispatch. It rechecks that original registry and parent association across consent before publishing a result.
+
 <!-- SECTION:NOTES:END -->
 
 Measured follow-up under the same [ADR-126 bounded configuration-read amendment](../decisions/126-complete-local-backup-and-recovery.md#task-40608--bounded-sensitive-database-path-configuration-reads): qualify the original sensitive container-reader cohort, then group its admissions without changing readers, overrides or refusal checks. The measured 0.218-second component is separate from the unresolved planning delay; final three-pair acceptance remains open.
