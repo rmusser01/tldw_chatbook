@@ -731,13 +731,17 @@ async def test_trace_view_lists_child_calls_under_the_spawning_turn(
             (row.key.value, [str(cell).strip() for cell in table.get_row(row.key)])
             for row in table.ordered_rows
         ]
-        # `a` (next child agent) reaches a child call from the top.
-        table.move_cursor(row=0)
+        # `a` (next child agent) stops on a child call.
+        first = next(i for i, (_, cells) in enumerate(rows) if cells[1] == "Child call")
+        table.move_cursor(row=first - 1)
         await pilot.press("a")
         await pilot.pause()
         landed = dict(rows)[screen._cursor_key()]
 
     headers = [i for i, (key, _) in enumerate(rows) if key.startswith("turn")]
+    # One user turn, one turn header: the children's own agent runs join the
+    # spawning turn instead of opening a phantom one.
+    assert [rows[i][0] for i in headers] == [f"turn:{turn_id}"], rows
     start = [key for key, _ in rows].index(f"turn:{turn_id}")
     end = next((i for i in headers if i > start), len(rows))
     child_rows = [cells for _, cells in rows if cells[1] == "Child call"]
@@ -753,4 +757,7 @@ async def test_trace_view_lists_child_calls_under_the_spawning_turn(
         "↳ sub-agent 2 · call 2 · tool loop",
     ], rows
     assert {cells[3] for cells in child_rows} == {"Complete"}, rows
+    # In / Cache / Out, as the parent's rows show them (the double reports
+    # prompt 10 and completion 5 on every reply).
+    assert {tuple(cells[4:7]) for cells in child_rows} == {("10", "0", "5")}, rows
     assert landed[1] == "Child call", landed

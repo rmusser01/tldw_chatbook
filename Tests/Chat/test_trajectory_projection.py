@@ -947,6 +947,7 @@ def test_child_calls_nest_under_their_turn_numbered_in_dispatch_order() -> None:
             "settled_at": started,
             "model_name": "m",
             "provider_name": "p",
+            "usage": {"prompt_tokens": 12, "completion_tokens": 3},
         }
 
     snapshot = derive_trajectory(
@@ -974,3 +975,7 @@ def test_child_calls_nest_under_their_turn_numbered_in_dispatch_order() -> None:
         ("Child call", 1, "subagent", "complete")
     }
     assert [record.run_id for record in children] == ["run-a", "run-b", "run-b"]
+    # Each child call carries its own normalized usage, as parent rows do.
+    assert children[0].usage == ProviderUsage(
+        uncached_input=12, output=3, provider="p", model="m"
+    )

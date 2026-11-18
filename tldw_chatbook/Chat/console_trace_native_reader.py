@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import dataclasses
 import json
 from collections.abc import Mapping
 from typing import Any
@@ -35,9 +34,6 @@ from tldw_chatbook.Chat.console_trace_service import (
 )
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 
-_PROVIDER_USAGE_FIELDS = frozenset(
-    field.name for field in dataclasses.fields(ProviderUsage)
-)
 _CONTINUATION_COMPONENTS = frozenset(
     {
         "continuation",
@@ -300,17 +296,14 @@ class ConsoleTraceNativeReader:
         # whole call; an empty payload reported nothing, so it stays None
         # rather than becoming an all-zero "reported" record.
         try:
-            usage_json = (
-                _normalized_usage_json(
-                    call.usage,
-                    provider=call.provider_name or "",
-                    model=call.model_name or "",
-                )
-                if call.usage
-                else None
+            usage = ProviderUsage.from_stored_call_usage(
+                call.usage,
+                provider=call.provider_name or "",
+                model=call.model_name or "",
             )
         except (TypeError, ValueError, RecursionError):
-            usage_json = None
+            usage = None
+        usage_json = None if usage is None else usage.to_json()
         if call.usage and usage_json is None:
             omitted.append("usage")
         capture = ExchangeCapture(
@@ -606,56 +599,6 @@ class ConsoleTraceNativeReader:
         if artifact is None:
             raise ValueError("trace_artifact_unavailable")
         return json.loads(artifact.sanitized_bytes)
-
-
-def _thaw_json(value: object) -> object:
-    """Return plain JSON containers for a repository-frozen value.
-
-    Args:
-        value: A decoded column whose objects are ``MappingProxyType`` and
-            whose arrays are tuples, at any depth.
-
-    Returns:
-        The same value built from ``dict`` and ``list``.
-    """
-    if isinstance(value, Mapping):
-        return {str(key): _thaw_json(item) for key, item in value.items()}
-    if isinstance(value, tuple):
-        return [_thaw_json(item) for item in value]
-    return value
-
-
-def _normalized_usage_json(
-    usage: Mapping[str, object], *, provider: str, model: str
-) -> str | None:
-    """Normalize one call's stored usage into ProviderUsage JSON.
-
-    Args:
-        usage: Stored usage: the provider's raw payload, or ProviderUsage
-            fields for rows imported from legacy captures.
-        provider: The call's provider, used when the payload names none.
-        model: The call's model, used when the payload names none.
-
-    Returns:
-        ``ProviderUsage.to_json()``, or None for an unrecognized shape.
-    """
-    payload = _thaw_json(usage)
-    if not isinstance(payload, dict):
-        return None
-    if set(payload) <= _PROVIDER_USAGE_FIELDS:
-        normalized = ProviderUsage.from_json(json.dumps(payload))
-        if normalized is not None:
-            # A legacy row that never named them takes the call's own.
-            normalized = dataclasses.replace(
-                normalized,
-                provider=normalized.provider or provider,
-                model=normalized.model or model,
-            )
-    else:
-        normalized = ProviderUsage.from_provider_payload(
-            payload, provider=provider, model=model
-        )
-    return None if normalized is None else normalized.to_json()
 
 
 __all__ = ["ConsoleTraceNativeReader"]

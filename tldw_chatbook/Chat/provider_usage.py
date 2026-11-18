@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields, replace
 from typing import Any, Mapping
 
 
@@ -192,6 +192,10 @@ class ProviderUsage:
             return None
         if not isinstance(data, dict):
             return None
+        return cls._from_fields(data)
+
+    @classmethod
+    def _from_fields(cls, data: Mapping[str, Any]) -> "ProviderUsage":
         return cls(
             uncached_input=_as_count(data.get("uncached_input")),
             cache_read=_as_count(data.get("cache_read")),
@@ -204,6 +208,31 @@ class ProviderUsage:
             model=str(data.get("model") or ""),
             partial=bool(data.get("partial")),
         )
+
+    @classmethod
+    def from_stored_call_usage(
+        cls, usage: Mapping[str, Any] | None, *, provider: str, model: str
+    ) -> "ProviderUsage | None":
+        """Normalize one trace call's stored usage.
+
+        Args:
+            usage: The provider's raw payload (frozen or not), or
+                ProviderUsage fields for calls imported from legacy captures.
+            provider: The call's provider, used when the usage names none.
+            model: The call's model, used when the usage names none.
+
+        Returns:
+            The normalized usage, or None when the usage is empty or in a
+            shape this class does not recognize.
+        """
+        if not isinstance(usage, Mapping) or not usage:
+            return None
+        if set(usage) <= _FIELD_NAMES:
+            stored = cls._from_fields(usage)
+            return replace(
+                stored, provider=stored.provider or provider, model=stored.model or model
+            )
+        return cls.from_provider_payload(usage, provider=provider, model=model)
 
     @classmethod
     def from_provider_payload(
@@ -288,3 +317,6 @@ class ProviderUsage:
                 **common,
             )
         return None
+
+
+_FIELD_NAMES = frozenset(field.name for field in fields(ProviderUsage))

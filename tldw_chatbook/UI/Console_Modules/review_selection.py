@@ -226,6 +226,7 @@ def _build_trajectory_snapshot(
             row_turn_id = getattr(trajectory_row, "turn_id", None)
         if row_message_id and row_turn_id:
             turn_by_message[str(row_message_id)] = str(row_turn_id)
+    turn_by_run: dict[str, str] = {}
     if agent_runs_db is not None:
         try:
             raw_runs = (
@@ -245,6 +246,12 @@ def _build_trajectory_snapshot(
                     assistant_message_id = str(run.get("assistant_message_id") or "")
                     if assistant_message_id in turn_by_message:
                         run["turn_id"] = turn_by_message[assistant_message_id]
+                    elif str(run.get("parent_run_id") or "") in turn_by_run:
+                        # A sub-agent has no reply of its own: it joins the
+                        # turn of the run that spawned it (primaries come first).
+                        run["turn_id"] = turn_by_run[str(run["parent_run_id"])]
+                    if run.get("turn_id"):
+                        turn_by_run[run_id] = str(run["turn_id"])
                     steps = list(run.get("steps", ()) or ())
                     converted_steps = [
                         {

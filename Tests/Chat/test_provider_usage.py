@@ -295,3 +295,34 @@ def test_openai_chat_payload_reads_cache_creation_tokens_as_write():
     assert usage.cache_read == 1536
     assert usage.cache_write == 111
     assert usage.output == 150
+
+
+def test_stored_call_usage_reads_raw_payloads_and_legacy_fields():
+    """TASK-41650: one public normalizer for a trace call's stored usage --
+    a frozen raw provider payload, or ProviderUsage fields from a legacy
+    import that take the call's provider/model when they name none."""
+    from types import MappingProxyType
+
+    frozen = MappingProxyType(
+        {
+            "prompt_tokens": 40,
+            "completion_tokens": 5,
+            "prompt_tokens_details": MappingProxyType({"cached_tokens": 30}),
+        }
+    )
+    assert ProviderUsage.from_stored_call_usage(
+        frozen, provider="openai", model="m"
+    ) == ProviderUsage(
+        uncached_input=10, cache_read=30, output=5, provider="openai", model="m"
+    )
+    assert ProviderUsage.from_stored_call_usage(
+        {"uncached_input": 5, "output": 7}, provider="openai", model="m"
+    ) == ProviderUsage(uncached_input=5, output=7, provider="openai", model="m")
+    assert ProviderUsage.from_stored_call_usage(
+        {"provider": "anthropic", "model": "c", "output": 1}, provider="x", model="y"
+    ) == ProviderUsage(output=1, provider="anthropic", model="c")
+    for nothing in (None, {}, {"promptTokenCount": 3}):
+        assert (
+            ProviderUsage.from_stored_call_usage(nothing, provider="p", model="m")
+            is None
+        )

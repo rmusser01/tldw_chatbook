@@ -275,10 +275,12 @@ under the turn that started the sub-agent, indented like the turn's other
 steps, for example `sub-agent 1 · call 2 · tool loop`. Sub-agents are numbered
 within the turn in the order they first called the provider, and calls within
 each sub-agent; the parent's own calls never carry this label. The State column
-shows how the call ended, and **Enter** opens its model, provider and timing in
-the inspector. Token counts are not shown for child calls. **a** and **s** move
-to the next and previous child-agent row, and the **Agent** filter can narrow
-the Trace to one sub-agent's calls.
+shows how the call ended, **In**, **Cache** and **Out** show that call's own
+token counts, and **Enter** opens its model, provider and timing in the
+inspector. The sub-agent's run (its **Agent run** row and steps) sits in the
+same turn, so starting sub-agents never adds turns to the Trace. **a** and
+**s** move to the next and previous child-agent row, and the **Agent** filter
+can narrow the Trace to one sub-agent's calls.
 
 An unfinished sub-agent call never holds up its parent's turn. A fork does not
 carry the source conversation's sub-agent calls, and the Conversation Inspector

@@ -1335,6 +1335,8 @@ def _records_from_child_calls(calls: Iterable[Any]) -> list[TrajectoryRecord]:
         sequence = _optional_int(_field(call, "call_sequence")) or 0
         route = _optional_text(_field(call, "route_identity")) or "call"
         state = _field(call, "state")
+        model = _optional_text(_field(call, "model_name"))
+        provider = _optional_text(_field(call, "provider_name"))
         records.append(
             TrajectoryRecord(
                 seq=0,
@@ -1345,12 +1347,14 @@ def _records_from_child_calls(calls: Iterable[Any]) -> list[TrajectoryRecord]:
                     f"sub-agent {numbers[(turn_id, run_id)]} · call {sequence + 1}"
                     f" · {route.replace('_', ' ')}"
                 ),
-                usage=None,
+                usage=ProviderUsage.from_stored_call_usage(
+                    _field(call, "usage"), provider=provider or "", model=model or ""
+                ),
                 step_started_at=started_at,
                 first_token_at=None,
                 completed_at=_parse_timestamp(_field(call, "settled_at")),
-                model=_optional_text(_field(call, "model_name")),
-                provider=_optional_text(_field(call, "provider_name")),
+                model=model,
+                provider=provider,
                 payload=None,
                 variants=(),
                 depth=1,
