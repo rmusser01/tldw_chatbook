@@ -3,6 +3,7 @@ id: TASK-41053
 title: "Three Console provider-gateway tests are red on dev: DeepSeek's base URL is pinned by default, and an OpenAI stop is not recorded"
 status: To Do
 created_date: 2026-11-15 02:03
+updated_date: 2026-11-17 01:01
 labels:
 - follow-up
 - architecture-review-2026-10-25
@@ -23,6 +24,7 @@ On dev ecad404bd4 (2026-11-15) (serially, at `-n 4` and under the bootstrap prof
 - `TestGatewayExchangeCapture::test_openai_stop_closes_transport_through_gateway_boundary`: the streamed content is never recorded within 5 s.
 
 Either DeepSeek now pins a base URL on purpose (the hosted-provider engine, ADR-179) and the tests are stale, or a Console send pins a URL that the user's config should own. The file runs on no PR lane.
+**Note (2026-11-17, TASK-41136).** The file now runs on the `pr-fast-lane-arch` PR lane with these three nodes deselected by name (`--deselect=` lines in `.github/workflows/derived-artifacts.yml`, pinned by `ARCH_REVIEW_DESELECTED` in `Tests/CI/test_ci_queue_pressure_contract.py`). When a node passes, remove its deselect line and its `ARCH_REVIEW_DESELECTED` row in the same commit.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

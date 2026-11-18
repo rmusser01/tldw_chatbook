@@ -3205,3 +3205,54 @@ Tests/UI/test_screen_navigation.py::test_search_all_palette_command_lands_on_lib
 Tests/UI/test_screen_navigation.py::test_search_route_round_trips_to_the_library_rag_row
 Tests/UI/test_screen_navigation.py::test_skills_route_lands_on_library_with_skills_row_selected
 Tests/UI/test_screen_navigation.py::test_study_screen_escape_returns_to_library_study_staging_canvas
+# TASK-41136 (2026-11-16): the Settings custom endpoint file's four green
+# nodes, on no lane before (about 6 s serially, load ~49). Its nine
+# config-writing nodes follow further down, once repaired.
+Tests/UI/test_settings_custom_endpoints.py::test_custom_endpoint_rows_render_safe_display
+Tests/UI/test_settings_custom_endpoints.py::test_delete_guard_lists_referencing_sessions
+Tests/UI/test_settings_custom_endpoints.py::test_edit_mutation_rejects_malformed_env_var_reference
+Tests/UI/test_settings_custom_endpoints.py::test_edit_mutation_keeps_valid_env_var_without_delete
+# TASK-41138 (2026-11-16): the Buddy conversation modal file's green tests,
+# on no lane before (about 317 s serially, load 68-77). Review r15ti-rev1
+# (2026-11-17) split the real Console send by parameter ([False] 42.5-98.6 s,
+# [True] 49.1-102.1 s serially, load 47-76) and laned the cold-home node
+# once its send stopped being refused (35.0-99.5 s, same runs).
+Tests/UI/test_buddy_conversation_modal.py::test_buddy_rendered_typed_head_spends_one_visible_allowance
+Tests/UI/test_buddy_conversation_modal.py::test_completed_buddy_release_fences_inflight_expiry_snapshot
+Tests/UI/test_buddy_conversation_modal.py::test_buddy_typed_mixed_head_blocks_later_or_other_owner_resolution
+Tests/UI/test_buddy_conversation_modal.py::test_buddy_clock_claim_keeps_render_and_owner_boundaries
+Tests/UI/test_buddy_conversation_modal.py::test_buddy_send_targets_bound_session_and_survives_modal_close
+Tests/UI/test_buddy_conversation_modal.py::test_buddy_drafts_and_approval_use_exact_binding
+Tests/UI/test_buddy_conversation_modal.py::test_closed_owner_does_not_fall_back_or_start_microphone
+Tests/UI/test_buddy_conversation_modal.py::test_buddy_existing_decision_cards_resolve_only_the_bound_round
+Tests/UI/test_buddy_conversation_modal.py::test_explicit_buddy_retains_headless_decisions_after_close
+Tests/UI/test_buddy_conversation_modal.py::test_draft_follows_same_conversation_canonical_binding
+Tests/UI/test_buddy_conversation_modal.py::test_saved_load_revalidates_after_io_without_selecting
+Tests/UI/test_buddy_conversation_modal.py::test_failed_cold_bootstrap_keeps_explicit_console_recovery
+Tests/UI/test_buddy_conversation_modal.py::test_concurrent_saved_loader_retains_the_exact_buddy_decision_owner
+Tests/UI/test_buddy_conversation_modal.py::test_dictation_finishes_into_reviewable_draft_without_sending
+Tests/UI/test_buddy_conversation_modal.py::test_closing_buddy_discards_microphone_and_ignores_late_result
+Tests/UI/test_buddy_conversation_modal.py::test_buddy_refuses_unseen_input_and_unavailable_owners
+Tests/UI/test_buddy_conversation_modal.py::test_late_voice_completion_after_close_cannot_change_the_draft
+Tests/UI/test_buddy_conversation_modal.py::test_real_console_buddy_send_preserves_both_durable_console_drafts[False]
+Tests/UI/test_buddy_conversation_modal.py::test_real_console_buddy_send_preserves_both_durable_console_drafts[True]
+Tests/UI/test_buddy_conversation_modal.py::test_recorder_buffer_callback_runs_on_textual_app_thread
+Tests/UI/test_buddy_conversation_modal.py::test_saved_buddy_bulk_reads_allow_loop_progress_and_recheck_owner
+Tests/UI/test_buddy_conversation_modal.py::test_deferred_transcript_scroll_after_close_keeps_draft
+# TASK-41136 review r15ti-rev1 (2026-11-17): the file's nine config-writing
+# nodes, now private-profile tests that write their own selected config
+# instead of switching TLDW_CONFIG_PATH mid-test. Serially with the lane's
+# flags at load ~64, s: 20.0, 33.0, 23.0, 26.8, 54.6, 63.2, 56.3, 52.3, 41.9
+# (about 371 s for the nine).
+Tests/UI/test_settings_custom_endpoints.py::test_delete_after_detach_removes_entry
+Tests/UI/test_settings_custom_endpoints.py::test_detach_preserves_entry_url_for_blank_session_base_url
+Tests/UI/test_settings_custom_endpoints.py::test_convert_custom_slot_creates_entry_and_keeps_slot
+Tests/UI/test_settings_custom_endpoints.py::test_edit_mutation_clearing_env_var_deletes_reference_on_disk
+Tests/UI/test_settings_custom_endpoints.py::test_settings_screen_duplicate_button_opens_template_modal
+Tests/UI/test_settings_custom_endpoints.py::test_settings_screen_duplicate_seeds_from_disk_when_app_snapshot_stale
+Tests/UI/test_settings_custom_endpoints.py::test_settings_screen_duplicate_reports_missing_slug_instead_of_blank
+Tests/UI/test_settings_custom_endpoints.py::test_settings_screen_duplicate_falls_back_to_view_config_when_snapshot_read_only
+Tests/UI/test_settings_custom_endpoints.py::test_settings_screen_edit_flow_clears_env_var_reference
+# TASK-41138 review r15ti-rev1 (2026-11-17): the cold-home Buddy send, laned once
+# the product stopped refusing it (35.0-99.5 s serially, load 47-76).
+Tests/UI/test_buddy_conversation_modal.py::test_cold_home_saved_buddy_bootstraps_only_after_explicit_open

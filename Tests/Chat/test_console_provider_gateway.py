@@ -10977,11 +10977,14 @@ class TestSignalsExchangeCapture:
         from tldw_chatbook.Chat import console_trace_regex_worker as regex_worker
 
         real_run = regex_worker.run_custom_pii_batch
+        # The worker's 500 ms default deadline is not under test, and a cold
+        # worker start missed it at load ~70-100 (TASK-41136 review).
+        roomy = regex_worker.CustomPIIWorkerLimits(deadline_ms=5_000)
 
-        def counted_run(*args, **kwargs):
+        def counted_run(*args, limits=None, **kwargs):
             nonlocal calls
             calls += 1
-            return real_run(*args, **kwargs)
+            return real_run(*args, limits=limits or roomy, **kwargs)
 
         monkeypatch.setattr(regex_worker, "run_custom_pii_batch", counted_run)
         aggregate = ConsoleProviderStreamSignals(

@@ -1118,6 +1118,23 @@ MINIMUM_FILES = 2181
 # TASK-41127 review r15lt-rev1 / TASK-41303 (2026-11-17): append 12
 # screen-navigation nodes at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 2207
+# TASK-41136 (2026-11-16): append the custom endpoint Settings file's four
+# green nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2211
+MINIMUM_FILES = 2149
+# TASK-41138 (2026-11-16): append the Buddy conversation modal file's 21 green
+# test functions at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2232
+MINIMUM_FILES = 2170
+# TASK-41136 review r15ti-rev1 (2026-11-17): append the custom endpoint
+# Settings file's nine repaired nodes at the tail. The floor is the measured
+# entry count.
+MINIMUM_FILES = 2241
+MINIMUM_FILES = 2179
+# TASK-41138 review r15ti-rev1 (2026-11-17): split the real Console Buddy send
+# by parameter and append the repaired cold-home node. The floor is the
+# measured entry count.
+MINIMUM_FILES = 2243
 
 
 def read_census(path: Path) -> list[str]:

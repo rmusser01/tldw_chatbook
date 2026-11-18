@@ -2,6 +2,7 @@
 
 import asyncio
 import threading
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -38,8 +39,17 @@ def pending_image():
     )
 
 
-async def until(predicate):
-    deadline = asyncio.get_running_loop().time() + 5
+#: Deadlines for the two real-Console journeys (TASK-41138, review r15ti-rev1),
+#: from the slowest wait measured through run.sh: the real send's waits took
+#: up to 2.2 s serially and 3.3 s at -n 3 (load ~58); the cold-home first send
+#: took 9.7-13.9 s from press to provider (load 55-75: the first send's
+#: personal-context bootstrap and storage evidence reads, off the UI loop).
+REAL_CONSOLE_WAIT_SECONDS = 15.0
+COLD_HOME_SEND_SECONDS = 30.0
+
+
+async def until(predicate, seconds: float = 5):
+    deadline = asyncio.get_running_loop().time() + seconds
     while not predicate():
         assert asyncio.get_running_loop().time() < deadline
         await asyncio.sleep(0.01)
@@ -939,7 +949,9 @@ async def test_late_voice_completion_after_close_cannot_change_the_draft(late_ph
         await until(started.is_set)
         modal.query_one("#buddy-close", Button).press()
         await until(lambda: app.screen is not modal)
-        assert voice.discards
+        # The discard runs in the modal's on_unmount, after the pop (review
+        # r15ti-rev1: asserting right after the pop was flaky).
+        await until(lambda: voice.discards)
         gate.set()
         await pilot.pause(0.1)
         assert modal.coordinator.drafts[binding] == "Keep typed words"
@@ -952,6 +964,7 @@ async def test_late_voice_completion_after_close_cannot_change_the_draft(late_ph
 async def test_real_console_buddy_send_preserves_both_durable_console_drafts(
     request: pytest.FixtureRequest, monkeypatch, tmp_path, saved
 ):
+    wait = partial(until, seconds=REAL_CONSOLE_WAIT_SECONDS)
     from Tests.UI.test_console_native_chat_flow import (
         _configure_native_ready_console,
         _ReadyResolutionGateway,
@@ -1008,6 +1021,9 @@ async def test_real_console_buddy_send_preserves_both_durable_console_drafts(
         target.draft = reply
         other = controller.new_session()
         await console._sync_native_console_chat_ui()
+        # The composer must belong to `other` before it is typed into; else
+        # leaving Console banks this text into `target` (review r15ti-rev1).
+        await wait(lambda: console._console_visible_draft_session_id == other.id)
         composer.load_draft("Unrelated visible composer")
         other.draft = "Unrelated visible composer"
         await _press_until_screen(pilot, "ctrl+1", "HomeScreen")
@@ -1042,7 +1058,7 @@ async def test_real_console_buddy_send_preserves_both_durable_console_drafts(
         await pilot.pause()
         try:
             if saved:
-                await until(lambda: modal.coordinator.resolve(binding) is not None)
+                await wait(lambda: modal.coordinator.resolve(binding) is not None)
                 target = modal.coordinator.resolve(binding)
                 target.draft = reply
                 assert target.persisted_conversation_id == conversation_id
@@ -1056,10 +1072,10 @@ async def test_real_console_buddy_send_preserves_both_durable_console_drafts(
                 )
             # Restore completion publishes the owner before the next visible
             # projection enables Send. Wait for the action a user can perform.
-            await until(lambda: not modal.query_one("#buddy-send", Button).disabled)
+            await wait(lambda: not modal.query_one("#buddy-send", Button).disabled)
             modal.query_one("#buddy-reply", TextArea).load_text(reply)
             modal.query_one("#buddy-send", Button).press()
-            await until(gateway.started.is_set)
+            await wait(gateway.started.is_set)
             assert target.persisted_conversation_id
             assert modal.coordinator.resolve(binding) is target
             assert target.draft == reply
@@ -1067,10 +1083,10 @@ async def test_real_console_buddy_send_preserves_both_durable_console_drafts(
             assert composer.draft_text() == "Unrelated visible composer"
             assert controller.store.active_session_id == other.id
             modal.query_one("#buddy-close", Button).press()
-            await until(lambda: type(app.screen).__name__ == "HomeScreen")
+            await wait(lambda: type(app.screen).__name__ == "HomeScreen")
             assert controller.in_flight_run_count() == 1
             gateway.release.set()
-            await until(lambda: controller.in_flight_run_count() == 0)
+            await wait(lambda: controller.in_flight_run_count() == 0)
             assert target.draft == reply
             assert not controller.store.messages_for_session(other.id)
             reopened = open_buddy_conversation(
@@ -1078,8 +1094,8 @@ async def test_real_console_buddy_send_preserves_both_durable_console_drafts(
             )
             await pilot.pause()
             reopened.query_one("#buddy-open-console", Button).press()
-            await until(lambda: app.screen.__class__.__name__ == "ChatScreen")
-            await until(
+            await wait(lambda: app.screen.__class__.__name__ == "ChatScreen")
+            await wait(
                 lambda: (
                     controller.store.active_session_id == target.id
                     and composer.draft_text() == reply
@@ -1095,6 +1111,7 @@ async def test_real_console_buddy_send_preserves_both_durable_console_drafts(
 async def test_cold_home_saved_buddy_bootstraps_only_after_explicit_open(
     request: pytest.FixtureRequest, monkeypatch, tmp_path
 ):
+    wait = partial(until, seconds=COLD_HOME_SEND_SECONDS)
     from Tests.UI.test_console_native_chat_flow import (
         _configure_native_ready_console,
         _ReadyResolutionGateway,
@@ -1162,8 +1179,8 @@ async def test_cold_home_saved_buddy_bootstraps_only_after_explicit_open(
         )
         modal = open_buddy_conversation(app, binding, allow_voice=False)
         try:
-            await until(lambda: modal.coordinator.resolve(binding) is not None)
-            await until(lambda: not modal.query_one("#buddy-send", Button).disabled)
+            await wait(lambda: modal.coordinator.resolve(binding) is not None)
+            await wait(lambda: not modal.query_one("#buddy-send", Button).disabled)
             store = runtime.chat_store
             target = modal.coordinator.resolve(binding)
             assert store.active_session_id is None
@@ -1173,12 +1190,12 @@ async def test_cold_home_saved_buddy_bootstraps_only_after_explicit_open(
             )
             modal.query_one("#buddy-reply", TextArea).load_text("Follow up from Home")
             modal.query_one("#buddy-send", Button).press()
-            await until(gateway.started.is_set)
+            await wait(gateway.started.is_set)
             modal.query_one("#buddy-close", Button).press()
-            await until(lambda: app.screen.__class__.__name__ == "HomeScreen")
+            await wait(lambda: app.screen.__class__.__name__ == "HomeScreen")
             assert store.active_session_id is None
             assert runtime.view is None
-            await until(lambda: runtime.chat_controller.in_flight_run_count() == 0)
+            await wait(lambda: runtime.chat_controller.in_flight_run_count() == 0)
             from Tests.Chat.test_console_ask_user_round import _questions
 
             for kind in ("question", "approval"):
@@ -1202,7 +1219,7 @@ async def test_cold_home_saved_buddy_bootstraps_only_after_explicit_open(
                         )
                     )
                 try:
-                    await until(
+                    await wait(
                         lambda controller=controller, pending=pending: (
                             controller._interrupt_host.pending_total() == 1
                             or pending.done()
@@ -1220,7 +1237,7 @@ async def test_cold_home_saved_buddy_bootstraps_only_after_explicit_open(
                     )
                     await asyncio.wait_for(pending, 3)
                     reopened.query_one("#buddy-close", Button).press()
-                    await until(lambda: app.screen.__class__.__name__ == "HomeScreen")
+                    await wait(lambda: app.screen.__class__.__name__ == "HomeScreen")
                     assert store.active_session_id is None
                 finally:
                     if not pending.done():

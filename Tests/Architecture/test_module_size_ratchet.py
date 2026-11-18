@@ -149,7 +149,9 @@ _BUDGETS: dict[str, int] = {
     # the TUI opens ChaChaNotes and Media through the shared openers (+8).
     # the TUI opens ChaChaNotes and Media through the shared openers (+8);
     # review fix: a failed notes service reuses the startup-opened DB (+9).
-    "tldw_chatbook/app.py": 5705,
+    # 2026-11-15, TASK-41141 (owner rule: raise by the change's own lines): +2,
+    # TldwCli.__init__ installs the stock Select exit gate.
+    "tldw_chatbook/app.py": 5707,
     # TASK-34406.5: unchanged startup/footer wiring, born governed.
     "tldw_chatbook/app_startup.py": 176,
     # TASK-34406.7: app-owned served control and relay bodies, born governed.

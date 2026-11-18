@@ -542,7 +542,11 @@ class WorkspaceCreateModal(
             self._error = (
                 f"Created {self._created_workspace_name}. Retry the failed folders "
                 "or keep the workspace with its successful bindings.\n"
-                + "\n".join(f"{folder}: {message}" for folder, message in failed)
+                # TASK-41142: most binding errors already name the folder.
+                + "\n".join(
+                    message if folder in message else f"{folder}: {message}"
+                    for folder, message in failed
+                )
             )
             self._stash_form_state()
             self.run_worker(

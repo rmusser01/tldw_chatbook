@@ -569,6 +569,14 @@ ARCH_REVIEW_TARGETS = (
     "Tests/DB/test_chachanotes_v53_safe_capture_trim.py::test_v53_without_the_trimming_port_fails_closed_and_stays_v52",
     "Tests/DB/test_chachanotes_v53_safe_capture_trim.py::test_fresh_database_opens_without_the_trimming_port",
     "Tests/DB/test_chachanotes_bare_open_self_migration.py::test_a_bare_open_of_a_v52_safe_capture_fails_closed_and_stays_v52",
+    # TASK-41136 (bootstrap_profile): three red nodes deselected, TASK-41053.
+    "Tests/Chat/test_console_provider_gateway.py",
+)
+#: Red on dev, owned by TASK-41053; remove each once it passes (TASK-41136).
+ARCH_REVIEW_DESELECTED = (
+    "Tests/Chat/test_console_provider_gateway.py::test_all_qwencloud_kwargs_paths_forward_pinned_mode_and_base",
+    "Tests/Chat/test_console_provider_gateway.py::test_console_send_leaves_base_url_unpinned_in_default_case[deepseek]",
+    "Tests/Chat/test_console_provider_gateway.py::TestGatewayExchangeCapture::test_openai_stop_closes_transport_through_gateway_boundary",
 )
 #: Owner decision (2026-11-06): suites runnable again after being red in no PR
 #: lane, in their own job, serial under --storage-lease-guard. Sandboxed suites
@@ -1621,6 +1629,13 @@ def test_architecture_review_lane_is_one_serial_minimal_python_312_job() -> None
     step = _named_step(job, "Run the architecture-review tests")
     assert "if" not in step
     assert _pytest_targets(step["run"]) == ARCH_REVIEW_TARGETS
+    assert tuple(shlex.split(step["run"].replace("\\\n", " "), comments=True)) == (
+        "pytest",
+        *ARCH_REVIEW_TARGETS,
+        *(f"--deselect={node}" for node in ARCH_REVIEW_DESELECTED),
+        "--timeout=180",
+        "--tb=short",
+    )
     assert not set(ARCH_REVIEW_TARGETS) & set(FAST_LANE_TARGETS)
 
 
