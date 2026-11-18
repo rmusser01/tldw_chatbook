@@ -1713,7 +1713,7 @@ selector.chmod(0o600)
     + _RESTORE_PRIVATE
     + r"""
 async def main():
- from Tests.Plugins.acquisition_process_support import repository
+ from Tests.Plugins.acquisition_process_support import acquisition_failure_diagnostic,repository
  from tldw_chatbook.Plugins.git_source import select_local_source
  from tldw_chatbook.Plugins.source_service import SourceService
  package=home/'package';shutil.copytree(Path('Tests/Plugins/fixtures/native'),package)
@@ -1726,7 +1726,8 @@ async def main():
   await plugins.bootstrap('test passphrase')
   # The Plugins screen's repository path: acquire, then review the acquired bytes.
   destination=await plugins.acquisition_destination('ui-git-install')
-  snapshot=await plugins.acquire_snapshot(select_local_source(source),'ui-git-install',destination)
+  with acquisition_failure_diagnostic():
+   snapshot=await plugins.acquire_snapshot(select_local_source(source),'ui-git-install',destination)
   review=await SourceService(plugins).review_acquired(snapshot,selection=('skill:review',),workspace_id=None)
   await plugins.commit(review,review.operation_id)
   trust_review=await plugins.review_trust(review.installation_id)
