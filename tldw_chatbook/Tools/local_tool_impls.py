@@ -62,6 +62,10 @@ from pathlib import Path
 from typing import Any, BinaryIO, Literal
 
 from tldw_chatbook.Tools.worker_watchdog import register_temp, unregister_temp
+from tldw_chatbook.Tools.workspace_root_pin import (
+    _windows_close_metadata,
+    _windows_open_metadata,
+)
 from tldw_chatbook.Utils.path_validation import fold_path_part, validate_path
 from tldw_chatbook.Utils.sensitive_paths import (
     is_git_metadata_write,
@@ -405,6 +409,33 @@ def read_file(
     )
 
 
+def _read_file_stat(target: Path) -> os.stat_result:
+    """Observe a named file with the same change-time clock as its descriptor."""
+    if os.name != "nt":
+        return target.stat(follow_symlinks=False)
+
+    import msvcrt
+
+    # CPython 3.12 pathname stat exposes creation time as ctime, while fstat
+    # exposes native ChangeTime. A metadata-only no-follow open preserves the
+    # latter before the body open, including same-size writes restoring mtime.
+    handle, identity, reparse = _windows_open_metadata(target)
+    descriptor = None
+    try:
+        if reparse:
+            raise LocalToolError(f"file changed or is not regular: {target.name}")
+        descriptor = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+        result = os.fstat(descriptor)
+        if (result.st_dev, result.st_ino) != (identity.device, identity.inode):
+            raise LocalToolError(f"file changed while observing: {target.name}")
+        return result
+    finally:
+        if descriptor is None:
+            _windows_close_metadata(handle)
+        else:
+            os.close(descriptor)
+
+
 def _read_bounded_bytes(target: Path) -> bytes:
     """Read one unchanged regular file, bounding both metadata and actual bytes.
 
@@ -412,14 +443,14 @@ def _read_bounded_bytes(target: Path) -> bytes:
     from turning a bounded read into an unbounded effect. Compare the descriptor
     and path before and after reading; never stamp a changed or replaced file.
     """
-    before = target.stat(follow_symlinks=False)
+    before = _read_file_stat(target)
     if not stat_module.S_ISREG(before.st_mode):
         raise LocalToolError(f"file changed or is not regular: {target.name}")
     if before.st_size > MAX_READ_FILE_BYTES:
         raise LocalToolError(f"'{target.name}' is too large to read")
 
     def version(info: os.stat_result) -> tuple[int, ...]:
-        return (
+        fields = (
             info.st_dev,
             info.st_ino,
             info.st_mode,
@@ -427,6 +458,12 @@ def _read_bounded_bytes(target: Path) -> bytes:
             info.st_mtime_ns,
             info.st_ctime_ns,
         )
+        if os.name == "nt":
+            birth = getattr(info, "st_birthtime_ns", None)
+            if type(birth) is not int:
+                raise LocalToolError(f"file creation time unavailable: {target.name}")
+            fields += (birth,)
+        return fields
 
     flags = (os.O_RDONLY | getattr(os, "O_BINARY", 0)
              | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
@@ -447,7 +484,7 @@ def _read_bounded_bytes(target: Path) -> bytes:
         if (
             total != before.st_size
             or version(os.fstat(descriptor)) != version(before)
-            or version(target.stat(follow_symlinks=False)) != version(before)
+            or version(_read_file_stat(target)) != version(before)
         ):
             raise LocalToolError(f"file changed while reading: {target.name}")
         return b"".join(chunks)

@@ -239,6 +239,28 @@ def _pin_windows(locator: Path, expected: DirectoryIdentity) -> PinnedWorkspaceR
 def _windows_open_directory(path: Path) -> tuple[int, DirectoryIdentity, bool]:
     if os.name != "nt":
         raise WorkspaceRootPinError("Windows root pinning is unavailable")
+    try:
+        return _windows_open_metadata(path)
+    except OSError as error:
+        reasons = {
+            "file metadata open failed": "workspace root open failed",
+            "file metadata unavailable": "workspace root metadata unavailable",
+            "file metadata cleanup failed": "workspace root handle cleanup failed",
+        }
+        raise WorkspaceRootPinError(
+            reasons.get(error.strerror, "workspace root pinning failed")
+        ) from error
+
+
+def _windows_open_metadata(path: Path) -> tuple[int, DirectoryIdentity, bool]:
+    """Open one file or directory for attributes without following its reparse point.
+
+    The caller owns the returned handle and must close it or transfer it to a
+    CRT descriptor. Root pinning and bounded file reads share the same native
+    identity observation; this does not grant access to file contents.
+    """
+    if os.name != "nt":
+        raise OSError("Windows file metadata is unavailable")
     from ctypes import wintypes
 
     class ByHandleFileInformation(ctypes.Structure):
@@ -302,7 +324,7 @@ def _windows_open_directory(path: Path) -> tuple[int, DirectoryIdentity, bool]:
     invalid_handle = ctypes.c_void_p(-1).value
     handle = int(ctypes.cast(raw_handle, ctypes.c_void_p).value or 0)
     if not handle or handle == invalid_handle:
-        raise WorkspaceRootPinError("workspace root open failed")
+        raise ctypes.WinError(ctypes.get_last_error(), "file metadata open failed")
     information = ByHandleFileInformation()
     identity_information = FileIdInformation()
     file_id_info = 18
@@ -314,8 +336,9 @@ def _windows_open_directory(path: Path) -> tuple[int, DirectoryIdentity, bool]:
         ctypes.byref(identity_information),
         ctypes.sizeof(identity_information),
     ):
-        _windows_close_handle(handle)
-        raise WorkspaceRootPinError("workspace root metadata unavailable")
+        error_code = ctypes.get_last_error()
+        _windows_close_metadata(handle)
+        raise ctypes.WinError(error_code, "file metadata unavailable")
     # FILE_ID_INFO preserves Python's full 64-bit device and 128-bit inode.
     inode = int.from_bytes(bytes(identity_information.FileId), "little")
     reparse = bool(int(information.dwFileAttributes) & 0x00000400)
@@ -346,13 +369,23 @@ def _windows_set_current_directory(path: str) -> None:
 def _windows_close_handle(handle: int) -> None:
     if os.name != "nt":
         raise WorkspaceRootPinError("Windows root pinning is unavailable")
+    try:
+        _windows_close_metadata(handle)
+    except OSError as error:
+        raise WorkspaceRootPinError("workspace root handle cleanup failed") from error
+
+
+def _windows_close_metadata(handle: int) -> None:
+    """Retire an owned metadata handle; unknown close remains an OS failure."""
+    if os.name != "nt":
+        raise OSError("Windows file metadata is unavailable")
     from ctypes import wintypes
 
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
     kernel32.CloseHandle.restype = wintypes.BOOL
     if not kernel32.CloseHandle(handle):
-        raise WorkspaceRootPinError("workspace root handle cleanup failed")
+        raise ctypes.WinError(ctypes.get_last_error(), "file metadata cleanup failed")
 
 
 __all__ = ["PinnedWorkspaceRoot", "WorkspaceRootPinError", "pin_workspace_root"]

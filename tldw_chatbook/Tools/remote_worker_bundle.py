@@ -854,16 +854,44 @@ def _sensitive_db_paths() -> tuple[Path, ...]:
         check -- it is additional coverage, not the primary guarantee.
     """
     raise ImportError("'..' (importing config) is not available inside the remote worker bundle")
-    resolved: list[Path] = []
-    for accessor_name in _DB_PATH_ACCESSOR_NAMES:
-        accessor = getattr(_config, accessor_name, None)
-        if accessor is None:
-            continue
-        try:
-            resolved.append(accessor())
-        except Exception as exc:
-            _debug(f'sensitive_paths: could not resolve {accessor_name}: {exc}')
-    return tuple(resolved)
+
+    def collect(check=None) -> tuple[Path, ...]:
+        resolved: list[Path] = []
+        for accessor_name in _DB_PATH_ACCESSOR_NAMES:
+            if check is not None:
+                check()
+            accessor = getattr(_config, accessor_name, None)
+            if accessor is None:
+                continue
+            try:
+                resolved.append(accessor())
+            except Exception as exc:
+                if check is not None:
+                    check()
+                _debug(f'sensitive_paths: could not resolve {accessor_name}: {exc}')
+        return tuple(resolved)
+    source = getattr(_config, '_SENSITIVE_DB_PATH_SOURCE', None)
+    if source is None:
+        return collect()
+    import sys
+    raise ImportError("'.definition_records' (importing definitions_current) is not available inside the remote worker bundle")
+    owner, life, paths, names, definitions = source
+
+    def current() -> bool:
+        return _config is owner and sys.modules.get('tldw_chatbook.config') is owner and (_config._SENSITIVE_DB_PATH_SOURCE is source) and (_config._config_participants is life) and (sys.modules.get(life.__name__) is life) and (_config.profile_paths is paths) and (life.profile_paths is paths) and (sys.modules.get(paths.__name__) is paths) and (_DB_PATH_ACCESSOR_NAMES == names) and (_sensitive_db_paths is _SENSITIVE_DB_PATHS_ORIGINAL[0]) and (_sensitive_db_paths.__code__ is _SENSITIVE_DB_PATHS_ORIGINAL[1]) and (_debug is _SENSITIVE_DB_PATHS_ORIGINAL[2]) and (_debug.__code__ is _SENSITIVE_DB_PATHS_ORIGINAL[3]) and definitions_current(definitions)
+    operation = life.operation
+    if not current():
+        return collect()
+
+    def require_current():
+        if not current():
+            raise life.bootstrap.RecoveryRequired('sensitive_db_sources_changed')
+    with operation(_config):
+        require_current()
+        result = collect(require_current)
+    require_current()
+    return result
+_SENSITIVE_DB_PATHS_ORIGINAL = (_sensitive_db_paths, _sensitive_db_paths.__code__, _debug, _debug.__code__)
 
 def _sensitive_single_file_paths() -> tuple[Path, ...]:
     """Resolve this app's own non-DB sensitive single files, lazily.
@@ -1001,26 +1029,72 @@ def _direct_child_rule_container_dirs() -> tuple[Path, ...]:
         An accessor that raises is skipped rather than failing the whole
         check, as elsewhere in this module.
     """
+    import sys
+    raise ImportError("'..' (importing config) is not available inside the remote worker bundle")
+    raise ImportError("'.' (importing rag_state_paths) is not available inside the remote worker bundle")
+    raise ImportError("'.definition_records' (importing definitions_current) is not available inside the remote worker bundle")
+    source = getattr(_config, '_SENSITIVE_DB_PATH_SOURCE', None)
+    rag_source = getattr(rag, '_SENSITIVE_CONTAINER_SOURCE', None)
+    if source is None or rag_source is None:
+        return _collect_container_dirs()
+    owner, life, paths, _names, definitions = source
+    namespace, rag_os, rag_path, rag_definitions = rag_source
+    package = sys.modules['tldw_chatbook']
+    operation = life.operation
+
+    def current():
+        return _config is owner and sys.modules.get('tldw_chatbook') is package and (vars(package).get('config') is owner) and (sys.modules.get('tldw_chatbook.config') is owner) and (_config._SENSITIVE_DB_PATH_SOURCE is source) and (_config._config_participants is life) and (sys.modules.get(life.__name__) is life) and (_config.profile_paths is paths) and (life.profile_paths is paths) and (sys.modules.get(paths.__name__) is paths) and (sys.modules.get(rag.__name__) is rag) and (vars(rag) is namespace) and (rag._SENSITIVE_CONTAINER_SOURCE is rag_source) and (rag.os is rag_os) and (rag.Path is rag_path) and definitions_current(definitions) and definitions_current(rag_definitions) and all((function is original and function.__code__ is code for function, (original, code) in zip((_direct_child_rule_container_dirs, _collect_container_dirs, _debug), _SENSITIVE_CONTAINER_ORIGINAL, strict=True)))
+    if not current():
+        return _collect_container_dirs()
+
+    def require_current():
+        if not current():
+            raise life.bootstrap.RecoveryRequired('sensitive_container_sources_changed')
+    with operation(_config):
+        require_current()
+        result = _collect_container_dirs(require_current)
+    require_current()
+    return result
+
+def _collect_container_dirs(check=None) -> tuple[Path, ...]:
+    """Run every original reader, preserving additive accessor failures."""
     raise ImportError("'..' (importing config) is not available inside the remote worker bundle")
     raise ImportError("'.rag_state_paths' (importing default_chroma_persist_directory, default_rag_profiles_dir) is not available inside the remote worker bundle")
     resolved: list[Path] = []
+    if check is not None:
+        check()
     try:
         resolved.append(_config.get_user_data_dir())
     except Exception as exc:
+        if check is not None:
+            check()
         _debug(f'sensitive_paths: could not resolve user data dir: {exc}')
+    if check is not None:
+        check()
     try:
         resolved.append(_config._get_effective_config_path().parent)
     except Exception as exc:
+        if check is not None:
+            check()
         _debug(f'sensitive_paths: could not resolve effective config dir: {exc}')
+    if check is not None:
+        check()
     try:
         resolved.append(default_chroma_persist_directory())
     except Exception as exc:
+        if check is not None:
+            check()
         _debug(f'sensitive_paths: could not resolve chroma persist dir: {exc}')
+    if check is not None:
+        check()
     try:
         resolved.append(default_rag_profiles_dir())
     except Exception as exc:
+        if check is not None:
+            check()
         _debug(f'sensitive_paths: could not resolve rag profiles dir: {exc}')
     return tuple(resolved)
+_SENSITIVE_CONTAINER_ORIGINAL = tuple(((function, function.__code__) for function in (_direct_child_rule_container_dirs, _collect_container_dirs, _debug)))
 
 def _db_sidecar_paths(db_path: Path) -> tuple[Path, ...]:
     """Build the WAL/SHM/rollback-journal sidecar paths for one DB path.
@@ -2354,6 +2428,27 @@ def read_file(path: str, *, workspace_root: Path, offset: int=1, limit: int | No
     root = resolve_workspace_path(path, workspace_root, intent='read')
     return _read_relative_file(root.relative_to(Path(workspace_root).resolve()), workspace=Path(workspace_root).resolve(), offset=offset, limit=limit, sensitive_exclusions=sensitive_exclusions_under(Path(workspace_root).resolve()), display_path=path)
 
+def _read_file_stat(target: Path) -> os.stat_result:
+    """Observe a named file with the same change-time clock as its descriptor."""
+    if os.name != 'nt':
+        return target.stat(follow_symlinks=False)
+    import msvcrt
+    handle, identity, reparse = _windows_open_metadata(target)
+    descriptor = None
+    try:
+        if reparse:
+            raise LocalToolError(f'file changed or is not regular: {target.name}')
+        descriptor = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+        result = os.fstat(descriptor)
+        if (result.st_dev, result.st_ino) != (identity.device, identity.inode):
+            raise LocalToolError(f'file changed while observing: {target.name}')
+        return result
+    finally:
+        if descriptor is None:
+            _windows_close_metadata(handle)
+        else:
+            os.close(descriptor)
+
 def _read_bounded_bytes(target: Path) -> bytes:
     """Read one unchanged regular file, bounding both metadata and actual bytes.
 
@@ -2361,15 +2456,21 @@ def _read_bounded_bytes(target: Path) -> bytes:
     from turning a bounded read into an unbounded effect. Compare the descriptor
     and path before and after reading; never stamp a changed or replaced file.
     """
-    before = target.stat(follow_symlinks=False)
+    before = _read_file_stat(target)
     if not stat_module.S_ISREG(before.st_mode):
         raise LocalToolError(f'file changed or is not regular: {target.name}')
     if before.st_size > MAX_READ_FILE_BYTES:
         raise LocalToolError(f"'{target.name}' is too large to read")
 
     def version(info: os.stat_result) -> tuple[int, ...]:
-        return (info.st_dev, info.st_ino, info.st_mode, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
-    flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0)
+        fields = (info.st_dev, info.st_ino, info.st_mode, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+        if os.name == 'nt':
+            birth = getattr(info, 'st_birthtime_ns', None)
+            if type(birth) is not int:
+                raise LocalToolError(f'file creation time unavailable: {target.name}')
+            fields += (birth,)
+        return fields
+    flags = os.O_RDONLY | getattr(os, 'O_BINARY', 0) | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0)
     descriptor = os.open(target, flags)
     try:
         if version(os.fstat(descriptor)) != version(before):
@@ -2384,7 +2485,7 @@ def _read_bounded_bytes(target: Path) -> bytes:
             if total > MAX_READ_FILE_BYTES:
                 raise LocalToolError(f"'{target.name}' is too large to read")
             chunks.append(chunk)
-        if total != before.st_size or version(os.fstat(descriptor)) != version(before) or version(target.stat(follow_symlinks=False)) != version(before):
+        if total != before.st_size or version(os.fstat(descriptor)) != version(before) or version(_read_file_stat(target)) != version(before):
             raise LocalToolError(f'file changed while reading: {target.name}')
         return b''.join(chunks)
     finally:
@@ -3492,6 +3593,21 @@ def _pin_windows(locator: Path, expected: DirectoryIdentity) -> PinnedWorkspaceR
 def _windows_open_directory(path: Path) -> tuple[int, DirectoryIdentity, bool]:
     if os.name != 'nt':
         raise WorkspaceRootPinError('Windows root pinning is unavailable')
+    try:
+        return _windows_open_metadata(path)
+    except OSError as error:
+        reasons = {'file metadata open failed': 'workspace root open failed', 'file metadata unavailable': 'workspace root metadata unavailable', 'file metadata cleanup failed': 'workspace root handle cleanup failed'}
+        raise WorkspaceRootPinError(reasons.get(error.strerror, 'workspace root pinning failed')) from error
+
+def _windows_open_metadata(path: Path) -> tuple[int, DirectoryIdentity, bool]:
+    """Open one file or directory for attributes without following its reparse point.
+
+    The caller owns the returned handle and must close it or transfer it to a
+    CRT descriptor. Root pinning and bounded file reads share the same native
+    identity observation; this does not grant access to file contents.
+    """
+    if os.name != 'nt':
+        raise OSError('Windows file metadata is unavailable')
     from ctypes import wintypes
 
     class ByHandleFileInformation(ctypes.Structure):
@@ -3515,13 +3631,14 @@ def _windows_open_directory(path: Path) -> tuple[int, DirectoryIdentity, bool]:
     invalid_handle = ctypes.c_void_p(-1).value
     handle = int(ctypes.cast(raw_handle, ctypes.c_void_p).value or 0)
     if not handle or handle == invalid_handle:
-        raise WorkspaceRootPinError('workspace root open failed')
+        raise ctypes.WinError(ctypes.get_last_error(), 'file metadata open failed')
     information = ByHandleFileInformation()
     identity_information = FileIdInformation()
     file_id_info = 18
     if not kernel32.GetFileInformationByHandle(handle, ctypes.byref(information)) or not kernel32.GetFileInformationByHandleEx(handle, file_id_info, ctypes.byref(identity_information), ctypes.sizeof(identity_information)):
-        _windows_close_handle(handle)
-        raise WorkspaceRootPinError('workspace root metadata unavailable')
+        error_code = ctypes.get_last_error()
+        _windows_close_metadata(handle)
+        raise ctypes.WinError(error_code, 'file metadata unavailable')
     inode = int.from_bytes(bytes(identity_information.FileId), 'little')
     reparse = bool(int(information.dwFileAttributes) & 1024)
     return (handle, DirectoryIdentity(device=int(identity_information.VolumeSerialNumber), inode=inode, mode=0, reparse=reparse), reparse)
@@ -3539,12 +3656,21 @@ def _windows_set_current_directory(path: str) -> None:
 def _windows_close_handle(handle: int) -> None:
     if os.name != 'nt':
         raise WorkspaceRootPinError('Windows root pinning is unavailable')
+    try:
+        _windows_close_metadata(handle)
+    except OSError as error:
+        raise WorkspaceRootPinError('workspace root handle cleanup failed') from error
+
+def _windows_close_metadata(handle: int) -> None:
+    """Retire an owned metadata handle; unknown close remains an OS failure."""
+    if os.name != 'nt':
+        raise OSError('Windows file metadata is unavailable')
     from ctypes import wintypes
     kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
     kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
     kernel32.CloseHandle.restype = wintypes.BOOL
     if not kernel32.CloseHandle(handle):
-        raise WorkspaceRootPinError('workspace root handle cleanup failed')
+        raise ctypes.WinError(ctypes.get_last_error(), 'file metadata cleanup failed')
 
 
 # ===========================================================================
@@ -5849,4 +5975,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("6ee03d93f1905684ef06a39553baf84bd19cfea81e0d139524c67c690b31f9b7")
+BUNDLE_SHA256 = _enter_worker_exchange("bb583fe85c7de4c130bbc78f3219030287e44e1445bbfcec92876bdcb9c86390")

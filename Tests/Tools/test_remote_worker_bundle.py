@@ -460,6 +460,9 @@ _STUB_RAISE_ALLOWED = frozenset(
         "_sensitive_single_file_paths",
         "_sensitive_skill_trust_dir",
         "_direct_child_rule_container_dirs",
+        # The original laptop-only container readers now live in this helper;
+        # remote callers still provide their explicit sensitive context.
+        "_collect_container_dirs",
         "resolve_sensitive_context",
         # PERF-07: the memo key of resolve_sensitive_context's raw inputs
         # holds its stubbed config import; reached only through it, so it
@@ -574,3 +577,23 @@ def test_generated_write_backend_selector_keeps_native_import_platform_scoped(
     else:
         with pytest.raises(ImportError, match="platform_files"):
             namespace["_write_file_os"]()
+
+
+def test_generated_read_metadata_does_not_evaluate_windows_helpers_on_posix() -> None:
+    tree = ast.parse(_BUNDLE_PATH.read_text(encoding="utf-8"))
+    reader = next(
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_read_file_stat"
+    )
+    calls = []
+    expected = object()
+
+    def stat(*, follow_symlinks):
+        calls.append(follow_symlinks)
+        return expected
+
+    # Deliberately no Windows helpers/imports in this evaluated namespace.
+    namespace = {"os": SimpleNamespace(name="posix", stat_result=os.stat_result), "Path": Path}
+    exec(compile(ast.Module(body=[reader], type_ignores=[]), str(_BUNDLE_PATH), "exec"), namespace)
+    assert namespace["_read_file_stat"](SimpleNamespace(stat=stat)) is expected
+    assert calls == [False]
