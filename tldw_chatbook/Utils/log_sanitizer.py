@@ -577,7 +577,9 @@ CREDENTIAL_VALUE_PATTERNS = (
 #: that does not end a name (``users[0].password``, ``$.token``,
 #: ``...password``; reviews r16tr-rev1, rev2); ``db.password`` is one label.
 #: Labels may repeat separators (pydantic's ``APP__X``) and may be quoted, or
-#: escape-quoted inside a JSON string (``\"client_secret\":``). Any
+#: escape-quoted inside a JSON string (``\"client_secret\":``). A separator
+#: holds at most one ``.``, so a label after ``..`` cannot run on through
+#: every later ``..`` (quadratic; review r16tr-rev3). Any
 #: non-line-break whitespace may surround the separator (NBSP, ideographic
 #: space; review r16tr-rev2). ``==`` is a comparison, never a separator
 #: (review r15tr-rev8).
@@ -585,7 +587,7 @@ _LABEL = re.compile(
     r"""
     (?<![A-Za-z0-9_-])(?<![A-Za-z0-9_-]\.)
     (?:\\?(?P<label_quote>["']))?
-    (?P<label>(?i:(?:[A-Za-z0-9_]+[.-])*api[ ]key)|-*[A-Za-z0-9]+(?:[_.-]+[A-Za-z0-9]+)*)
+    (?P<label>(?i:(?:[A-Za-z0-9_]+[.-])*api[ ]key)|-*[A-Za-z0-9]+(?:(?:[_-]++\.?|\.)[_-]*+[A-Za-z0-9]+)*)
     (?(label_quote)\\?(?P=label_quote))
     [^\S\r\n]*(?::|=(?!=))[^\S\r\n]*
     """,
@@ -641,26 +643,37 @@ _PATH_KEY = re.compile(r"[a-z][a-z0-9_.-]*(?:/[a-z][a-z0-9_.-]*)+")
 _CODE_VALUE_END = re.compile(r"""[\s,;&)\]}"']|\.(?:\s|$)|$""")
 #: A YAML block scalar indicator; its value is the indented lines after it.
 _YAML_BLOCK = re.compile(r"[|>][-+]?[ \t]*(?:\r\n|\r|\n)")
-#: The value below a label that ends its line, past blank lines and
-#: indentation (``password:\n  hunter2``, ``password =\nhunter2``): not a
-#: nested ``name:``, ``"name":`` or ``NAME=`` field (an empty ``KEY=`` before
-#: another), a ``- `` list item or a ``# `` comment (``-hunter2`` and
-#: ``#hunter2`` are values; review r16tr-rev2).
+#: The value below a label that ends its line, past blank lines and any
+#: non-line-break indentation (``password:\n  hunter2``, ``password =\n
+#: hunter2``, NBSP too; review r16tr-rev3): not a nested ``name:`` or
+#: ``"name":``, an env or config ``NAME=`` field (an empty ``KEY=`` before
+#: another; base64 such as ``YWJj...=`` is a value), a ``- `` list item or a
+#: ``# `` comment (``-hunter2`` and ``#hunter2`` are values; review r16tr-rev2).
 _VALUE_BELOW = re.compile(
-    r"""(?:\r\n|\r|\n)(?:[ \t]*+(?:\r\n|\r|\n))*+[ \t]*+"""
-    r"""(?!\s|[-#](?=\s|\Z)|[A-Za-z0-9_.-]+[^\S\r\n]*(?::(?:\s|\Z)|=(?!=))"""
+    r"""(?:\r\n|\r|\n)(?:[^\S\r\n]*+(?:\r\n|\r|\n))*+[^\S\r\n]*+"""
+    r"""(?!\s|[-#](?=\s|\Z)|[A-Za-z0-9_.-]+[^\S\r\n]*:(?:\s|\Z)"""
+    r"""|(?:[A-Z][A-Z0-9_]*|[a-z][a-z0-9_]*)[^\S\r\n]*=(?!=)"""
     r"""|(?P<q>["'])[^"'\r\n]*(?P=q)[^\S\r\n]*:)"""
 )
 #: The start of a code header whose subject is the label after it, matched
-#: up to the label (``if token:``, ``if not password:``, ``class Password:``,
-#: ``with open(p) as token:``, ``for x in token:``, ``except KeyError as
-#: secret:``). Prose that starts with the same word (``try this password:``,
-#: ``for prod the password:``) and a list item (``1. Password:``) are not
-#: (reviews r16tr-rev1, rev2; coordinator rulings).
+#: up to the label: ``if``/``elif``/``while`` with an optional ``not`` and
+#: comparison (``if token:``, ``if not password:``, ``if x in token:``),
+#: bare ``match``/``case``/``class``, ``for <name> in``, and
+#: ``with``/``except <expr> as`` (``with open(p) as token:``, ``except
+#: KeyError as secret:``). Prose that starts with the same word (``try this
+#: password:``, ``for prod the password:``), a bare ``for password:``,
+#: ``with password:`` or ``except token:``, ``def`` and a list item are not
+#: (reviews r16tr-rev1..rev3; coordinator rulings). Known remainder:
+#: lowercase prose shaped like a comparison (``if it is password:``).
+_EXPR = r"[A-Za-z_][\w.]*(?:\([^()\r\n]*\))?"
 _CODE_HEADER = re.compile(
-    r"[ \t]*(?:(?:el)?if|while|match|case|class|def|async[ \t]+(?:for|with)|for|with|except)"
-    r"[ \t]+(?:not[ \t]+)?"
-    r"(?:[A-Za-z_][\w.]*(?:\([^()\r\n]*\))?[ \t]+(?:in|as|is|and|or|==|!=)[ \t]+(?:not[ \t]+)?)?"
+    r"[ \t]*(?:"
+    r"(?:(?:el)?if|while)[ \t]+(?:not[ \t]+)?"
+    rf"(?:{_EXPR}[ \t]+(?:in|is|and|or|==|!=)[ \t]+(?:not[ \t]+)?)?"
+    r"|(?:match|case|class)[ \t]+"
+    r"|(?:async[ \t]+)?for[ \t]+[A-Za-z_]\w*[ \t]+in[ \t]+"
+    rf"|(?:(?:async[ \t]+)?with|except)[ \t]+{_EXPR}[ \t]+as[ \t]+"
+    r")"
 )
 _INDENTED_LINES = re.compile(r"(?:[ \t]+[^\r\n]*(?:\r\n|\r|\n|$))+")
 #: Longer values are masked whole, never examined (review r15tr-rev3).
@@ -1013,7 +1026,7 @@ def _value_span(text: str, start: int, line_end: int) -> tuple[int, int, bool]:
 
 #: Words after a masked value under a strict label, up to the next field.
 _MORE_WORDS = re.compile(r"[ \t]+(?![A-Za-z0-9_.-]+[ \t]*[:=])[^\s]")
-_NEXT_FIELD = re.compile(r"[ \t]+(?=[A-Za-z0-9_.-]+[ \t]*[:=])")
+_NEXT_FIELD = re.compile(r"[^\S\r\n]+(?=[A-Za-z0-9_.-]+[^\S\r\n]*[:=])")
 _NEXT_WORD = re.compile(rf"[ \t]+(\S{{1,{_MAX_EXAMINED_VALUE}}})")
 
 
@@ -1024,7 +1037,7 @@ _NEXT_WORD = re.compile(rf"[ \t]+(\S{{1,{_MAX_EXAMINED_VALUE}}})")
 _EXPRESSION_TOKEN = re.compile(
     r"""\"(?:\"\"[\s\S]*?\"\"\"|(?:[^"\\\r\n]|\\.)*+\")"""
     r"""|'(?:''[\s\S]*?'''|(?:[^'\\\r\n]|\\.)*+')|\\(?:\r\n|\r|\n)"""
-    r"""|(?<![ \t])[ \t]++(?=(?:["'](?P<quoted_key>[A-Za-z0-9_.-]+)["']|[A-Za-z0-9_.-]+)[ \t]*(?P<separator>=(?!=)|:))"""
+    r"""|(?<![^\S\r\n])[^\S\r\n]++(?=(?:["'](?P<quoted_key>[A-Za-z0-9_.-]+)["']|[A-Za-z0-9_.-]+)[^\S\r\n]*(?P<separator>=(?!=)|:))"""
     r"""|\?(?![?.])|[()\[\]{},;\r\n]"""
 )
 #: What may follow a top-level comma for the comma to end the expression: a
@@ -1039,8 +1052,8 @@ _FIELD_AFTER_COMMA = re.compile(_AFTER_COMMA)
 #: value with no bracket of its own followed by one of these is a lone value,
 #: judged as it is.
 _LONE_VALUE_END = re.compile(
-    rf"""[ \t]*(?:[;)\]}}\r\n]|$|,(?={_AFTER_COMMA}))"""
-    r"""|(?<![ \t])[ \t]++(?=(?:["'](?P<quoted_key>[A-Za-z0-9_.-]+)["']|[A-Za-z0-9_.-]+)[ \t]*(?:=(?!=)|:))"""
+    rf"""[^\S\r\n]*(?:[;)\]}}\r\n]|$|,(?={_AFTER_COMMA}))"""
+    r"""|(?<![^\S\r\n])[^\S\r\n]++(?=(?:["'](?P<quoted_key>[A-Za-z0-9_.-]+)["']|[A-Za-z0-9_.-]+)[^\S\r\n]*(?:=(?!=)|:))"""
 )
 _OPENER = re.compile(r"[(\[{]")
 

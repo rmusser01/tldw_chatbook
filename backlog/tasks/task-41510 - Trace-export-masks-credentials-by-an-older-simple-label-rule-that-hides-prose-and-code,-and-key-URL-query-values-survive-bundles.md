@@ -4,7 +4,7 @@ title: "Trace export masks credentials by an older simple-label rule that hides 
 status: Done
 assignee:
 - '@claude'
-updated_date: 2026-11-18 04:45
+updated_date: 2026-11-18 05:24
 created_date: 2026-11-17 05:27
 labels:
 - follow-up
@@ -80,3 +80,14 @@ Simple labels are judged as compound labels are, and a URL's `?key=` value is ma
 - **Red evidence.** Against 7f03daa295's sources: 28 failed (the 22 new must-mask rows other than `dotted-api-key`, the 2 `KEY=` chains, the 2 new deep-nesting shapes of TASK-41701, the CR adversarial and the CR ratio); `dotted-api-key` failed too. The 5 new header cases and the list-item and comment cases held there already. Controls: without the code-header carve-out, 9 header cases failed; without the list-item/comment refusal, 2 failed.
 - **Probe** (367,290 texts: 22 labels x 15 values, `-` and `#` starts included, x 21 separators, Unicode-whitespace and CR included, x 53 contexts, including prose lines starting with each keyword, the code headers, `EMPTY_KEY=\n` before the label and ellipses): 14,700 values masked at base are kept at head. All 14,700 are values on a later line after `:` under a code header whose subject is the label (`if`, `if not`, `if self.`, `elif`, `class`, `match`, `while`, `with open(p) as`, `for x in`, `except KeyError as`). Nothing else.
 - **Runs** (load 20-65): the trace set (`test_trace_v2_collaboration.py`, `test_log_sanitizer.py`, the trajectory export/import files, `Tests/UI/test_trajectory_import_ui.py`, the two CI workflow contract files; `-n 4`): 1231 passed. Log byte-identity: 2,350 texts x 5 log functions, plus `sanitize_dict`/`sanitize_list`: 0 diffs. Serial size and identity ratchets: 270 passed. `ruff_gate`: OK. `preflight.sh`: passed.
+
+**Review r16tr-rev3 (fix round 3).**
+- **Critical 1.** Round 2's ellipsis lookbehind let a label start after `..`, and `[_.-]+` then ran through every later `..`: quadratic (`"..a" * 40_000` 47.7 s, `"a..." * 40_000` 58.3 s). A separator now holds at most one `.` (`(?:[_-]++\.?|\.)[_-]*+`), the reviewer's fix; both texts are `_ADVERSARIAL_TEXTS` rows.
+- **Critical 2.** The `NAME=` refusal below a label took base64 with `=` padding for a field. It now refuses only an env or config name (`[A-Z][A-Z0-9_]*` or `[a-z][a-z0-9_]*`) before `=`; `name:` keeps the wider class. The two `KEY=` chain keeps hold.
+- **Important 1.** The blank-line skip and indentation below a label take any non-line-break whitespace (NBSP, ideographic space, tab and NBSP).
+- **Important 2.** `_CODE_HEADER` carves out `if`/`elif`/`while` (optional `not` and comparison), bare `match`/`case`/`class`, `(async) for <name> in` and `(async) with`/`except <expr> as`; `def` and the bare `for`/`with`/`except`/`async for` forms are gone. All 10 `_KEPT_BELOW` headers stay kept. **Known remainder (coordinator ruling):** lowercase prose shaped like a comparison (`if it is password:` with the value on a later line) stays carved out as lexically code.
+- **Minor 1.** `_LONE_VALUE_END`, `_EXPRESSION_TOKEN` and `_NEXT_FIELD` take any non-line-break whitespace before a field, so `client_secret: x<NBSP>user=bob` keeps `user=bob`.
+- **Rows.** `_MUST_MASK` +14 (5 `base64-below-*`, 4 `indent-below-*`, 5 `bare-header-*`), exact case `nbsp-field`, adversarial `dot-runs` and `dot-runs-after`. Red against 8a7766237b's sanitizer: all 17 failed; green after.
+- **Probe** (632,060 texts: 22 labels x 17 values, two base64 values included, x 26 separators, Unicode indentation below included, x 65 contexts, dot runs `a..`, `..`, `x...`, `a.b..`, the bare header words, `case`, `while not` and `if it is` included): 39,312 values masked at base are kept at head: 36,288 below an accepted code header whose subject is the label (`if`, `if not`, `if self.`, `elif`, `while`, `while not`, `class`, `match`, `case`, `with open(p) as`, `for x in`, `except KeyError as`), 3,024 below `if it is` (the accepted remainder), 0 elsewhere.
+- **Timing** (CPU s at 10k/20k/40k units, `_credential_text` / `mask_credential_labels` / logs): LF 0.19/0.38/0.76, 0.11/0.23/0.48, 0.15/0.30/0.59; CR 0.20/0.40/0.79, 0.13/0.26/0.51, 0.14/0.30/0.60; CRLF 0.19/0.40/0.80, 0.12/0.24/0.52, 0.16/0.32/0.64; mixed (CR, LF, CRLF, NBSP) 0.27/0.56/1.09, 0.17/0.35/0.69, 0.21/0.40/0.83; `..a` 0.01/0.01/0.03; `a...` 0.01/0.02/0.04. All linear; base logs on the same LF text 0.19/0.45/1.14.
+- **Runs** (load 60-112): trace set (`-n 4`) 1248 passed; log byte-identity 2,420 texts x 5 functions, 0 diffs; serial size and identity ratchets 270 passed; `ruff_gate` OK; `preflight.sh` passed.

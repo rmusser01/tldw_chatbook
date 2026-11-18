@@ -1038,6 +1038,38 @@ _MUST_MASK: dict[str, tuple[str, str]] = {
     "after-spaced-ellipsis": (" ...tok" + "en=hunter2xyz", "hunter2xyz"),
     # the probe's "self.API key=" (base's \bapi matched after the dot)
     "dotted-api-key": ("cfg.API " + "key: " + _P8 + "abc", _P8 + "abc"),
+    # review r16tr-rev3 Critical 2: base64 with "=" padding below a label
+    **{
+        f"base64-below-{name}": (text, value)
+        for name, text, value in (
+            ("token", "tok" + "en:\n  c2VjcmV0a2V5MTIz=", "c2VjcmV0a2V5MTIz="),
+            ("password", "pass" + "word:\nYWJjZGVmZ2hpams=", "YWJjZGVmZ2hpams="),
+            ("api-key", "api" + "_key:\n    c2VjcmV0a2V5MTIz=", "c2VjcmV0a2V5MTIz="),
+            ("equals", "pass" + "word =\n  YWJjZGVmZ2hpams=", "YWJjZGVmZ2hpams="),
+            ("after-blank", "sec" + "ret:\n\nc2VjcmV0a2V5MTIz=", "c2VjcmV0a2V5MTIz="),
+        )
+    },
+    # Important 1: Unicode whitespace in the indentation or blank lines below
+    **{
+        f"indent-below-{name}": (text, "hunter2xyz")
+        for name, text in (
+            ("nbsp", "pass" + "word:\n\u00a0\u00a0hunter2xyz"),
+            ("nbsp-blank-line", "pass" + "word:\n\u00a0\u00a0\nhunter2xyz"),
+            ("ideographic", "tok" + "en:\n\u3000hunter2xyz"),
+            ("tab-nbsp", "pass" + "word:\n\t\u00a0hunter2xyz"),
+        )
+    },
+    # Important 2: bare header words whose subject is not the label
+    **{
+        f"bare-header-{name}": (text, "hunter2xyz")
+        for name, text in (
+            ("for", "for pass" + "word:\nhunter2xyz"),
+            ("def", "def pass" + "word:\nhunter2xyz"),
+            ("async-for", "async for tok" + "en:\nhunter2xyz"),
+            ("with", "with pass" + "word:\nhunter2xyz"),
+            ("except", "except tok" + "en:\nhunter2xyz"),
+        )
+    },
     # ...and a URL's ?key= value is masked whatever its shape, as logs mask it.
     "url-key-placeholder": (
         "https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&callback=init",
@@ -1347,6 +1379,11 @@ _KEPT_BELOW = {
             "db" + "_password: correct horse battery staple, user=bob",
             "db" + "_password: [credential redacted], user=bob",
         ),
+        # review r16tr-rev3 Minor 1: a field after a non-breaking space
+        (
+            "client" + "_secret: x\u00a0user=bob",
+            "client" + "_secret: [credential redacted]\u00a0user=bob",
+        ),
         # TASK-41510: a value on the indented line below a bare label is the
         # label's; a nested name: line, a blank line and later lines are not.
         (
@@ -1378,6 +1415,7 @@ _KEPT_BELOW = {
         "function-word-token",
         "piped-fields",
         "comma-field",
+        "nbsp-field",
         "value-below",
         "value-after-blank",
         *_KEPT_BELOW,
@@ -1532,6 +1570,10 @@ _ADVERSARIAL_TEXTS = {
     # review r16tr-rev2: CR-only lines whose value sits below the label (19.7 s
     # at 80k lines when each looked back for an LF to the start of the text).
     "cr-only-value-below": ("pass" + "word:\r  hunter2x\r") * 80_000,
+    # review r16tr-rev3: a separator holds one "."; a label after ".." ran on
+    # through every later ".." (47.7 s and 58.3 s at 40k).
+    "dot-runs": "..a" * 40_000,
+    "dot-runs-after": "a..." * 40_000,
     "chained-simple-credential-labels-spaced": ("tok" + "en= ") * 30_000,
     "api-words": "api " * 50_000 + "key",
 }
