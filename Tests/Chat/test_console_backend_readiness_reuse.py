@@ -141,6 +141,9 @@ async def test_backend_readiness_reuses_native_facts_without_renewing_age(
 
             # Late usage changes the display revision, not request payload.
             # Actual pricing must update without another config/catalog read.
+            backend.store.append_message(
+                session.id, role=ConsoleMessageRole.USER, content="Question",
+            )
             message = backend.store.append_message(
                 session.id, role=ConsoleMessageRole.ASSISTANT, content="Paid answer",
             )

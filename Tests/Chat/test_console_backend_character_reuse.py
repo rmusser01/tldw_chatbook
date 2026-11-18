@@ -22,6 +22,7 @@ async def test_backend_visible_character_reuses_only_current_retired_observation
     from tldw_chatbook.Chat.console_backend_view_lifecycle import (
         ConsoleBackendViewLifecycle,
     )
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
     from tldw_chatbook.Chat.console_control_dispatch import ConsoleLocalControls
     from tldw_chatbook.Chat.console_display_phases import ConsoleDisplayPhysicalOwner
     from tldw_chatbook.Chat.console_execution_backend import ConsoleExecutionBackend
@@ -101,11 +102,12 @@ async def test_backend_visible_character_reuses_only_current_retired_observation
                     {}
                     if action is None
                     else {
+                        "known_display_revision": None,
                         "view_checkpoint": {
                             "attachment_id": "actual-client",
                             "visit": 1,
                             "action": action,
-                        }
+                        },
                     },
                 )
             )
@@ -155,7 +157,7 @@ async def test_backend_visible_character_reuses_only_current_retired_observation
             clock[0] += character_context._CHARACTER_PRESENTATION_TTL_SECONDS
             assert await projection("expired") == 2
             backend.store.append_message(
-                session.id, role="user", content="Changed payload"
+                session.id, role=ConsoleMessageRole.USER, content="Changed payload"
             )
             assert await projection("payload-changed") == 2
             assert await projection("payload-repeat") == 0
