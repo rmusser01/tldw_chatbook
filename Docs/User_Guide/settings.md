@@ -386,15 +386,20 @@ A cloud provider's Endpoint (OpenAI, Anthropic, Cohere, Google Gemini,
 Hugging Face, Groq, OpenRouter, DeepSeek, Mistral AI, Moonshot, Z.AI or
 QwenCloud) can be a gateway's base, such as a Cloudflare AI Gateway address
 `https://gateway.ai.cloudflare.com/v1/<account>/<gateway>/openai` or
-DeepInfra's `https://api.deepinfra.com/v1/openai`. **s** saves it as typed (a
-pasted `/chat/completions` is dropped), the Console reads it as Ready, and every
-chat, from the Console or from Dreams, ingest analysis or Evals, sends to it with
-the provider's own route added: `…/openai/chat/completions`, or for Google
-`…/google-ai-studio/v1beta/models/<model>:generateContent`. Enter the address
-the provider's requests go under, as its default does: Anthropic's default is
-`https://api.anthropic.com/v1`, so its gateway base ends in `/anthropic/v1`.
-The host is checked as any endpoint's is, and an address that names a request
-route, such as `…/openai/responses`, is still refused.
+DeepInfra's `https://api.deepinfra.com/v1/openai`. **s** saves such a base as
+typed (a pasted `/chat/completions` is dropped), the Console reads it as Ready,
+and every chat, from the Console or from Dreams, ingest analysis or Evals, sends
+to it with the provider's own route added: `…/openai/chat/completions`, or for
+Google `…/google-ai-studio/v1beta/models/<model>:generateContent`. Enter the
+address the provider's requests go under, as its default does: Anthropic's
+default is `https://api.anthropic.com/v1`, so its gateway base ends in
+`/anthropic/v1`. The host is checked as any endpoint's is. A gateway address
+that names a request route, such as `…/openai/responses`, is refused, and so is
+a provider's own route pasted into its Endpoint: Anthropic's `/v1/messages`,
+Cohere's `/v2/chat` or Google's `…:generateContent`. One known gap: **s** adds
+`/v1` to an address whose path has no `v1`, so Google's own
+`https://generativelanguage.googleapis.com/v1beta` is saved as `…/v1beta/v1`;
+until that is fixed, set such an address as `api_base_url` in the config file.
 
 MLX-LM is reached at `http://<host>:<port>/v1`, built from
 `[api_settings.local_mlx_lm]` `host` and `port` (127.0.0.1 and 8080 when

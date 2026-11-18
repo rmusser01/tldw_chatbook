@@ -2431,6 +2431,9 @@ def test_a_provider_console_does_not_support_keeps_its_copy():
                 "user:pw@gpu-box.lan:8080",
                 ":secretpw@gpu-box.lan:8080",
                 "gpu-box.lan:8080?key=sk-x",
+                # Review r16cu-rev2 M-2: with a scheme the path is still
+                # refused, so adding one is no fix.
+                "gpu-box.lan:8080/v1/models/v1",
             )
         ],
     ],
@@ -4427,6 +4430,37 @@ def test_a_cloud_adapter_still_posts_where_it_did(monkeypatch):
             assert sent == [posted], case
 
 
+def test_the_strict_transport_refuses_a_user_info_base_without_rendering_it():
+    """TASK-41522 review r16cu-rev1 Minor 1 (moved here, lane-run, by review
+    r16cu-rev2 Minor 3): the contract refuses a base with user info before
+    any request; neither the refusal nor anything chained to it renders the
+    credential."""
+    import traceback
+
+    from tldw_chatbook.LLM_Calls.hosted_chat import (
+        HostedHTTPTransportConfig,
+        owned_json_post,
+    )
+    from tldw_chatbook.Provider_Contract import ChatConfigurationError
+
+    config = HostedHTTPTransportConfig(
+        provider="moonshot",
+        base_url="https://user:CRED-CANARY@example.com/v1",
+        api_key="not-a-real-key-0000",
+        timeout=0.2,
+        retries=0,
+        retry_delay=0.0,
+    )
+
+    with pytest.raises(ChatConfigurationError) as caught:
+        owned_json_post(config=config, route="chat/completions", payload={}, streaming=False)
+
+    assert type(caught.value) is ChatConfigurationError
+    assert caught.value.status_code is None
+    rendered = "".join(traceback.format_exception(caught.type, caught.value, caught.tb))
+    assert "CRED-CANARY" not in rendered
+
+
 # --- TASK-41700: gateway bases for first-party cloud providers ---------------
 
 _GATEWAY = "https://gateway.ai.cloudflare.com/v1/acct/gw"
@@ -4568,6 +4602,21 @@ _GATEWAY_ROUTE_SHAPES = (
     "http://127.0.0.1:8000/v1/acct/gw/openai/responses",
     "http://127.0.0.1:8000/v1/acct/gw/openai/chat/completions/v1",
 )
+#: Review r16cu-rev2 I-1: a native adapter's own route is a route too; the
+#: adapter appends it to the base (``.../v1/messages/messages``, a 404).
+_NATIVE_ROUTE_SHAPES = {
+    "anthropic": (
+        "https://api.anthropic.com/v1/messages",
+        f"{_GATEWAY}/anthropic/v1/messages",
+        f"{_GATEWAY}/anthropic/v1/complete",
+    ),
+    "cohere": ("https://api.cohere.com/v2/chat", f"{_GATEWAY}/cohere/v2/chat"),
+    "google": (
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        f"{_GATEWAY}/google-ai-studio/v1beta/models/x:generateContent",
+        f"{_GATEWAY}/google-ai-studio/v1beta/models/x:streamGenerateContent",
+    ),
+}
 
 
 def test_a_gateway_path_keeps_every_host_and_shape_refusal():
@@ -4578,7 +4627,8 @@ def test_a_gateway_path_keeps_every_host_and_shape_refusal():
 
     for provider in sorted({case.split("-")[0] for case in _GATEWAY_POSTS}):
         routes = () if provider == "zai" else _GATEWAY_ROUTE_SHAPES
-        for endpoint in (*_GATEWAY_REFUSED_SHAPES, *routes):
+        native = _NATIVE_ROUTE_SHAPES.get(provider, ())
+        for endpoint in (*_GATEWAY_REFUSED_SHAPES, *routes, *native):
             assert endpoint_refusal(provider, endpoint), (provider, endpoint)
 
 

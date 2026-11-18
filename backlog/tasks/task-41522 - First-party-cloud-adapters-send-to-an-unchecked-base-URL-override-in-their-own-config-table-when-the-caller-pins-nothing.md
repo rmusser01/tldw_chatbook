@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-17 05:27
-updated_date: 2026-11-18 04:56
+updated_date: 2026-11-18 05:35
 labels:
 - follow-up
 - security
@@ -68,6 +68,6 @@ Every first-party cloud adapter now checks the base URL it is about to send to, 
 Files: `tldw_chatbook/LLM_Calls/hosted_chat.py`, `LLM_API_Calls.py`, `qwencloud.py`, `LLM_API_Calls_Local.py` and `Provider_Contract/provider_endpoint_contract.py` (docstrings), `Docs/Architecture/llm-providers.md` (gotcha 6), `Tests/Chat/test_local_server_discovery.py`, `Tests/LLM_Calls/test_hosted_chat.py`, `Tests/Architecture/test_module_size_ratchet.py`.
 
 **Review r16cu-rev1 round (2026-11-18).**
-- Minor 1: `Tests/LLM_Calls/test_hosted_chat.py::test_owned_json_post_refuses_a_user_info_base_without_rendering_it` puts back a traceback no-echo check for a user-info base at the transport (`https://user:CRED-CANARY@example.com/v1`): a status-less `ChatConfigurationError`, and the canary absent from the whole rendered traceback, chained exceptions included. Red under a temporary edit that raised the refusal `from ValueError(<url>)` (the canary rendered in the chained `ValueError`), green after reverting it. That file runs only in the nightly whole-suite job, where the coordinator asked for it.
+- Minor 1: `Tests/LLM_Calls/test_hosted_chat.py::test_owned_json_post_refuses_a_user_info_base_without_rendering_it` puts back a traceback no-echo check for a user-info base at the transport (`https://user:CRED-CANARY@example.com/v1`): a status-less `ChatConfigurationError`, and the canary absent from the whole rendered traceback, chained exceptions included. Red under a temporary edit that raised the refusal `from ValueError(<url>)` (the canary rendered in the chained `ValueError`), green after reverting it. That file runs only in the nightly whole-suite job, so review r16cu-rev2 M-3 moved the test to `Tests/Chat/test_local_server_discovery.py::test_the_strict_transport_refuses_a_user_info_base_without_rendering_it` (lane-run; same negative control, re-run there).
 - Minor 2: the status, provider and no-echo assertions now run for every case, including Moonshot's, Z.ai's and QwenCloud's own malformed-base refusals. Moved, they were red for those three (status 500: the families' configuration-error default), so the three base-URL refusals are now status-less like the contract's (nothing was sent): `moonshot._resolve_base_url`, `zai._resolve_base_url`, `qwencloud.normalize_qwencloud_base_url`. Their callers catch by type. 1790 passed across the discovery, hosted-chat, Moonshot, Z.ai, QwenCloud, Kimi/Z.ai contract and readiness files.
 

@@ -2166,6 +2166,10 @@ def _invalid_endpoint_kind(
         REMOTE_ENDPOINT_SCHEME_REQUIRED,
     ):
         return "invalid"
+    if resolve_provider_endpoint(provider_key, f"http://{value.strip()}").errors:
+        # A scheme would not fix it: the provider's own reading still refuses
+        # the path (review r16cu-rev2 M-2; the display reads more paths).
+        return "invalid"
     if safe_endpoint_display(value) != "invalid endpoint":
         return "needs_scheme"
     try:

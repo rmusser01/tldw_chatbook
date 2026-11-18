@@ -314,6 +314,10 @@ def _resolve_provider_endpoint(
     segments = tuple(segment for segment in path.split("/") if segment)
     if any(segment in {".", ".."} for segment in segments):
         return _invalid_resolution(provider_key, "Endpoint path is ambiguous.")
+    if _names_a_native_route(provider_key, segments):
+        return _invalid_resolution(
+            provider_key, "Endpoint path has ambiguous API suffixes."
+        )
 
     netloc = _normalized_netloc(canonical_host, port)
     preset = _ENGINE_PRESETS.get(provider_key) or _route_owning_presets().get(
@@ -410,6 +414,28 @@ def endpoint_refusal(
         key = "custom_hosted"
     errors = resolve_provider_endpoint(key, value).errors
     return errors[0] if errors else ""
+
+
+def _names_a_native_route(provider_key: str, segments: tuple[str, ...]) -> bool:
+    """Whether a path ends in a native cloud adapter's own route.
+
+    TASK-41700 review r16cu-rev2: the adapter appends that route to its base,
+    so a pasted one was sent twice (``.../v1/messages/messages``, a 404).
+    Anthropic's ``/messages`` and legacy ``/complete``, Cohere's ``/chat``
+    (``/v2/chat``), and any Google segment naming ``:generateContent`` or
+    ``:streamGenerateContent``.
+    """
+    if provider_key == "anthropic":
+        return segments[-1:] in {("messages",), ("complete",)}
+    if provider_key == "cohere":
+        return segments[-1:] == ("chat",)
+    if provider_key == "google":
+        return any(
+            method in segment.casefold().replace("%3a", ":")
+            for segment in segments
+            for method in (":generatecontent", ":streamgeneratecontent")
+        )
+    return False
 
 
 def _names_a_route(segments: tuple[str, ...]) -> bool:

@@ -1143,30 +1143,6 @@ def test_owned_json_post_maps_invalid_base_url_to_redacted_transport_error() -> 
     assert "RAW-URL-CANARY" not in rendered
 
 
-def test_owned_json_post_refuses_a_user_info_base_without_rendering_it() -> None:
-    """TASK-41522 review r16cu-rev1 Minor 1: the endpoint contract refuses a
-    base with user info before any request; neither the refusal nor anything
-    chained to it renders the credential."""
-    from tldw_chatbook.Provider_Contract import ChatConfigurationError
-
-    base_url = "https://user:CRED-CANARY@example.com/v1"
-
-    with pytest.raises(ChatConfigurationError) as exc_info:
-        owned_json_post(
-            config=_transport_config(base_url),
-            route="chat/completions",
-            payload={},
-            streaming=False,
-        )
-
-    assert type(exc_info.value) is ChatConfigurationError
-    assert exc_info.value.status_code is None
-    rendered = "".join(
-        traceback.format_exception(exc_info.type, exc_info.value, exc_info.tb)
-    )
-    assert "CRED-CANARY" not in rendered
-
-
 @pytest.mark.allow_network
 @pytest.mark.parametrize("route", ["chat/completions", "responses"])
 def test_owned_json_post_sends_exact_route_headers_payload_and_timeout(
