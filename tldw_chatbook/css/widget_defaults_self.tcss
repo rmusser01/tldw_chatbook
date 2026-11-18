@@ -2037,10 +2037,10 @@ ActorPackRecoveryNotice {
     padding: 0 1;
     border: round $warning;
 }
-ActorPackRecoveryNotice > Static {
+ActorPackRecoveryNotice > Static.actor-pack-recovery-text {
     width: 1fr;
 }
-ActorPackRecoveryNotice > Button {
+ActorPackRecoveryNotice > Button#personas-actor-pack-recovery-clear {
     width: auto;
 }
 

@@ -1,12 +1,12 @@
 {
   "_comment": "Boot-parsed CSS byte census. Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).",
-  "total": 602209,
+  "total": 602269,
   "per_source": {
     "screen_css_scoped.tcss": 12290,
     "screen_css_self.tcss": 2318,
     "tldw_cli_modular.tcss": 428809,
     "widget_defaults_scoped.tcss": 75536,
-    "widget_defaults_self.tcss": 83256
+    "widget_defaults_self.tcss": 83316
   },
   "per_segment": {
     "screen_css_scoped.tcss::(header)": 455,
@@ -166,7 +166,7 @@
     "widget_defaults_scoped.tcss::WorkspacePersonaDefaultModal (Widgets/workspace_persona_default.py)": 545,
     "widget_defaults_self.tcss::(header)": 463,
     "widget_defaults_self.tcss::ActorPackImportReviewDialog (Widgets/Persona_Widgets/actor_pack_import_review.py)": 1063,
-    "widget_defaults_self.tcss::ActorPackRecoveryNotice (Widgets/Persona_Widgets/actor_pack_recovery_notice.py)": 307,
+    "widget_defaults_self.tcss::ActorPackRecoveryNotice (Widgets/Persona_Widgets/actor_pack_recovery_notice.py)": 367,
     "widget_defaults_self.tcss::AppFooterStatus (Widgets/AppFooterStatus.py)": 541,
     "widget_defaults_self.tcss::ArtifactShareDialog (UI/Screens/artifact_share_dialog.py)": 572,
     "widget_defaults_self.tcss::AutoSpeakConsentModal (Widgets/Console/console_auto_speak_consent.py)": 150,
