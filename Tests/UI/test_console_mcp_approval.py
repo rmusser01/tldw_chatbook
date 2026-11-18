@@ -1626,6 +1626,13 @@ async def _wait_for_production_console_ready(app, pilot) -> ChatScreen:
         await pilot.pause(0.05)
     else:
         raise AssertionError("Production Console did not mount")
+    # Both timer checks below rest on `_timer_target`; a Textual change to how
+    # `set_timer` wraps its callback must fail here, by name, not match nothing.
+    probe = screen.set_timer(3600, screen.refresh)
+    probe.stop()
+    assert _timer_target(probe) is type(screen).refresh, (
+        f"set_timer no longer wraps {probe._callback!r} as partial(call_next, fn)"
+    )
 
     # on_mount queues the production attach reconciliation before this callback.
     # Waiting behind it observes completion even when its DB projection is slow.
@@ -1633,17 +1640,14 @@ async def _wait_for_production_console_ready(app, pilot) -> ChatScreen:
     screen.call_after_refresh(reconciliation_drained.set)
     await asyncio.wait_for(reconciliation_drained.wait(), timeout=10.0)
 
-    projection_task = None
-    for timer in screen._timers:
-        callback = getattr(timer, "_callback", None)
-        scheduled = getattr(callback, "args", ())
-        target = scheduled[0] if scheduled else None
-        if (
-            getattr(target, "__self__", None) is screen
-            and getattr(target, "__func__", None) is ChatScreen.sync_task_resume_state
-        ):
-            projection_task = timer._task
-            break
+    projection_task = next(
+        (
+            timer._task
+            for timer in list(screen._timers)
+            if _timer_target(timer) is ChatScreen.sync_task_resume_state
+        ),
+        None,
+    )
     # Textual keeps timers weakly: a completed one-shot may already be gone.
     # Await any pending timer, then drain its call_next projection in either case.
     if projection_task is not None:
@@ -1726,9 +1730,14 @@ async def _wait_for_production_console_ready(app, pilot) -> ChatScreen:
         # means a drain that leaves nothing pending.
         after_refresh = asyncio.Event()
         screen.call_after_refresh(after_refresh.set)
-        await asyncio.wait_for(
-            after_refresh.wait(), timeout=max(0.1, deadline - time.monotonic())
-        )
+        try:
+            await asyncio.wait_for(
+                after_refresh.wait(), timeout=max(5.0, deadline - time.monotonic())
+            )
+        except TimeoutError:
+            raise AssertionError(
+                f"no refresh ran the call_after_refresh drain; {still_unsettled()}"
+            ) from None
         if not unsettled():
             break
 

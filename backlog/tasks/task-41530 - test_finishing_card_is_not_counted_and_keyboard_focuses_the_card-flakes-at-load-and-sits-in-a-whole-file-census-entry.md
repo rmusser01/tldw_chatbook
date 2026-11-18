@@ -4,7 +4,7 @@ title: "test_finishing_card_is_not_counted_and_keyboard_focuses_the_card flakes 
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-18 08:36'
+updated_date: '2026-11-18 08:58'
 created_date: 2026-11-17 05:39
 labels:
 - follow-up
@@ -80,5 +80,11 @@ Test-only (`Tests/UI/test_console_mcp_approval.py`). The production-Console read
 - **Batches with the final helper.** Eight 8-node x 10 batches in two concurrent streams passed 640 of 640, including this node 80 of 80. Alongside them, four 20-rep rounds of this node alone passed 80 of 80. 1-minute load was 10.4-23.4.
 - **Old helper, same load.** Under that load the committed (old) helper passed 60 of 60 in three side-by-side rounds (load 17.6-21.3). The theft did not reproduce there; the forced control above is the red evidence.
 - **Alt+A tests.** They use the same helper, so they get the fix. `test_console_mcp_approval.py`, `test_console_approval_compact_layout.py`, `test_approval_batch_geometry.py` and the Personal Context files passed 261 of 261 (load 13.7-19.3).
+
+**Fix round 2 (review r16wt-rev2).**
+- **Timer self-check.** The helper now sets a 3600 s `screen.refresh` timer, stops it, and asserts that `_timer_target` returns `type(screen).refresh`. A Textual change to how `set_timer` wraps its callback now fails at once, by name, instead of letting both timer checks match nothing. Negative control (temporary): with `_timer_target` no longer reading the partial, the node failed "set_timer no longer wraps functools.partial(<bound method MessagePump.call_next ...>, <bound method BaseAppScreen.refresh ...>) as partial(call_next, fn)".
+- **Drain timeout.** The `call_after_refresh` drain has a 5 s floor. A drain that still times out raises the named `still_unsettled()` failure instead of a bare `TimeoutError`.
+- **One lookup.** The projection-timer lookup now calls `_timer_target` too. It no longer checks the method's `__self__`; the timer comes from this screen's own `_timers`.
+- **Runs.** The three approval files passed 129 of 129 (load 10.6-13.9). Two 8-node x 10 batches passed 160 of 160, and two 20-rep rounds of this node passed 40 of 40 (load 10.6-22.9).
 
 **Proposed follow-up.** Convert the Alt+A and widget-harness sites above to condition waits (`_information_ready` for a fresh batch).
