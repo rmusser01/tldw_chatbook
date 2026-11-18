@@ -235,3 +235,19 @@ An accepted native turn's validated durable commit owns its operational mix-in a
 ## CI integration clarification: model and storage dependencies
 
 The existing immutable operational values and strict JSON compatibility codecs belong in `Chat/console_prompt_mixin_models.py`. Request composition and selection reconciliation stay in the domain module; its existing public imports remain available. Shared literal-v3 envelope/definition validation and size limits use the pure artifact-model owner. Coherent DB snapshot reads retain strict validation inside their existing transaction, without importing the general artifact compiler/service. This is a source dependency correction, with unchanged persisted JSON, receipt identity, format classifications and source-authority contracts; no migration is introduced.
+
+## Amendment 2026-11-18 (clarification, TASK-41652): a spawned sub-agent gets no mix-ins
+
+The decision did not name sub-agents; rules 5 and 6 already settle them. A mix-in
+composes only the user's current message (rule 6), and the parent's tool
+continuations reuse that composed message. A child spawned during the turn sends
+its own system prompt and the task the parent model wrote, which is not the user's
+message, and machine-originated work does not newly resolve human-selected
+modifiers (rule 5). So a child's requests carry no mix-in body, and its calls
+bind no mix-in attempt (it records its trace in its own segment, ADR-337
+amendment 2026-11-17). The answer the user reads is the parent's,
+which is still composed under the chat's mix-ins. No code changed; this was
+already the behaviour. `Tests/Chat/test_console_spawn_subagent_trace_capture.py::
+test_a_spawned_child_never_gets_the_chats_mix_ins` pins it, Capture On and Off,
+for a native and a fenced spawn (the fenced case also fails if a child call binds
+the parent's attempt).

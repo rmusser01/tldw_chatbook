@@ -1,6 +1,7 @@
 """TASK-41310: Capture On around a native ``spawn_subagent`` call.
 
-TASK-41651 adds the child's own native tool round (Capture On and Off).
+TASK-41651 adds the child's own native tool round (Capture On and Off) and
+TASK-41652 the chat's prompt mix-ins.
 
 The real ``ConsoleChatController``, ``ConsoleChatStore``, agent bridge,
 provider gateway and ``ConsoleTraceBoundaryFactory`` run over real SQLite.
@@ -38,6 +39,7 @@ ENDPOINT = {
     "models": [MODEL],
 }
 DRAFT = "Delegate a task, then finish."
+MIXIN = "MIXIN-BODY: answer as a pirate."
 
 
 def _sse(delta: dict, finish: str) -> bytes:
@@ -54,6 +56,50 @@ def _sse(delta: dict, finish: str) -> bytes:
     return (body + "data: [DONE]\n\n").encode()
 
 
+async def _enable_mixin(tmp_path, monkeypatch, store, controller, session):
+    """Enable one Before mix-in on the chat (as the prompt mix-in journeys do)."""
+    from tldw_chatbook.Chat.console_prompt_mixin_service import (
+        ConsolePromptMixinService,
+    )
+    from tldw_chatbook.Chat.console_prompt_mixins import MixinSourceRef
+    from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
+    from tldw_chatbook.Prompt_Management.prompt_scope_service import (
+        LocalPromptService,
+        PromptScopeService,
+    )
+
+    prompts = PromptsDatabase(tmp_path / "prompts.sqlite", client_id="spawntrace")
+    scope = PromptScopeService(
+        local_service=LocalPromptService(prompts), server_service=None
+    )
+    service = ConsolePromptMixinService(
+        store=store, prompt_scope_service=scope, persistence=store.persistence
+    )
+    monkeypatch.setattr(controller, "prompt_mixin_service", lambda: service)
+    record = await scope.save_prompt(
+        mode="local",
+        name="Pirate",
+        artifact_type="mixin",
+        prompt_format="structured",
+        prompt_schema_version=3,
+        prompt_definition={
+            "kind": "text_mixin",
+            "schema_version": 3,
+            "body": MIXIN,
+            "placement": "before",
+        },
+    )
+    await service.enable_reference(
+        session.id,
+        source=MixinSourceRef(
+            scope.mixin_source_identity(mode="local")[0], "local", record["uuid"]
+        ),
+        target_incarnation_id=store._sessions[session.id].incarnation_id,
+        expected_revision=0,
+    )
+    return prompts
+
+
 async def _spawn_turn(
     tmp_path,
     monkeypatch,
@@ -65,6 +111,8 @@ async def _spawn_turn(
     tamper_child_route=False,
     child_native=False,
     capture="capture_on",
+    mixin=False,
+    fenced_spawn=False,
 ) -> SimpleNamespace:
     """Send one turn (Capture On unless ``capture`` says otherwise) whose model
     spawns a child; return the facts."""
@@ -85,7 +133,7 @@ async def _spawn_turn(
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
     facts = SimpleNamespace(wire=[], refusals=[], boundary_errors=[], tools=[])
-    facts.applied, facts.persisted = [], []
+    facts.applied, facts.persisted, facts.sent = [], [], []
     # The child re-resolves the inherited custom endpoint from app config,
     # which conftest redirects into the test root; refuse outside it.
     assert config.get_cli_config_path().is_relative_to(
@@ -214,6 +262,7 @@ async def _spawn_turn(
         kind = getattr(current_run_actor(), "kind", None)
         roles = [message["role"] for message in request["messages"]]
         facts.wire.append((kind, roles))
+        facts.sent.append((kind, request["messages"]))
         facts.tools.append(
             (
                 kind,
@@ -223,7 +272,12 @@ async def _spawn_turn(
                 ],
             )
         )
-        if kind == "primary" and "tool" not in roles:
+        if fenced_spawn and kind == "primary" and len(roles) == 2:
+            from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
+
+            call = json.dumps({"name": "spawn_subagent", "arguments": {"task": task}})
+            body = _sse({"content": f"{FENCE_OPEN}\n{call}\n```"}, "stop")
+        elif kind == "primary" and "tool" not in roles and not fenced_spawn:
             calls = [
                 {
                     "index": index,
@@ -285,6 +339,8 @@ async def _spawn_turn(
         agent_runtime_enabled=True,
     )
     session = store.ensure_session()
+    if mixin:
+        prompts = await _enable_mixin(tmp_path, monkeypatch, store, controller, session)
     assert not network_guard.is_allowed()
     try:
         with (
@@ -352,6 +408,8 @@ async def _spawn_turn(
             "custom_endpoints", "spawntrace", old_endpoint
         )
         runs.close()
+        if mixin:
+            prompts.close_connection()
         await gateway.aclose()
         chat.close_connection()
 
@@ -491,3 +549,32 @@ async def test_child_native_tool_round_completes(tmp_path, monkeypatch, capture)
     if capture == "capture_on":
         child = [call[4:] for call in facts.owned_calls if not call[0]]
         assert child == [("agent_first", "complete"), ("tool_loop", "complete")], why
+
+
+@pytest.mark.parametrize("fenced_spawn", [False, True], ids=["native", "fenced"])
+@pytest.mark.parametrize("capture", ["capture_on", "capture_off"])
+async def test_a_spawned_child_never_gets_the_chats_mix_ins(
+    tmp_path, monkeypatch, capture, fenced_spawn
+):
+    """TASK-41652 / ADR-286 rules 5-6: a mix-in composes only the user's current
+    message, reused through the parent's tool continuations; a spawned child's
+    requests (a machine-authored task) never carry it."""
+    facts = await _spawn_turn(
+        tmp_path,
+        monkeypatch,
+        "Say child done.",
+        mixin=True,
+        capture=capture,
+        fenced_spawn=fenced_spawn,
+    )
+    why = str(vars(facts))
+    assert facts.boundary_errors == [] and facts.refusals == [], why
+    assert ("subagent", "done") in facts.runs, why
+    composed = MIXIN + "\n\n" + DRAFT
+    primary = [messages for kind, messages in facts.sent if kind == "primary"]
+    assert len(primary) == 2, why
+    for messages in primary:
+        users = [m["content"] for m in messages if m["role"] == "user"]
+        assert users[0] == composed and MIXIN not in json.dumps(users[1:]), why
+    child = [messages for kind, messages in facts.sent if kind == "subagent"]
+    assert child and MIXIN not in json.dumps(child), why
