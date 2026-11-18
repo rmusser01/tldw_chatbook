@@ -22695,21 +22695,47 @@ class ChatScreen(BaseAppScreen):
             right_handle = self.query_one("#console-inspector-rail-handle")
         except QueryError:
             return
-        if getattr(self.app_instance, "console_execution_client", None) is not None:
-            from ..Console_Modules.execution_state import defer_selected_resize
+        selected = getattr(self.app_instance, "console_execution_client", None)
+        if selected is not None:
+            from ..Console_Modules.execution_state import (
+                ConsoleDisplayExpired,
+                defer_selected_resize,
+            )
 
             if defer_selected_resize(self, event):
                 return
-        self._last_console_workspace_width_band = band
+            source, visit, publication = (
+                selected._source_revision, selected._visit, selected.projection_view,
+            )
+            expired = None
+            try:
+                rail_state = self._current_console_rail_state(
+                    available_columns=event.size.width
+                )
+            except ConsoleDisplayExpired as error:
+                expired = error
+            if (
+                self.app_instance.console_execution_client is not selected
+                or selected._source_revision != source or selected._visit != visit
+                or selected.projection_view is not publication
+            ):
+                raise RuntimeError("Console resize presentation changed during derivation")
+            # The original Inspector build can outlive the display deadline.
+            # Keep the actual resize owed; no stale rail values reach widgets.
+            if defer_selected_resize(self, event):
+                return
+            if expired is not None:
+                raise expired
+        else:
+            rail_state = self._current_console_rail_state(
+                available_columns=event.size.width
+            )
         self._request_console_control_bar_sync()  # The header word is band-sized.
         focused = self.app.focused
         focused_in_left_rail = self._is_descendant_or_self(focused, left_rail)
         focused_in_right_rail = self._is_descendant_or_self(focused, right_rail)
         focused_in_left_handle = self._is_descendant_or_self(focused, left_handle)
         focused_in_right_handle = self._is_descendant_or_self(focused, right_handle)
-        rail_state = self._current_console_rail_state(
-            available_columns=event.size.width
-        )
         # TASK-32327: capture which rails the user could SEE before this
         # band crossing, so a responsive force-close (not a user toggle --
         # preferences are never rewritten here) can be named out loud
@@ -22752,6 +22778,7 @@ class ChatScreen(BaseAppScreen):
             button = self.query_one(button_selector, Button)
             if target.display and button.display:
                 button.focus()
+        self._last_console_workspace_width_band = band
 
     def _notify_console_responsive_rail_collapse(
         self,

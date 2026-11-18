@@ -175,6 +175,8 @@ Both callers can now await a single full display read while it is still queued f
 
 The contained run-history reader now executes the original scoped AgentRuns query independently. History still verifies the published session, conversation, source and visit and waits for positive retirement. Reading completed history issues zero full-display requests. All 30 selected Windows checks passed in g54historyq9, including a real private-profile query with original filters, limits and steps. A second q9 attempt on the earlier frozen code stopped in workspace setup with an expired resize presentation. Both attempts are retained in the [timing record](../../Docs/Development/task-40608-recovery/windows-journey-timings.md#qualifying-pairs).
 
+The original candidate-only screening run g55h passed both journeys and shutdown on `737e2a1ba8` at 28.4291 and 29.2931 seconds adjusted. The subsequent resize fix retains the latest event when display readiness expires during Inspector calculation and commits its width band after applying the layout. Changed owners, publications and visits still refuse. The separate batch must qualify a frozen revision containing this fix.
+
 <!-- SECTION:NOTES:END -->
 
 Measured follow-up under the same [ADR-126 bounded configuration-read amendment](../decisions/126-complete-local-backup-and-recovery.md#task-40608--bounded-sensitive-database-path-configuration-reads): qualify the original sensitive container-reader cohort, then group its admissions without changing readers, overrides or refusal checks. The measured 0.218-second component is separate from the unresolved planning delay; final three-pair acceptance remains open.
