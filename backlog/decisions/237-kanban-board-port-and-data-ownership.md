@@ -22,7 +22,7 @@ TASK-18934's step-zero audit (recorded in the task file) established:
    `BoardColumn`/`TaskCard` widgets, selection preservation across
    refreshes — is exactly the multi-agent work-board pattern the task
    wants. It is installed in the dev venv as a wheel but **undeclared** in
-   `pyproject.toml` (the ADR-225 trap).
+   `pyproject.toml` (the ADR-360 trap).
 3. No honest data sources emit cards yet: Scheduling jobs and agent-run
    wakes have no card/board concepts.
 
@@ -66,7 +66,7 @@ client, and the board needs no changes to surface them.
 ## Alternatives considered
 
 - **Depend on `backlog_md_py` as a package** — rejected: undeclared stale
-  wheel (ADR-225 pattern), wrong data layer, would freeze the UI against
+  wheel (ADR-360 pattern), wrong data layer, would freeze the UI against
   our evolution.
 - **Build a board from scratch** — rejected: duplicates a proven
   selection-preservation/navigation design; the port is smaller than a

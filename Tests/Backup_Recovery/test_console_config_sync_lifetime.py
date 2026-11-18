@@ -55,6 +55,9 @@ screen=Surface()
 # Instance state ChatScreen.__init__ sets, which the coalesced callback reads
 # since dev 0aa96f8d1b moved it to config_sync (TASK-38973's rule: name it).
 screen._console_sync_in_progress=False
+# The control-bar sync now runs inside `_console_derivation_scope`, which
+# reads this class default as instance state (TASK-38973's rule: name it).
+screen._console_derivation_memo=None
 scheduled=[]
 screen.set_timer=lambda delay,callback:scheduled.append((delay,callback))
 screen.call_after_refresh=lambda callback:scheduled.append((0,callback))
@@ -449,6 +452,7 @@ screen._current_console_attach_visit=lambda:ConsoleAttachVisit(visit_runtime,scr
 screen._console_attach_sync_complete=True
 screen._console_attach_reconciled=True
 screen._console_sync_in_progress=False;screen._console_sync_requested=False
+screen.is_attached=False
 screen._console_chat_store=None
 # The real screen's property answers None with no chat controller; the
 # sync's cadence reads it (TASK-33620.15.1).

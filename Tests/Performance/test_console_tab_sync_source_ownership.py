@@ -58,6 +58,11 @@ config_sync_source = source.parents[1] / "Console_Modules/config_sync.py"
 config_sync = ModuleType("tldw_chatbook.UI.Console_Modules.config_sync")
 config_sync.__package__ = "tldw_chatbook.UI.Console_Modules"
 exec(compile(config_sync_source.read_bytes(), str(config_sync_source), "exec", dont_inherit=True), vars(config_sync))  # noqa: S102 - the same fixed-source compile as the screen's.
+# The cold FULL path's core-state sync lazily imports console_spend_projection
+# (and through it the Console controller). Load it now so each case's
+# one-second hang guard times the sync itself, not a multi-second cold import
+# that only surfaces once the sync yields between its phases.
+import tldw_chatbook.UI.Console_Modules.console_spend_projection  # noqa: E402,F401
 namespace = {
     # The cold FULL path's function-local `from ..Console_Modules.character_context
     # import ...` resolves as in chat_screen. It loads the tldw_chatbook.UI
@@ -78,6 +83,8 @@ namespace = {
     # run_controls returns for any other type. The real poll_source imports
     # chat_screen, which the teardown check below forbids.
     "ChatScreen": type("ChatScreen", (), {}),
+    # The phased sync yields between its phases with this module constant.
+    "_CONSOLE_SYNC_PHASE_YIELD_SECONDS": 0.001,
     "run_controls": SimpleNamespace(
         poll_source=lambda _owner: None,
         PreparingPollChanged=type("PreparingPollChanged", (RuntimeError,), {}),

@@ -16,11 +16,11 @@ from Tests.private_profile import private_profile_test
 from textual.events import MouseDown, MouseMove, MouseUp
 from textual.widgets import Static
 
+import tldw_chatbook.Widgets.Console.console_transcript as console_transcript_module
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
-import tldw_chatbook.Widgets.Console.console_transcript as console_transcript_module
 from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleTranscript,
     ConsoleTranscriptMessage,
@@ -30,6 +30,9 @@ from tldw_chatbook.Widgets.Console.console_transcript import (
 pytestmark = pytest.mark.bootstrap_profile
 
 #: ~20 KB multi-line body (28 paragraphs that each wrap over several lines).
+# The real transcript getters retain their collection-selected source.
+pytestmark = pytest.mark.bootstrap_profile
+
 _BIG_BODY = ("lorem ipsum dolor sit amet consectetur adipiscing elit " * 13 + "\n") * 28
 assert 18_000 < len(_BIG_BODY) < 24_000
 
@@ -76,7 +79,7 @@ async def _armed_drag(pilot):
     await pilot.pause()
     row = app.query_one("#console-message-big", ConsoleTranscriptMessage)
     body = row.query_one(".console-transcript-message-body", Static)
-    transcript.on_mouse_down(
+    await transcript.on_mouse_down(
         _mouse_event(
             MouseDown, row, screen_x=body.region.x + 2, screen_y=body.region.y + 1
         )
@@ -117,7 +120,7 @@ async def test_drag_wraps_the_body_at_most_once_per_text_and_width():
 
     app = _DragPerfApp()
     async with app.run_test(size=(100, 40)) as pilot:
-        transcript, row, body = await _armed_drag(pilot)
+        transcript, _row, body = await _armed_drag(pilot)
         wrap_table = getattr(console_transcript_module, "_body_wrap_table", None)
         if wrap_table is not None and hasattr(wrap_table, "cache_clear"):
             wrap_table.cache_clear()
@@ -182,7 +185,7 @@ async def test_moves_do_not_sweep_other_rows_per_event():
     """The stale-highlight sweep runs at drag arm, never per MouseMove."""
     app = _DragPerfApp()
     async with app.run_test(size=(100, 40)) as pilot:
-        transcript, row, body = await _armed_drag(pilot)
+        transcript, _row, body = await _armed_drag(pilot)
         other = app.query_one("#console-message-other", ConsoleTranscriptMessage)
         clear_calls = 0
         real_clear = other.clear_selection
@@ -221,7 +224,7 @@ async def test_arm_time_sweep_still_clears_a_stale_highlight():
         body_a = row_a.query_one(".console-transcript-message-body", Static)
         body_b = row_b.query_one(".console-transcript-message-body", Static)
         # Drag on row A and finish it: A holds a highlight.
-        transcript.on_mouse_down(
+        await transcript.on_mouse_down(
             _mouse_event(
                 MouseDown, row_a, screen_x=body_a.region.x + 1, screen_y=body_a.region.y
             )
@@ -245,7 +248,7 @@ async def test_arm_time_sweep_still_clears_a_stale_highlight():
         await pilot.pause()
         assert row_a.get_selection_text() != ""
         # Arm a new drag on row B: A's stale highlight must clear.
-        transcript.on_mouse_down(
+        await transcript.on_mouse_down(
             _mouse_event(
                 MouseDown, row_b, screen_x=body_b.region.x + 2, screen_y=body_b.region.y
             )

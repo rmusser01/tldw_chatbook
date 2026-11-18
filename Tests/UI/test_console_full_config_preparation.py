@@ -99,6 +99,10 @@ def _full_screen(screen, controller, monkeypatch):
         "sync_project_instruction_status_for_screen",
         no_op,
     )
+    # The tick hands the Character read to a screen worker; not a FULL concern.
+    monkeypatch.setattr(
+        chat_screen.wiring, "request_console_character_context_refresh", no_op
+    )
     return effects
 
 

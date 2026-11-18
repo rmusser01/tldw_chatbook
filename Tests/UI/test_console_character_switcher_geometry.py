@@ -137,7 +137,7 @@ async def test_wide_layout_retains_bounds_and_selected_detail_only() -> None:
     ids=["ascii", "wide-unicode"],
 )
 async def test_long_selected_detail_paints_timestamp_on_second_row_after_resize(
-    size, excerpt
+    size, excerpt, monkeypatch
 ):
     from Tests.UI.test_console_character_switcher import _CharacterSwitcherApp
 
@@ -167,6 +167,19 @@ async def test_long_selected_detail_paints_timestamp_on_second_row_after_resize(
             assert "Long ASCII" in painted[0] or "研究" in painted[0]
             assert screen._entries[0].absolute_time in painted[1]
             assert "RESUME CHAT" in painted[1]
+        updates = []
+        update = detail.update
+
+        def record(copy="", *, layout=True):
+            updates.append(layout)
+            return update(copy, layout=layout)
+
+        monkeypatch.setattr(detail, "update", record)
+        screen._mode = SwitcherMode.ACTIVE
+        screen._update_selected_detail()
+        screen._update_selected_detail()
+        assert str(detail.renderable) == ""
+        assert updates == [False]
 
 
 @pytest.mark.asyncio
@@ -210,8 +223,8 @@ async def test_context_handoff_is_contained_and_transfers_exact_query():
     async with app.run_test(size=(52, 20)) as pilot:
         await pilot.pause()
         owner = app.screen.query_one(ConsoleCharacterContext)
-        if owner._task is not None:
-            await owner._task
+        assert owner._controller_task is not None
+        await owner._controller_task
         await controller.search("needle")
         await pilot.pause()
         button = app.screen.query_one("#console-character-query-handoff", Button)

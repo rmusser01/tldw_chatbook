@@ -198,6 +198,7 @@ EXCLUDED: dict[str, str] = {
     **dict.fromkeys(
         (
             "console_runtime",
+            "retired_console_runtime",
             "db_status_manager",
             "raw_cli_runtime",
             "screen_state_store",

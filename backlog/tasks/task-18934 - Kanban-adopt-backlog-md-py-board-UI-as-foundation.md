@@ -102,7 +102,7 @@ in ADR-237, not synthetic data wired now.**
 **5. backlog-md-py board UI is port-ready.** Sibling checkout at
 `/Users/macbook-dev/Documents/GitHub/backlog-md-py` (on `main` @ 39e66a8,
 57 commits behind origin/main); also present as a WHEEL in the dev venv
-site-packages and NOT declared in pyproject.toml (the ADR-225 undeclared
+site-packages and NOT declared in pyproject.toml (the ADR-360 undeclared
 -dependency trap). Board TUI in `src/backlog_py/tui/` (~3.0k lines):
 `widgets.py` (`BoardColumn(VerticalScroll)`, `TaskCard(Static)`,
 `BoardHeader`, `FilterBar`, `TaskInspector`), `screens.py`

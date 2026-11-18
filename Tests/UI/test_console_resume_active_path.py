@@ -20,6 +20,7 @@ from textual.app import ComposeResult
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.console_fixture_ownership import owned_console_apps  # noqa: F401
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_agent_bridge import (

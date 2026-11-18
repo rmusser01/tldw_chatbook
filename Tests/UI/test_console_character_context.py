@@ -12,6 +12,8 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Input, Static
 
+from Tests.UI.console_fixture_ownership import owned_console_apps  # noqa: F401
+from Tests.UI.test_console_left_rail import make_console_pilot
 from tldw_chatbook.Character_Chat.character_conversation_navigation import (
     CharacterConversationGroup,
     CharacterConversationPage,
@@ -62,6 +64,8 @@ from tldw_chatbook.Widgets.Console.console_character_context import (
     CONSOLE_CHARACTER_SEARCH_ID,
     ConsoleCharacterContext,
 )
+
+pytestmark = pytest.mark.bootstrap_profile
 
 
 def _resolved(character_id: int, conversation_id: str) -> CharacterConversationRow:
@@ -273,7 +277,6 @@ async def test_widget_query_validation_preserves_search_and_clear(
 async def test_character_mount_loads_groups_without_duplicate_cold_resume_worker(
     monkeypatch,
 ):
-    from Tests.UI.test_console_left_rail import make_console_pilot
     from tldw_chatbook.UI.Console_Modules.wiring import (
         _sync_character_context_presentation,
     )
@@ -284,34 +287,64 @@ async def test_character_mount_loads_groups_without_duplicate_cold_resume_worker
         get_character_conversation_search_revision=lambda: revision[0],
     )
     original_build = chat_screen_module.build_console_controllers
+    original_resume = chat_screen_module.ChatScreen.on_screen_resume
     original_worker = chat_screen_module.ChatScreen.run_worker
     refresh_workers = []
+    recent_loads = []
+    resuming = False
+
+    class MountService(_Service):
+        def recent_groups(self, *, group_limit, row_limit):
+            recent_loads.append(revision[0])
+            return super().recent_groups(group_limit=group_limit, row_limit=row_limit)
 
     def build(screen, *args, **kwargs):
         original_build(screen, *args, **kwargs)
         screen._character_context = _controller(
             database_accessor=lambda: database,
+            service_factory=MountService,
             state_changed=lambda state: _sync_character_context_presentation(
                 screen, state
             ),
         )
 
+    def resume(screen):
+        nonlocal resuming
+        resuming = True
+        try:
+            original_resume(screen)
+        finally:
+            resuming = False
+
     def run_worker(screen, work, *args, **kwargs):
-        if kwargs.get("group") == "console-character-context-refresh":
+        if resuming and kwargs.get("group") == "console-character-context-refresh":
             refresh_workers.append(work)
         return original_worker(screen, work, *args, **kwargs)
 
     monkeypatch.setattr(chat_screen_module, "build_console_controllers", build)
+    monkeypatch.setattr(chat_screen_module.ChatScreen, "on_screen_resume", resume)
     monkeypatch.setattr(chat_screen_module.ChatScreen, "run_worker", run_worker)
     async with make_console_pilot(size=(120, 50)) as pilot:
         screen = pilot.app.screen
+
+        async def settled_groups() -> int:
+            # sync_state recomposes on a spawned task; a state published just
+            # before the poll wakes is not in the DOM yet (flaky on dev too).
+            widget = screen.query_one(ConsoleCharacterContext)
+            for _ in range(40):
+                if not widget._render_tasks:
+                    break
+                await pilot.pause(0.05)
+            return len(screen.query(".console-character-group"))
+
         for _ in range(40):
             if screen._character_context.state.groups:
                 break
             await pilot.pause(0.05)
-        assert len(screen.query(".console-character-group")) == 4
+        assert await settled_groups() == 4
         assert screen._character_context.state.scope_fingerprint.data_revision == 7
         assert refresh_workers == []
+        assert recent_loads == [7]
         revision[0] = 8
         screen.on_screen_resume()
         for _ in range(40):
@@ -320,7 +353,100 @@ async def test_character_mount_loads_groups_without_duplicate_cold_resume_worker
                 break
         assert len(refresh_workers) == 1
         assert screen._character_context.state.scope_fingerprint.data_revision == 8
-        assert len(screen.query(".console-character-group")) == 4
+        assert await settled_groups() == 4
+        assert recent_loads == [7, 8]
+
+
+@pytest.mark.asyncio
+async def test_resume_read_queues_behind_a_running_passive_read(monkeypatch) -> None:
+    """A Console return mid-read still gets its forced-fresh Character read."""
+    from tldw_chatbook.UI.Console_Modules import character_context, wiring
+
+    order: list[str] = []
+    passive_done = asyncio.Event()
+    started: list[asyncio.Task] = []
+    screen = SimpleNamespace(
+        is_attached=True,
+        app=SimpleNamespace(_exit=False),
+        _character_context=SimpleNamespace(
+            state=SimpleNamespace(phase=ConsoleCharacterOperationPhase.REFRESHING)
+        ),
+        run_worker=lambda work, **_kwargs: started.append(asyncio.ensure_future(work())),
+    )
+
+    async def wait_passive():
+        await passive_done.wait()
+        order.append("passive")
+
+    screen.workers = [
+        SimpleNamespace(
+            node=screen,
+            group="console-character-context-refresh",
+            is_finished=False,
+            wait=wait_passive,
+        )
+    ]
+
+    async def resume_read(_controller, _screen):
+        order.append("resume")
+
+    monkeypatch.setattr(character_context, "character_view_resume_work", resume_read)
+    wiring.request_console_character_context_refresh(screen)
+    assert started == []  # passive reads still coalesce
+    wiring.request_console_character_context_refresh(screen, resumed=True)
+    assert len(started) == 1
+    await asyncio.sleep(0)
+    assert order == []
+    passive_done.set()
+    await started[0]
+    assert order == ["passive", "resume"]
+
+
+@pytest.mark.asyncio
+async def test_cancelled_resume_read_does_not_run_after_its_wait(monkeypatch) -> None:
+    """Quit's drain cancels a queued resume read; Worker.wait() must not hide it."""
+    from textual.worker import WorkerCancelled
+
+    from tldw_chatbook.UI.Console_Modules import character_context, wiring
+
+    reads: list[str] = []
+    started: list[asyncio.Task] = []
+    waiting = asyncio.Event()
+    screen = SimpleNamespace(
+        is_attached=True,
+        app=SimpleNamespace(_exit=False),
+        _character_context=SimpleNamespace(
+            state=SimpleNamespace(phase=ConsoleCharacterOperationPhase.REFRESHING)
+        ),
+        run_worker=lambda work, **_kwargs: started.append(asyncio.ensure_future(work())),
+    )
+
+    async def wait_like_textual():
+        waiting.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            raise WorkerCancelled("cancelled") from None  # Worker.wait()'s shape
+
+    screen.workers = [
+        SimpleNamespace(
+            node=screen,
+            group="console-character-context-refresh",
+            is_finished=False,
+            wait=wait_like_textual,
+        )
+    ]
+
+    async def resume_read(_controller, _screen):
+        reads.append("resume")
+
+    monkeypatch.setattr(character_context, "character_view_resume_work", resume_read)
+    wiring.request_console_character_context_refresh(screen, resumed=True)
+    await waiting.wait()
+    started[0].cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await started[0]
+    assert reads == []
 
 
 def test_accordion_keeps_at_most_one_stable_typed_key_expanded() -> None:
@@ -358,7 +484,6 @@ async def test_canonical_writer_persists_first_use_close_reopen_and_legacy(
     from Tests.UI.test_console_inspector_compact_access import (
         _stored_rail_preferences,
     )
-    from Tests.UI.test_console_left_rail import make_console_pilot
 
     key = ConsoleRailPreferenceKey("global", "layout", "key")
 
@@ -507,12 +632,18 @@ async def test_identity_line_uses_only_owner_current_and_exact_open_state(
         await controller.refresh()
         await pilot.pause()
         assert str(app.identity.render()) == expected
+        visual = app.identity.visual
+        widget = app.query_one(ConsoleCharacterContext)
+        app.identity.tooltip = "stale tooltip"
+        for _ in range(3):
+            widget._sync_identity_line()
+        assert app.identity.visual is visual
+        assert app.identity.tooltip == expected
 
 
 @pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_production_avatar_repaint_never_overwrites_identity_variants() -> None:
-    from Tests.UI.test_console_left_rail import make_console_pilot
 
     variants = (
         (None, "", "No current character · Local · No open chat"),
@@ -1038,6 +1169,45 @@ async def test_scope_capture_retries_same_handle_metadata_mutation_across_await(
     assert controller.state.scope_fingerprint is not None
     assert controller.state.scope_fingerprint.data_authority_id == database.authority
     assert controller.state.scope_fingerprint.data_revision == database.revision
+
+
+@pytest.mark.asyncio
+async def test_character_scope_retires_cold_handles_without_wal_truncation(
+    tmp_path, monkeypatch
+) -> None:
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(tmp_path / "character-scope.sqlite", "character-scope")
+    try:
+        expected = (
+            db.get_local_authority_id(),
+            db.get_character_conversation_search_revision(),
+        )
+        main_connection = db.get_connection()
+        statements: list[str] = []
+        connections = {}
+        get_connection = db.get_connection
+
+        def observe_connection():
+            connection = get_connection()
+            connection.set_trace_callback(statements.append)
+            connections[id(connection)] = connection
+            return connection
+
+        monkeypatch.setattr(db, "get_connection", observe_connection)
+        fingerprint = await _controller(database_accessor=lambda: db)._fingerprint()
+        assert (fingerprint.data_authority_id, fingerprint.data_revision) == expected
+        # Dev reads the before/after scope pair on one cold handle (TASK-35961).
+        assert len(connections) == 1
+        assert db.registered_connection_count() == 1
+        assert main_connection.execute("SELECT 1").fetchone()[0] == 1
+        assert not any(
+            "wal_checkpoint" in statement.lower() for statement in statements
+        )
+    finally:
+        with db.quiesce_connections(timeout_seconds=5):
+            pass
+        assert db.registered_connection_count() == 0
 
 
 @pytest.mark.asyncio

@@ -28,7 +28,12 @@ from textual.worker import (
     WorkerCancelled as WorkerCancelled,  # noqa: PLC0414 -- retained late shutdown patch point.
 )
 
-from tldw_chatbook.app_keep_alive import keep_alive_notice, retire_dead_pump
+from tldw_chatbook.app_keep_alive import (
+    _PUMP_DISPATCH_FRAMES,
+    _exception_frames,
+    keep_alive_notice,
+    retire_dead_pump,
+)
 from tldw_chatbook.app_service_wiring import TldwCli  # class proxy (see its docstring)
 from tldw_chatbook.app_shutdown import _drain_app_unmount_services
 from tldw_chatbook.Chat.console_runtime import dispose_console_runtime
@@ -38,6 +43,7 @@ from tldw_chatbook.config import (
     persist_cli_config_for_shutdown,
 )
 from tldw_chatbook.Constants import TAB_ARTIFACTS
+from tldw_chatbook.DB.base_db import SqliteRetirementIncomplete
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.shell_destinations import get_shell_destination
@@ -61,11 +67,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 DEFERRED_MEDIA_CLEANUP_DELAY_SECONDS = 5.0
 
-# task-19561: how long a cancelled worker gets to settle before shutdown
-# stops waiting on it and says so. Replaces a flat `asyncio.sleep(0.1)` that
-# waited on nothing in particular. Sized to be invisible on a quiet exit
-# (the wait ends the moment the last worker finishes) while still bounding a
-# thread worker that will not notice cancellation at all.
+# task-19561: bounded Worker-wrapper settlement, not a physical thread join.
 WORKER_CANCELLATION_GRACE_SECONDS = 3.0
 
 # TASK-38955: the longest a quit-time close waits on another writer's lock
@@ -78,43 +80,6 @@ _QUIT_CLOSE_BUSY_SECONDS = 0.5
 # file must agree on one spelling. Private to `app.py`: every event emitted
 # here belongs to the application lifecycle.
 _DIAGNOSTICS_COMPONENT_APP = "app"
-
-# TASK-32533. The three `textual.message_pump` frames that mean "one pump's own
-# handler raised": `_dispatch_message` (a message handler, and the compose/mount
-# dispatch in `_pre_process` -- the P0's own path), `_flush_next_callbacks`
-# (`call_after_refresh` / `call_later`) and `_process_messages_loop` (the
-# `on_idle` dispatch inlined there). Workers, the compositor and the driver
-# carry none of these and still exit.
-#
-# The application's OWN run loop is the exception: it runs through
-# `_process_messages_loop` too, so this frame set alone would make run-loop
-# errors non-fatal. It is excluded instead by `keep_alive`'s `pump is not self`
-# clause. Neither clause works without the other -- do not remove one because
-# the other "already covers it".
-_PUMP_DISPATCH_FRAMES = frozenset(
-    {"_dispatch_message", "_flush_next_callbacks", "_process_messages_loop"}
-)
-
-def _exception_frames(error: BaseException) -> list[tuple[str, str, int | None]]:
-    """Return ``(module, function, line)`` for each traceback frame, outermost first.
-
-    TASK-32533. Identifiers only -- module ``__name__``, ``co_name`` and the
-    line number -- so the result can be persisted through the metadata-only
-    diagnostics schema without ever carrying the message or a file path.
-    """
-    frames: list[tuple[str, str, int | None]] = []
-    tb = error.__traceback__
-    while tb is not None:
-        frame = tb.tb_frame
-        frames.append(
-            (
-                str(frame.f_globals.get("__name__", "")),
-                frame.f_code.co_name,
-                tb.tb_lineno,
-            )
-        )
-        tb = tb.tb_next
-    return frames
 
 
 class LifecycleMixin:
@@ -578,12 +543,9 @@ class LifecycleMixin:
     async def _shutdown_console_runtime(self) -> None:
         """Destroy the app-owned Console runtime exactly once, at exit.
 
-        task-15860: the runtime survives every navigation away from
-        Console, so the unmount Textual performs at exit is no longer what
-        ends it -- this is. `ConsoleRuntime.dispose` runs the permanent
-        teardown in the order `ChatScreen.on_unmount` used to:
-        `controller.shutdown()`, then `gateway.aclose()`. Idempotent: the
-        runtime detaches itself from the app on the way out.
+        task-15860: navigation and unmount preserve runtime until this exit.
+        `ConsoleRuntime.dispose` retains the original teardown order:
+        `controller.shutdown()`, then `gateway.aclose()`.
         """
         task = self._console_runtime_shutdown_task
         if task is None:
@@ -622,7 +584,13 @@ class LifecycleMixin:
                 await asyncio.shield(task)
             except asyncio.CancelledError as error:
                 cancellation = cancellation or error
-        task.result()
+            except SqliteRetirementIncomplete:
+                break  # Reported below.
+        try:
+            task.result()
+        except SqliteRetirementIncomplete as error:
+            # Later owners and quit go on; those handles close with the process.
+            logger.warning("SQLite retirement incomplete at quit: {}", error)
         if cancellation is not None:
             raise cancellation
         plugin_service = getattr(self, "_plugin_service", None)
@@ -847,14 +815,15 @@ class LifecycleMixin:
         if errors:
             raise errors[0]
 
+    async def _retire_app_sqlite_handles(self) -> None:
+        from tldw_chatbook.app_sqlite_retirement import retire_app_sqlite_handles
+        await retire_app_sqlite_handles(self)
+
     async def _shutdown(self) -> None:
         """Settle app-owned durable work before Textual closes screens."""
-        # App.exit normally closes mount admission first. Direct shutdown
-        # (including run_test teardown) must use that same Textual fence so
-        # queued rebuilds cannot register children after message pumps stop.
+        # Match App.exit's mount-admission fence, including direct run_test teardown.
         self._exit = True
-        # Ordinary Quit reaches these drains before on_unmount. Use the same
-        # process-owned, idempotent watchdog here so the drains are bounded too.
+        # Bound pre-unmount drains with the existing process-owned watchdog.
         arm_exit_watchdog(reason="app shutdown")
         cancellation: asyncio.CancelledError | None = None
         owner_error: BaseException | None = None
@@ -879,12 +848,25 @@ class LifecycleMixin:
             break
 
         shutdown_error: BaseException | None = None
+        textual_settled = False
         try:
             await super()._shutdown()
+            textual_settled = True
         except asyncio.CancelledError as error:
             cancellation = cancellation or error
         except BaseException as error:
             shutdown_error = error
+
+        if owner_error is None and textual_settled:
+            try:
+                await self._retire_app_sqlite_handles()
+            except asyncio.CancelledError as error:
+                cancellation = cancellation or error
+            except SqliteRetirementIncomplete as error:
+                # Never fail quit: those handles close with the process.
+                logger.warning("SQLite retirement incomplete at quit: {}", error)
+            except BaseException as error:  # noqa: BLE001 - retain the existing shutdown error/cancellation precedence.
+                shutdown_error = error
 
         if shutdown_error is not None:
             if owner_error is not None:
@@ -2193,6 +2175,7 @@ class LifecycleMixin:
     def _run_blocking_quit_persistence(self) -> None:
         """Run timed joins and configuration persistence off the app loop."""
         from .css.Themes.theme_catalog import wait_for_theme_quit_work
+
         wait_for_theme_quit_work(self)  # TASK-33121/review M-2: one deadline, THEME_QUIT_WAIT_SECONDS
         try:
             save_thread = threading.Thread(

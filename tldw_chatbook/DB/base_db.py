@@ -36,13 +36,22 @@ SEMANTIC_MUTATION_GUARD_FUNCTION = "console_semantic_mutation_authorized"
 TRACE_GC_DELETE_GUARD_FUNCTION = "console_trace_gc_delete_authorized"
 
 
+class SqliteRetirementIncomplete(RuntimeError):
+    """An owner stayed in use at quit; its handles close with the process (ADR225).
+
+    The message names owner categories only, never a path or a SQL body.
+    """
+
+
 # Thread-local, like the handles it governs (asyncio.to_thread copies
 # contextvars, which would leak an owner into another thread's handle).
 _OPERATION_OWNERS = threading.local()
 
 
 @contextmanager
-def operation_owned_connection(database: object) -> Iterator[None]:
+def operation_owned_connection(
+    database: object, *, read_only: bool = False
+) -> Iterator[None]:
     """Close only the thread-local handle opened by this synchronous operation.
 
     Inspect without acquiring a handle. A pre-existing registered connection,
@@ -50,6 +59,9 @@ def operation_owned_connection(database: object) -> Iterator[None]:
     during the operation; a newly acquired replacement is operation-owned.
     A nested operation on the same thread and database defers to the
     outermost owner, which retires the handle when the whole operation ends.
+
+    Read-only operations can retire a ChaCha handle without requesting an
+    explicit WAL truncation.
     """
     owners = getattr(_OPERATION_OWNERS, "ids", None)
     if owners is None:
@@ -59,14 +71,16 @@ def operation_owned_connection(database: object) -> Iterator[None]:
         return
     owners.add(id(database))
     try:
-        with _operation_owned_connection(database):
+        with _operation_owned_connection(database, read_only=read_only):
             yield
     finally:
         owners.discard(id(database))
 
 
 @contextmanager
-def _operation_owned_connection(database: object) -> Iterator[None]:
+def _operation_owned_connection(
+    database: object, *, read_only: bool = False
+) -> Iterator[None]:
     local = getattr(database, "_local", None)
     registry = getattr(database, "_connection_quiescence", None)
     close = getattr(database, "close_connection", None)
@@ -107,6 +121,11 @@ def _operation_owned_connection(database: object) -> Iterator[None]:
     else:
         previous = getattr(local, "conn", None)
         borrowed = previous is not None and registry.is_registered(previous)
+        if read_only:
+            from .ChaChaNotes_DB import CharactersRAGDB
+
+            if type(database) is CharactersRAGDB:
+                close = functools.partial(database.close_connection, checkpoint=False)
     try:
         yield
     finally:
@@ -120,6 +139,7 @@ async def run_owned_db_call[**_CallParameters, _CallResult](
     operation: Callable[_CallParameters, _CallResult],
     /,
     *args: _CallParameters.args,
+    _read_only: bool = False,
     **kwargs: _CallParameters.kwargs,
 ) -> _CallResult:
     """Run a finite callback and retire only its newly opened worker handle.
@@ -128,7 +148,8 @@ async def run_owned_db_call[**_CallParameters, _CallResult](
     before its newly opened handle retires.
     Cancellation of the awaiting task does not close a handle still in use by
     its executor callback. Existing connections and memory/custom owners retain
-    their original lifetimes.
+    their original lifetimes. ``_read_only`` is ``operation_owned_connection``'s
+    ``read_only`` and is not passed to ``operation``.
     """
 
     def invoke() -> _CallResult:
@@ -149,7 +170,10 @@ async def run_owned_db_call[**_CallParameters, _CallResult](
             return operation(*args, **kwargs)
         from tldw_chatbook.Backup_Recovery.participants import core_operation
 
-        with operation_owned_connection(database), core_operation(database):
+        with (
+            operation_owned_connection(database, read_only=_read_only),
+            core_operation(database),
+        ):
             return operation(*args, **kwargs)
 
     return await asyncio.to_thread(invoke)

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from textual.css.query import NoMatches
 
 from tldw_chatbook.Character_Chat.character_conversation_navigation import (
     LocalCharacterConversationTarget,
@@ -631,11 +632,13 @@ def test_production_workspace_visibility_requires_settled_transcript_owner() -> 
         def app(self):
             return SimpleNamespace(screen=self)
 
-        def query_one(self, selector):
+        def query_one(self, selector, _expect_type=None):
             if selector == "#console-native-composer":
                 return composer
             if selector == "#console-native-transcript":
                 return stale_transcript
+            if selector == "#console-transcript-surface":
+                raise NoMatches(selector)
             raise AssertionError(selector)
 
     controller = ConsoleWorkspaceController.__new__(ConsoleWorkspaceController)
@@ -645,8 +648,6 @@ def test_production_workspace_visibility_requires_settled_transcript_owner() -> 
     assert session.persisted_conversation_id == "conversation-X"
 
     assert controller._character_conversation_target_visible(request) is False
-
-    from textual.css.query import NoMatches
 
     def missing_widget(_selector):
         raise NoMatches("transcript not mounted")
@@ -663,7 +664,9 @@ def test_production_workspace_visibility_requires_settled_transcript_owner() -> 
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("focus_failure", ["", "missing_composer", "broken_focus"])
+@pytest.mark.parametrize(
+    "focus_failure", ["", "missing_composer", "broken_focus", "app_shutdown"]
+)
 async def test_production_workspace_predicate_failure_rolls_back_exact_owned_session(
     focus_failure,
 ) -> None:
@@ -679,12 +682,10 @@ async def test_production_workspace_predicate_failure_rolls_back_exact_owned_ses
     screen._sync_native_console_transcript = AsyncMock(return_value=None)
     presentation_steps = []
 
-    def query(selector):
+    def query(selector, _expect_type=None):
         presentation_steps.append(selector)
         if selector == "#console-native-composer":
             if focus_failure == "missing_composer":
-                from textual.css.query import NoMatches
-
                 raise NoMatches("composer unmounted")
             return composer
         return transcript
@@ -700,6 +701,13 @@ async def test_production_workspace_predicate_failure_rolls_back_exact_owned_ses
     controller = ConsoleWorkspaceController.__new__(ConsoleWorkspaceController)
     controller._screen = screen
     controller._chat_store_accessor = lambda: store
+    # The post-projection fence reads the controller's injected liveness seam.
+    controller._screen_running_accessor = lambda: True
+    if focus_failure == "app_shutdown":
+        # App quit began during the post-projection yield; the pump still runs.
+        screen.app_instance = SimpleNamespace(
+            _console_runtime_shutdown_task=asyncio.create_task(asyncio.sleep(0))
+        )
 
     async def hydrate(_conversation_id):
         store.restore_persisted_session(
@@ -724,8 +732,12 @@ async def test_production_workspace_predicate_failure_rolls_back_exact_owned_ses
     result = await controller.activate_character_conversation_after_commit(request)
 
     screen._sync_native_console_transcript.assert_awaited_once()
-    assert "#console-native-composer" in presentation_steps
-    assert ("focus" in presentation_steps) == (focus_failure != "missing_composer")
+    assert ("#console-native-composer" in presentation_steps) == (
+        focus_failure != "app_shutdown"
+    )
+    assert ("focus" in presentation_steps) == (
+        focus_failure not in {"missing_composer", "app_shutdown"}
+    )
     assert result.kind is ConsoleActivationResultKind.FAILED
     assert store.active_session_id == prior.id
     assert all(

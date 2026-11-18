@@ -139,6 +139,8 @@ class _ParentWaitsForDrainGateway(_FleetTwoChildGateway):
 # ---------------------------------------------------------------------------
 
 
+# These bridge journeys read bound startup config; keep that selected profile.
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_survivor_settle_writes_the_durable_mark_and_toasts_once(
     tmp_path,
@@ -211,6 +213,7 @@ async def test_a_survivor_settle_writes_the_durable_mark_and_toasts_once(
         chacha.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_child_that_finishes_inside_its_turn_marks_and_toasts_nothing(
     tmp_path,
@@ -278,6 +281,7 @@ async def test_a_child_that_finishes_inside_its_turn_marks_and_toasts_nothing(
         chacha.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_two_survivors_in_one_drain_coalesce_into_one_toast(tmp_path):
     """N children of one conversation settling together = one toast, not N."""

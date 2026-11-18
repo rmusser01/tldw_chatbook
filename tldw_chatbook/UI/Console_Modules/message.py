@@ -2934,15 +2934,18 @@ class ConsoleMessageController:
         Returns ``None`` when ``activity_id`` is not a projected thinking row
         or carries no displayable block; the caller decides how to respond.
         """
-        from ...Widgets.Console.console_transcript import ConsoleTranscript
+        from ...Widgets.Console.console_background_effect import (
+            active_console_transcript,
+        )
 
         try:
-            transcript = self._screen.query_one(
-                "#console-native-transcript", ConsoleTranscript
-            )
+            transcript = active_console_transcript(self._screen)
         except Exception:
             return None
-        if transcript.thinking_owner_message_id(activity_id) is None:
+        if (
+            transcript is None
+            or transcript.thinking_owner_message_id(activity_id) is None
+        ):
             return None
         return transcript.thinking_editable_block(activity_id)
 

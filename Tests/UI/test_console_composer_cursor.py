@@ -720,6 +720,48 @@ async def test_console_composer_blink_tick_arms_no_layout_pass():
 
 @pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
+async def test_same_height_composer_caret_repaints_without_layout(monkeypatch):
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = _CssTrueConsoleHarness(app)
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = host.screen_stack[-1]
+        composer = await _focused_composer(pilot, console, "hello")
+        visible = composer.query_one("#console-command-visible-text", Static)
+        initial_region = visible.region
+        initial_copy = visible.renderable.plain
+        refresh_layout = console._refresh_layout
+        layout_calls = 0
+
+        def count_layout(*args, **kwargs):
+            nonlocal layout_calls
+            layout_calls += 1
+            return refresh_layout(*args, **kwargs)
+
+        monkeypatch.setattr(console, "_refresh_layout", count_layout)
+        composer.position_cursor_from_display_index(0)
+        await pilot.pause()
+
+        assert layout_calls == 0
+        assert visible.region == initial_region
+        painted_copy = visible.renderable.plain
+        assert painted_copy != initial_copy
+        assert painted_copy in "\n".join(
+            strip.text for strip in console._compositor.render_strips()
+        )
+
+        composer.load_draft("first line\nsecond line")
+        await pilot.pause()
+        assert layout_calls > 0
+        assert visible.region.height == initial_region.height + 1
+        assert "second line" in "\n".join(
+            strip.text for strip in console._compositor.render_strips()
+        )
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
 async def test_console_composer_blink_phases_are_geometry_identical():
     """Both blink phases occupy identical geometry, at every wrap boundary.
 

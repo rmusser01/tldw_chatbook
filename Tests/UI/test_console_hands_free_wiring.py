@@ -131,7 +131,7 @@ def test_handsfree_send_delay_seconds_reader_accepts_configured_value(monkeypatc
 def test_acoustic_barge_in_enabled_reader_reads_the_exact_key(monkeypatch):
     calls = _spy_get_cli_setting(monkeypatch, False)
     assert real_acoustic_barge_in_enabled() is False
-    assert calls == [(("dictation.acoustic_barge_in", False), {})]
+    assert calls == [(("dictation.acoustic_barge_in", None, False), {})]
 
 
 def test_acoustic_barge_in_enabled_reader_accepts_truthy_string(monkeypatch):

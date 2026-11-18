@@ -163,10 +163,11 @@ class ConsoleDispatchRecoveryRegion(Widget):
             self._pending_intent = None
         self._recovery_snapshot = recovery
         self._model_in_flight = recovery.in_flight if recovery is not None else False
+        presentation_changed = updated != self._presentation
         if (
             session_id == self._session_id
             and assistant_message_id == self._assistant_message_id
-            and updated == self._presentation
+            and not presentation_changed
         ):
             if dropped_pending:  # no recompose follows: release the busy state
                 self._show_pending(None)
@@ -175,7 +176,7 @@ class ConsoleDispatchRecoveryRegion(Widget):
         self._assistant_message_id = assistant_message_id
         self._presentation = updated
         self.set_class(updated.visible, "-visible")
-        if self.is_mounted:
+        if self.is_mounted and (updated.visible or presentation_changed):
             self.refresh(recompose=True, layout=True)
         return True
 

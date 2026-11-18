@@ -1,5 +1,23 @@
 # Lessons: hook teardown verification
 
+## Cross-thread asyncio test gates need their owning loop woken (TASK-34660, 2026-10-07)
+
+**Incident.** The original real mounted Interrupt body passed, but its default
+executor teardown timed out at 300 seconds with the bridge blocked in
+`future.result()`. Its provider runs on a separate event-loop thread. Both
+`entered.set()` and the final `release.set()` were called from the other loop;
+queuing the future callback did not wake that loop's selector. A call-through
+probe observed both wrong-loop calls and only woke their owning loops; the
+unchanged node then completed. Scheduling both test gates with
+`loop.call_soon_threadsafe(event.set)` completed the uninstrumented node in
+8.52s and all 13 affected controls in 83.83s.
+
+**What to do.** Trace the actual provider loop before blaming production Stop
+or executor cancellation. Cross-thread asyncio gates must schedule their set on
+the owning loop. Verify the entire pytest process, not just the body summary;
+retain the original teardown failure and late logs. Evidence:
+`Docs/QA/task-34660/README.md`. This does not waive SQLite ownership or FD gaps.
+
 ## Exercise trusted projection beside a real standalone hook (TASK-33648, 2026-10-06)
 
 **Incident.** The initial SessionEnd disposal fix passed its standalone close,

@@ -10,6 +10,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.DB.base_db import SqliteRetirementIncomplete
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 
@@ -238,7 +239,13 @@ async def mounted_rules_console(tmp_path, size=(80, 24)):
             for release in (case.primary_release, case.helper_release):
                 if release is not None:
                     release.set()
-            await owner.dispose()
+            try:
+                await owner.dispose()
+            except SqliteRetirementIncomplete:
+                # Unlike quit, this disposes before draining the mounted
+                # screen's AgentRuns readers (subagent counts, run history),
+                # so retirement can be refused; quit logs a refusal too.
+                pass
 
 
 def seed_answer(case):

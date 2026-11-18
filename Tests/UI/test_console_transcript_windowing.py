@@ -12,6 +12,7 @@ from dataclasses import replace
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.geometry import Size
 
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
@@ -100,19 +101,25 @@ async def test_long_resume_mounts_only_a_contiguous_tail_window() -> None:
 
 
 @pytest.mark.asyncio
-async def test_long_session_swap_batches_row_mounts_and_removals(monkeypatch) -> None:
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("initial_count", [0, 180], ids=["empty", "populated"])
+async def test_long_session_swap_batches_row_mounts_and_removals(
+    monkeypatch, initial_count
+) -> None:
     app = WindowHarness()
 
     async with app.run_test(size=(100, 30)) as pilot:
         transcript = app.query_one(ConsoleTranscript)
-        transcript.set_messages(_messages(180, prefix="old-"))
+        transcript.set_messages(_messages(initial_count, prefix="old-"))
         await transcript.refresh_messages()
         await pilot.pause()
 
         mount_batch_sizes: list[int] = []
         remove_batch_sizes: list[int] = []
+        moved_rows = []
         original_mount = transcript.mount
         original_remove_children = transcript.remove_children
+        original_move_child = transcript.move_child
 
         def recording_mount(*widgets, **kwargs):
             mount_batch_sizes.append(len(widgets))
@@ -124,17 +131,107 @@ async def test_long_session_swap_batches_row_mounts_and_removals(monkeypatch) ->
                 remove_batch_sizes.append(len(materialized))
             return original_remove_children(materialized)
 
+        def recording_move_child(child, **kwargs):
+            moved_rows.append(child)
+            return original_move_child(child, **kwargs)
+
         monkeypatch.setattr(transcript, "mount", recording_mount)
         monkeypatch.setattr(transcript, "remove_children", recording_remove_children)
+        monkeypatch.setattr(transcript, "move_child", recording_move_child)
 
         transcript.set_messages(_messages(180, prefix="new-"))
         await transcript.refresh_messages()
         await pilot.pause()
 
         assert mount_batch_sizes and max(mount_batch_sizes) > 1
-        assert remove_batch_sizes and max(remove_batch_sizes) > 1
         assert len(mount_batch_sizes) <= 2
         assert len(remove_batch_sizes) == 1
+        if initial_count:
+            assert remove_batch_sizes[0] > 1
+        rows = [
+            transcript._row_widgets[row.key] for row in transcript._transcript_rows()
+        ]
+        recovery = transcript.query_one("#console-archive-recovery")
+        assert list(transcript.children)[: len(rows) + 1] == [*rows, recovery]
+        assert not moved_rows
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_non_scrolling_rows_record_native_sizes_without_relayout(monkeypatch):
+    app = WindowHarness()
+    async with app.run_test(size=(100, 30)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages(_messages(4))
+        await transcript.refresh_messages()
+        await pilot.pause()
+        row = transcript.query_one("#console-message-m0")
+        expected_size = Size(40, 4)
+        requests = []
+        original = row.refresh
+
+        def record_refresh(*args, **kwargs):
+            requests.append(kwargs)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(row, "refresh", record_refresh)
+        assert row._size_updated(expected_size, expected_size, expected_size)
+        assert row.virtual_size == expected_size
+        assert not any(request.get("layout") for request in requests)
+
+        row.styles.overflow_y = "auto"
+        requests.clear()
+        next_size = Size(41, 5)
+        assert row._size_updated(next_size, next_size, next_size)
+        assert row.virtual_size == next_size
+        assert any(request.get("layout") for request in requests)
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_transcript_row_restyles_once_only_for_changed_classes(monkeypatch):
+    app = WindowHarness()
+    async with app.run_test(size=(100, 30)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        messages = _messages(4)
+        transcript.set_messages(messages)
+        await transcript.refresh_messages()
+        await pilot.pause()
+        row = transcript.query_one("#console-message-m0")
+        row.add_class("unrelated-class")
+        speaker = row.query_one(".console-transcript-speaker-label")
+        original_restyle = row.update_node_styles
+        original_speaker_update = speaker.update
+        restyles = []
+        speaker_updates = []
+
+        def restyle(*args, **kwargs):
+            restyles.append(row.classes)
+            original_restyle(*args, **kwargs)
+
+        def speaker_update(content, *, layout=True):
+            speaker_updates.append(layout)
+            original_speaker_update(content, layout=layout)
+
+        monkeypatch.setattr(row, "update_node_styles", restyle)
+        monkeypatch.setattr(speaker, "update", speaker_update)
+        row.sync_message(messages[0])
+        assert not restyles
+        assert not speaker_updates
+
+        failed = replace(messages[0], status="failed")
+        row.sync_message(failed, selected=True)
+        assert row.has_class(
+            "unrelated-class",
+            "console-transcript-message-failed",
+            "console-transcript-message-selected",
+        )
+        assert restyles == [row.classes]
+        row.sync_message(messages[0])
+        assert row.has_class("unrelated-class")
+        assert not row.has_class("console-transcript-message-failed")
+        assert not row.has_class("console-transcript-message-selected")
+        assert len(restyles) == 2
 
 
 @pytest.mark.asyncio

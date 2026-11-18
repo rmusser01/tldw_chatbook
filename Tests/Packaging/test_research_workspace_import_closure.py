@@ -437,7 +437,10 @@ async def main() -> None:
 
         # First use: the deferred import failure lands here, not at boot.
         await app.handle_screen_navigation(NavigateToScreen("research_workspace"))
-        await asyncio.sleep(0)
+        # notify() posts to the app queue; a loop yield is not publication.
+        notified = asyncio.Event()
+        assert app.call_later(notified.set)
+        await notified.wait()
 
         # Legible, not fatal: the app is alive, the user stayed on the
         # current screen, and was TOLD -- not left staring at an unchanged

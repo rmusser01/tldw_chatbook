@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterable
 from time import monotonic
 
@@ -10,6 +11,7 @@ from rich.text import Text
 from textual import events
 from textual.containers import Horizontal, Vertical
 from textual.content import Content
+from textual.geometry import Size
 from textual.message import Message
 from textual.timer import Timer
 from textual.widget import Widget
@@ -24,9 +26,27 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.UI.Navigation.surface_swap_guard import finish_removal
 
-
 _RAW_CLI_ELAPSED_STATES = frozenset({"running", "stopping"})
 _RAW_CLI_ELAPSED_TICK_SECONDS = 0.1
+
+
+class TranscriptCompositionMixin:
+    """Keep native transcript row mounts responsive and avoid repeat layout."""
+
+    async def mount_composed_widgets(self, widgets: list[Widget]) -> None:
+        if widgets:
+            await asyncio.sleep(0)
+            if not self._closing and not self._pruning and self.is_attached:
+                await super().mount_composed_widgets(widgets)
+
+    def _size_updated(
+        self, size: Size, virtual_size: Size, container_size: Size, layout: bool = True
+    ) -> bool:
+        # Native layout has already placed these rows. Hidden overflow has no
+        # scrollbar transition requiring another parent layout.
+        if self.styles.overflow_x == self.styles.overflow_y == "hidden":
+            layout = False
+        return super()._size_updated(size, virtual_size, container_size, layout)
 
 
 def raw_cli_status_copy(
@@ -479,7 +499,7 @@ class ConsoleActivityDisclosure(Vertical):
         self._sync_visibility()
 
 
-class ConsoleAssistantTurnWidget(Vertical):
+class ConsoleAssistantTurnWidget(TranscriptCompositionMixin, Vertical):
     """Stable Assistant header/activity/answer/adjunct presentation shell."""
 
     def __init__(
@@ -493,31 +513,58 @@ class ConsoleAssistantTurnWidget(Vertical):
         self.assistant_message_id = assistant_message_id
         self.header_widget = header_widget
         self.answer_widget = answer_widget
-        self.activity_stack = Vertical(
-            *tuple(activity_widgets),
-            id=f"console-assistant-activities-{assistant_message_id}",
-            classes="console-assistant-activity-stack",
+        activities = tuple(activity_widgets)
+        adjuncts = tuple(adjunct_widgets)
+        self.activity_stack = (
+            self._build_stack(*activities, activity=True) if activities else None
         )
-        self.adjunct_stack = Vertical(
-            *tuple(adjunct_widgets),
-            id=f"console-assistant-adjuncts-{assistant_message_id}",
-            classes="console-assistant-adjunct-stack",
+        self.adjunct_stack = (
+            self._build_stack(*adjuncts, activity=False) if adjuncts else None
         )
+        children = [header_widget]
+        if self.activity_stack is not None:
+            children.append(self.activity_stack)
+        children.append(answer_widget)
+        if self.adjunct_stack is not None:
+            children.append(self.adjunct_stack)
         super().__init__(
-            header_widget,
-            self.activity_stack,
-            answer_widget,
-            self.adjunct_stack,
+            *children,
             id=f"console-assistant-turn-{assistant_message_id}",
             classes="console-assistant-turn",
         )
+
+    def _build_stack(self, *children: Widget, activity: bool) -> Vertical:
+        kind = "activity" if activity else "adjunct"
+        slot = "activities" if activity else "adjuncts"
+        return Vertical(
+            *children,
+            id=f"console-assistant-{slot}-{self.assistant_message_id}",
+            classes=f"console-assistant-{kind}-stack",
+        )
+
+    async def mount_stack_children(self, *children: Widget, activity: bool) -> Vertical:
+        """Attach the owned stack with its first content in native display order."""
+        stack = self.activity_stack if activity else self.adjunct_stack
+        if stack is None:
+            stack = self._build_stack(activity=activity)
+            if activity:
+                self.activity_stack = stack
+            else:
+                self.adjunct_stack = stack
+        if stack.parent is self:
+            await stack.mount(*children)
+        else:
+            for child in children:
+                stack.compose_add_child(child)
+            await self.mount(stack, before=self.answer_widget if activity else None)
+        return stack
 
     async def replace_activity_widgets(
         self, activity_widgets: Iterable[Widget]
     ) -> None:
         """Replace only mounted activity children, retaining turn identity."""
         replacements = tuple(activity_widgets)
-        if self.activity_stack.children:
+        if self.activity_stack is not None and self.activity_stack.children:
             await self.activity_stack.remove_children()
         if replacements:
-            await self.activity_stack.mount(*replacements)
+            await self.mount_stack_children(*replacements, activity=True)

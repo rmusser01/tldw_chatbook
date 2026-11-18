@@ -14,6 +14,9 @@ the swap then runs exactly as a later sync pass would.
 import pytest
 from textual.events import Key
 
+from Tests.UI.console_fixture_ownership import (
+    owned_console_apps as owned_console_apps,  # noqa: PLC0414 - pytest fixture export
+)
 from Tests.UI.test_console_native_chat_flow import _select_llamacpp_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (

@@ -75,7 +75,7 @@ from .watchlist_failure import InvalidFeedError, WatchlistPolicyFailure
 #
 ########################################################################################################################
 
-# bs4 is a declared CORE dependency (ADR-225 / TASK-21231: markdownify, also
+# bs4 is a declared CORE dependency (ADR-360 / TASK-21231: markdownify, also
 # core, transitively pinned it all along), but this module still resolves
 # `BeautifulSoup` lazily (TASK-21104): a damaged/partial install without it
 # can still import the app, and no install pays the bs4+soupsieve import at

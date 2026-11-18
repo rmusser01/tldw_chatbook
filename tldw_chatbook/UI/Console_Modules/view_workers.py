@@ -25,6 +25,7 @@ _GROUPS = frozenset(
         "console-library-activity",
         "console-library-outcome",
         "console-workspace-display-reads",
+        "console-workspace-files-availability",
         "console-context-publication",
         "console-hook-refresh",
         "console-prompt-history",

@@ -325,7 +325,7 @@ def _set_copy(widget: Static, text: str) -> None:
     ``Static.update`` always requests a whole-screen layout, and the callout
     re-syncs on every 0.2 s run tick while it is hidden (TASK-33620.15.7).
     """
-    if widget.content != text:
+    if type(widget.content) is not str or widget.content != text:
         widget.update(text)
 
 

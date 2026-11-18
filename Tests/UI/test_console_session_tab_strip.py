@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -15,6 +16,7 @@ from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunMarker
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
+from tldw_chatbook.Chat.console_onboarding_state import ConsoleSetupCardState
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_session_surface import (
     ConsoleSessionSurface,
@@ -196,6 +198,50 @@ async def test_session_title_surfaces_project_control_whitespace_to_one_line() -
 
 
 @pytest.mark.asyncio
+async def test_transcript_title_changes_repaint_the_existing_line(monkeypatch) -> None:
+    class StyledTabStripHost(TabStripHost):
+        CSS_PATH = (
+            Path(__file__).resolve().parents[2]
+            / "tldw_chatbook/css/tldw_cli_modular.tcss"
+        )
+
+    app = StyledTabStripHost()
+    async with app.run_test(size=(120, 50)) as pilot:
+        surface = app.query_one(ConsoleSessionSurface)
+        title = surface.query_one("#console-transcript-title", Static)
+        transcript = surface.query_one("#console-transcript-surface")
+        assert title.region.height == 1
+        regions = title.region, transcript.region
+        layout_requests: list[bool] = []
+        refresh = title.refresh
+
+        def record_refresh(*regions, **kwargs):
+            layout_requests.append(kwargs.get("layout", False))
+            return refresh(*regions, **kwargs)
+
+        monkeypatch.setattr(title, "refresh", record_refresh)
+        name = "劇場 [literal]" + " overflow" * 30
+        surface.set_session_title(name)
+        await pilot.pause()
+        assert "Conversation | 劇場 [literal]" in _rendered_text(app)
+        assert (title.region, transcript.region) == regions
+        assert layout_requests == [False]
+
+        surface.set_session_title(name)
+        surface.sync_inline_guidance(ConsoleSetupCardState(mode="quiet"))
+        await pilot.pause()
+        assert layout_requests == [False]
+
+        title.update("stale")
+        layout_requests.clear()
+        surface.sync_inline_guidance(ConsoleSetupCardState(mode="quiet"))
+        await pilot.pause()
+        assert "Conversation | 劇場 [literal]" in _rendered_text(app)
+        assert (title.region, transcript.region) == regions
+        assert layout_requests == [False]
+
+
+@pytest.mark.asyncio
 async def test_middle_click_on_tab_presses_its_close_button() -> None:
     app = TabStripHost()
     async with app.run_test(size=(80, 24)) as pilot:
@@ -208,6 +254,40 @@ async def test_middle_click_on_tab_presses_its_close_button() -> None:
 
         assert clicked
         assert "console-close-session-tab-s2" in app.pressed_ids
+
+
+@pytest.mark.asyncio
+async def test_appending_a_saved_tab_preserves_mounted_tab_controls() -> None:
+    app = TabStripHost()
+    async with app.run_test(size=(120, 50)) as pilot:
+        surface = app.query_one(ConsoleSessionSurface)
+        strip = surface.query_one(ConsoleSessionTabStrip)
+        sessions = _sessions(3)
+        await surface.sync_sessions(sessions=sessions[:2], active_session_id="s1")
+        await pilot.pause()
+        existing = list(strip.children)
+        existing[0].focus()
+        await pilot.pause()
+
+        await surface.sync_sessions(
+            sessions=sessions,
+            active_session_id="s3",
+            run_markers={"s2": ConsoleRunMarker.RUNNING},
+        )
+        await pilot.pause()
+
+        added = strip.query_one("#console-session-tab-s3", Button)
+        added_close = strip.query_one("#console-close-session-tab-s3", Button)
+        assert list(strip.children) == [
+            *existing[:-2],
+            added,
+            added_close,
+            *existing[-2:],
+        ]
+        assert app.focused is existing[0]
+        assert not existing[0].has_class("console-session-tab-active")
+        assert "agent running" in _rendered_tooltip(existing[2])
+        assert added.has_class("console-session-tab-active")
 
 
 @pytest.mark.asyncio

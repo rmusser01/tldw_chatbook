@@ -920,15 +920,22 @@ async def test_transcript_update_stops_after_real_owner_removal(monkeypatch, bou
         await transcript.refresh_messages()
         turn = transcript.query_one(ConsoleAssistantTurnWidget)
         old_signature = transcript._row_signatures[f"assistant-turn:{assistant.id}"]
-        disclosure = next(iter(turn.activity_stack.children), None)
         if boundary.startswith("activity"):
             target = turn.activity_stack
         elif boundary.startswith("adjunct"):
             target = turn.adjunct_stack
-        elif boundary.startswith("action"):
-            target = disclosure.action_stack
         else:
-            target = disclosure.detail_stack
+            assert turn.activity_stack is not None
+            disclosure = turn.activity_stack.children[0]
+            target = (
+                disclosure.action_stack
+                if boundary.startswith("action")
+                else disclosure.detail_stack
+            )
+        if boundary in {"activity-mount", "adjunct-mount"}:
+            assert target is None
+            target = turn  # The first child mounts with its new stack.
+        assert target is not None
         method = "remove_children" if boundary.endswith("remove") else "mount"
         original_operation = getattr(target, method)
         original_mount = target.mount
@@ -1062,7 +1069,8 @@ async def test_activity_projection_during_child_composition_eventually_renders(
         if hold:
             hold = False
             assert transcript.is_attached and turn.is_attached
-            assert not turn.activity_stack.is_attached
+            assert turn.activity_stack is None
+            assert not turn.answer_widget.is_attached
             entered.set()
             if initial_mount:
                 # Inherit the real app context from Textual's composition task.

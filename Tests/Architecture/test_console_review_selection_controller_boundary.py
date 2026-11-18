@@ -330,12 +330,15 @@ def test_review_selection_delegates_are_complete_and_bounded() -> None:
         name: tuple(ast.unparse(item) for item in methods[name].decorator_list)
         for name in DELEGATE_METHODS - {"action_open_trajectory_view"}
     } == {
+        # ADR-365: selection actions are fenced to their transcript visit.
         "on_console_selection_feedback_requested": (
             "on(ConsoleSelectionFeedbackRequested)",
+            "guard_transcript_action",
         ),
         "on_console_selection_note_requested": (
             "on(ConsoleTraceCopyRequested)",
             "on(ConsoleSelectionNoteRequested)",
+            "guard_transcript_action",
         ),
     }
     for name in DELEGATE_METHODS:

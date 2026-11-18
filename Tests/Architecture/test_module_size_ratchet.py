@@ -951,7 +951,9 @@ _BUDGETS: dict[str, int] = {
     # the storage provider reaches the per-run BuiltinToolProvider (+8 on 12,091).
     # 2026-11-17, TASK-41310 B review: 10084 -> 10111 (+27), exact measurement.
     # The factory verifies a child route names its spawning turn.
-    "tldw_chatbook/Chat/console_agent_bridge.py": 10111,
+    # 2026-11-18, PR #3536 rebase: 10111 -> 10110; its +3 handle-retiring
+    # lines are offset by a shorter subagent_counts docstring.
+    "tldw_chatbook/Chat/console_agent_bridge.py": 10110,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # TASK-36944.2, 2026-11-03: +6 for the public `setting` Console reads.

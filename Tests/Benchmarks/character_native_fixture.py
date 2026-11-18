@@ -167,7 +167,7 @@ def launch_native(
 
     class SyntheticNativeApp(TldwCli):
         def on_mount(self) -> None:
-            super().on_mount()
+            # Textual dispatches the parent Mount handler independently.
             self.run_worker(
                 self.prepare_tabs, name="synthetic-native-preparation", exclusive=True
             )
@@ -180,6 +180,11 @@ def launch_native(
                 ):
                     await asyncio.sleep(0.01)
                 chat = self.screen
+                console_count = sum(
+                    isinstance(screen, ChatScreen) for screen in self.screen_stack
+                )
+                if console_count != 1:
+                    raise RuntimeError("Expected one Console screen at native startup")
                 for conversation_id in receipt["initial_open_conversations"]:
                     if not await chat._workspace._resume_console_workspace_conversation(
                         conversation_id

@@ -27,23 +27,143 @@ stays reachable).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, ClassVar
+from collections.abc import Callable
+from dataclasses import dataclass
+from functools import partial, wraps
+from inspect import iscoroutinefunction
+from typing import TYPE_CHECKING, Any, ClassVar
 from weakref import WeakSet
 
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
-from textual.dom import NoScreen
+from textual.dom import DOMNode, NoScreen
 from textual.events import Click, Key, Resize
 from textual.geometry import Offset, Region
 from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from textual.screen import Screen
     from textual.signal import Signal
+
+# --- Transcript input ownership (ADR-365) -----------------------------------
+# Lives here, not in its own module, to keep the UI-ready module census
+# (ADR-097) flat: this module is already resident with every importer.
+
+
+@dataclass(eq=False)
+class TranscriptInputVisit:
+    """One published view of a store activation."""
+
+    published_at: float
+    is_current: Callable[[], bool]
+
+
+def _managed_transcript(node: object) -> Any:
+    while isinstance(node, DOMNode):
+        if getattr(node, "_transcript_surface", None) is not None:
+            return node
+        if (owner := getattr(node, "_transcript_input_owner", None)) is not None:
+            node = owner
+        else:
+            node = node.parent
+    return None
+
+
+def _current_visit(owner: Any) -> TranscriptInputVisit | None:
+    visit = getattr(owner, "_transcript_input_visit", None)
+    return visit if visit is not None and visit.is_current() else None
+
+
+def transcript_action_current(message: Message, receiver: Widget | None = None) -> bool:
+    """Check the input's original visit, including after it bubbles."""
+    origin = getattr(message, "_transcript_input_visit", None)
+    if origin is not None:
+        return origin.is_current()
+    owner = (
+        _managed_transcript(message._sender)
+        or _managed_transcript(message.control)
+        or _managed_transcript(receiver)
+    )
+    if owner is None:
+        return True
+    visit = _current_visit(owner)
+    if visit is None or message.time < visit.published_at:
+        return False
+    message._transcript_input_visit = visit
+    return True
+
+
+def transcript_callback(
+    node: Widget, callback: Callable[..., Any], *args: Any, **kwargs: Any
+) -> Callable[[], Any]:
+    """Preserve the visit when Textual schedules a transcript effect."""
+    invoke = partial(callback, *args, **kwargs)
+    owner = _managed_transcript(node)
+    if owner is None:
+        return invoke
+    visit = _current_visit(owner)
+
+    def run() -> Any:
+        if visit is not None and visit.is_current():
+            return invoke()
+        return None
+
+    return run
+
+
+def guard_transcript_action(method):
+    """Check a Console handler before it consumes a queued action."""
+
+    def allowed(widget: Widget, message: Message) -> bool:
+        if transcript_action_current(message, widget):
+            return True
+        # Mid-switch no visit is published: skip only this handler and let the
+        # key reach screen bindings (the transcript's own are off in
+        # ``check_action``). Known edge, accepted: a key still bubbling when
+        # the next visit publishes can reach a transcript binding, which then
+        # acts on the newly projected session.
+        if not isinstance(message, Key) or _current_visit(_managed_transcript(widget)):
+            message.stop().prevent_default()
+        return False
+
+    if iscoroutinefunction(method):
+
+        @wraps(method)
+        async def handle(widget, message):
+            if allowed(widget, message):
+                return await method(widget, message)
+            return None
+    else:
+
+        @wraps(method)
+        def handle(widget, message):
+            if allowed(widget, message):
+                return method(widget, message)
+            return None
+
+    return handle
+
+
+def transcript_focus(
+    node: Widget, target: Widget, *, scroll_visible: bool = True
+) -> None:
+    """Defer focus only while the requesting transcript visit is current."""
+    if _managed_transcript(node) is None:
+        target.focus(scroll_visible=scroll_visible)
+        return
+    screen = node.screen
+
+    def set_focus() -> None:
+        if target.is_attached and target.display:
+            screen.set_focus(target, scroll_visible=scroll_visible)
+
+    node.app.call_later(transcript_callback(node, set_focus))
+
 
 #: Every constructed, not-yet-collected selection menu (TASK-21119).
 #:
@@ -394,6 +514,8 @@ class ConsoleSelectionMenu(Vertical):
         super().__init__(id="console-selection-menu")
         self._anchor = (screen_x, screen_y)
         self._owner = owner
+        self._transcript_input_owner = owner
+        self._restore_focus = transcript_callback(self, self._restore_previous_focus)
         self._has_add_to_chat = has_add_to_chat
         self._feedback_available = feedback_available
         self._run_active = run_active
@@ -517,9 +639,9 @@ class ConsoleSelectionMenu(Vertical):
             # scroll_visible=False: focusing must not scroll the screen to
             # the menu (it shifted the transcript out from under the
             # selection when the menu mounted).
-            buttons[0].focus(scroll_visible=False)
+            transcript_focus(self, buttons[0], scroll_visible=False)
         else:
-            self.focus(scroll_visible=False)
+            transcript_focus(self, self, scroll_visible=False)
 
     def on_resize(self, _event: Resize) -> None:
         """Re-clamp after late CSS measurement changes the menu's extent.
@@ -631,6 +753,7 @@ class ConsoleSelectionMenu(Vertical):
             # absolute_offset is not reactive; update painting and hit tests.
             self.refresh(layout=True)
 
+    @guard_transcript_action
     def on_key(self, event: Key) -> None:
         """Keyboard navigation: arrows cycle actions; Escape closes.
 
@@ -659,13 +782,14 @@ class ConsoleSelectionMenu(Vertical):
             focused = next((b for b in buttons if b.has_focus), buttons[0])
             index = buttons.index(focused)
             step = 1 if event.key == "down" else -1
-            buttons[(index + step) % len(buttons)].focus()
+            transcript_focus(self, buttons[(index + step) % len(buttons)])
 
     def _post(self, message: Message) -> None:
         (self._owner if self._owner is not None else self).post_message(message)
 
     @on(Button.Pressed, "#console-selection-copy")
-    def _copy_selection(self) -> None:
+    @guard_transcript_action
+    def _copy_selection(self, _event: Button.Pressed) -> None:
         self._post(self.CopySelection())
 
     @on(Button.Pressed, "#console-selection-copy-all")
@@ -693,19 +817,23 @@ class ConsoleSelectionMenu(Vertical):
         )
 
     @on(Button.Pressed, "#console-selection-add-to-chat")
-    def _add_to_chat(self) -> None:
+    @guard_transcript_action
+    def _add_to_chat(self, _event: Button.Pressed) -> None:
         self._post(self.AddToChat())
 
     @on(Button.Pressed, "#console-selection-more-details")
-    def _more_details(self) -> None:
+    @guard_transcript_action
+    def _more_details(self, _event: Button.Pressed) -> None:
         self._post(self.MoreDetails())
 
     @on(Button.Pressed, "#console-selection-ask-side-chat")
-    def _ask_side_chat(self) -> None:
+    @guard_transcript_action
+    def _ask_side_chat(self, _event: Button.Pressed) -> None:
         self._post(self.AskInSideChat())
 
     @on(Button.Pressed, "#console-selection-create-note")
-    def _create_note(self) -> None:
+    @guard_transcript_action
+    def _create_note(self, _event: Button.Pressed) -> None:
         self._post(
             self.CreateNote(
                 row_id=self._selection_row_id, session_id=self._source_session_id
@@ -713,7 +841,8 @@ class ConsoleSelectionMenu(Vertical):
         )
 
     @on(Button.Pressed, "#console-selection-create-note-go")
-    def _create_note_go(self) -> None:
+    @guard_transcript_action
+    def _create_note_go(self, _event: Button.Pressed) -> None:
         self._post(
             self.CreateNote(
                 row_id=self._selection_row_id,
@@ -723,15 +852,18 @@ class ConsoleSelectionMenu(Vertical):
         )
 
     @on(Button.Pressed, "#console-selection-request-changes")
-    def _request_changes(self) -> None:
+    @guard_transcript_action
+    def _request_changes(self, _event: Button.Pressed) -> None:
         self._post(self.RequestChanges())
 
     @on(Button.Pressed, "#console-selection-lgm")
-    def _lgm(self) -> None:
+    @guard_transcript_action
+    def _lgm(self, _event: Button.Pressed) -> None:
         self._post(self.Lgm())
 
     @on(Button.Pressed, "#console-selection-comment")
-    def _comment(self) -> None:
+    @guard_transcript_action
+    def _comment(self, _event: Button.Pressed) -> None:
         self._post(self.Comment())
 
     class Dismissed(Message):
@@ -755,6 +887,7 @@ class ConsoleSelectionMenu(Vertical):
         self._post(self.Dismissed())
         self.remove()
 
+    @guard_transcript_action
     def _on_click(self, event: Click) -> None:
         event.stop()  # clicks inside the menu must not clear anything
         # A click on the menu that did NOT land on one of its action
@@ -778,7 +911,7 @@ class ConsoleSelectionMenu(Vertical):
         # reference expires on its own if this hook is skipped in teardown.
         _LIVE_SELECTION_MENUS.discard(self)
         if self._restore_focus_on_unmount:
-            self._restore_previous_focus()
+            self._restore_focus()
 
     def _restore_previous_focus(self) -> None:
         """Return focus to the widget that held it before the menu mounted.
@@ -802,10 +935,10 @@ class ConsoleSelectionMenu(Vertical):
         if previous is not None and previous is not self and previous.is_mounted:
             try:
                 if previous.screen is screen:
-                    previous.focus(scroll_visible=False)
+                    transcript_focus(self, previous, scroll_visible=False)
                     return
             except Exception:  # noqa: BLE001, S110 - previous detached during teardown
                 pass
         for composer in screen.query("#console-native-composer"):
-            composer.focus(scroll_visible=False)
+            transcript_focus(self, composer, scroll_visible=False)
             return

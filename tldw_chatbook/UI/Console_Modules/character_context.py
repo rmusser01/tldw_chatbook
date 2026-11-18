@@ -25,7 +25,7 @@ from ...Character_Chat.character_conversation_navigation import (
     UnavailableCharacterReason,
     UnresolvedConversationKey,
 )
-from ...DB.base_db import run_owned_db_call
+from ...DB.base_db import operation_owned_connection, run_owned_db_call
 from ...Utils.input_validation import validate_console_character_query
 
 if TYPE_CHECKING:
@@ -775,9 +775,11 @@ class ConsoleCharacterContextController:
         phase: ConsoleCharacterOperationPhase,
         *,
         row_key: str = "",
+        supersede: bool = True,
         **changes: Any,
     ) -> int:
-        self._generation += 1
+        if supersede:
+            self._generation += 1
         self._publish(
             replace(
                 self.state,
@@ -884,7 +886,9 @@ class ConsoleCharacterContextController:
             _reader_check()
         return (before, after) if _stock_character_scope_pair(self) else None
 
-    async def _await_database_work(self, database, operation, /, *args, **kwargs):
+    async def _await_database_work(
+        self, database, operation, /, *args, _read_only=False, **kwargs
+    ):
         """Retain an exact file callback until its existing native scopes retire."""
         from ...DB.ChaChaNotes_DB import CharactersRAGDB
 
@@ -892,12 +896,12 @@ class ConsoleCharacterContextController:
             return await run_owned_db_call(database, operation, *args, **kwargs)
         from ...Backup_Recovery.participants import core_operation
         from ...Chat.console_preparation_reads import run_preparation_read
-        from ...DB.base_db import operation_owned_connection
-
         def invoke():
             # The same scopes as run_owned_db_call, on this exact receiver.
             # A borrower retains its handle; only a newly opened handle retires.
-            with operation_owned_connection(database), core_operation(database):
+            with operation_owned_connection(
+                database, read_only=_read_only
+            ), core_operation(database):
                 return operation(*args, **kwargs)
 
         return await run_preparation_read(
@@ -953,6 +957,7 @@ class ConsoleCharacterContextController:
                         current,
                         open_conversation_id,
                         asyncio.get_running_loop(),
+                        _read_only=True,
                     )
                 except _ConsoleCharacterAmbientError as failure:
                     ambient_error = failure.error
@@ -974,7 +979,7 @@ class ConsoleCharacterContextController:
             else:
                 try:
                     metadata_before = await self._await_database_work(
-                        database, self._read_database_scope_metadata, database
+                        database, self._read_database_scope_metadata, database, _read_only=True
                     )
                 except Exception:  # noqa: BLE001 - DB adapters have no shared error base.
                     if not self._ambient_scope_matches(
@@ -988,7 +993,7 @@ class ConsoleCharacterContextController:
                     continue
                 try:
                     metadata_after = await self._await_database_work(
-                        database, self._read_database_scope_metadata, database
+                        database, self._read_database_scope_metadata, database, _read_only=True
                     )
                 except Exception:  # noqa: BLE001 - DB adapters have no shared error base.
                     if not self._ambient_scope_matches(
@@ -1033,13 +1038,17 @@ class ConsoleCharacterContextController:
         current = await self._scope_is_current(snapshot)
         return current and generation == self._generation
 
-    def invalidate_scope(self) -> None:
+    def invalidate_scope(self, *, _supersede: bool = True) -> None:
         """Fence work and force the next lifecycle check to reload."""
 
-        self._generation += 1
+        if _supersede:
+            self._generation += 1
         self._scope_invalidations += 1
         self._scope_checked = None
-        self._publish(replace(self.state, scope_fingerprint=None))
+        self._publish(replace(
+            self.state, scope_fingerprint=None, loading=False,
+            phase=ConsoleCharacterOperationPhase.IDLE, operation_row_key="",
+        ))
 
     def _mark_checked(self, started: tuple, invalidations: int) -> None:
         """Start the run recheck interval unless the scope was invalidated since."""
@@ -1108,13 +1117,15 @@ class ConsoleCharacterContextController:
 
         if getattr(screen, "_console_chat_tearing_down", False) or _console_screen_is_torn_down(screen):
             return False
+        if self.state.phase is not ConsoleCharacterOperationPhase.IDLE:
+            return False
         if not _stock_character_presentation(self):
             return await self.refresh_if_scope_changed()
 
         def owner_is_current() -> bool:
             return (
                 _stock_character_presentation(self)
-                and key[1:] == self._presentation_owner_key(screen)[1:]
+                and key == self._presentation_owner_key(screen)
             )
 
         if not force_fresh and self._run_active is not None and self._run_active():
@@ -1128,6 +1139,8 @@ class ConsoleCharacterContextController:
             )
         async with self._presentation_scope_lock:
             if getattr(screen, "_console_chat_tearing_down", False) or _console_screen_is_torn_down(screen):
+                return False
+            if self.state.phase is not ConsoleCharacterOperationPhase.IDLE:
                 return False
             if not _stock_character_presentation(self):
                 return await self.refresh_if_scope_changed()
@@ -1156,7 +1169,7 @@ class ConsoleCharacterContextController:
 
             try:
                 settled = self.state.scope_fingerprint
-                expected_generation = self._generation + 1
+                expected_generation = self._generation
                 # TASK-33620.15.6: decide and reload on one handle (one helper);
                 # None takes the original probe-then-refresh route below.
                 checked = await self._check_recent_batch(
@@ -1194,8 +1207,7 @@ class ConsoleCharacterContextController:
                         self._presentation_scope_at = time.monotonic()
                     return False
                 if checked is None:
-                    expected_generation = self._generation + 1
-                    await self.refresh(_presentation_is_current=owner_is_current)
+                    await self.refresh(_presentation_is_current=owner_is_current, _supersede=False)
                 if (
                     owner_is_current()
                     and self._successful_refresh_generation == expected_generation
@@ -1232,6 +1244,24 @@ class ConsoleCharacterContextController:
             # Keep the yield the skipped worker read gave the sync tick: the
             # tick's synchronous stretch must not grow by the read's absence.
             await asyncio.sleep(0)
+            return False
+        passive_generation = self._generation
+
+        def can_publish() -> bool:
+            return force or (
+                self.state.phase is ConsoleCharacterOperationPhase.IDLE
+                and self._generation == passive_generation
+                and (_presentation_is_current is None or _presentation_is_current())
+            )
+
+        async def refresh_current() -> None:
+            refresh = self.refresh
+            if getattr(refresh, "__func__", None) is _CHARACTER_READER_FUNCTIONS["refresh"]:
+                await refresh(_presentation_is_current=_presentation_is_current, _supersede=force)
+            else:
+                await refresh()
+
+        if not can_publish():
             return False
         started = (
             time.monotonic(),
@@ -1284,29 +1314,23 @@ class ConsoleCharacterContextController:
                     raise probed
                 snapshot = await self._capture_scope()
             except _ConsoleCharacterScopeChanged:
-                self.invalidate_scope()
+                if not can_publish():
+                    return False
+                self.invalidate_scope(_supersede=force)
                 invalidations = self._scope_invalidations
             except _ConsoleCharacterScopeReadError:
-                if (
-                    _presentation_is_current is not None
-                    and _stock_character_presentation(self)
-                ):
-                    await self.refresh(_presentation_is_current=_presentation_is_current)
-                else:
-                    await self.refresh()
+                if not can_publish():
+                    return False
+                await refresh_current()
                 self._mark_checked(started, invalidations)
                 return True
             else:
                 if not force and snapshot.fingerprint == self.state.scope_fingerprint:
                     self._mark_checked(started, invalidations)
                     return False
-        if (
-            _presentation_is_current is not None
-            and _stock_character_presentation(self)
-        ):
-            await self.refresh(_presentation_is_current=_presentation_is_current)
-        else:
-            await self.refresh()
+        if not can_publish():
+            return False
+        await refresh_current()
         self._mark_checked(started, invalidations)
         return True
 
@@ -1544,8 +1568,8 @@ class ConsoleCharacterContextController:
         unchanged check keeps the probe's cost: one on-loop midpoint inside
         the pair, then the ambient scope confirmed on the loop after
         retirement, as ``_capture_scope`` does. Nothing is published until
-        the callback has retired; a reload then advances the generation, as
-        ``_begin`` would, and publishes its result. Every outcome other than
+        the callback has retired; a passive reload publishes without changing
+        the generation of an explicit action. Every outcome other than
         an unchanged scope or a published reload drops the last-successful-
         refresh marker, as ``refresh()`` does on entry on the original route,
         so the idle display memo cannot keep serving a list it never reloaded.
@@ -1693,13 +1717,12 @@ class ConsoleCharacterContextController:
                 # changed; it moved again during the load. The original refresh
                 # retries it and presents a scope that never settles.
                 if _stock_character_presentation(self):
-                    await self.refresh(_presentation_is_current=presentation)
+                    await self.refresh(_presentation_is_current=presentation, _supersede=False)
                 else:
                     await self.refresh()
                 return True
             # Publish as the original batch does after its ``_begin``.
             self._successful_refresh_generation = None
-            self._generation += 1
             generation = self._generation
             if result.load_failed:
                 self._publish(
@@ -1832,7 +1855,8 @@ class ConsoleCharacterContextController:
         )
 
     async def refresh(
-        self, *, _presentation_is_current: Callable[[], bool] | None = None
+        self, *, _presentation_is_current: Callable[[], bool] | None = None,
+        _supersede: bool = True,
     ) -> None:
         """Refresh the bounded projection under one complete scope fence."""
 
@@ -1842,7 +1866,7 @@ class ConsoleCharacterContextController:
         self._successful_refresh_generation = None
         if not presentation_is_current():
             return
-        generation = self._begin(ConsoleCharacterOperationPhase.REFRESHING)
+        generation = self._begin(ConsoleCharacterOperationPhase.REFRESHING, supersede=_supersede)
         readers = _stock_character_refresh_readers(self, _presentation_is_current, generation)
         if readers is not None:
             published = await self._refresh_recent_batch(readers, generation)
@@ -2745,11 +2769,11 @@ _CHARACTER_PRESENTATION_OWNER_CODE = next(
 )
 
 
-def character_presentation_work(controller: Any, screen: Any) -> Awaitable[bool]:
+async def character_presentation_work(controller: Any, screen: Any) -> bool:
     """Use the stock display facade while retaining custom no-argument callers."""
     if type(controller) is _CHARACTER_SCOPE_OWNER:
-        return controller.refresh_presentation_if_scope_changed(screen)
-    return controller.refresh_if_scope_changed()
+        return await controller.refresh_presentation_if_scope_changed(screen)
+    return await controller.refresh_if_scope_changed()
 
 
 def _stock_character_view_resume(controller, screen):
