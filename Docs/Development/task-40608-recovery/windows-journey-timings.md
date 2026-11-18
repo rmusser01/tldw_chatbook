@@ -193,6 +193,7 @@ Batch `q5` started its first clean baseline on Windows 10 at 07:59 UTC on Novemb
 
 | Batch | Pair | README baseline / candidate | Approved edit baseline / candidate | State |
 |---|---|---|---|---|
+| `q9` | 1–3 | Pending | Pending | Started `q91b1` on candidate `72f36054ea`. Configuration SHA-256 `9ee7d9a18ab6bdec4083d192d47a41d7eb2bd2006882f6fc5e2ba4be2e6a84bd`. |
 | `q8` | 1 | 295.3187 s / 25.4222 s | 405.5752 s / 36.0400 s to persisted reply only | Baseline passed. The candidate verified README, then timed out painting the edit reply after all six edit requests. Zero eligible pairs. |
 | `q8` | 2–3 | — / — | — / — | The driver stopped. Frozen candidate `33470fe57d`, configuration SHA-256 `176e09ef967e1c4bbd5d74f2ccf5af15c36f7d40282d9184d9596eef5cde8b35`. |
 | `q7` | 1 | 259.5920 s / 24.0326 s | 386.9812 s / — | Baseline `q71b1` passed both original journeys. On `e761c372a4`, candidate `q71c1` passed the README assertions, then returned from Settings with source revision 2 while the visible projection still held revision 1. The controller getter refused it. The edit never reached Send. |
@@ -709,3 +710,28 @@ The eleven model calls totaled 11.830 s across both journeys, including
 0.313 s in HTTP requests. All five approvals delivered button-region cells
 before the click. The region observer cannot verify the exact painted label.
 Receipts are in `original-journey-33470fmodelg47b/replay-runs/g47d`.
+
+### A replacement design
+
+Give the Console backend sole ownership of its run, permission and persistence
+state. At the end of each finite command, it can publish immutable results for
+the parts of the Console that actually changed. A committed transcript row,
+for example, carries its source, session incarnation, message revision and
+marker revision. Rendering that row should require neither a character database
+read nor a fresh provider-readiness projection. The existing decision-head
+reader already delivers a scoped result independently of those reads.
+
+Publish a terminal row only after the original accepted turn proves physical
+retirement. Keep policy and filesystem checks at Send, approval, access changes
+and tool execution. External edits still require bounded reconciliation for
+config, character, workspace and file state. A closed view or a newer source
+cannot receive an earlier publication. Existing readers of durable state retain
+their ordered commit boundaries.
+
+The g47d model-to-model intervals totaled 28.842 s across both journeys.
+Of that time, 9.153 s was in approval rounds, 5.991 s in local tool calls
+and 5.154 s in the union of foreground step writes and run-log appends.
+The remaining 8.544 s has no assignment in this breakdown. This spread makes
+a rewrite of the HTTP client a poor fit. A replacement should demonstrate both
+fewer native display reads per completed row and fewer admissions per durable
+operation, then meet the original end-to-end gate.

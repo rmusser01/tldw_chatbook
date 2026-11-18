@@ -165,6 +165,8 @@ The third guarded Windows batch used candidate `997b3339ff`. Its baseline passed
 
 The original guarded q8 baseline passed at 295.3187 seconds for README and 405.5752 seconds for edit. Candidate `33470fe57d` verified README at 25.4222 seconds. The edit reply persisted at 36.0400 seconds and then missed the original 600-second painted-row deadline. The driver recorded zero eligible pairs. The [Windows timing tracker](../../Docs/Development/task-40608-recovery/windows-journey-timings.md#clean-windows-pair-attempt-q8) records raw times and receipt hashes. AC5 remains open.
 
+Windows verification covered checked metadata, physical retirement, absent project index and stale source behavior. The targeted g49 run passed 150 of 153 cases. Its three failures came from counting a new SQLite connection's physical lease as part of its enclosing operation. The corrected trace suite and both real Textual tray overlap cases passed in g50 (11 cases). The catalog fingerprint cases passed in g52 (5 cases) using the actual keyword-only permission mutation and the original drained source-fence publication. The older off-loop and uncertain-close permission controls passed in g51. The next three-pair batch, q9, pins `72f36054ea` and the original fixture.
+
 <!-- SECTION:NOTES:END -->
 
 Measured follow-up under the same [ADR-126 bounded configuration-read amendment](../decisions/126-complete-local-backup-and-recovery.md#task-40608--bounded-sensitive-database-path-configuration-reads): qualify the original sensitive container-reader cohort, then group its admissions without changing readers, overrides or refusal checks. The measured 0.218-second component is separate from the unresolved planning delay; final three-pair acceptance remains open.

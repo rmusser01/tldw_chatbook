@@ -121,7 +121,7 @@ async def test_fingerprint_reuses_local_owner_and_retains_actual_read(
                 mutation = controls.dispatch(
                     PermissionAction(
                         ControlIdentity("profile", "service", 2, "mutate"),
-                        SetKillSwitch(True),
+                        SetKillSwitch(value=True),
                     )
                 )
                 await mutation.applied
@@ -152,8 +152,8 @@ async def test_fingerprint_cannot_use_an_old_selected_source(domain_case):
     fence = controls.dispatch(
         FenceSource(ControlIdentity("profile", "service", 1, "fence"), "configuration")
     )
-    await fence.applied
-    assert await fence.retired is True
+    # FenceSource publishes the drained fence itself, as in the wire worker.
+    controls._require_source_publication(await fence.applied)
     entered = []
     with ExitStack() as observed:
         for code in (
