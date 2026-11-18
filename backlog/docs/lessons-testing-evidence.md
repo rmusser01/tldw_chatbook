@@ -6,6 +6,20 @@
 
 **What to do.** After a press whose handler or dismiss callback starts a worker, wait for that work's outcome: a message it posts, the state it writes, or the worker found by group and then awaited. Before filing "X never happens" from such a check, rerun it with a delay injected into the worker; if X happens later, the test raced it.
 
+## A busy startup result can precede its worker's cleanup (TASK-41564, 2026-11-18)
+
+**Incident.** Hosted macOS plugin qualification job 134646901741 returned
+`plugin_owner_busy` again after the test released its real backup lock.
+The startup Future had published that error before the worker's cleanup,
+and retry required the old thread to have died. Moving publication to the
+last statement alone still leaves a live-thread epilogue window.
+
+**What worked.** Capture each attempt's exact Future, publish startup failure
+after cleanup, and allow contention retry once that cleanup has succeeded.
+Keep cleanup errors non-retryable. Two real-lock barriers distinguish the
+complete repair: hold owner cleanup to reject early publication, then hold
+the cleaned-up worker's exit to reject a remaining thread-liveness condition.
+
 ## A passing test's printed timings never reach CI; record them as JUnit properties (TASK-41104, 2026-11-15)
 
 **Incident.** TASK-41104 asked for the plugin restore test's limits to come from "measured CI times of its children". The test printed `child seconds: {...}` after every child, but none of 24 macOS qualification runs kept them. pytest shows a passing test's captured output only with `-rP` or `-s`, and the lane runs `-q -ra`. The uploaded JUnit has no `system-out`, because `junit_logging` is unset. Only the whole test's `--durations` line survived (66-310 s). The test now records each child's wall and CPU seconds with `record_testsuite_property`, which works under the default xunit2 family (`record_property` warns there). The values land in `plugin-qualification.xml` as `<property name="plugin_restore_child_first" value="... s wall, ... s cpu"/>`; a local serial `--junitxml` run showed the property. Under xdist the fixture is a no-op. Those runs also showed where the time goes: at load 77-127, the restore test took 552-646 s of wall time, while its children used 94-96 s of CPU.
@@ -25989,3 +26003,9 @@ opens. A follow-up trace caught layout and control refresh in the same loop
 gap while the activation was already suspended. The exact-source repeat
 passed all 12. Measure the longest loop gap and Return-to-paint separately,
 and keep the first run and repeat beside the instrumented comparison.
+
+## An unlink checkpoint must select a file (TASK-41564, 2026-11-18)
+
+**Incident.** Hosted comprehensive core shard 2 failed `test_remove_target_worktree_real_git_resumes_namespace_checkpoints[admin_content_removed]` because its injected `KeyboardInterrupt` never fired. The fixture selected the first Git administration entry except `gitdir`; that can be the `logs` directory, which cleanup removes with `rmdir`, while the injection watches `unlink`. The unchanged node passed natively. Reordering only the private fixture's `Path.iterdir` directory-first selected real `logs` and reproduced the failure; production filesystem calls stayed unchanged. Selecting existing `HEAD` with a regular-file `lstat` assertion passed that control and all six checkpoints. Hosted entry ordering was not recorded, so the Git version alone does not establish its cause.
+
+**What to do.** Pick a fixture object of the exact kind the injected operation handles. Keep filesystem enumeration order out of the fault target, and exercise the alternate ordering before blaming platform cleanup.
