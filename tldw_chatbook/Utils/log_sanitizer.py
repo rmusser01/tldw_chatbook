@@ -571,20 +571,23 @@ CREDENTIAL_VALUE_PATTERNS = (
 )
 
 
-#: A label: a word, ``api key``, or a compound name (TASK-41133), after any
+#: A label: a word, ``api key`` (after any dotted name: ``self.API key``,
+#: review r16tr-rev2), or a compound name (TASK-41133), after any
 #: leading hyphens (``--client-secret=``, TASK-41510). It may follow a ``.``
-#: that does not end a name (``users[0].password``, ``$.token``; review
-#: r16tr-rev1); ``db.password`` is one label. Labels may repeat separators
-#: (pydantic's ``APP__X``) and may be quoted, or escape-quoted inside a JSON
-#: string (``\"client_secret\":``). ``==`` is a comparison, never a separator
+#: that does not end a name (``users[0].password``, ``$.token``,
+#: ``...password``; reviews r16tr-rev1, rev2); ``db.password`` is one label.
+#: Labels may repeat separators (pydantic's ``APP__X``) and may be quoted, or
+#: escape-quoted inside a JSON string (``\"client_secret\":``). Any
+#: non-line-break whitespace may surround the separator (NBSP, ideographic
+#: space; review r16tr-rev2). ``==`` is a comparison, never a separator
 #: (review r15tr-rev8).
 _LABEL = re.compile(
     r"""
-    (?<![A-Za-z0-9_-])(?<![A-Za-z0-9_.-]\.)
+    (?<![A-Za-z0-9_-])(?<![A-Za-z0-9_-]\.)
     (?:\\?(?P<label_quote>["']))?
-    (?P<label>(?i:api[ ]key)|-*[A-Za-z0-9]+(?:[_.-]+[A-Za-z0-9]+)*)
+    (?P<label>(?i:(?:[A-Za-z0-9_]+[.-])*api[ ]key)|-*[A-Za-z0-9]+(?:[_.-]+[A-Za-z0-9]+)*)
     (?(label_quote)\\?(?P=label_quote))
-    [ \t]*(?::|=(?!=))[ \t]*
+    [^\S\r\n]*(?::|=(?!=))[^\S\r\n]*
     """,
     re.VERBOSE,
 )
@@ -640,18 +643,24 @@ _CODE_VALUE_END = re.compile(r"""[\s,;&)\]}"']|\.(?:\s|$)|$""")
 _YAML_BLOCK = re.compile(r"[|>][-+]?[ \t]*(?:\r\n|\r|\n)")
 #: The value below a label that ends its line, past blank lines and
 #: indentation (``password:\n  hunter2``, ``password =\nhunter2``): not a
-#: nested ``name:`` or ``"name":``, a list item or a comment.
+#: nested ``name:``, ``"name":`` or ``NAME=`` field (an empty ``KEY=`` before
+#: another), a ``- `` list item or a ``# `` comment (``-hunter2`` and
+#: ``#hunter2`` are values; review r16tr-rev2).
 _VALUE_BELOW = re.compile(
     r"""(?:\r\n|\r|\n)(?:[ \t]*+(?:\r\n|\r|\n))*+[ \t]*+"""
-    r"""(?![\s#-]|[A-Za-z0-9_.-]+[ \t]*:(?:\s|\Z)|(?P<q>["'])[^"'\r\n]*(?P=q)[ \t]*:)"""
+    r"""(?!\s|[-#](?=\s|\Z)|[A-Za-z0-9_.-]+[^\S\r\n]*(?::(?:\s|\Z)|=(?!=))"""
+    r"""|(?P<q>["'])[^"'\r\n]*(?P=q)[^\S\r\n]*:)"""
 )
-#: What may precede a YAML key on its line: indentation and one ``- ``.
-_KEY_PREFIX = re.compile(r"[ \t]*(?:-[ \t]+)?")
-#: A line that opens a code block whose body follows (``if token:``,
-#: ``class Password:``). A list item is not one: ``1. Password:\n   hunter2``
-#: is a value (coordinator ruling, review r16tr-rev1).
-_BLOCK_OPENER = re.compile(
-    r"[ \t]*(?:if|elif|else|while|for|with|match|case|class|def|async|try|except|finally)\b"
+#: The start of a code header whose subject is the label after it, matched
+#: up to the label (``if token:``, ``if not password:``, ``class Password:``,
+#: ``with open(p) as token:``, ``for x in token:``, ``except KeyError as
+#: secret:``). Prose that starts with the same word (``try this password:``,
+#: ``for prod the password:``) and a list item (``1. Password:``) are not
+#: (reviews r16tr-rev1, rev2; coordinator rulings).
+_CODE_HEADER = re.compile(
+    r"[ \t]*(?:(?:el)?if|while|match|case|class|def|async[ \t]+(?:for|with)|for|with|except)"
+    r"[ \t]+(?:not[ \t]+)?"
+    r"(?:[A-Za-z_][\w.]*(?:\([^()\r\n]*\))?[ \t]+(?:in|as|is|and|or|==|!=)[ \t]+(?:not[ \t]+)?)?"
 )
 _INDENTED_LINES = re.compile(r"(?:[ \t]+[^\r\n]*(?:\r\n|\r|\n|$))+")
 #: Longer values are masked whole, never examined (review r15tr-rev3).
@@ -1159,21 +1168,22 @@ def _owns_value_below(text: str, label: re.Match) -> bool:
     """Whether the value below a label that ends its line is the label's.
 
     After ``=`` it always is (``const password =\n  "..."``). After ``:`` it
-    is for a YAML key (only indentation or ``- `` before the label), for
-    prose (``my password:\nhunter2``) and for a list item (``1. Password:\n
-    hunter2``), not when the label's line opens a code block (``if token:\n
-    return token``). Reads the label's line back to its start, once per
-    line.
+    is, for a YAML key, prose (``my password:\nhunter2``) and a list item
+    (``1. Password:\n   hunter2``), unless the label is the subject of a code
+    header (``if token:\n    return token``; ``_CODE_HEADER``). It reads at
+    most ``_MAX_EXAMINED_VALUE`` characters back for the line's start (an
+    unbounded ``rfind`` was quadratic on CR-only text, review r16tr-rev2); a
+    label further than that from its line's start owns the value below.
     """
     if label.group().rstrip().endswith("="):
         return True
     start = label.start()
-    newline = text.rfind("\n", 0, start)
-    line_start = max(newline, text.rfind("\r", newline + 1, start)) + 1
-    return (
-        _KEY_PREFIX.match(text, line_start).end() == start
-        or _BLOCK_OPENER.match(text, line_start, start) is None
-    )
+    window = max(0, start - _MAX_EXAMINED_VALUE)
+    newline = text.rfind("\n", window, start)
+    line_break = max(newline, text.rfind("\r", max(newline + 1, window), start))
+    if line_break < 0 and window:
+        return True
+    return _CODE_HEADER.fullmatch(text, line_break + 1, start) is None
 
 
 def mask_credential_labels(text: str, marker: str = REDACTION_MARKER) -> str:

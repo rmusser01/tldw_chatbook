@@ -433,10 +433,11 @@ def test_export_masks_credentials_in_message_content_and_the_title(
     }
     # A tool call whose arguments and result hold secrets, and one with none.
     anchor = next(iter(ids))
-    secrets = ("hunter2x", "DONOTUSE" + "abc123def456", "Xk9mP2vL7wQ8" + "abc123")
+    secrets = ("hunter2x", "DONOTUSE" + "abc123def456", "Xk9mP2vL7wQ8" + "abc123", "Zq7wN3rT8yU2" + "abc")
     tool_payload = json.dumps(
         {"name": "fs_read", "args": {"note": "pass" + "word=" + secrets[0]}, "result": "tok" + "en=" + secrets[1]}
     )
+    array_payload = json.dumps(["tok" + "en=" + secrets[3], 1])
     db.upsert_trajectory_rows(
         [
             TrajectoryRowWrite(
@@ -446,6 +447,11 @@ def test_export_masks_credentials_in_message_content_and_the_title(
             TrajectoryRowWrite(
                 message_id=anchor, conversation_id=conv, turn_id="t1", seq=2,
                 event_kind="tool_result", payload_json=_TOOL_PAYLOAD,
+            ),
+            # review r16tr-rev2: a JSON array payload stays JSON when masked
+            TrajectoryRowWrite(
+                message_id=anchor, conversation_id=conv, turn_id="t1", seq=3,
+                event_kind="tool_result", payload_json=array_payload,
             ),
         ]
     )
@@ -493,6 +499,7 @@ def test_export_masks_credentials_in_message_content_and_the_title(
     json.loads(tool_rows[1])  # still JSON
     if include_payloads:
         assert tool_rows[2] == _TOOL_PAYLOAD  # nothing to mask: as written
+        assert json.loads(tool_rows[3]) == ["tok" + "en=[credential redacted]", 1]
     assert payload["variants"][0]["variants"][0] == "kept reply"
     assert payload["compaction_records"][0]["failure_reason"] == "API key: [credential redacted]"
 

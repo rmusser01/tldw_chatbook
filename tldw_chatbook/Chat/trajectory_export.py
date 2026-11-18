@@ -423,15 +423,16 @@ def _mask_credential_material(value: Any, *, structural_keys: bool = False) -> t
     return value, False
 
 
-def _json_object(value: Any) -> Any:
-    """``value`` parsed when it is JSON text holding an object, else as is."""
+def _parsed_json(value: Any) -> Any:
+    """``value`` parsed when it is JSON text holding an object or an array,
+    else as is, so masking keeps it JSON (review r16tr-rev2)."""
     if not isinstance(value, str):
         return value
     try:
         parsed = json.loads(value)
     except (ValueError, RecursionError):
         return value
-    return parsed if isinstance(parsed, dict) else value
+    return parsed if isinstance(parsed, (dict, list)) else value
 
 
 def _masked(value: Any) -> Any:
@@ -1421,15 +1422,15 @@ def build_trajectory_export(
     if variant_sets:
         payload["variants"] = [_serialize_variant_set(vs) for vs in variant_sets]
     # TASK-41603: the finished payload is masked as a Trace v2 bundle is
-    # (review r16tr-rev1). A tool payload's JSON object is masked as v2 masks
-    # a payload, and stays as written when nothing in it is masked.
+    # (review r16tr-rev1). A tool payload's JSON object or array is masked as
+    # v2 masks a payload, and stays as written when nothing in it is masked.
     written = [row["payload_json"] for row in rows_out]
-    parsed = [_json_object(value) for value in written]
+    parsed = [_parsed_json(value) for value in written]
     for row, value in zip(rows_out, parsed, strict=True):
         row["payload_json"] = value
     masked = _mask_credential_material(payload)[0]
     for row, before, original in zip(masked["trajectory_rows"], parsed, written, strict=True):
-        if isinstance(row["payload_json"], dict):
+        if isinstance(row["payload_json"], (dict, list)):
             row["payload_json"] = (
                 original
                 if row["payload_json"] == before

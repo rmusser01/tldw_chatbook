@@ -4,7 +4,7 @@ title: "A deeply nested v2 trace bundle crashes Import with an uncaught Recursio
 status: Done
 assignee:
 - '@claude'
-updated_date: 2026-11-18 04:04
+updated_date: 2026-11-18 04:45
 created_date: 2026-11-18 04:00
 labels:
 - follow-up
@@ -45,3 +45,5 @@ A file nested past what validation can walk now fails Import with a named error.
 - **Test.** `Tests/Chat/test_trace_v2_collaboration.py::test_a_deeply_nested_file_fails_import_with_a_named_error`: a resigned v2 bundle whose first event payload is nested `sys.getrecursionlimit() + 500` levels (built through JSON text, so no recursive helper touches it), and a v1 file whose `format` is nested as deep. Red before the fix: 2 failed with `RecursionError: maximum recursion depth exceeded`; green after. The probe now gives the named error at 1400 and 3000.
 - **Lane.** The node joins the recovered-suites step with the round's other Trace nodes (5.4 s for the three nodes' 17 cases serially under `--storage-lease-guard`, load 29-31).
 - Files: `tldw_chatbook/Chat/trajectory_import.py`, `Tests/Chat/test_trace_v2_collaboration.py`.
+
+**Review r16tr-rev2 (fix round 2), Minor 4.** A deep v1 unknown field or tool payload still read `... could not be mapped ... (RecursionError ...)`: `_v1_snapshot`'s mapping boundary caught it as `Exception`. It now re-raises `RecursionError`, so `load_imported_trace` names it "nested too deeply" like the other shapes. The test gains `v1-unknown-field` and `v1-tool-payload`. Both failed with 7f03daa295's import (the mapping message) and pass now. (`_json_object` is now `_parsed_json`, TASK-41603.)

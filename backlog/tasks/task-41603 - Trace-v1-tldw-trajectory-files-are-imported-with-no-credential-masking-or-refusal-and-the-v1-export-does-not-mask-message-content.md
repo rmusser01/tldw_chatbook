@@ -4,7 +4,7 @@ title: "Trace v1 (tldw-trajectory) files are imported with no credential masking
 status: Done
 assignee:
 - '@claude'
-updated_date: 2026-11-18 04:03
+updated_date: 2026-11-18 04:45
 created_date: 2026-11-17 19:44
 labels:
 - follow-up
@@ -74,3 +74,5 @@ A v1 (`tldw-trajectory`) import is masked by the rules a v2 import re-masks with
 - **Docs.** `Docs/Features/Trajectory-View.md` no longer says credential-bearing bundles fail closed: they import masked (TASK-41133), v1 files are masked as they load, a quoted error value is masked and plain text, and the v1 export masks its whole payload.
 - **Lane.** The export node joins the recovered-suites step (`derived-artifacts.yml`, `RECOVERED_SUITES_TARGETS`) in the round's lane commit.
 - **Runs** (load 26-35, `-n 4`): the covering set (trace and trajectory Chat files, `test_log_sanitizer.py`, the other v1 callers, trace UI, Docs, CI workflow contracts): 1347 passed, 2 failed with the `RecoveryRequired` trap (the same 2 as round 1, red with base sources).
+
+**Review r16tr-rev2 (fix round 2), Minor 5.** A JSON-array `payload_json` was masked as text, so `["token=...", 1]` came out invalid JSON with `include_payloads=True`. `_json_object` is now `_parsed_json`: it parses an object or an array; the export re-dumps either only when masking changed it. The export test adds an array payload (`[payloads]` asserts it loads as `["token=[credential redacted]", 1]`). Red with 7f03daa295's export and import: `JSONDecodeError: Unterminated string`. Green after.

@@ -43,9 +43,9 @@ from tldw_chatbook.Chat.trajectory_export import (
     TRACE_EXPORT_VERSION,
     TraceExportProfile,
     TrajectoryExportError,
-    _json_object,
     _mask_credential_material,
     _masked,
+    _parsed_json,
     _trace_digest,
     validate_trajectory_export,
 )
@@ -154,7 +154,7 @@ def _v1_snapshot(document: Mapping, path: Path | None) -> TrajectorySnapshot:
         # with (owner decision 2026-11-17, "Re-mask on import"): messages,
         # title, and tool payloads, a payload's JSON object as v2 masks one.
         payload["trajectory_rows"] = [
-            {**row, "payload_json": _json_object(row.get("payload_json"))}
+            {**row, "payload_json": _parsed_json(row.get("payload_json"))}
             for row in payload["trajectory_rows"]
         ]
         payload = _mask_credential_material(payload)[0]
@@ -171,6 +171,8 @@ def _v1_snapshot(document: Mapping, path: Path | None) -> TrajectorySnapshot:
             payload["compaction_records"],
             payload.get("active_leaf_message_id"),
         )
+    except RecursionError:
+        raise  # load_imported_trace names it "nested too deeply" (TASK-41701)
     except Exception as exc:  # noqa: BLE001 - mapping boundary; name the file
         where = f"'{path}'" if path is not None else "trace document"
         raise TrajectoryImportError(

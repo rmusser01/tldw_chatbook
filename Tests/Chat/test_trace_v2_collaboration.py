@@ -1000,6 +1000,44 @@ _MUST_MASK: dict[str, tuple[str, str]] = {
     "list-dash-prose": ("- Your pass" + "word:\n  hunter2xyz", "hunter2xyz"),
     "list-star": ("* API " + "key:\n  " + _P8 + "abc", _P8 + "abc"),
     "list-plus": ("+ tok" + "en:\n    " + _P8, _P8),
+    # review r16tr-rev2 Critical 1: prose that starts with a code keyword
+    **{
+        f"prose-{name}": (text, "hunter2xyz")
+        for name, text in (
+            ("try", "try this pass" + "word:\nhunter2xyz"),
+            ("for", "for prod the pass" + "word:\nhunter2xyz"),
+            ("for-indented", "for staging use this tok" + "en:\n  hunter2xyz"),
+            ("with", "with admin rights the pass" + "word:\nhunter2xyz"),
+            ("if-comma", "if you need it, pass" + "word:\n    hunter2xyz"),
+            ("if-asked", "if asked, the pass" + "word:\nhunter2xyz"),
+            ("else", "else use this pass" + "word:\nhunter2xyz"),
+            ("case-hyphen", "case-sensitive pass" + "word:\nhunter2xyz"),
+            ("while", "while waiting, the pass" + "word:\nhunter2xyz"),
+            ("def", "def the pass" + "word:\nhunter2xyz"),
+            ("async", "async tok" + "en:\nhunter2xyz"),
+        )
+    },
+    # Critical 2: Unicode whitespace around the separator
+    **{
+        f"space-{name}": (text, "hunter2xyz")
+        for name, text in (
+            ("nbsp-colon", "Pass" + "word:\u00a0hunter2xyz"),
+            ("nbsp-equals", "pass" + "word\u00a0=\u00a0hunter2xyz"),
+            ("ideographic", "tok" + "en:\u3000hunter2xyz"),
+            ("form-feed", "pass" + "word:\x0chunter2xyz"),
+            ("vertical-tab", "pass" + "word:\x0bhunter2xyz"),
+            ("narrow-nbsp", "pass" + "word:\u202fhunter2xyz"),
+            ("next-line-char", "pass" + "word:\x85hunter2xyz"),
+        )
+    },
+    # Minor 2: a value below that starts with "-" or "#" (no space after)
+    "below-dash-value": ("pass" + "word:\n  -hunter2xyz", "hunter2xyz"),
+    "below-hash-value": ("pass" + "word:\n#hunter2xyz", "hunter2xyz"),
+    # Minor 3: an ellipsis before the label
+    "after-ellipsis": ("...pass" + "word: hunter2xyz", "hunter2xyz"),
+    "after-spaced-ellipsis": (" ...tok" + "en=hunter2xyz", "hunter2xyz"),
+    # the probe's "self.API key=" (base's \bapi matched after the dot)
+    "dotted-api-key": ("cfg.API " + "key: " + _P8 + "abc", _P8 + "abc"),
     # ...and a URL's ?key= value is masked whatever its shape, as logs mask it.
     "url-key-placeholder": (
         "https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&callback=init",
@@ -1270,6 +1308,30 @@ def test_a_masked_label_value_keeps_its_closing_bracket_and_full_stop(
     assert trajectory_export._credential_text(text) == (expected, True)
 
 
+#: Lines below a label that ends its line and are not its value: the body
+#: of a code header whose subject is the label, a nested quoted key, the
+#: next field after an empty ``KEY=``, a YAML list item and a comment.
+_KEPT_BELOW = {
+    "block-if": "if tok" + "en:\n    return token",
+    "block-if-not": "if not pass" + 'word:\n    raise ValueError("missing")',
+    "block-class": "class Pass" + "word:\n    def __init__(self):",
+    "block-match": "match sec" + 'ret:\n    case "a": pass',
+    "nested-quoted-key": "sec" + 'ret:\n  "name": x',
+    # review r16tr-rev2: the code headers that keep the body below
+    "header-if-attribute": "if self.tok" + "en:\n    return self.token",
+    "header-elif": "elif pass" + "word:\n    pass",
+    "header-with-as": "with open(p) as tok" + "en:\n    return token.read()",
+    "header-for-in": "for x in tok" + "en:\n    yield x",
+    "header-except-as": "except KeyError as sec" + "ret:\n    raise",
+    # Minor 1: an empty KEY= before another field
+    "empty-key-chain": "OPENAI_API" + "_KEY=\nANTHROPIC_API" + "_KEY=\nMODEL=gpt-4o",
+    "empty-password-then-host": "DB_PASS" + "WORD=\nDB_HOST=localhost",
+    # Minor 2: a YAML list item and a comment
+    "list-items-below": "tok" + "en:\n  - first\n  - second",
+    "comment-below": "pass" + "word:\n# set it in the vault",
+}
+
+
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
@@ -1295,19 +1357,13 @@ def test_a_masked_label_value_keeps_its_closing_bracket_and_full_stop(
             "user" + "name: bob\npass" + "word:\n\n  hunter2xyz\nhost: db",
             "user" + "name: bob\npass" + "word:\n\n  [credential redacted]\nhost: db",
         ),
-        # Review r16tr-rev1 Minor 3: a code block a label line opens, or a
-        # nested quoted key, is not the label's value. Each is kept and the
-        # field after it is masked. (Not _MUST_KEEP rows: a preview joins the
-        # lines, and on one line the code is masked as before.)
+        # Reviews r16tr-rev1 Minor 3, rev2: lines below a label that are not
+        # its value (_KEPT_BELOW). Each is kept and the field after it is
+        # masked. (Not _MUST_KEEP rows: a preview joins the lines, and on one
+        # line the code is masked as before.)
         *(
             (shape + "\ntok" + "en: " + _P8, shape + "\ntok" + "en: [credential redacted]")
-            for shape in (
-                "if tok" + "en:\n    return token",
-                "if not pass" + 'word:\n    raise ValueError("missing")',
-                "class Pass" + "word:\n    def __init__(self):",
-                "match sec" + 'ret:\n    case "a": pass',
-                "sec" + 'ret:\n  "name": x',
-            )
+            for shape in _KEPT_BELOW.values()
         ),
         # A list item is not a code block: the line below is judged as the
         # label's value (coordinator ruling, review r16tr-rev1). "Go" starts
@@ -1324,11 +1380,7 @@ def test_a_masked_label_value_keeps_its_closing_bracket_and_full_stop(
         "comma-field",
         "value-below",
         "value-after-blank",
-        "block-if",
-        "block-if-not",
-        "block-class",
-        "block-match",
-        "nested-quoted-key",
+        *_KEPT_BELOW,
         "list-item-first-word",
     ),
 )
@@ -1477,6 +1529,9 @@ _ADVERSARIAL_TEXTS = {
     # review r16tr-rev1: one label per line, 150k lines (0.93 s; 5.6 s for
     # the labels alone at 200k when each line end searched to the text's end).
     "many-label-lines": ("tok" + "en: x9\n") * 150_000,
+    # review r16tr-rev2: CR-only lines whose value sits below the label (19.7 s
+    # at 80k lines when each looked back for an LF to the start of the text).
+    "cr-only-value-below": ("pass" + "word:\r  hunter2x\r") * 80_000,
     "chained-simple-credential-labels-spaced": ("tok" + "en= ") * 30_000,
     "api-words": "api " * 50_000 + "key",
 }
@@ -1508,8 +1563,10 @@ def test_escape_quoted_values_scan_in_linear_time() -> None:
         ("db" + "_password=a b c ", "db" + "_password=abc "),
         # review r16tr-rev1: a label on each line costs what one line of them does
         ("tok" + "en: x9\n", "tok" + "en: x9 "),
+        # review r16tr-rev2: and so does a value below it on CR-only lines
+        ("pass" + "word:\r  x9\r", "pass" + "word: x9 "),
     ],
-    ids=("function-word-chain", "passphrase-chain", "label-lines"),
+    ids=("function-word-chain", "passphrase-chain", "label-lines", "cr-value-below"),
 )
 def test_runs_after_a_value_scan_in_linear_time(unit: str, plain_unit: str) -> None:
     """Review r15tr-rev6: each function word looked up to 2 KB ahead for a
@@ -2331,17 +2388,46 @@ def _deeply_nested_v2_bundle(depth: int) -> dict:
     return json.loads(json.dumps(payload).replace('"@@"', nested))
 
 
-@pytest.mark.parametrize("shape", ["v2-event-payload", "v1-format"])
+@pytest.mark.parametrize(
+    "shape", ["v2-event-payload", "v1-format", "v1-unknown-field", "v1-tool-payload"]
+)
 def test_a_deeply_nested_file_fails_import_with_a_named_error(shape: str) -> None:
     """TASK-41701: a file nested past the recursion limit where validation
-    reaches (a v2 event's payload; a v1 file's ``format``, which the error
-    quotes) fails with a named ``TrajectoryImportError``. A ``RecursionError``
-    escaped ``except TrajectoryImportError`` in the Trace screen's Import."""
+    or masking reaches (a v2 event's payload; a v1 file's ``format``, which
+    the error quotes, an unknown field or a tool payload) fails with one named
+    ``TrajectoryImportError``. A ``RecursionError`` escaped ``except
+    TrajectoryImportError`` in the Trace screen's Import, and on v1 masking
+    it read as a mapping failure (review r16tr-rev2)."""
     depth = sys.getrecursionlimit() + 500
+    nested = "[" * depth + "]" * depth
+    v1 = {
+        "format": "tldw-trajectory",
+        "version": 1,
+        "exported_at": FIXED_EXPORTED_AT,
+        "redacted": False,
+        "conversation": {"id": "c"},
+        "messages": [
+            {
+                "id": "m",
+                "sender": "assistant",
+                "content": "done",
+                "timestamp": "2026-08-14T12:00:00",
+                "parent_message_id": None,
+                "usage_json": None,
+            }
+        ],
+        "trajectory_rows": [],
+    }
     if shape == "v2-event-payload":
         document = _deeply_nested_v2_bundle(depth)
+    elif shape == "v1-format":
+        document = json.loads('{"format": ' + nested + "}")
+    elif shape == "v1-unknown-field":
+        document = json.loads(json.dumps({**v1, "deep": "@@"}).replace('"@@"', nested))
     else:
-        document = json.loads('{"format": ' + "[" * depth + "]" * depth + "}")
+        row = {"message_id": "m", "conversation_id": "c", "turn_id": "t", "seq": 1}
+        row |= {"event_kind": "tool_result", "payload_json": '{"r": ' + nested + "}"}
+        document = {**v1, "trajectory_rows": [row]}
 
     with pytest.raises(trajectory_import.TrajectoryImportError, match="nested too deeply"):
         trajectory_import.load_imported_trace(document)
