@@ -1632,7 +1632,7 @@ class TldwCli(
         self._notes_sync_runtime_start_task: asyncio.Task[None] | None = None
         self._notes_sync_runtime_lazy_start_task: asyncio.Task[None] | None = None
         self._notes_sync_runtime_shutdown_task: asyncio.Task[None] | None = None
-        self._recover_inflight_transfers_task: asyncio.Task[None] | None = None
+        self._scheduling_local_ready: asyncio.Event | None = None
         # Kanban trio (server/local/scope) is built lazily on first access
         # (TASK-21239): zero in-app consumers, and building it drags the
         # 76-model `tldw_api.kanban_schemas` import chain (TASK-21107), so
@@ -3606,35 +3606,15 @@ class TldwCli(
         from tldw_chatbook.Backup_Recovery.activation import execution_allowed
 
         if execution_allowed(("db.scheduled_tasks",), self.scheduler_loop.db.db_path):
-            # Stale-run reconciliation (spec §4.1): an app killed mid-run must
-            # not leave a phantom `running`/`queued` automation_runs row in the
-            # UI forever. Cutoff is generous on purpose -- longer than any run
-            # this process itself would let live (handler timeout) plus two
-            # poll intervals of scheduling slack -- so a run still genuinely
-            # in flight is never reconciled out from under itself. Guarded:
-            # a diagnostics-adjacent startup step must never block the
-            # scheduler from starting.
-            try:
-                self.scheduling_service.db.reconcile_stale_automation_runs(
+            local_ready = self._scheduling_local_ready = asyncio.Event()
+            # The cutoff includes scheduling slack for still-live runs.
+            self._create_deferred_startup_task(
+                self.scheduling_service.recover_startup(
                     older_than_seconds=HANDLER_TIMEOUT_SECONDS
-                    + 2 * SCHEDULER_POLL_INTERVAL_SECONDS
-                )
-            except Exception:
-                self.loguru_logger.exception(
-                    "Failed to reconcile stale automation runs at startup"
-                )
-
-            # Transfer-machine startup recovery (spec §6.1.3): a row stuck
-            # `to_server_sent` across a crash/restart is the one case
-            # SyncEngine's own push replay deliberately refuses to touch --
-            # this is its only recovery path. Fire-and-forget: on_mount is not
-            # async, and `recover_inflight_transfers` itself never raises
-            # (each sub-step is independently exception-guarded, same
-            # "must never block the scheduler from starting" discipline as
-            # the stale-run reconciliation just above).
-            self._recover_inflight_transfers_task = asyncio.create_task(
-                self.scheduling_service.recover_inflight_transfers(),
-                name="recover_inflight_transfers",
+                    + 2 * SCHEDULER_POLL_INTERVAL_SECONDS,
+                    local_ready=local_ready,
+                ),
+                name="recover_scheduling_startup",
             )
 
         # TASK-22215: the two FTS backfills (task-688 subscription_items,
@@ -4589,7 +4569,7 @@ class TldwCli(
 
         if execution_allowed(("db.scheduled_tasks",), self.scheduler_loop.db.db_path):
             self.scheduler_worker = self.run_worker(
-                self.scheduler_loop.run(),
+                self._run_scheduler_after_local_recovery(),
                 exclusive=True,
                 group="scheduling",
             )
@@ -4608,6 +4588,13 @@ class TldwCli(
         from .Backup_Recovery.profile_open import acknowledge_mounted
 
         self.call_after_refresh(acknowledge_mounted, self)
+
+    async def _run_scheduler_after_local_recovery(self) -> None:
+        """Load the scheduler queue after local startup recovery settles."""
+        if self._scheduling_local_ready is not None:
+            await self._scheduling_local_ready.wait()
+        if not (self._shutting_down or self._exit):
+            await self.scheduler_loop.run()
 
     async def update_db_sizes(self) -> None:
         """Updates the database size information in the shell status line."""
