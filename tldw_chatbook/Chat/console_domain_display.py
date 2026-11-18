@@ -330,6 +330,48 @@ class ConsoleDomainDisplayOwner:
             ):
                 raise ConsoleDisplayPhaseRefused("Character defining accessor changed")
 
+    def apply_configuration_publication(self, publication) -> None:
+        """Advance this same idle owner only at the original drained Apply."""
+        from .console_control_dispatch import _display_control_sources_current
+        from .console_control_publication import ConsoleConfigurationPublication
+
+        self.require_current()
+        service = self.runtime._execution_service
+        controls = service._local_controls
+        if (
+            type(publication) is not ConsoleConfigurationPublication
+            or service.domain_services is not self.domain
+            or service._display_owner is not self
+            or controls is None
+            or controls._domain is not self.domain
+            or not _display_control_sources_current(controls)
+            or publication.previous_sources is not self.sources
+        ):
+            raise ConsoleDisplayPhaseRefused("Display publication owner changed")
+        controls._require_graph()  # The original loop and thread own this Apply.
+        controls._require_publication(publication)
+        self.require_character_sources(self.character)
+        if (
+            self._full is not None
+            or self._full_tasks
+            or self._preparation_reads
+            or self.character._preparation_reads
+            or self.context.task is not None
+            or self.context.pending_key is not None
+            or self.context.lock.locked()
+            or self.appearance.refresh_for is not None
+            or self.appearance._preparation_reads
+        ):
+            raise ConsoleDisplayPhaseRefused("Display publication still owns work")
+        # The original drained fence above requires positive finite retirement;
+        # an uncertain FULL keeps its effect and cannot reach this transition.
+        # The caller has checked every non-configuration source identity and
+        # assigns the same successor to the domain immediately, without await.
+        self.sources = publication.sources
+        self._character_reuse_checkpoint = None
+        self.context.key = self.context.value = None
+        self.context.at = 0.0
+
     def active_session(self) -> ConsoleChatSession | None:
         self.require_current()
         return next(

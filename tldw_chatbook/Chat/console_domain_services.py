@@ -329,6 +329,14 @@ class ConsoleDomainServices:
             for field in fields(ConsoleDomainSources)
         ):
             raise RecoveryRequired("console_snapshot_owner_changed")
+        display = controls._service._display_owner
+        if display is not None:
+            from .console_domain_display import ConsoleDomainDisplayOwner, _require_definitions
+
+            if type(display) is not ConsoleDomainDisplayOwner or display.domain is not self:
+                raise RecoveryRequired("console_snapshot_owner_changed")
+            _require_definitions(display)
+            display.apply_configuration_publication(publication)
         self.sources = successor
         self._construction_sources = successor
         return successor

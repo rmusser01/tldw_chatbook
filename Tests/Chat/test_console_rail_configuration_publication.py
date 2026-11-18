@@ -178,7 +178,9 @@ def _rail_comparison_note(backend, publication):
 
 @private_profile_test
 @pytest.mark.asyncio
-@pytest.mark.parametrize("outcome", ["accepted", "partial", "extra", "persisted_marker", "refresh_failure"])
+@pytest.mark.parametrize("outcome", [
+    "accepted", "accepted_unmounted", "partial", "extra", "persisted_marker", "refresh_failure",
+])
 async def test_exact_rail_publication_reassociates_only_after_retired_refresh(request, outcome):
     import inspect
     from contextlib import nullcontext
@@ -192,6 +194,9 @@ async def test_exact_rail_publication_reassociates_only_after_retired_refresh(re
     from tldw_chatbook.Chat.console_execution_profile import open_console_backend_profile
     from tldw_chatbook.Chat.console_execution_protocol import ConsoleWireMessage, WireIdentity
     from tldw_chatbook.Chat.console_execution_worker import _BackendService
+    from tldw_chatbook.Chat.console_domain_display import ConsoleDisplayFull
+    from tldw_chatbook.Chat.console_display_phases import ConsoleDisplayPhaseRefused
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
     from tldw_chatbook.Chat.console_rail_state import (
         build_console_rail_preference_key, serialize_console_rail_stored_preferences,
     )
@@ -209,10 +214,14 @@ async def test_exact_rail_publication_reassociates_only_after_retired_refresh(re
     key = build_console_rail_preference_key(layout_scope="global").value
     value = serialize_console_rail_stored_preferences({"workspace_open": True})
     original_cleanup = profile._cleanup
+    sequence_offset = 0
+    full_reads = []
+    accepted = outcome in {"accepted", "accepted_unmounted"}
 
     def command(sequence, operation, payload, revision=0):
         return ConsoleWireMessage(
-            WireIdentity("rail-profile", "rail-service", sequence, f"rail-{sequence}", source_revision=revision),
+            WireIdentity("rail-profile", "rail-service", sequence + sequence_offset,
+                         f"rail-{sequence}", source_revision=revision),
             "command", operation, payload,
         )
 
@@ -222,9 +231,40 @@ async def test_exact_rail_publication_reassociates_only_after_retired_refresh(re
     def fail_reload(_frame):
         raise RuntimeError("Original configuration publication failed")
 
+    async def visible_projection(action):
+        sequence = backend._sequence + 1
+        receipt = backend.dispatch(ConsoleWireMessage(
+            WireIdentity(
+                "rail-profile", "rail-service", sequence, f"rail-view-{sequence}",
+                session.id, session.incarnation_id, backend.controls.source_revision,
+            ),
+            "command", "ReadProjection",
+            {"view_checkpoint": {"attachment_id": "rail-view", "visit": 1, "action": action}},
+        ))
+        try:
+            with _observe(ConsoleDisplayFull.run.__code__, sys.monitoring.events.PY_START,
+                          lambda frame: full_reads.append(frame.f_locals["self"])):
+                return await asyncio.shield(receipt.applied)
+        finally:
+            assert await asyncio.shield(receipt.retired) is True
+
     try:
         backend.start()
         service = _BackendService(backend, channel)
+        display = backend.runtime._execution_service.prepare_display_owner()
+        producers = display.character, display.context, display.appearance
+        assert display._graph_bound  # Original open_local_controls binds before any FULL.
+        if outcome == "accepted":
+            session = backend.store.create_session(
+                title="Rail source transition", assistant_kind="generic",
+                settings=ConsoleSessionSettings(provider="openai", model=None, source="user"),
+            )
+            await visible_projection("mount")
+            assert len(full_reads) == 1
+            original_full = full_reads[0]
+            assert original_full.effect.completed.result() is True
+            assert original_full.physically_retired
+            sequence_offset = backend._sequence
         await service.accept(command(1, "FenceSource", {
             "source": "configuration", "rail_update": {"key": key, "value": value},
         }))
@@ -269,7 +309,7 @@ async def test_exact_rail_publication_reassociates_only_after_retired_refresh(re
                 assert publication.selection_cache["_first_run"] is True
                 with pytest.raises(RuntimeError, match="another change"):
                     backend._require_rail_publication(publication)
-            if outcome == "accepted":
+            if accepted:
                 # The original normalizer publishes separate Console and raw
                 # mirror tables. Exact requested values belong in both; an
                 # incomplete mirror or any unrelated key still must refuse.
@@ -297,10 +337,34 @@ async def test_exact_rail_publication_reassociates_only_after_retired_refresh(re
                         backend._require_rail_publication(publication)
                 finally:
                     settings["COMPREHENSIVE_CONFIG_RAW"] = mirror
+                # Source transition controls use the actual issued publication
+                # and retained FULL. These are structural refusal probes; no
+                # synthetic native success or replacement producer is supplied.
+                with pytest.raises(RuntimeError, match="not issued"):
+                    display.apply_configuration_publication(replace(publication))
+                with pytest.raises(RuntimeError, match="control graph changed"):
+                    await asyncio.to_thread(display.apply_configuration_publication, publication)
+                if outcome == "accepted":
+                    display._full = original_full
+                    try:
+                        with pytest.raises(ConsoleDisplayPhaseRefused, match="still owns work"):
+                            display.apply_configuration_publication(publication)
+                    finally:
+                        display._full = None
+                async with display.context.lock:
+                    with pytest.raises(ConsoleDisplayPhaseRefused, match="still owns work"):
+                        display.apply_configuration_publication(publication)
+                display.apply_configuration_publication = lambda _publication: None
+                try:
+                    with pytest.raises(ConsoleDisplayPhaseRefused, match="defining body changed"):
+                        backend.domain.apply_configuration_publication(publication)
+                finally:
+                    del display.apply_configuration_publication
+                assert display.sources is original_sources
             applied = service.accept(command(3, "ApplySourceRevision", {"publication_request_id": "rail-2"}, 1))
             if applied is not None:
                 await applied
-            if outcome == "accepted":
+            if accepted:
                 actual = [row.kind for row in replies(3)]
                 if actual != ["received", "applied", "retired"]:
                     pytest.fail("Original rail publication refused: " + _rail_comparison_note(backend, publication))
@@ -310,10 +374,30 @@ async def test_exact_rail_publication_reassociates_only_after_retired_refresh(re
                 assert backend.domain.sources.configuration is profile.configuration
                 assert profile.configuration["console"]["rail_state"][key] == value
                 assert backend.controls._intake_open
+                assert display is backend.runtime._execution_service.prepare_display_owner()
+                assert producers == (display.character, display.context, display.appearance)
+                assert display.sources is backend.domain.sources is not original_sources
+                assert display.context.key is display.context.value is None
+                assert display.context.at == 0.0
+                assert display._character_reuse_checkpoint is None
+                if outcome == "accepted":
+                    with pytest.raises(ConsoleDisplayPhaseRefused):
+                        original_full.require_current()
+                    projection = await visible_projection("visible")
+                    assert projection.source_revision == 1
+                    assert len(full_reads) == 2
+                    assert full_reads[-1].sources is backend.domain.sources
+                    assert full_reads[-1].effect.completed.result() is True
+                    assert full_reads[-1].physically_retired
+                else:
+                    assert not full_reads
+                    assert backend.presentation.view_lifecycle._current is None
+                assert display._full is None and not display._preparation_reads
             else:
                 assert [row.kind for row in replies(3)] == ["failed"]
-        if outcome != "accepted":
+        if not accepted:
             assert backend.domain.sources is original_sources
+            assert backend.runtime._execution_service._display_owner.sources is original_sources
             assert profile._selection_cache is before
             assert not backend.controls._intake_open
         assert not backend.controls.admitted_effects

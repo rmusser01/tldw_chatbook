@@ -192,6 +192,7 @@ Batch `q5` started its first clean baseline on Windows 10 at 07:59 UTC on Novemb
 
 | Batch | Pair | README baseline / candidate | Approved edit baseline / candidate | State |
 |---|---|---|---|---|
+| `q5` | 1 | 284.7760 s / — | 374.3431 s / — | Baseline `q51b1` passed both journeys. Candidate `q51c1` started at 08:13 UTC on November 18. |
 | `q2` | 1 | 470.518 s / — | 575.079 s / — | Baseline passed. Candidate timed out at disclosure. Batch stopped. |
 | `q3` | 1 | 312.621 s / — | 392.728 s / — | Baseline `q31b1` passed. On `997b3339ff`, candidate `q31c1` reached the persisted README reply at 30.027 s adjusted and found its mounted row. The original painted-code check timed out at 300 s, and a ReadProjection command failed at application. The edit did not start. |
 | `q3` | 2–3 | — / — | — / — | The driver stopped at the failed first pair. |
