@@ -159,6 +159,8 @@ def conversation_archive_refusal(app: Any, conversation_id: str) -> str | None:
         A refusal for running, queued or unsaved work, otherwise None.
     """
     capture_console_archive_draft(app)
+    if getattr(app, "_conversation_send_inflight", {}).get(conversation_id, 0):
+        return "Wait for the current send to finish before archiving."
     store = getattr(getattr(app, "console_runtime", None), "chat_store", None)
     for session in store.sessions() if store is not None else ():
         if session.persisted_conversation_id == conversation_id:

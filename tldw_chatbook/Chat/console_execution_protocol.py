@@ -642,6 +642,33 @@ _PLAN = {
 }
 _SOURCE = _enum("configuration", "workspace")
 
+ARCHIVE_SEND_REFUSALS = MappingProxyType({
+    "archive_inflight": "Wait for the archive change to finish; your draft is preserved.",
+    "archived": "This conversation is archived. Open Archived chats and choose Restore & resume.",
+})
+
+
+def _archive_checkpoint(value, path):
+    _record(
+        turn_id=_TURN_ID, ordinal=_SEQUENCE, stage=_enum("prepare", "finish"),
+        conversation_id=_REFERENCE, archived=_optional(_boolean),
+    )(value, path)
+    if (value["ordinal"] != (1 if value["stage"] == "prepare" else 2)
+        or value["stage"] == "prepare" and value["archived"] is not None):
+        _reject(path, "archive checkpoint phase changed")
+
+
+def _archive_checkpoint_ack(value, path):
+    _record(
+        received_request_id=_REFERENCE, turn_id=_TURN_ID,
+        ordinal=_SEQUENCE, stage=_enum("prepare", "finish"),
+        conversation_id=_REFERENCE, generation=_REVISION,
+        refusal=_optional(_enum("archive_inflight", "archived")),
+    )(value, path)
+    if (value["ordinal"] != (1 if value["stage"] == "prepare" else 2)
+        or value["stage"] == "prepare" and value["refusal"] == "archived"):
+        _reject(path, "archive acknowledgement phase changed")
+
 
 def _open_session_request(value, path):
     fields = dict(title=_TEXT, workspace_id=_MAYBE_TEXT, conversation_id=_MAYBE_TEXT)
@@ -684,6 +711,7 @@ def _projection_result(value, path):
 
 
 _COMMANDS = {
+    "ArchiveSendCheckpointAck": _archive_checkpoint_ack,
     "UpdateInputs": _record(
         draft=_TEXT,
         authored_token=_AUTHORED_TOKEN,
@@ -1068,6 +1096,7 @@ _PERMISSION_RESULT = _tagged(
     }
 )
 _APPLIED = {
+    "ArchiveSendCheckpointAck": _APPLIED_BOOL,
     "ReadProjection": _projection_result,
     "UpdateInputs": _record(draft_revision=_REVISION),
     "ReceiveTurn": _record(turn_id=_TURN_ID),
@@ -1135,6 +1164,11 @@ def _validate_message(identity, kind, operation, payload):
                     "payload.pressed_inputs",
                     "pressed identity or attachment order changed",
                 )
+        return
+    if kind == "archive_checkpoint" and operation == "ReceiveTurn":
+        if not identity.session_id:
+            _reject("identity", "archive checkpoint requires its session")
+        _archive_checkpoint(payload, "payload")
         return
     if kind == "input_projected" and operation == "ReceiveTurn":
         _record(turn_id=_TURN_ID, draft_committed=_boolean)(payload, "payload")

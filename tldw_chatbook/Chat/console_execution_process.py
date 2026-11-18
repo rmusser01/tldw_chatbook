@@ -217,6 +217,8 @@ class ConsoleExecutionClient:
         self._shutdown_acknowledged = False
         self._requests: dict[str, ConsoleProcessReceipt] = {}
         self._plans: dict[tuple[str, int], ConsoleWireMessage] = {}
+        self._archive_sends: dict[str, Any] = {}
+        self._archive_tasks: set[asyncio.Task] = set()
         self._sent_sequence = 0
         self._received_sequence = 0
         self._source_revision = 0
@@ -1182,6 +1184,7 @@ class ConsoleExecutionClient:
         self._ready.result()
         if not self._intake_open and operation not in {
             "CommitPlanAck",
+            "ArchiveSendCheckpointAck",
             "CancelTurn",
             "CloseIntake",
             "Drain",
@@ -1212,6 +1215,10 @@ class ConsoleExecutionClient:
             future(),
         )
         receipt.turn_id = message.payload["turn_id"] if operation == "ReceiveTurn" else None
+        if operation == "ReceiveTurn":
+            from .console_execution_archive import reserve_archive_send
+
+            reserve_archive_send(self, receipt)
         self._requests[identity.request_id] = receipt
         self._sent_sequence = identity.sequence
         assert self._channel is not None
@@ -1324,6 +1331,10 @@ class ConsoleExecutionClient:
                     raise ConsoleProtocolError("unexpected_retired")
                 receipt.retired.set_result(message.payload["retired"])
                 receipt.changed.set()
+                if receipt.operation == "ReceiveTurn":
+                    from .console_execution_archive import settle_archive_send
+
+                    settle_archive_send(self, receipt)
                 if (
                     receipt.operation == "Shutdown"
                     and message.payload["retired"] is True
@@ -1352,9 +1363,18 @@ class ConsoleExecutionClient:
                 error = ConsoleRemoteFailure(
                     message.payload["code"], message.payload["stage"]
                 )
+                admission_refused = not receipt.received.done() and error.stage == "admission"
                 if not receipt.received.done():
                     receipt.received.set_exception(error)
                 receipt.applied.set_exception(error)
+                if receipt.operation == "ReceiveTurn" and admission_refused:
+                    from .console_execution_archive import settle_archive_send
+
+                    settle_archive_send(self, receipt, admission_refused=True)
+            elif message.kind == "archive_checkpoint":
+                from .console_execution_archive import receive_archive_checkpoint
+
+                receive_archive_checkpoint(self, receipt, message)
             else:
                 if message.kind in {"input_projected", "terminal"}:
                     if (
@@ -1373,6 +1393,10 @@ class ConsoleExecutionClient:
                     self._plans[key] = message
                 receipt.events.append(message)
                 self._project_event(receipt, message)
+                if message.kind == "terminal":
+                    from .console_execution_archive import settle_archive_send
+
+                    settle_archive_send(self, receipt, terminal=True)
         except BaseException as error:
             self._fail(error)
 
@@ -1474,6 +1498,10 @@ class ConsoleExecutionClient:
                     retired = await asyncio.shield(receipt.retired)
                     if applied.get("applied") is not True or retired is not True:
                         raise ConsoleChannelLost("Console lifecycle did not retire")
+                if self._archive_tasks:
+                    await asyncio.gather(*(asyncio.shield(task) for task in tuple(self._archive_tasks)))
+                if self._archive_sends:
+                    raise ConsoleChannelLost("Console archive reservation retirement is unproven")
                 if self._process is not None:
                     returncode = await asyncio.to_thread(
                         self._process.wait,

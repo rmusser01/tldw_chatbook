@@ -230,6 +230,7 @@ class _BackendCommandAdapter:
             "OpenSession": controls.OpenSession,
             "CloseSession": controls.CloseSession,
             "ProjectDecisionPresentation": controls.ProjectDecisionPresentation,
+            "ArchiveSendCheckpointAck": controls.ArchiveSendCheckpointAck,
             "CancelTurn": controls.CancelTurn,
             "FenceSource": controls.FenceSource,
             "CloseIntake": controls.CloseIntake,
@@ -795,6 +796,7 @@ class _BackendService:
     async def finish(self, message, command, receipt) -> None:
         from .console_control_dispatch import (
             ApplySourceRevision,
+            ArchiveSendCheckpointAck,
             CloseIntake,
             CommitPlanAck,
             Drain,
@@ -864,6 +866,7 @@ class _BackendService:
                 UpdateInputs,
                 ResolveDecision,
                 ProjectDecisionPresentation,
+                ArchiveSendCheckpointAck,
                 CommitPlanAck,
                 CloseIntake,
                 ApplySourceRevision,

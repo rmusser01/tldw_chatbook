@@ -251,6 +251,31 @@ class ProjectDecisionPresentation:
 
 
 @dataclass(frozen=True, slots=True)
+class ArchiveSendCheckpointAck:
+    identity: ControlIdentity
+    received_request_id: str
+    turn_id: str
+    ordinal: int
+    stage: str
+    conversation_id: str
+    generation: int
+    refusal: str | None
+
+    def __post_init__(self):
+        if (
+            any(type(value) is not str or not value for value in (
+                self.received_request_id, self.turn_id, self.conversation_id,
+            ))
+            or type(self.ordinal) is not int or self.ordinal not in (1, 2)
+            or self.stage != ("prepare" if self.ordinal == 1 else "finish")
+            or type(self.generation) is not int or self.generation < 0
+            or self.refusal not in (None, "archive_inflight", "archived")
+            or self.ordinal == 1 and self.refusal == "archived"
+        ):
+            raise ValueError("Invalid archive checkpoint acknowledgement")
+
+
+@dataclass(frozen=True, slots=True)
 class ReadProjection:
     identity: ControlIdentity
 
@@ -1374,6 +1399,7 @@ class ConsoleLocalControls:
             CloseSession,
             ResolveDecision,
             ProjectDecisionPresentation,
+            ArchiveSendCheckpointAck,
             ReadProjection,
         ):
             raise TypeError("Unsupported local Console command")
@@ -1396,6 +1422,7 @@ class ConsoleLocalControls:
             if type(command) not in (
                 CancelTurn,
                 CommitPlanAck,
+                ArchiveSendCheckpointAck,
                 CloseIntake,
                 Drain,
                 Shutdown,
@@ -1555,6 +1582,18 @@ class ConsoleLocalControls:
         if type(command) is ResolveDecision:
             receipt.applied.set_result(
                 resolve_original_decision(self, identity, command.decision)
+            )
+            return receipt
+        if type(command) is ArchiveSendCheckpointAck:
+            from . import console_backend_archive_send as archive_send
+
+            record = dict(archive_send._DEFINITIONS)["acknowledge_archive_send"]
+            from .console_domain_services import _definition_current
+
+            if archive_send.acknowledge_archive_send is not record[0] or not _definition_current(record):
+                raise RuntimeError("Console archive acknowledgement source changed")
+            receipt.applied.set_result(
+                archive_send.acknowledge_archive_send(self._domain.presentation, command)
             )
             return receipt
         if type(command) is ProjectDecisionPresentation:

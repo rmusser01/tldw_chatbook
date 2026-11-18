@@ -260,12 +260,25 @@ async def selected_conversation_send_refusal(runtime, record, require_received):
     owner = _SavedOpenOwner(controls, source.sources)
     owner.current()
     effect = controls._begin_effect("archive_read", scope.local_service, source)
+    parent_checkpoint = None
     try:
         conversation_id = record.archive_conversation_id
         if not conversation_id:
             return None
         port = domain.presentation
-        refusal = port.archive_send_inflight(record)
+        from .console_backend_presentation import ConsoleBackendPresentation
+        if type(port) is ConsoleBackendPresentation:
+            from . import console_backend_archive_send as backend_archive
+
+            for name, definition in _BACKEND_ARCHIVE_DEFINITIONS:
+                if (getattr(backend_archive, name) is not definition[0]
+                    or not _definition_current(definition)):
+                    raise RuntimeError("Console archive checkpoint source changed")
+            parent_checkpoint, refusal = await backend_archive.prepare_archive_send(port, record, read_owner=owner)
+            owner.current()
+            require_received()
+        else:
+            refusal = port.archive_send_inflight(record)
         if refusal is not None:
             return refusal
         service = scope.local_service
@@ -274,7 +287,7 @@ async def selected_conversation_send_refusal(runtime, record, require_received):
             "get_conversation_archive_states",
             service.get_conversation_archive_states,
         )
-        checkpoint = port.capture_archive_send(record)
+        checkpoint = parent_checkpoint if parent_checkpoint is not None else port.capture_archive_send(record)
         states = await archive.storage_call(
             service,
             "get_conversation_archive_states",
@@ -288,11 +301,20 @@ async def selected_conversation_send_refusal(runtime, record, require_received):
         )
         if not owner.retired:
             raise RuntimeError("Console archive read has not physically retired")
-        result = port.finish_archive_send(checkpoint, record, states)
+        if parent_checkpoint is not None:
+            for name, definition in _BACKEND_ARCHIVE_DEFINITIONS:
+                if (getattr(backend_archive, name) is not definition[0]
+                    or not _definition_current(definition)):
+                    raise RuntimeError("Console archive checkpoint source changed")
+            result = await backend_archive.finish_archive_send(checkpoint, record, states)
+        else:
+            result = port.finish_archive_send(checkpoint, record, states)
         owner.current()
         require_received()
         return result
     finally:
+        if parent_checkpoint is not None and record.archive_checkpoint is parent_checkpoint:
+            record.archive_checkpoint = None
         controls._finish_effect(effect, retired=owner.retired)
 
 
@@ -335,6 +357,13 @@ _ARCHIVE_DEFINITIONS = tuple(
         "archive_send_inflight_refusal",
         "publish_archive_send_state",
     )
+)
+
+from . import console_backend_archive_send as _backend_archive
+
+_BACKEND_ARCHIVE_DEFINITIONS = tuple(
+    (name, _definition(getattr(_backend_archive, name)))
+    for name in ("prepare_archive_send", "finish_archive_send")
 )
 
 _DOMAIN_SOURCE_DEFINITIONS = tuple(

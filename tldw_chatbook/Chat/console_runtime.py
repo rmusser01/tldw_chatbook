@@ -407,6 +407,7 @@ class _ConsoleTurnCustodyRecord:
     inputs: _ConsoleTurnCustodyInputs = field(default_factory=_ConsoleTurnCustodyInputs, repr=False)
     task: asyncio.Task[Any] | None = field(default=None, repr=False)
     archive_conversation_id: str | None = None
+    archive_checkpoint: Any = field(default=None, repr=False)
     store: Any = field(default=None, repr=False)
     received_claim: Any = field(default=None, repr=False)
     received_intent: Any = field(default=None, repr=False)
@@ -3209,7 +3210,7 @@ class ConsoleRuntime:
         )
         self._turn_custody[record.turn_id] = record
         self._clear_staged_evidence_receipt(record.session_id)
-        if self._app is not None and self._chat_store is not None:
+        if self._chat_store is not None and (self._app is not None or self.domain_services is not None):
             session = next(
                 (
                     item
@@ -3221,7 +3222,7 @@ class ConsoleRuntime:
             record.archive_conversation_id = (
                 session.persisted_conversation_id if session is not None else None
             )
-            if record.archive_conversation_id:
+            if record.archive_conversation_id and self._app is not None:
                 reservations = getattr(self._app, "_conversation_send_inflight", None)
                 if reservations is None:
                     reservations = self._app._conversation_send_inflight = {}
@@ -3256,14 +3257,15 @@ class ConsoleRuntime:
             record.store = None
             record.received_claim = None
             record.received_intent = None
-            if record.archive_conversation_id:
+            if record.archive_conversation_id and self._app is not None:
                 reservations = self._app._conversation_send_inflight
                 remaining = reservations.get(record.archive_conversation_id, 1) - 1
                 if remaining:
                     reservations[record.archive_conversation_id] = remaining
                 else:
                     reservations.pop(record.archive_conversation_id, None)
-                record.archive_conversation_id = None
+            record.archive_conversation_id = None
+            record.archive_checkpoint = None
             if self._archive_recovery is not None and record.request is not None:
                 self._archive_recovery.release_user_proof(
                     record.request.recovery_user_origin
