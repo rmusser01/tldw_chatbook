@@ -706,7 +706,7 @@ class _BackendService:
             or identity.request_id in self._received_requests
         ):
             raise ConsoleProtocolError("received_claim_owner_changed")
-        self.emit(identity, "received", "ReceiveTurn", {"sequence": identity.sequence})
+        self.emit(entry[0].identity, "received", "ReceiveTurn", {"sequence": identity.sequence})
         self._received_requests.add(identity.request_id)
 
     async def _finish_backend_send_admission(self, message, command, receipt):
@@ -722,7 +722,7 @@ class _BackendService:
                 self._failure(message.operation, "retirement", retirement_error)
             self._failure(message.operation, "admission", error)
             self.emit(message.identity, "failed", message.operation, {
-                "code": "command_refused" if retired and not claimed else "command_failed",
+                "code": "send_selection_refused" if retired and not claimed else "send_selection_unsettled",
                 "stage": "admission" if retired and not claimed else "retirement",
             })
             self.emit(message.identity, "retired", message.operation, {

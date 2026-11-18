@@ -147,11 +147,17 @@ async def test_readiness_change_requires_retirement_and_unchanged_original_scope
 
 @pytest.mark.asyncio
 async def test_retired_stale_display_keeps_the_original_pressed_composer(monkeypatch):
-    """A transport refusal must not submit ReceiveTurn or consume the real draft."""
+    """Retired selection refusal keeps the draft and never repeats ReceiveTurn."""
     from textual.app import App, ComposeResult
 
     from Tests.Chat.test_console_execution_protocol import receive_payload
     from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+    from tldw_chatbook.Chat.console_execution_projection_values import (
+        ConsoleSessionView,
+    )
+    from tldw_chatbook.Chat.console_execution_projection_view import (
+        ConsoleProjectionView,
+    )
     from tldw_chatbook.UI.Console_Modules import execution_send, execution_state
     from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 
@@ -172,15 +178,27 @@ async def test_retired_stale_display_keeps_the_original_pressed_composer(monkeyp
         composer.load_draft("original pressed text")
         await pilot.pause()
         stash = composer.capture_draft_for_send()
-        row = SimpleNamespace(
-            id="session",
-            incarnation_id="incarnation",
-            settings_revision=7,
-            settings=ConsoleSessionSettings(provider="openai"),
+        row = ConsoleSessionView(
+            "session",
+            "Pressed",
+            False,
+            None,
+            None,
+            "workspace",
+            None,
+            "incarnation",
+            0,
+            7,
+            ConsoleSessionSettings(provider="openai"),
+            "original pressed text",
+            0,
         )
-        client.projection_view = SimpleNamespace(
-            active_session_id=row.id,
-            session=lambda _: row,
+        client.projection_view = ConsoleProjectionView(
+            client._source_revision,
+            (row,),
+            row.id,
+            ((row.id, (0, 0)),),
+            (),
         )
         client.pressed_inputs = receive_payload()["pressed_inputs"]
         screen = SimpleNamespace(
@@ -212,15 +230,12 @@ async def test_retired_stale_display_keeps_the_original_pressed_composer(monkeyp
                     pending_send_token=token,
                 )
             )
-            await _until(lambda: task.done() or len(client._channel.messages) == 2)
+            await _until(lambda: task.done() or len(client._channel.messages) == 1)
             if task.done():
-                pytest.fail(f"Send returned before the projection read: {task.result()!r}")
+                pytest.fail(f"Send returned before input settlement: {task.result()!r}")
             receipts = list(client._requests.values())
-            update, read = receipts
-            assert (update.operation, read.operation) == (
-                "UpdateInputs",
-                "ReadProjection",
-            )
+            (update,) = receipts
+            assert update.operation == "UpdateInputs"
             for receipt, kind, payload in (
                 (update, "received", {"sequence": update.identity.sequence}),
                 (update, "applied", {"draft_revision": 1}),
@@ -229,18 +244,38 @@ async def test_retired_stale_display_keeps_the_original_pressed_composer(monkeyp
                     "retired",
                     {"operation_id": update.identity.request_id, "retired": True},
                 ),
-                (read, "received", {"sequence": read.identity.sequence}),
-                (
-                    read,
-                    "failed",
-                    {"code": "readiness_context_changed", "stage": "applied"},
-                ),
             ):
                 client._receive(
                     _reply(
                         client, receipt, client._received_sequence + 1, kind, payload
                     )
                 )
+            await _until(lambda: task.done() or len(client._channel.messages) == 2)
+            if task.done():
+                pytest.fail(
+                    f"Send returned before original admission: {task.result()!r}"
+                )
+            read = next(
+                item
+                for item in client._requests.values()
+                if item.operation == "ReceiveTurn"
+            )
+            receipts.append(read)
+            assert (
+                client._channel.messages[-1].payload["selection"]["source"] == "backend"
+            )
+            client._receive(
+                _reply(
+                    client,
+                    read,
+                    client._received_sequence + 1,
+                    "failed",
+                    {
+                        "code": "send_selection_refused",
+                        "stage": "admission",
+                    },
+                )
+            )
             await asyncio.sleep(0)
             assert client._input_press is not None and not task.done()
             client._receive(
@@ -261,7 +296,7 @@ async def test_retired_stale_display_keeps_the_original_pressed_composer(monkeyp
             assert client._input_press is None and client._channel_error is None
             assert [message.operation for message in client._channel.messages] == [
                 "UpdateInputs",
-                "ReadProjection",
+                "ReceiveTurn",
             ]
             assert notices == ["Console input changed; your draft was kept."]
         finally:

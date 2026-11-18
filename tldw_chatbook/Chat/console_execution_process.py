@@ -723,7 +723,17 @@ class ConsoleExecutionClient:
             press.receipt = receipt
             # Received follows the original claim, not merely transport parsing.
             # Later edits may enter only after this claim or its known refusal.
-            await asyncio.shield(receipt.received)
+            try:
+                await asyncio.shield(receipt.received)
+            except ConsoleRemoteFailure as error:
+                if selection.get("source") == "backend" and error.code in {
+                    "send_selection_refused", "send_selection_unsettled",
+                }:
+                    if await asyncio.shield(receipt.retired) is not True:
+                        raise ConsoleChannelLost("Console Send selection did not physically retire") from error
+                    if error.code != "send_selection_refused" or error.stage != "admission":
+                        raise ConsoleChannelLost("Console Send selection claim is unproven") from error
+                raise
             return receipt
         finally:
             if self._input_press is press:

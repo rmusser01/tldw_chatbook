@@ -49,11 +49,21 @@ def _require_readers(controls):
     backend = controls._domain.presentation.backend
     if not definitions_current(_SOURCES) or any(
         type(receiver) is not expected
-        or any(getattr_static(receiver, name, None) is not getattr(expected, name) for name in names)
+        or any(
+            getattr_static(receiver, name, None) is not getattr(expected, name)
+            for name in names
+        )
         for receiver, expected, names in (
-            (backend.store, ConsoleChatStore, ("session_input_snapshot", "session_inputs_are_current")),
-            (backend.presentation.view_lifecycle, ConsoleBackendViewLifecycle,
-             ("capture_display_checkpoint", "display_checkpoint_current")),
+            (
+                backend.store,
+                ConsoleChatStore,
+                ("session_input_snapshot", "session_inputs_are_current"),
+            ),
+            (
+                backend.presentation.view_lifecycle,
+                ConsoleBackendViewLifecycle,
+                ("capture_display_checkpoint", "display_checkpoint_current"),
+            ),
         )
     ):
         raise RuntimeError("Console Send configuration reader changed")
@@ -228,7 +238,8 @@ _SOURCES = capture_definitions(
         *(
             (globals(), name, globals()[name])
             for name in (
-                "_current", "_require_readers",
+                "_current",
+                "_require_readers",
                 "capture_backend_send_selection",
                 "require_backend_send_selection",
                 "publish_backend_send_claim",
