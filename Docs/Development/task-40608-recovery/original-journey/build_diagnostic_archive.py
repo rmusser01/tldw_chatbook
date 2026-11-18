@@ -65,6 +65,21 @@ def signature(code):
     )
 
 
+def reviewed_modal_ordering(module, function, reference, candidate):
+    """The v3 parent span still times entry/exit when a queued rail save defers a modal."""
+    if (module, function) != ("UI.Console_Modules.execution_decisions", "present_selected_decision"):
+        return False
+
+    def digest(raw):
+        node = next(node for node in ast.parse(raw).body if getattr(node, "name", None) == function)
+        return sha(ast.dump(node).encode())
+
+    return (digest(reference), digest(candidate)) == (
+        "b4b75aa0bb562adc772da97a8f3a13e9097c1e710a43a4e1ea2c928e0800b024",
+        "558845bc5082e691a71e15f8f10d2f110d8fb9db936f45c9663d7ffbaed817ef",
+    )
+
+
 def build(
     foreground,
     approval,
@@ -73,6 +88,7 @@ def build(
     compatibility,
     output,
     approval_revision=2,
+    reviewed_candidate=None,
 ):
     declared_revision = next(
         (
@@ -108,10 +124,15 @@ def build(
         2: "aab319544eb295d5b6ef78daab1bd8674743a839",
         3: "997b3339ffd37fab54dc28054ed4987fb933e478",
     }
-    if (
-        manifests["candidate"]["candidate_commit"]
-        != reviewed_candidates[approval_revision]
+    if reviewed_candidate is None:
+        reviewed_candidate = reviewed_candidates[approval_revision]
+    elif (
+        approval_revision != 3
+        or not re.fullmatch(r"[0-9a-f]{40}", reviewed_candidate)
+        or manifests["compatibility"]["candidate_commit"] != reviewed_candidates[3]
     ):
+        raise ValueError("New v3 source pins require the frozen q3 compatibility reference")
+    if manifests["candidate"]["candidate_commit"] != reviewed_candidate:
         raise ValueError(
             "This probe revision is reviewed only for its recorded frozen candidate"
         )
@@ -134,8 +155,12 @@ def build(
             result[module] = sha(raw)
             code = code_at(compiled, function)
             if role == "candidate":
-                old = code_at(source("compatibility", module)[1], function)
-                if signature(code) != signature(old):
+                reference, old_module = source("compatibility", module)
+                old = code_at(old_module, function)
+                identical = signature(code) == signature(old)
+                if not identical and not (
+                    approval_revision == 3 and reviewed_modal_ordering(module, function, reference, raw)
+                ):
                     raise ValueError(
                         "Review changed monitored definition before packaging: "
                         + module
@@ -147,6 +172,7 @@ def build(
                     "function": function,
                     "reference_line": old.co_firstlineno,
                     "candidate_line": code.co_firstlineno,
+                    "equal_code_constants_names_closures_arguments": identical,
                     "module_source_changed": source("candidate", module)[0]
                     != source("compatibility", module)[0],
                 }
@@ -244,7 +270,9 @@ print(json.dumps({'members_verified': len(manifest['files']), 'native_launched':
             ],
             "candidate_monitored_targets_checked": len(checked),
             "candidate_compatibility_checks": [checked[key] for key in sorted(checked)],
-            "equal_code_constants_names_closures_arguments": True,
+            "equal_code_constants_names_closures_arguments": all(
+                item["equal_code_constants_names_closures_arguments"] for item in checked.values()
+            ),
             "fixed_metadata_contracts_checked": True,
             "files": {name: sha(raw) for name, raw in sorted(files.items())},
         }
@@ -300,6 +328,10 @@ if __name__ == "__main__":
     ):
         parser.add_argument("--" + name, type=Path, required=True)
     parser.add_argument("--approval-revision", type=int, choices=(2, 3), default=2)
+    parser.add_argument(
+        "--reviewed-candidate",
+        help="Exact new v3 candidate commit to compare with every monitored q3 definition.",
+    )
     args = parser.parse_args()
     build(
         args.foreground_artifact,
@@ -309,4 +341,5 @@ if __name__ == "__main__":
         args.compatibility_replay,
         args.output,
         args.approval_revision,
+        args.reviewed_candidate,
     )

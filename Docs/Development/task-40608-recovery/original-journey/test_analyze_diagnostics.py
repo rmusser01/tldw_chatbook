@@ -31,15 +31,32 @@ class DiagnosticAnalysisTests(unittest.TestCase):
             self.approval_event("approval_request_start", 2),
             self.approval_event("painted_approval", 3),
             self.approval_event(
+                "controls_ready_return", 3.1,
+                same_generation=True, information_ready=True,
+                visit=2, card_generation=4,
+            ),
+            self.approval_event(
+                "actual_approval_frame", 3.5,
+                qualified_delivered_button_region_cells=True,
+                visit=2, card_generation=4,
+            ),
+            self.approval_event(
                 "original_label_probe", 4, qualified_rendered_fast_approve=False
             ),
-            self.approval_event("approval_click", 5),
+            self.approval_event(
+                "approval_click", 5, visit=2, card_generation=4,
+                prior_qualified_region_cells_seen=True,
+            ),
             self.approval_event("approval_request_return", 8),
             self.approval_event("local_review_return", 9),
         ]
         [result] = analysis.approval(rows)
         self.assertTrue(result["original_painted_approval_observed"])
         self.assertFalse(result["qualified_frame_observed"])
+        self.assertEqual(result["qualified_button_region_cells"]["wall"], 3.5)
+        self.assertAlmostEqual(result["controls_ready_to_button_region_cells"]["seconds"], 0.4)
+        self.assertEqual(result["button_region_cells_to_click"]["seconds"], 1.5)
+        self.assertTrue(result["prior_qualified_region_cells_at_click"])
         edges = {
             (row["from_boundary"], row["to_boundary"]): row
             for row in result["boundary_intervals"]
@@ -60,6 +77,7 @@ class DiagnosticAnalysisTests(unittest.TestCase):
                 "original_label_probe",
                 2,
                 qualified_rendered_fast_approve=True,
+                qualified_delivered_button_region_cells=True,
                 card_generation=5,
             ),
         ]
@@ -67,6 +85,8 @@ class DiagnosticAnalysisTests(unittest.TestCase):
         [edge] = result["adjacent_observed_intervals"]
         self.assertIsNone(edge["seconds"])
         self.assertEqual(edge["reason"], "scope_changed")
+        self.assertIsNone(result["controls_ready_to_button_region_cells"]["seconds"])
+        self.assertEqual(result["controls_ready_to_button_region_cells"]["reason"], "scope_changed")
 
     def test_local_ui_delivery_and_missing_paint_reasons_are_retained(self):
         rows = [

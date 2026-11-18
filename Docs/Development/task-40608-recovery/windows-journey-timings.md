@@ -285,8 +285,8 @@ two storage admissions. Neither process recorded an interactive approval stage,
 and no filesystem executor call occurred. Consequently this run tests observer
 installation but does not verify the repaired ancestry proof, emitted approval
 region cells, fixed-label paint or per-tool costs. The original project-modal
-paint event is a different measurement. V3 baseline execution and a complete
-candidate per-tool trace remain outstanding.
+paint event is a different measurement. V3 baseline execution subsequently
+completed as recorded below; a complete candidate per-tool trace remains outstanding.
 
 `g33p` used a separate predicate observer, not the foreground/approval v3 probe.
 It recorded 5,780 `require_sources`, 5,780 `selection_is_current` and 10
@@ -306,3 +306,101 @@ Source receipts are `original-journey-997b33fg/replay-runs/g32f` and
 has four `tool-{foreground,approval}-{ui,backend}-*.jsonl` streams. Both runners
 exited 1. A failed original receipt or a clean observer summary does not establish
 positive native retirement. Neither run meets the five-second acceptance target.
+
+## Completed corrected-probe baseline: `fgv3b1`
+
+The separately prepared original LOCAL baseline ran with foreground observation
+and approval **v3**, unchanged product `b6b53f084a63058ca4b4dac99e074cff42192f7e`
+and the same original QA hash above. The exhaustive guarded runner exited **0**;
+the original receipt is **passed/complete**, with zero model errors or blocked
+destinations. Both original journeys, file/diff/Git/permission evidence and
+shutdown completed. Original total was **880.094 s**; pytest reported 890.04 s.
+This is an additional nonqualifying diagnostic, not a fourth acceptance pair.
+
+| Journey | Persisted reply completed | Original adjusted | Common adjusted reply seen | Acquisitions at completion | Latest acquisitions / scope checks |
+|---|---:|---:|---:|---:|---:|
+| README | 313.2911 s | 303.0486 s | 303.7695 s | 1,956 | 2,300 / 4,600 |
+| Approved edit | 427.3703 s | 412.4056 s | 413.2279 s | 2,396 | 2,423 / 4,848 |
+
+Setup contributed 778 acquisitions: **5,501** across setup and both phases;
+reuse hits were zero. These original counters include later evidence work at
+their latest boundary. Loopback handlers totaled 0.0309 s for five README
+requests and 0.0231 s for six edit requests. The earlier v2 result is preserved,
+not replaced or used to infer an optimization from different observer runs.
+
+### Foreground tool boundaries
+
+Values below use the same exact-call/worker association and clipped admission
+intervals as the earlier diagnostic. The request-build interval is inside the
+executor interval. Inclusive observer/storage time must not be added to wall time.
+
+| Call | Execution start → executor | Worker acquisitions / time in that interval | Request build | Acquisitions / time in build | Entire executor | Child work |
+|---|---:|---:|---:|---:|---:|---:|
+| README `fs_list` | 22.0198 s | 32 / 15.2005 s | 2.0217 s | 4 / 1.5829 s | 2.7022 s | 156 ms |
+| README `fs_read` | 26.7114 s | 34 / 18.0435 s | 2.5983 s | 4 / 0.8778 s | 2.9714 s | 125 ms |
+| Edit `fs_read` | 24.5602 s | 34 / 17.3150 s | 1.3170 s | 4 / 1.1800 s | 1.7099 s | 109 ms |
+| Edit `fs_edit` | 24.0306 s | 36 / 17.4580 s | 3.0881 s | 4 / 2.3579 s | 3.5507 s | 155 ms |
+| Edit `git_diff` | 20.7770 s | 32 / 15.1347 s | 1.6873 s | 4 / 1.4912 s | 2.3264 s | 264 ms |
+
+The original Trace surrounds slightly different wrappers (`fs_list` executor
+2.6871 s, Git executor 2.3106 s); it remains the journey timing authority.
+`fs_edit` additionally spent 3.2724 s after executor return before worker return,
+with four acquisitions totaling 2.6420 s. Its complete worker invocation was
+29.5795 s with 4.6094 thread CPU seconds; its execution-start mark precedes that
+worker entry, so the boundaries differ.
+
+| `fs_edit` source owner in the original baseline | Boundary | Count | Acquisition time |
+|---|---|---:|---:|
+| `Agents/agent_service.py:2357`, worker handover | Before executor | 8 | 5.2560 s |
+| `Agents/local_tool_dispatch.py:104`, kill-switch check | Before executor | 12 | 5.2802 s |
+| `Agents/local_tool_provider.py:3156`, verdict effective-local-state check | Before executor | 12 | 4.6189 s |
+| `Tools/local_tool_impls.py:233,246`, CAS target resolution | Before executor | 4 | 2.3029 s |
+| `Tools/workspace_tool_executor.py:252,256`, call context | Request build | 4 | 2.3579 s |
+| `Tools/local_tool_impls.py:233,246`, post-executor target resolution | After executor | 4 | 2.6420 s |
+| **Actual worker total** | | **44** | **22.4580 s** |
+
+The original costs receipt independently reports 44 `tool-fs_edit` acquisitions,
+22.440042 s total and 1.647205 s maximum. The 0.0179 s difference is between nested
+observation boundaries. Both runs locate repeated admission around the same
+required checks; neither measurement authorizes removing a check.
+
+### Corrected approval-region evidence
+
+All five approvals now have a positive **actual button-region delivery** record:
+the original compositor wrapper returned an update intersecting the eligible
+button, with exact live ancestry, matching visit/card generation, full clip and
+viewport containment, and no covering foreground widget. There were 47 observed
+frames and five such qualifying deliveries. This is stronger than v2's broken
+ancestry record, but still **not an exact-label paint measurement**: original
+`painted_approval`, original-label probes and qualified fixed-label frames all
+remain zero.
+
+| Approval | Policy before request | Request → published | Published → UI | UI → card | Card → ready | Ready → delivered cells | Cells → click | Click → request returned |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| README `fs_list` | 6.7771 s | 1.4065 s | 0.7062 s | 0.0357 s | 0.2310 s | 0.0350 s | 2.9384 s | 0.3373 s |
+| README `fs_read` | 5.4763 s | 1.6429 s | 1.5587 s | 0.0240 s | 0.5683 s | 0.2102 s | 4.0917 s | 0.7223 s |
+| Edit `fs_read` | 6.9776 s | 1.9140 s | 1.3035 s | 0.0238 s | 0.4622 s | 0.0329 s | 4.4227 s | 0.8706 s |
+| Edit `fs_edit` | 5.8028 s | 1.7701 s | 1.5887 s | 0.0267 s | 0.2965 s | 0.0423 s | 3.8479 s | 0.4061 s |
+| Edit `git_diff` | 7.1277 s | 1.9258 s | 0.3376 s | 0.0238 s | 0.2899 s | 0.0368 s | 2.3919 s | 0.2735 s |
+
+The matching card generations were 20, 22, 29, 31 and 33, all under original
+local attachment generation 1. Every click retained the same-generation prior
+qualified region evidence. Request→cells was 2.4144, 4.0042, 3.7364, 3.7243 and
+2.6139 s respectively. The synchronous policy interval precedes those request
+boundaries. In four calls, the original pilot observed the pending approval
+before the new card batch; that mark still cannot stand in for its frame.
+Measured human waits and the original timing formula remain unchanged.
+
+Both observer summaries completed with zero errors, source refusals, unfinished
+work and truncation; 535 foreground acquisitions were observed. Bookkeeping
+completion and process exit are not per-resource retirement certificates; this
+LOCAL baseline has no selected-process `Retired` frames. No candidate speedup or
+five-second qualification follows from this baseline alone.
+
+Receipts: `original-journey-win10-before-foreground-v3-20261118-a1/replay-runs/fgv3b1`,
+original `timings.json`, `progress.jsonl`, `native-f601942b/{receipt,costs}.json`,
+and `lab-observer/tool-{foreground,approval}-ui-15408.jsonl`. The tracked numeric
+helper produces `fgv3b1-diagnostic-numeric.json` locally; source-only arithmetic
+tests distinguish region delivery from fixed-label paint and refuse intervals
+across changed card/visit scope. The portable v3 archive and its checksum remain
+unchanged by this execution.

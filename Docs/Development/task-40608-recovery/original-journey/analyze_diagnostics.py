@@ -194,6 +194,14 @@ def approval(rows):
             edges.append(
                 {"from_boundary": left_name, "to_boundary": right_name, **value}
             )
+        region = next(
+            (
+                row for row in events
+                if row["stage"] in {"actual_approval_frame", "original_label_probe"}
+                and row.get("qualified_delivered_button_region_cells") is True
+            ),
+            None,
+        )
         result.append(
             {
                 "journey": journey,
@@ -208,6 +216,18 @@ def approval(rows):
                 "qualified_frame_observed": points["qualified_frame"] is not None,
                 "prior_qualified_frame_at_click": (points["clicked"] or {}).get(
                     "prior_qualified_rendered_seen"
+                ),
+                "qualified_button_region_cells": region,
+                "controls_ready_to_button_region_cells": (
+                    interval(points["controls_ready"], region)
+                    if points["controls_ready"] and region else None
+                ),
+                "button_region_cells_to_click": (
+                    interval(region, points["clicked"])
+                    if region and points["clicked"] else None
+                ),
+                "prior_qualified_region_cells_at_click": (points["clicked"] or {}).get(
+                    "prior_qualified_region_cells_seen"
                 ),
             }
         )

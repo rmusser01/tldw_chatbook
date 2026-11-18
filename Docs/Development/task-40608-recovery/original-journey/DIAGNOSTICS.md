@@ -2,8 +2,13 @@
 
 `windows-foreground-approval-v2.zip` preserves the executed diagnostic;
 `windows-foreground-approval-v3-997b33.zip` contains the separately corrected
-approval probe, partially exercised by candidate `g32f`. Both are portable,
-source-only **nonqualifying** bundles. Each
+approval probe, exercised by completed baseline `fgv3b1` and partial candidate `g32f`.
+`windows-foreground-approval-v3-46ff4b.zip` is the separately reviewed candidate
+bundle for `g34f`, SHA256
+`167feb3cb3c189dfcd67eb363c24696da88e791337fbfe8b92c7c97e4bd4c610`.
+It keeps the same baseline pins; 45 unique monitored candidate definitions
+(48 labeled entries) were verified against q3. These are portable, source-only
+**nonqualifying** bundles. Each
 adjacent `.sha256` file pins its complete archive. They contain foreground
 monitors, the respective approval monitors, installers, source-only
 verification, a diagnostic summary helper, and the exact baseline/candidate
@@ -16,8 +21,9 @@ approval **v2** probe, including its known ancestry false-negative: it reads
 `_parent` directly, whereas pinned Textual stores a weakref in
 `_MessagePump__parent`. That run recorded no original-label probe or qualified
 approval paint. Preserve the diagnostic result; do not use v2 to claim paint
-latency. The separately identified v3 correction still needs a native run that
-reaches an interactive tool approval; its baseline variant remains unrun.
+latency. The separate v3 baseline reached all five interactive approvals;
+its actual region-cell delivery evidence is recorded below. Exact-label paint
+remains unobserved.
 The immutable v2 archive's candidate pins refer to `aab319544eb295d5b6ef78daab1bd8674743a839`.
 The latest v3 candidate pins refer specifically to the product under q3:
 `997b3339ffd37fab54dc28054ed4987fb933e478`. **Its full per-tool diagnostic has not
@@ -26,6 +32,25 @@ archive describes source status at packaging time; the subsequent execution
 record below does not change its source pins or claim a qualifying result.
 
 ## Native execution status
+
+The original LOCAL baseline `fgv3b1` completed with **exit 0 / 1 passed** on
+`b6b53f084a63058ca4b4dac99e074cff42192f7e`. Both original journeys and shutdown
+passed: total 880.094 s, README 303.0486 s adjusted, approved edit 412.4056 s
+adjusted. This is a new nonqualifying v3 run, not a correction to the v2 receipt.
+All five approvals recorded qualified actual button-region cells with matching
+live ancestry, visit and card generation; ready→cells was 0.033–0.210 s.
+The 47 observed frames included five qualified region deliveries but zero
+original-label probes or qualified fixed-label frames. Both observer summaries
+closed with zero errors, source refusals, unfinished work and truncation.
+
+Its fresh snapshot is `original-journey-win10-before-foreground-v3-20261118-a1`,
+run `fgv3b1`, using the unchanged original QA and a private manifest/plugin/QA
+copy and venv. Exhaustive verification checked 3,524 product sources and 6,333
+private files before installation. The installed replay manifest SHA256 is
+`b6fc22ba9d81981a8111fcc5b0df9c9f860f859237a5f4081b62415bc58e3580`.
+The source-only archive stays unchanged; receipt and numeric details are in the
+timing tracker. No selected-process per-resource retirement certificate is
+inferred from this original local run.
 
 On the frozen `997b3339ff` product, `g32f` installed the foreground and approval
 v3 observers in both processes. It painted the original project disclosure at
@@ -41,7 +66,7 @@ work and truncation. Both approval streams recorded revision 3 but **zero approv
 stages**. The backend foreground observer recorded two step-write invocations
 and two storage admissions, with no filesystem executor invocation. This proves
 installation and bounded bookkeeping, not corrected ancestry or approval-paint
-timing. There is no full candidate per-call comparison or v3 baseline result.
+timing. There is no full candidate per-call comparison.
 
 The separate `g33p` predicate diagnostic used the same product and original QA,
 without these foreground/approval observers. README passed its original checks:
@@ -53,6 +78,12 @@ and progress timer. The edit never reached Send; the failed original total was
 `require_sources`, 5,780 `selection_is_current` and 10
 `require_retired_context_change` calls. It did not reproduce `g32f`'s readiness
 verifier failure and does not supply approval-paint evidence.
+
+`g34f` uses the separate `46ff4b` bundle with foreground/approval observation and
+the first-error observer. The optional source-predicate probe rejected changed
+bytecode before the workload started and was omitted. That probe's rejection
+is not a product failure. No `g34f` quantity or completion outcome is recorded
+here before its runner exits; it must not inherit `997b33`'s compatibility pins.
 
 See the [timing tracker](../windows-journey-timings.md) for source receipt names
 and the distinct clean `q31c1` final-code-paint failure. Failed journey receipts
@@ -144,6 +175,11 @@ only through its exact retained invocation and observed exit context, never a
 nearby thread. Nested child intervals use their union; inclusive storage/thread totals
 must not be added to critical-path wall time. Missing, reversed or scope-changing
 boundaries remain null. No timestamp is subtracted across processes or streams.
+The current adjacent analyzer additionally reports same-scope
+`controls_ready_to_button_region_cells` and `button_region_cells_to_click`;
+these do not populate the separate qualified fixed-label frame field. Historical
+archives retain their packaged analyzer; use the tracked adjacent source for
+these additional numeric fields.
 
 `local_review_return` and `approval_request_return` follow user approval; they are
 resolution completion, not policy work before paint. Original `painted_approval`
