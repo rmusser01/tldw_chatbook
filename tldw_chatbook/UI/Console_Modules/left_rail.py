@@ -2909,6 +2909,12 @@ class ConsoleLeftRail(Vertical):
             self._progress_timer.stop()
 
     def _sync_progress_count(self) -> None:
+        if not self.is_attached:
+            return
+        from .execution_state import defer_selected_passive_render
+
+        if defer_selected_passive_render(self.screen):
+            return
         count, counts = (
             self._agent_progress_state() if self._agent_progress_state else (0, {})
         )

@@ -56,6 +56,8 @@ def test_selected_progress_reader_and_rail_use_published_counts(monkeypatch):
     navigation_refreshes = []
     button = SimpleNamespace(is_attached=True, label="")
     rail = SimpleNamespace(
+        is_attached=True,
+        screen=screen,
         _agent_progress_state=controller.progress_state,
         _progress_button=button,
         _progress_counts={},

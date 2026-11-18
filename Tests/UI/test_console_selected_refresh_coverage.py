@@ -145,3 +145,86 @@ async def test_new_visit_reconciles_after_the_superseded_worker_releases_its_fla
     assert not screen._console_attach_reconcile_running
     assert scheduled == [screen._start_console_attach_reconciliation]
     assert not screen._console_process_surface_reconciled
+
+
+@pytest.mark.parametrize("state", ["covered", "revoked", "teardown", "unmounted", "failed"])
+def test_passive_timers_leave_previous_progress_untouched(monkeypatch, state):
+    from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
+
+    screen, client, app = _visit(monkeypatch)
+    client._readiness_deadline = 0
+    if state == "covered":
+        _cover(screen, app)
+    elif state == "revoked":
+        client._view, client._visit = None, 2
+    elif state == "teardown":
+        screen._console_chat_tearing_down = True
+    elif state == "unmounted":
+        screen.is_mounted = False
+    else:
+        screen._console_process_content_failed = True
+
+    def unexpected(*_, **__):
+        raise AssertionError("Passive obsolete view requested or painted values")
+
+    monkeypatch.setattr(execution_state, "selected_client", unexpected)
+    screen.run_worker = unexpected
+    button = SimpleNamespace(is_attached=True, label="Progress: 3 queued")
+    counts = {"chat": 3}
+    rail = SimpleNamespace(
+        is_attached=True, screen=screen,
+        _agent_progress_state=unexpected,
+        _progress_button=button, _progress_counts=counts,
+        _refresh_progress_navigation=unexpected,
+    )
+    execution_state.refresh_selected_when_due(screen)
+    ConsoleLeftRail._sync_progress_count(rail)
+    assert button.label == "Progress: 3 queued"
+    assert rail._progress_counts is counts
+
+
+@pytest.mark.parametrize("owned_modal", [False, True])
+@pytest.mark.parametrize("failure", ["channel", "source"])
+def test_current_passive_timers_keep_original_reads_and_failures(monkeypatch, owned_modal, failure):
+    from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
+
+    screen, client, app = _visit(monkeypatch)
+    if owned_modal:
+        _cover(screen, app)
+        monkeypatch.setattr(execution_decisions, "is_owned_project_modal", lambda *_: True)
+    client._readiness_deadline = 0
+    scheduled = []
+    screen.run_worker = lambda *args, **kwargs: scheduled.append((args, kwargs))
+    execution_state.refresh_selected_when_due(screen)
+    assert len(scheduled) == 1
+    reads = []
+    rail = SimpleNamespace(
+        is_attached=True, screen=screen,
+        _agent_progress_state=lambda: (reads.append(True) or (5, {"chat": 5})),
+        _progress_button=SimpleNamespace(is_attached=True, label="old"),
+        _progress_counts={}, _refresh_progress_navigation=None,
+    )
+    ConsoleLeftRail._sync_progress_count(rail)
+    assert reads == [True]
+    assert rail._progress_button.label == "Progress: 5 queued"
+
+    error = (
+        ConsoleChannelLost("actual active channel loss")
+        if failure == "channel" else RuntimeError("actual active source change")
+    )
+    if failure == "channel":
+        client._channel_error = error
+
+    def failed(*_, **__):
+        raise error
+
+    monkeypatch.setattr(execution_state, "selected_client", failed)
+    if failure == "source":
+        monkeypatch.setattr(execution_state, "_require_sources", failed)
+    rail._agent_progress_state = failed
+    with pytest.raises(type(error)) as refreshed:
+        execution_state.refresh_selected_when_due(screen)
+    assert refreshed.value is error
+    with pytest.raises(type(error)) as progress:
+        ConsoleLeftRail._sync_progress_count(rail)
+    assert progress.value is error

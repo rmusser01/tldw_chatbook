@@ -517,7 +517,7 @@ async def reconcile_selected_view(screen: ChatScreen) -> None:
 
 def refresh_selected_when_due(screen: ChatScreen) -> None:
     """Request the original readiness refresh after its published expiry."""
-    if getattr(screen, "_console_process_content_failed", False):
+    if defer_selected_passive_render(screen):
         return
     from .execution_decisions import is_owned_project_modal
 
@@ -539,6 +539,36 @@ def refresh_selected_when_due(screen: ChatScreen) -> None:
         partial(reconcile_selected_view, screen),
         group="console-attach-reconciliation", exclusive=False,
     )
+
+
+def defer_selected_passive_render(screen: ChatScreen) -> bool:
+    """Skip obsolete timer work without substituting display values or authority."""
+    app = getattr(screen, "app_instance", None)
+    client = getattr(app, "console_execution_client", None)
+    if client is None:
+        return False
+    if (
+        not screen.is_attached or not screen.is_mounted
+        or getattr(screen, "_console_chat_tearing_down", False)
+        or getattr(screen, "_closing", False)
+        or getattr(screen, "_console_process_content_failed", False)
+    ):
+        return True
+    visit = getattr(screen, "_console_process_visit", None)
+    if visit is None:
+        return True  # No visit has published yet; this timer cannot render it.
+    if (type(client) is ConsoleExecutionClient and client._app is app
+        and client._visit > visit):
+        screen._console_process_surface_reconciled = False
+        return True
+    if _defer_selected_refresh(screen, client, visit):
+        return True
+    from .execution_decisions import is_owned_project_modal
+
+    # A passive timer has nothing to paint on a covered/replaced screen. The
+    # original owned disclosure remains eligible for its checked refresh path.
+    # Eligible callers still use selected_client and propagate real failures.
+    return not screen.is_current and not is_owned_project_modal(client, screen, visit)
 
 
 _MOUNT_UI_METHODS = tuple(
