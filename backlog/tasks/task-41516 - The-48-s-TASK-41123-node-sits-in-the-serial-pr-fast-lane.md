@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-17 05:27
-updated_date: 2026-11-18 08:39
+updated_date: 2026-11-18 19:41
 labels:
 - follow-up
 - tests
@@ -57,6 +57,6 @@ The whole file moves, not only the node. The recovered-suites contract refuses a
 - `test_recovered_suites_lane_is_one_serial_guarded_minimal_python_312_job`: 35de45b226 put `Tests/Actor_Packs/test_persona_actor_pack_coordinator.py` in the workflow but not in `RECOVERED_SUITES_TARGETS`.
 - `test_backup_owner_suites_run_on_dev_pushes_only_and_are_never_required`: ba0f910e01 added `test_created_owner_rollback.py` to the backup-owner job but not to `BACKUP_OWNER_SUITE_TARGETS`.
 
-Both stay red on this branch until TASK-41521's branch adds those lines.
+Both stayed red until TASK-41521's branch added those lines. After the 2026-11-18 rebase onto ffdf0c5472 they pass: `Tests/CI` gives 1746 passed, 1 skipped (`-n 4`).
 
 **Files.** `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`.
