@@ -100,6 +100,43 @@ def test_snapshot_refuses_invalid_ancestor_before_native_open(
         windows_files.WindowsOS().stat_many_for_admission((selected,))
 
 
+@pytest.mark.parametrize("case_change", ["leaf", "ancestor"])
+def test_admission_refuses_inconsistent_spelling_before_native_read(tmp_path, monkeypatch, case_change):
+    left = tmp_path / "Project" / "src" / "left"
+    right = (
+        left.with_name("LEFT") if case_change == "leaf"
+        else tmp_path / "project" / "docs" / "right"
+    )
+    monkeypatch.setattr(
+        storage.os, "stat_many_for_admission",
+        lambda paths: pytest.fail("ambiguous spelling reached the native reader"),
+    )
+    with pytest.raises(ValueError, match="ambiguous_windows_admission_spelling"):
+        storage._windows_stamps((left,), (right,))
+
+
+def test_admission_checks_shared_spelling_once_per_input_and_reads_fresh_metadata(tmp_path, monkeypatch):
+    files = tuple(tmp_path / str(i) for i in range(4))
+    for path in files:
+        path.write_bytes(b"x")
+    paths = (*tmp_path.parents, tmp_path, *files)
+    original = storage._windows_same_spelling
+    comparisons = []
+
+    def compare(left, right):
+        comparisons.append((left, right))
+        return original(left, right)
+
+    monkeypatch.setattr(storage, "_windows_same_spelling", compare)
+    first_posture, first_content = storage._windows_stamps(paths, files)
+    assert len(comparisons) == len(paths) + len(files)
+    assert set(first_posture) == set(first_content) == set(paths)
+    files[0].write_bytes(b"longer")
+    _, second_content = storage._windows_stamps(paths, files)
+    assert first_content[files[0]][2] == 1
+    assert second_content[files[0]][2] == 6
+
+
 @pytest.mark.parametrize("route", ["batch", "scalar"])
 @pytest.mark.parametrize(
     "outcome", ["before-close-false", "after-close-false", "raised", "native-protected"]

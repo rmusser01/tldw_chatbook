@@ -845,8 +845,13 @@ class WindowsOS:
         retain their exact birth records and refuse the observation.
         """
         selected = tuple(Path(path) for path in paths)
+        components = set()
+        for node in selected:
+            while node not in components:
+                components.add(node)
+                node = node.parent
         nodes = sorted(
-            {node for path in selected for node in (*path.parents, path)},
+            components,
             key=lambda node: (len(node.parts), str(node)),
         )
         for node in nodes:

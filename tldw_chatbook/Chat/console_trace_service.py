@@ -143,7 +143,18 @@ def trace_critical_write_checkpoint_policy(database: object) -> Iterator[None]:
     if not callable(get_connection):
         yield
         return
-    with operation_owned_connection(database):
+    from tldw_chatbook.Backup_Recovery.participants import core_operation
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    # The policy probe and enclosed trace transaction use the same finite
+    # repository operation. Restore the policy before releasing that operation,
+    # then retire only the original connection owner's newly opened handle.
+    with (
+        operation_owned_connection(database),
+        core_operation(database)
+        if type(database) is CharactersRAGDB and not database.is_memory_db
+        else nullcontext(),
+    ):
         connection = get_connection()
         row = connection.execute("PRAGMA wal_autocheckpoint").fetchone()
         if row is None or type(row[0]) is not int or row[0] < 0:

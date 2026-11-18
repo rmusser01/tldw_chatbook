@@ -1035,10 +1035,14 @@ def _windows_stamps(posture_paths, content_paths):
     named = {}
     paths = {}
     for path in (*posture_paths, *content_paths):
-        for component in (*path.parents, path):
-            original = named.setdefault(component, component)
-            if not _windows_same_spelling(original, component):
-                raise ValueError("ambiguous_windows_admission_spelling")
+        component = path
+        while component not in named:
+            named[component] = component
+            component = component.parent
+        # A matching full spelling includes every ancestor already recorded.
+        # A case-insensitive Path match alone would accept ambiguous names.
+        if not _windows_same_spelling(named[component], component):
+            raise ValueError("ambiguous_windows_admission_spelling")
         paths[path] = None
     observations = os.stat_many_for_admission(paths)
     posture, content = {}, {}
