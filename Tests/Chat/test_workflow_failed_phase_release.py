@@ -52,11 +52,20 @@ def test_ownership_error_in_a_phase_keeps_a_claim_it_does_not_own(tmp_path):
     _run(tmp_path, "ownership_error", "native", script=_SCRIPT, timeout=180)
 
 
-def test_open_unlaunched_preparation_is_reconciled_without_effects(tmp_path):
+def test_phase_failing_before_launch_returns_its_chat_without_reconcile(tmp_path):
     """A phase that failed after preparing task-1 but before launching it kept
-    the run retained: the open preparation counted as live work, so reconcile
-    refused with `workflow_resources_still_live` and the chat stayed held until
-    restart (TASK-41320). Reconcile now closes that never-launched preparation
+    the run retained: the driver's failure handler counted the open preparation
+    as live work, so only a reconcile released the chat (TASK-41646). The
+    handler now closes that never-launched preparation itself, and the phase
+    retires as a resumable failed phase, as `blocked_phase` does."""
+    _run(tmp_path, "failed_before_launch", "native", script=_SCRIPT, timeout=180)
+
+
+def test_open_unlaunched_preparation_is_reconciled_without_effects(tmp_path):
+    """A retained run whose wave call was cancelled after preparing task-1 but
+    before launching it kept that preparation open: it counted as live work, so
+    reconcile refused with `workflow_resources_still_live` and the chat stayed
+    held until restart (TASK-41320). Reconcile now closes that never-launched preparation
     without launching or dispatching anything, records the review, and returns
     the chat's claim. A stale revision is refused before anything closes.
 
@@ -421,25 +430,71 @@ async def ownership_error(tmp_path):
         await rig.close()
 
 
-async def _retained_unlaunched(rig):
-    """Fail the phase after task-1 is prepared, before any wave binds it."""
+async def _failed_before_launch(rig, error):
+    """The wave call raises `error` after task-1 is prepared, before any wave
+    binds it; returns once the phase driver has finished."""
     import asyncio
 
     from tldw_chatbook.Chat import console_workflow_wave
 
+    prepared = []
+
     async def refused_before_launch(phase, selected, **kwargs):
-        raise RuntimeError("wave refused before launch")
+        prepared.extend(selected)
+        raise error
 
     decision = await _started(rig)
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(console_workflow_wave, "run_workflow_wave", refused_before_launch)
         await rig.coordinator.approve(decision, command_id="approved-once")
         run = rig.coordinator._runs[rig.workflow.id]
-        await asyncio.wait_for(asyncio.shield(run.driver), 60)
-    # task-1 is prepared and was never enrolled in a wave or launched.
-    (item,) = run.preparations.values()
-    assert item in rig.runtime._workflow_preparations and not item._closed
+        await asyncio.wait({run.driver}, timeout=60)
+    assert run.driver.done()
+    # task-1 was prepared and never enrolled in a wave or launched.
+    (item,) = prepared
     assert item._wave is None and not item.authorization._native_launch
+    return run, item
+
+
+async def failed_before_launch(tmp_path):
+    import asyncio
+
+    from Tests.Chat.workflow_rig import WorkflowProvider, build_workflow_rig
+
+    rig = await build_workflow_rig(tmp_path, None, WorkflowProvider())
+    session_id = "workflow-test-chat"
+    try:
+        run, item = await _failed_before_launch(
+            rig, RuntimeError("wave refused before launch")
+        )
+        # The driver closed the preparation itself, without effects.
+        assert item._closed and item not in rig.runtime._workflow_preparations
+        assert not item.authorization._native_launch
+        assert [key for key, _ in rig.provider.calls] == ["planning"]
+        assert not rig.runtime.execution_capacity.snapshot().executions
+        assert rig.workflow.id not in rig.coordinator._runs
+        assert not [key for key in rig.coordinator._commands if key[0] == "reconcile"]
+        # The same resumable failed phase as `blocked_phase`.
+        assert (await rig.coordinator.get(rig.workflow.id)).status == "paused"
+        sent = await rig.controller.submit_draft(
+            "A new turn after the failed phase", session_id=session_id
+        )
+        assert sent.accepted, sent
+        stream = rig.controller._active_stream_tasks.get(session_id)
+        if stream is not None:
+            await asyncio.wait_for(asyncio.shield(stream), 15)
+    finally:
+        await rig.close()
+
+
+async def _retained_unlaunched(rig):
+    """A cancelled wave call leaves task-1's preparation open in a retained
+    run: the driver's failure handler takes ordinary exceptions only."""
+    import asyncio
+
+    run, item = await _failed_before_launch(rig, asyncio.CancelledError())
+    assert item in run.preparations.values()
+    assert item in rig.runtime._workflow_preparations and not item._closed
     assert rig.coordinator._runs.get(rig.workflow.id) is run
     assert not (
         await rig.controller.submit_draft("Still held", session_id="workflow-test-chat")

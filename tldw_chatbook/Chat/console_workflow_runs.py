@@ -2123,6 +2123,10 @@ class ConsoleWorkflowCoordinator:
                 # TASK-40718: a failure that left no workflow work live retires
                 # below as a failed phase, so the chat gets its claim back.
                 # Settlement re-proves the return; live work keeps custody.
+                # TASK-41646: a never-launched preparation is not live work;
+                # close it here, as reconcile would (TASK-41320).
+                for item in self._unlaunched(run):
+                    await item.close()
                 if self.service._has_live_workflow_resources(run.workflow_id):
                     raise
                 logger.exception("Native workflow phase failed")
@@ -2213,6 +2217,18 @@ class ConsoleWorkflowCoordinator:
         if self._runs.pop(run.workflow_id) is not run:
             raise PermissionError("original workflow run did not return")
         return binding
+
+    @staticmethod
+    def _unlaunched(run):
+        """Preparations never enrolled in a wave, so never launched (TASK-41320).
+
+        Read from runtime state; ``close()`` rechecks it under the task lock.
+        """
+        return [
+            item
+            for item in run.preparations.values()
+            if item._wave is None and not item.authorization._native_launch
+        ]
 
     def _notify_execution_release(self, binding):
         _execution_release_source(self, binding, released=True)
@@ -2471,13 +2487,7 @@ class ConsoleWorkflowCoordinator:
                         # TASK-41320 (ADR-285): the control returned unproven.
                         # An unproven read was refused above, before any change.
                         raise ValueError("workflow_return_unproven")
-                    # TASK-41320: never enrolled in a wave means never launched;
-                    # close() rechecks that under the task lock.
-                    unlaunched = [
-                        item
-                        for item in run.preparations.values()
-                        if item._wave is None and not item.authorization._native_launch
-                    ]
+                    unlaunched = self._unlaunched(run)
                     if unlaunched:
                         current = await self.service.call(self.service.get, workflow_id)
                         if current.control_revision != revision:
