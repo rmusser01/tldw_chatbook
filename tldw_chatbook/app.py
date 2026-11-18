@@ -1299,8 +1299,12 @@ class TldwCli(
         #: means nothing to report; empty visits mint nothing. Task 3
         #: polishes the surfacing copy.
         self._guardian_visit_summary_notice: dict | None = None
-        self.service_policy_enforcer = (
-            ServicePolicyEnforcer.from_runtime_policy_context(self.runtime_policy)
+        # Console skill reads run this provider off the UI loop only while
+        # the enforcer holds the one registered here (ADR-356 rule 4).
+        runtime_policy = self.runtime_policy
+        self._service_policy_state_provider = lambda: runtime_policy.state
+        self.service_policy_enforcer = ServicePolicyEnforcer(
+            state_provider=self._service_policy_state_provider
         )
         self.ui_policy_engine = PolicyEngine(CAPABILITY_REGISTRY)
         self.home_active_work_adapter = UnavailableHomeActiveWorkAdapter(

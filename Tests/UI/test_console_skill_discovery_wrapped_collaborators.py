@@ -120,6 +120,17 @@ async def exercise():
     elif case in foreign_slots:
         fields, name = foreign_slots[case]
         fields[name] = foreign
+    elif case == 'foreign_policy_provider':
+        # A state provider the app did not register for its policy enforcer.
+        policy_fields = vars(vars(local)['policy_enforcer'])
+        registered = policy_fields['_state_provider']
+
+        def foreign_provider():
+            foreign_calls.append(threading.current_thread() is main)
+            return registered()
+
+        policy_fields['_state_provider'] = foreign_provider
+        restores.append(lambda: policy_fields.__setitem__('_state_provider', registered))
     try:
         with app._context():
             context = await controller._fetch_console_skill_context()
@@ -135,13 +146,13 @@ async def exercise():
     assert 'available_skills' in context, context
     assert vars(app)['_local_skill_trust_service'] is not None
     assert threads['builder'] and threads['context'], threads
-    if case in foreign_slots:
+    if case in foreign_slots or case == 'foreign_policy_provider':
         # The off-loop read declines: the skills are read on the UI loop, and
         # a foreign callback never runs anywhere else.
         assert threads['context'] == [True] * len(threads['context']), threads
         assert all(foreign_calls), foreign_calls
-        if case == 'foreign_loader':
-            assert foreign_calls, 'the foreign loader never ran'
+        if case in {'foreign_loader', 'foreign_policy_provider'}:
+            assert foreign_calls, f'{case}: the foreign callback never ran'
     else:
         # The same route as stock: trust built and skills read off the loop.
         assert not any(threads['builder']), f'{case}: trust built on the UI loop {threads}'
@@ -179,7 +190,13 @@ def test_wrapped_skill_collaborator_keeps_the_off_loop_discovery(tmp_path, case)
 
 
 @pytest.mark.parametrize(
-    "case", ["instance_controller_override", "instance_view_popup", "foreign_loader"]
+    "case",
+    [
+        "instance_controller_override",
+        "instance_view_popup",
+        "foreign_loader",
+        "foreign_policy_provider",
+    ],
 )
 def test_foreign_skill_callback_declines_the_off_loop_discovery(tmp_path, case):
     _run(tmp_path, "skill_discovery_wrapped", case, script=_SCRIPT, timeout=180)

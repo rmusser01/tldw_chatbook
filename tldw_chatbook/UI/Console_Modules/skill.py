@@ -377,7 +377,8 @@ def _capture_console_skill_context_read(app, service, wiring):
 
     ADR-356 rule 4: the app's registrations and the services' current slots
     decide, not code identity. The disabled-builtins loader must be the
-    callback the app registered for its skills stack (TASK-41319 D3).
+    callback the app registered for its skills stack (TASK-41319 D3), and the
+    policy's state provider the one the app registered for its enforcer.
     """
     source = wiring._capture_console_skill_trust_source(app, service)
     if source is None or _CONTEXT_CLASSES is None:
@@ -400,6 +401,7 @@ def _capture_console_skill_context_read(app, service, wiring):
     policy_fields = vars(policy) if policy is not None else {}
     engine = policy_fields.get("_engine")
     provider = policy_fields.get("_state_provider")
+    registered_provider = vars(app).get("_service_policy_state_provider")
 
     def stock(value, expected, names):
         return type(value) is expected and not any(
@@ -443,7 +445,9 @@ def _capture_console_skill_context_read(app, service, wiring):
             and stock(engine, engine_type, ("evaluate", "_deny"))
             and vars(engine).get("_registry") is registry
             and type(runtime_policy) is context_type
-            and callable(provider)
+            and provider is not None
+            and provider is registered_provider
+            and vars(app).get("_service_policy_state_provider") is registered_provider
         )
 
     if not source_current():
