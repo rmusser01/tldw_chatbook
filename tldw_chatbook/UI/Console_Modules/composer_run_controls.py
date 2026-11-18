@@ -1308,6 +1308,8 @@ def poll_source_is_current(self, captured: dict | None) -> bool:
 
 def preparing_poll_record(self):
     """Select only a sole, unchanged stock manual receipt for display work."""
+    from types import MethodType
+
     from tldw_chatbook.Chat.console_chat_models import ConsoleSubmissionOrigin
     from tldw_chatbook.Chat.console_configuration_preparation import (
         capture_console_received_configuration_preparation,
@@ -1403,9 +1405,9 @@ def preparing_poll_record(self):
     ):
         return None
     context_provider = controller._turn_context_provider
-    if (
-        context_provider is not None
-        and context_provider != self._session._build_console_turn_execution_context
+    if context_provider is not None and (
+        type(context_provider) is not MethodType
+        or context_provider != self._session._build_console_turn_execution_context
     ):
         return None
     adapters = getattr(self, "_console_received_live_adapters", ())

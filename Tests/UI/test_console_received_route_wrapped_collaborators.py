@@ -10,6 +10,7 @@ the real route; ``stock`` is the control. Each foreign case puts a callback on
 one object (or replaces a registered slot), which still declines.
 """
 
+import copy
 import functools
 from functools import partial
 from types import MethodType
@@ -87,6 +88,8 @@ async def test_wrapped_received_collaborator_keeps_the_received_route(
         "instance_turn_context_builder",
         "foreign_scratch_slot",
         "foreign_rag_slot",
+        "swapped_session_scratch",
+        "subclass_screen_gate",
     ],
 )
 async def test_foreign_received_collaborator_is_refused(monkeypatch, foreign):
@@ -115,8 +118,21 @@ async def test_foreign_received_collaborator_is_refused(monkeypatch, foreign):
                 "_scratch_snapshot_provider",
                 partial(owner._scratch_snapshot_provider.func, screen),
             )
-        else:
+        elif foreign == "foreign_rag_slot":
             monkeypatch.setattr(owner, "_rag_top_k_accessor", foreign_callback)
+        elif foreign == "swapped_session_scratch":
+            # A same-class session the wiring never registered, carrying a
+            # foreign scratch partial bound to the right screen.
+            clone = copy.copy(owner)
+            vars(clone)["_scratch_snapshot_provider"] = partial(foreign_callback, screen)
+            monkeypatch.setattr(screen, "_session", clone)
+        else:
+            # A subclass's own gate: the route computes the stock answer and
+            # would never call it, so only the exact screen type qualifies.
+            gated = type(
+                "GatedChatScreen", (type(screen),), {"_console_send_gate": foreign_callback}
+            )
+            monkeypatch.setattr(screen, "__class__", gated)
         assert _receive(case) is None, f"{foreign}: the received route accepted"
         assert not foreign_calls
         assert not case.runtime._turn_custody
@@ -143,3 +159,12 @@ def test_own_methods_accepts_wrapped_class_methods_but_not_instance_overrides():
     Controller.queue_prompt = staticmethod(lambda: None)
     assert not own_methods(controller, ("queue_prompt",))
     assert not own_methods(controller, ("missing",))
+
+    class Slotted:
+        __slots__ = ()
+
+        def queue_prompt(self):
+            return "stock"
+
+    # No instance dict, so no instance override: decided without raising.
+    assert own_methods(Slotted(), ("queue_prompt",))

@@ -28626,12 +28626,6 @@ _HOOK_AUTHORITY_VALUES_ORIGINAL = (
 )
 
 
-_CONSOLE_RECEIVED_QUEUE_METHOD = (
-    ConsoleChatController.queue_prompt,
-    ConsoleChatController.queue_prompt.__code__,
-)
-
-
 # Stock sharing narrows only these directly consumed wrappers. A custom binding
 # keeps the preceding composition route; a captured change refuses publication.
 _CONSOLE_TOOL_COMPOSITION_METHODS = tuple(

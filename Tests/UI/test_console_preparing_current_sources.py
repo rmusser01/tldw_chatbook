@@ -96,6 +96,23 @@ async def test_preparing_defining_sources_decline_changed_callbacks(
                 assert controls.preparing_poll_record(screen) is None, name
             assert controls.preparing_poll_record(screen) is record
             qualified.append((name, "code"))
+
+        class ForeignProvider:
+            """A provider whose comparison would run foreign code."""
+
+            def __eq__(self, other):
+                raise AssertionError("compared a foreign turn-context provider")
+
+            __ne__ = __eq__
+            __hash__ = None
+
+        # TASK-41643 review: only a bound method is compared with the session's
+        # builder; anything else declines before its ``__eq__``/``__ne__`` runs.
+        with monkeypatch.context() as changed:
+            changed.setattr(case.controller, "_turn_context_provider", ForeignProvider())
+            assert controls.preparing_poll_record(screen) is None
+        assert controls.preparing_poll_record(screen) is record
+        qualified.append(("_turn_context_provider", "foreign_object"))
         record_property("qualified_current_source_mutations", qualified)
         assert case.provider_calls == []
         assert case.composer.draft_text() == case.draft

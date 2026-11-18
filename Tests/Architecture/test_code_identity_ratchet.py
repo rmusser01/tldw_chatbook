@@ -60,6 +60,9 @@ PACKAGE = Path(__file__).resolve().parents[2] / "tldw_chatbook"
 # from the app's registrations; the skill source capsules deleted) removed 109:
 # __func__ 8, __code__ 14, __defaults__ 11, __kwdefaults__ 20, __closure__ 21,
 # cell_contents 9, __globals__ 17, __wrapped__ 9.
+# TASK-41643 review (queue_prompt admission downstream of the received route
+# decided by own_methods; _CONSOLE_RECEIVED_QUEUE_METHOD and the unread
+# _CONSOLE_PROMPT_QUEUE_DISPATCH deleted) removed 4: __func__ 1, __code__ 3.
 # Lower a row when you remove sites.
 PINS = {
     # caller frames, coroutine/generator implementation
@@ -79,8 +82,8 @@ PINS = {
     "ag_code": 0,
     "ag_frame": 0,
     # function, code, default and closure identity
-    "__func__": 132,
-    "__code__": 365,
+    "__func__": 131,
+    "__code__": 362,
     "__defaults__": 190,
     "__kwdefaults__": 283,
     "__closure__": 217,

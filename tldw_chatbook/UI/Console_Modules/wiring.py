@@ -394,6 +394,7 @@ def receive_console_visible_intent(
     from collections.abc import Mapping
     from tldw_chatbook import config
     from tldw_chatbook.Chat.console_chat_controller import (
+        ConsoleChatController,
         build_console_provider_selection_from_settings,
         coerce_bool_setting,
         coerce_int_setting,
@@ -411,6 +412,7 @@ def receive_console_visible_intent(
     from ..Screens.settings_library_rag_defaults import load_direct_library_tools
     from ..Navigation.pending_handoff_store import HandoffChannel
     from ..Screens.chat_screen import (
+        ChatScreen,
         _CONSOLE_RECEIVED_SCREEN_SELECTORS,
         _stock_received_rag_sources,
         _stock_received_rag_top_k,
@@ -429,6 +431,9 @@ def receive_console_visible_intent(
             or controller is None
             or composer is None
             or type(owner) is not ConsoleSessionController
+            # This route computes what the screen's selectors would and never
+            # calls them, so a subclass (which may override them) declines.
+            or type(screen) is not ChatScreen
         ):
             return None
         if _captured_inputs is None and stash is not None:
@@ -492,10 +497,19 @@ def receive_console_visible_intent(
             return None
         if not policy_producers_current():
             return None
-        # The adapter check above already holds these slots to what this
-        # screen's wiring registered; the scratch slot is always its partial.
+        # The adapter check above holds these slots to what this screen's
+        # wiring registered; the registration must also name this session
+        # (a swapped-in copy was never registered).
         scratch = owner._scratch_snapshot_provider
-        if type(scratch) is not partial or scratch.args != (screen,) or scratch.keywords:
+        if (
+            type(scratch) is not partial
+            or scratch.args != (screen,)
+            or scratch.keywords
+            or not any(
+                target is owner and name == "_scratch_snapshot_provider" and original is scratch
+                for target, name, original in callbacks
+            )
+        ):
             return None
         rag_source = owner._rag_source_types_accessor
         if (
@@ -552,7 +566,10 @@ def receive_console_visible_intent(
         queue_revision = (
             queue.revision if activity.accepted_live_turn or queue.total_count else None
         )
-        if queue_revision is not None and not own_methods(controller, ("queue_prompt",)):
+        if queue_revision is not None and (
+            type(controller) is not ConsoleChatController
+            or not own_methods(controller, ("queue_prompt",))
+        ):
             return None
         section = raw.get("console", {})
         section = section if isinstance(section, Mapping) else {}
