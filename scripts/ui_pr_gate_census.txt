@@ -3523,14 +3523,17 @@ Tests/UI/test_screen_navigation.py::test_legacy_alias_explicit_context_merges_de
 Tests/UI/test_screen_navigation.py::test_workflows_and_schedules_updates_during_removal_touch_no_controls
 # TASK-41507 (2026-11-18): the launch-wake file, on no lane before (its seeding
 # send was red at base); its cold-Home case pins the wake's skill trust.
-# Serially with the lane's flags at load 14-17: 12 passed in 148.6 s.
+# Serially with the lane's flags at load 14-17: 12 passed in 148.6 s; after
+# review r16co-rev1 added the denied-listing and pre-claim backoff cases, 18
+# nodes took 208.4 s at load 25-36.
 Tests/UI/test_console_launch_wake.py
 # TASK-41509 (2026-11-18): the Settings reasoning-history nodes, now private
 # profile tests (3 passed in 23.1 s serially, load ~11).
 Tests/UI/test_settings_console_thinking.py
 # TASK-41511 (2026-11-18): three Console files red at base and on no lane.
 # Serially with the lane's flags at load 10-12: staged context 17 passed in
-# 3.1 s, Buddy poll idempotence 8 in 4.2 s, cardless compaction holds 4 in 92.3 s.
+# 3.1 s, Buddy poll idempotence 8 in 4.2 s, cardless compaction holds 4 in 92.3 s
+# (222.9 s at load 25-36 after review r16co-rev1's wait for a pressable Cancel).
 Tests/UI/test_console_staged_context.py
 Tests/UI/test_polling_static_update_idempotence.py
 Tests/UI/test_console_compaction_hold_cardless_sends.py
