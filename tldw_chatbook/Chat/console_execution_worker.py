@@ -828,11 +828,35 @@ class _BackendService:
             applied = True
         except BaseException as error:
             from .console_backend_view_lifecycle import ConsoleBackendViewSuperseded
+            from .console_backend_readiness import (
+                ConsoleBackendReadiness,
+                ConsoleBackendReadinessChanged,
+                _DEFINITIONS as readiness_definitions,
+            )
+            from .console_domain_services import _definition_current
+            from inspect import getattr_static
 
             superseded = (
                 message.operation == "ReadProjection"
                 and type(error) is ConsoleBackendViewSuperseded
             )
+            readiness_changed = False
+            if (
+                message.operation == "ReadProjection"
+                and type(error) is ConsoleBackendReadinessChanged
+            ):
+                try:
+                    readiness = self.backend.presentation.readiness
+                    definition = dict(readiness_definitions)["require_retired_context_change"]
+                    readiness_changed = (
+                        type(readiness) is ConsoleBackendReadiness
+                        and getattr_static(readiness, "require_retired_context_change", None)
+                        is definition[0]
+                        and _definition_current(definition)
+                        and readiness.require_retired_context_change(error) is True
+                    )
+                except BaseException as qualification_error:
+                    error = qualification_error
             self._failure(message.operation, "applied", error)
             self.emit(
                 message.identity,
@@ -841,7 +865,8 @@ class _BackendService:
                 {
                     "code": "cancelled"
                     if isinstance(error, asyncio.CancelledError)
-                    else "view_checkpoint_superseded" if superseded else "command_failed",
+                    else "view_checkpoint_superseded" if superseded
+                    else "readiness_context_changed" if readiness_changed else "command_failed",
                     "stage": "applied",
                 },
             )

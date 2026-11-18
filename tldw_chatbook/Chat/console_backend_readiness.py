@@ -761,6 +761,7 @@ class ConsoleBackendReadiness:
         backend._require_owner_loop()
         if (
             ConsoleBackendReadinessChanged is not _CHANGE_TYPE
+            or getattr_static(_CHANGE_TYPE, "__init__", None) is not _CHANGE_INIT[0]
             or not _definition_current(_CHANGE_INIT)
             or type(error) is not _CHANGE_TYPE or error.owner is not self
             or type(error.scope) is not tuple or len(error.scope) != 6

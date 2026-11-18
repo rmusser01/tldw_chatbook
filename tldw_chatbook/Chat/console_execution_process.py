@@ -35,7 +35,7 @@ class ConsoleChannelLost(RuntimeError):
 
 
 class ConsoleReadinessExpired(ConsoleChannelLost):
-    """The checked display aged out before the client could adopt it."""
+    """A retired display aged out or its display inputs changed before adoption."""
 
 
 class ConsoleRemoteFailure(RuntimeError):
@@ -805,6 +805,8 @@ class ConsoleExecutionClient:
         from .console_execution_composition_values import decode_session_composition
 
         previous = self._projection
+        published = self.projection_view
+        active_session = published.active_session_id if published is not None else None
         view, visit = self._view, self._visit
         attachment, app = self._attachment_id, self._app
         if self._view_preparation is not _preparation:
@@ -861,6 +863,39 @@ class ConsoleExecutionClient:
                     self._fail(error)
                     raise error
         if failure is not None:
+            if (
+                type(failure) is ConsoleRemoteFailure
+                and failure.code == "readiness_context_changed"
+                and failure.stage == "applied"
+                and not admission_refused
+                and receipt.received.exception() is None
+                and receipt.retired.result() is True
+                and self._view is view and self._visit == visit
+                and self._attachment_id == attachment
+                and self._source_revision == binding[0]
+                and self._view_preparation is _preparation
+                and self._app is app
+                and (app is None or (
+                    getattr(app, "console_execution_client", None) is self
+                    and getattr(app, "console_runtime", None) is None
+                ))
+                and self._channel_error is None and not self._disposed
+                and self._shutdown_task is None
+                and receipt.identity.sequence > self._projection_sequence
+                and self.projection_view is published
+                and (published is None or (
+                    published.active_session_id == active_session
+                    and (
+                        published.session(session_id).incarnation_id == incarnation_id
+                        if active_session == session_id else _preparation is not None
+                    )
+                ))
+            ):
+                if view is not None:
+                    self.require_view(view, visit)
+                # No stale values are adopted. Only a display observer may use
+                # read_view_display's existing backoff; authored presses refuse.
+                raise ConsoleReadinessExpired("Console readiness display inputs changed") from failure
             if (
                 type(failure) is ConsoleRemoteFailure
                 and failure.code == "view_checkpoint_superseded"

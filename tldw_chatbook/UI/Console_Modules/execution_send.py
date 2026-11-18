@@ -7,7 +7,11 @@ from dataclasses import dataclass
 from types import FunctionType
 from uuid import uuid4
 
-from ...Chat.console_execution_process import ConsoleChannelLost, ConsoleRemoteFailure
+from ...Chat.console_execution_process import (
+    ConsoleChannelLost,
+    ConsoleReadinessExpired,
+    ConsoleRemoteFailure,
+)
 from ...Chat.console_execution_protocol import _PROJECTED_INPUTS, _detach
 from ...Widgets.Console.console_composer_bar import (
     ConsoleComposerBar,
@@ -251,6 +255,16 @@ async def dispatch_send(screen, *, session_id=None, pending_send_token=None) -> 
 
             await refresh_selected_view(screen)
         return accepted
+    except ConsoleReadinessExpired:
+        if receipt is not None or press.task is not None:
+            raise
+        if client._view is not screen or client._visit != visit:
+            return False
+        _current(screen, client, visit)
+        screen.app_instance.notify(
+            "Console input changed; your draft was kept.", severity="warning"
+        )
+        return False
     except ConsoleRemoteFailure:
         screen.app_instance.notify(
             "Console input changed; your draft was kept.", severity="warning"
