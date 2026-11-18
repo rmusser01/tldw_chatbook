@@ -60,7 +60,7 @@ async def exercise():
     assert wiring._skill_wiring is skill_wiring and skill_wiring._source_wiring is wiring
     assert '_skill_foreign_calls' not in vars(skill_wiring)
     skill_method_names = ('_build_local_skill_trust_service', '_build_local_skills_stack', 'ensure_local_skill_trust_service')
-    skill_helper_names = ('_console_skill_source_current', '_capture_console_skill_trust_source', '_capture_console_skill_trust_preparation', '_prepare_console_skill_trust_service')
+    skill_helper_names = ('_capture_console_skill_trust_source', '_capture_console_skill_trust_preparation', '_prepare_console_skill_trust_service')
     for name in skill_method_names:
         function = vars(skill_wiring.SkillServiceWiringMixin)[name]
         assert type(function) is FunctionType

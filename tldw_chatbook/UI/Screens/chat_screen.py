@@ -24560,4 +24560,4 @@ run_controls.bind_preparing_screen_sources(ChatScreen)
 
 
 # Complete the finite discovery binding after the real view definition.
-skill_controller.bind_console_skill_discovery(ChatScreen, build_console_controllers)
+skill_controller.bind_console_skill_discovery(ChatScreen)

@@ -56,6 +56,10 @@ PACKAGE = Path(__file__).resolve().parents[2] / "tldw_chatbook"
 # TASK-41643 (Console received route decided from registrations and
 # per-instance overrides) removed 18: __func__ 5, __code__ 10, __defaults__ 1,
 # __kwdefaults__ 2.
+# TASK-41642 (Console skill mount discovery and its trust preparation decided
+# from the app's registrations; the skill source capsules deleted) removed 109:
+# __func__ 8, __code__ 14, __defaults__ 11, __kwdefaults__ 20, __closure__ 21,
+# cell_contents 9, __globals__ 17, __wrapped__ 9.
 # Lower a row when you remove sites.
 PINS = {
     # caller frames, coroutine/generator implementation
@@ -75,14 +79,14 @@ PINS = {
     "ag_code": 0,
     "ag_frame": 0,
     # function, code, default and closure identity
-    "__func__": 140,
-    "__code__": 379,
-    "__defaults__": 201,
-    "__kwdefaults__": 303,
-    "__closure__": 238,
-    "cell_contents": 126,
-    "__globals__": 208,
-    "__wrapped__": 206,
+    "__func__": 132,
+    "__code__": 365,
+    "__defaults__": 190,
+    "__kwdefaults__": 283,
+    "__closure__": 217,
+    "cell_contents": 117,
+    "__globals__": 192,
+    "__wrapped__": 197,
 }
 
 

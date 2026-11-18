@@ -66,8 +66,8 @@ async def exercise():
     try:
         with app._context():
             owner = _capture_console_skill_discovery(screen._skill)
-            assert owner is not None and owner[0](), "original discovery owner must qualify"
-            assert capture(app, service, owner[0], owner[1]) is not None
+            assert owner is not None and owner(), "original discovery owner must qualify"
+            assert capture(app, service, owner) is not None
             assert app._local_skill_trust_service is None and local._trust_service is None
             holder.start()
             sys.setprofile(observe)
@@ -174,8 +174,8 @@ async def exercise():
     try:
         with app._context():
             owner = _capture_console_skill_discovery(screen._skill)
-            assert owner is not None and owner[0](), "original discovery owner must qualify"
-            assert context_capture(app, service, wiring, owner[2]) is not None, "warm original context reader must qualify"
+            assert owner is not None and owner(), "original discovery owner must qualify"
+            assert context_capture(app, service, wiring) is not None, "warm original context reader must qualify"
             holder.start()
             sys.setprofile(observe)
             try:
