@@ -188,7 +188,8 @@ The earlier local implementation completed three sequential pairs with the origi
 | Batch | Pair | README baseline / candidate | Approved edit baseline / candidate | State |
 |---|---|---|---|---|
 | `q2` | 1 | 470.518 s / — | 575.079 s / — | Baseline passed. Candidate timed out at disclosure. Batch stopped. |
-| `q3` | 1–3 | — / — | — / — | The first baseline, `q31b1`, started with candidate `997b3339ff` pinned. The candidate includes the explicit-return fix and the batched AgentRuns log metadata reads. |
+| `q3` | 1 | 312.621 s / — | 392.728 s / — | Baseline `q31b1` passed the original journeys and guard checks. Paired candidate `q31c1` started at `997b3339ff`, with the explicit-return fix and batched AgentRuns log metadata reads. |
+| `q3` | 2–3 | — / — | — / — | Pending. |
 
 Times in the pair table use the benchmark's original adjusted duration. A dash means there is no measurement for that cell. With each new Windows result, append its run ID and commit, retain failed rows and update the diagram to the latest measured path. For a performance claim, record the comparable before/after boundary, wall-time delta, available work count and source receipt. Publish qualifying pair rows separately from instrumented replays.
 
