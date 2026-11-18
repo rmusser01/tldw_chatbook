@@ -3300,3 +3300,6 @@ Tests/UI/test_screen_navigation.py::test_reused_library_reentry_shows_the_landin
 # TASK-41702 (2026-11-18): Home's triage refresh and Library's footer
 # eligibility do nothing once the app's exit fence has emptied the stack.
 Tests/UI/test_screen_navigation.py::test_late_completions_after_the_exit_fence_skip_the_empty_stack
+# TASK-41604 (2026-11-18): the Trace import failure notice shows a quoted file
+# value masked and literally (3.0-6.4 s serially, load 66-77).
+Tests/UI/test_trajectory_import_ui.py::test_import_failure_shows_file_values_masked_and_literally

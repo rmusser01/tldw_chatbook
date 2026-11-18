@@ -1574,6 +1574,9 @@ jobs:
       # its v1/v2 cases replace TASK-40303's ledger node.
       # TASK-41134's legacy trace maintenance parking and projection files
       # (sandboxed, ~42 s serial at load 51-56), on no lane before, follow.
+      # Round 16: TASK-41604's import-error masking, TASK-41701's deep-nesting
+      # import and TASK-41603's v1 export masking nodes (pure or a temp DB,
+      # 17 cases, 5.4 s serial at load 29-31) join the Trace export nodes.
       # test_closed_loop_pending_submit_is_emergency_detachment: deselected
       # 2026-11-12: red on dev e0186fa10a (console_send_diagnostic ContextVar
       # token reset across contexts), owned by TASK-33621.36 AC#3; remove when fixed.
@@ -1606,6 +1609,9 @@ jobs:
             Tests/Chat/test_trace_v2_collaboration.py::test_adversarial_bundle_text_is_masked_in_bounded_time \
             Tests/Chat/test_trace_v2_collaboration.py::test_escape_quoted_values_scan_in_linear_time \
             Tests/Chat/test_trace_v2_collaboration.py::test_runs_after_a_value_scan_in_linear_time \
+            Tests/Chat/test_trace_v2_collaboration.py::test_an_import_error_never_shows_a_credential_from_the_file \
+            Tests/Chat/test_trace_v2_collaboration.py::test_a_deeply_nested_file_fails_import_with_a_named_error \
+            Tests/Chat/test_trajectory_export.py::test_export_masks_credentials_in_message_content_and_the_title \
             Tests/Chat/test_console_trace_legacy_migration.py::test_an_older_legacy_ledger_keeps_migrating_new_exchanges_under_the_current_version \
             Tests/Chat/test_console_trace_maintenance_parking.py \
             Tests/Chat/test_console_trace_projection.py \

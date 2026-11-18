@@ -60,7 +60,10 @@ class VariantSetLike:
 
 @pytest.fixture()
 def db(tmp_path: Path) -> CharactersRAGDB:
-    return CharactersRAGDB(tmp_path / "test.db", client_id="test")
+    # Closed, so a node laned under --storage-lease-guard leaves no lease.
+    database = CharactersRAGDB(tmp_path / "test.db", client_id="test")
+    yield database
+    database.close_connection()
 
 
 def _seed_conversation(database: CharactersRAGDB, *, with_sidecar: bool = True) -> str:
@@ -405,6 +408,100 @@ def test_include_payloads_opt_in_keeps_verbatim(db) -> None:
         r for r in payload["trajectory_rows"] if r["event_kind"] == "tool_call"
     )
     assert tool_row["payload_json"] == _TOOL_PAYLOAD
+
+
+@pytest.mark.parametrize("include_payloads", [False, True], ids=["previews", "payloads"])
+def test_export_masks_credentials_in_message_content_and_the_title(
+    db, monkeypatch, include_payloads: bool
+) -> None:
+    """TASK-41603 AC#2: the whole v1 payload is masked by the rules a shared
+    Trace bundle uses: message content (every must-mask row) and the title,
+    a tool payload and its previews, a variant reply and a compaction
+    record. Text that only looks like a credential (every must-keep row)
+    is kept, and a tool payload with nothing to mask stays as written."""
+    from Tests.Chat.test_trace_v2_collaboration import _MUST_KEEP, _MUST_MASK, _survives
+    from tldw_chatbook.Chat.trajectory_export import _credential_text
+
+    title, title_secret = _MUST_MASK["simple-token"]
+    conv = db.add_conversation({"title": title})
+    rows = [*_MUST_MASK.values(), *((text, None) for text in _MUST_KEEP.values())]
+    ids = {
+        db.add_message(
+            {"conversation_id": conv, "sender": "user", "content": text, "timestamp": _T0}
+        ): (text, secret)
+        for text, secret in rows
+    }
+    # A tool call whose arguments and result hold secrets, and one with none.
+    anchor = next(iter(ids))
+    secrets = ("hunter2x", "DONOTUSE" + "abc123def456", "Xk9mP2vL7wQ8" + "abc123", "Zq7wN3rT8yU2" + "abc")
+    tool_payload = json.dumps(
+        {"name": "fs_read", "args": {"note": "pass" + "word=" + secrets[0]}, "result": "tok" + "en=" + secrets[1]}
+    )
+    array_payload = json.dumps(["tok" + "en=" + secrets[3], 1])
+    db.upsert_trajectory_rows(
+        [
+            TrajectoryRowWrite(
+                message_id=anchor, conversation_id=conv, turn_id="t1", seq=1,
+                event_kind="tool_call", payload_json=tool_payload,
+            ),
+            TrajectoryRowWrite(
+                message_id=anchor, conversation_id=conv, turn_id="t1", seq=2,
+                event_kind="tool_result", payload_json=_TOOL_PAYLOAD,
+            ),
+            # review r16tr-rev2: a JSON array payload stays JSON when masked
+            TrajectoryRowWrite(
+                message_id=anchor, conversation_id=conv, turn_id="t1", seq=3,
+                event_kind="tool_result", payload_json=array_payload,
+            ),
+        ]
+    )
+    # A compaction record holding a secret: the schema allows only reason
+    # codes, so an older or foreign row is simulated at the read seam.
+    repository = ConsoleContextRepository(db)
+    repository.start_auxiliary_attempt(
+        AuxiliaryAttemptStart(
+            operation_id="op-compaction-secret", conversation_id=conv,
+            purpose="conversation_compaction", provider="p", model="m",
+            requested_output_cap=10, estimated_input_tokens=5,
+            started_at="2026-08-14T12:05:00Z",
+        )
+    )
+    listed = ConsoleContextRepository.list_auxiliary_attempts
+    monkeypatch.setattr(
+        ConsoleContextRepository,
+        "list_auxiliary_attempts",
+        lambda self, *args, **kwargs: [
+            {**record, "failure_reason": "API " + "key: " + secrets[2]}
+            for record in listed(self, *args, **kwargs)
+        ],
+    )
+    variant = VariantSetLike("t1", ("kept reply", "the sec" + "ret: " + secrets[2]))
+
+    payload = build_trajectory_export(
+        db, conv, include_payloads=include_payloads, variant_sets=[variant]
+    )
+
+    assert payload["conversation"]["title"] == _credential_text(title)[0]
+    assert title_secret not in payload["conversation"]["title"]
+    exported = {message["id"]: message["content"] for message in payload["messages"]}
+    assert exported.keys() == ids.keys()
+    for message_id, (text, secret) in ids.items():
+        assert exported[message_id] == _credential_text(text)[0], text
+        assert secret is None or not _survives(secret, text, exported[message_id]), text
+    tool_rows = {row["seq"]: row["payload_json"] for row in payload["trajectory_rows"]}
+    channels = {
+        "tool payload or previews": tool_rows[1],
+        "variant reply": json.dumps(payload["variants"]),
+        "compaction record": json.dumps(payload["compaction_records"]),
+        "whole payload": json.dumps(payload, ensure_ascii=False),
+    }
+    assert [name for name, text in channels.items() if any(s in text for s in secrets)] == []
+    json.loads(tool_rows[1])  # still JSON
+    if include_payloads:
+        assert tool_rows[2] == _TOOL_PAYLOAD  # nothing to mask: as written
+        assert json.loads(tool_rows[3]) == ["tok" + "en=[credential redacted]", 1]
+    assert payload["variants"][0]["variants"][0] == "kept reply"
+    assert payload["compaction_records"][0]["failure_reason"] == "API key: [credential redacted]"
 
 
 # ---------------------------------------------------------------------------

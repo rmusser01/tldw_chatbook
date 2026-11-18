@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import DataTable, Static
+from textual.widgets._toast import Toast
 
 from tldw_chatbook.Chat.trajectory_export import (
     build_trajectory_export,
@@ -181,6 +182,35 @@ async def test_version_mismatch_notifies_with_validator_message(tmp_path) -> Non
         notification = _last_notification(app)
         assert notification is not None, "version mismatch must surface a notification"
         assert "version 2" in notification.message
+
+
+@pytest.mark.asyncio
+async def test_import_failure_shows_file_values_masked_and_literally(tmp_path) -> None:
+    """TASK-41604: a value the error quotes from the file is credential-masked,
+    and Rich markup in it (``[/]`` has nothing to close) is shown as typed
+    instead of raising MarkupError when the notice renders."""
+    import json as _json
+
+    trace = tmp_path / "markup.json"
+    trace.write_text(_json.dumps({"format": "[/] sk-" + "Xk9mP2vL7wQ8" * 2}), encoding="utf-8")
+
+    app = _Harness()
+    async with app.run_test(notifications=True) as pilot:
+        screen = TrajectoryScreen(base_snapshot())
+        await app.push_screen(screen)
+        await pilot.pause()
+        screen._pick_trace_file = _stub_picker(trace)
+        await pilot.press("o")
+        await pilot.pause()
+
+        assert app.screen is screen
+        notification = _last_notification(app)
+        assert notification is not None, "import failure must surface a notification"
+        assert notification.severity == "error"
+        toast = screen.query_one(Toast)
+        shown = toast.render().plain
+        assert "got '[/] [credential redacted]'" in shown, shown
+        assert "Xk9mP2vL7wQ8" not in shown
 
 
 # ---------------------------------------------------------------------------

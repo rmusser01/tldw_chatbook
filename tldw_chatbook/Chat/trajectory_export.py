@@ -324,10 +324,9 @@ _CREDENTIAL_VALUE_RES = (
         r"\b(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*://[^/\s:@]+:[^/\s@]+@",
         re.IGNORECASE,
     ),
-    re.compile(
-        r"\b(?:api[_ -]?key|token|password|passwd|secret)\s*[:=]\s*\S+",
-        re.IGNORECASE,
-    ),
+    # TASK-41510: ``token=``, ``password:`` and the other simple labels are
+    # judged by mask_credential_labels, no longer masked whole here, so
+    # ``token = oauth.fetch_token(url,)`` stays readable.
 )
 _CONTENT_KEYS = frozenset(
     {"args", "arguments", "body", "content", "input", "output", "prompt", "result"}
@@ -354,8 +353,9 @@ def _credential_text(value: str) -> tuple[str, bool]:
     redacted = value
     for pattern in _CREDENTIAL_VALUE_RES:
         redacted = pattern.sub("[credential redacted]", redacted)
-    # TASK-41133: then compound labels (client_secret=...), named as logs name
-    # them, and a URL's ``?key=`` value, as logs mask it.
+    # TASK-41133: then credential labels (client_secret=..., token=...; the
+    # simple ones since TASK-41510), named as logs name them, and a URL's
+    # ``?key=`` value, as logs mask it.
     redacted = mask_credential_labels(redacted, "[credential redacted]")
     redacted = mask_url_query_keys(redacted, "[credential redacted]")
     return redacted, redacted != value
@@ -421,6 +421,24 @@ def _mask_credential_material(value: Any, *, structural_keys: bool = False) -> t
     if isinstance(value, str):
         return _credential_text(value)
     return value, False
+
+
+def _parsed_json(value: Any) -> Any:
+    """``value`` parsed when it is JSON text holding an object or an array,
+    else as is, so masking keeps it JSON (review r16tr-rev2)."""
+    if not isinstance(value, str):
+        return value
+    try:
+        parsed = json.loads(value)
+    except (ValueError, RecursionError):
+        return value
+    return parsed if isinstance(parsed, (dict, list)) else value
+
+
+def _masked(value: Any) -> Any:
+    """A value read from a file, masked as a bundle masks it, for an error
+    message to quote (TASK-41604)."""
+    return _mask_credential_material(value)[0]
 
 
 def _has_credential_material(value: Any, *, structural_keys: bool = False) -> bool:
@@ -1403,7 +1421,22 @@ def build_trajectory_export(
     }
     if variant_sets:
         payload["variants"] = [_serialize_variant_set(vs) for vs in variant_sets]
-    return payload
+    # TASK-41603: the finished payload is masked as a Trace v2 bundle is
+    # (review r16tr-rev1). A tool payload's JSON object or array is masked as
+    # v2 masks a payload, and stays as written when nothing in it is masked.
+    written = [row["payload_json"] for row in rows_out]
+    parsed = [_parsed_json(value) for value in written]
+    for row, value in zip(rows_out, parsed, strict=True):
+        row["payload_json"] = value
+    masked = _mask_credential_material(payload)[0]
+    for row, before, original in zip(masked["trajectory_rows"], parsed, written, strict=True):
+        if isinstance(row["payload_json"], (dict, list)):
+            row["payload_json"] = (
+                original
+                if row["payload_json"] == before
+                else json.dumps(row["payload_json"], ensure_ascii=False)
+            )
+    return masked
 
 
 # ---------------------------------------------------------------------------
@@ -1506,24 +1539,24 @@ def validate_trajectory_export(payload: Any) -> dict:
     if fmt != TRAJECTORY_EXPORT_FORMAT:
         raise TrajectoryExportError(
             f"Invalid trajectory export: 'format' must be "
-            f"'{TRAJECTORY_EXPORT_FORMAT}', got {fmt!r}"
+            f"'{TRAJECTORY_EXPORT_FORMAT}', got {_masked(fmt)!r}"
         )
 
     version = payload.get("version")
     if not isinstance(version, int) or isinstance(version, bool):
         raise TrajectoryExportError(
-            f"Invalid trajectory export: 'version' must be an integer, got {version!r}"
+            f"Invalid trajectory export: 'version' must be an integer, got {_masked(version)!r}"
         )
     if version > TRAJECTORY_EXPORT_VERSION:
         raise TrajectoryExportError(
-            f"Unsupported trajectory export version {version}: this build reads "
+            f"Unsupported trajectory export version {_masked(version)}: this build reads "
             f"version {TRAJECTORY_EXPORT_VERSION}; export with an older version "
             f"or upgrade the app"
         )
     if version < TRAJECTORY_EXPORT_VERSION:
         raise TrajectoryExportError(
             f"Invalid trajectory export: 'version' must be "
-            f"{TRAJECTORY_EXPORT_VERSION}, got {version!r}"
+            f"{TRAJECTORY_EXPORT_VERSION}, got {_masked(version)!r}"
         )
 
     _require(payload, "exported_at", str, "exported_at")

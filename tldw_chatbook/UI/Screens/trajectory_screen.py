@@ -2033,7 +2033,10 @@ class TrajectoryScreen(ModalScreen[None]):
             imported = await asyncio.to_thread(load_imported_trace, path)
         except TrajectoryImportError as exc:
             if self._alive:
-                self.app.notify(str(exc), title="Import failed", severity="error")
+                # The error may quote the file (TASK-41604): never markup.
+                self.app.notify(
+                    str(exc), title="Import failed", severity="error", markup=False
+                )
             return
         finally:
             self._import_in_flight = False

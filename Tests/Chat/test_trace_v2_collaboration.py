@@ -9,6 +9,7 @@ import hashlib
 import json
 import random
 import string
+import sys
 import time
 from dataclasses import FrozenInstanceError
 from pathlib import Path
@@ -21,6 +22,7 @@ from tldw_chatbook.Chat.trajectory import (
     TrajectoryRecord,
     TrajectorySnapshot,
     TrajectoryTurn,
+    _preview,
 )
 
 FIXED_EXPORTED_AT = "2026-08-22T19:00:00+00:00"
@@ -961,6 +963,130 @@ _MUST_MASK: dict[str, tuple[str, str]] = {
     "inner-label-word": ("client" + _L + "secret=build(2, access" + _L + "token=hunter2x)", "hunter2x"),
     "inner-label-after-call": ("client" + _L + "secret=build(g(x), db" + _L + "password=letmein99)", "letmein99"),
     "inner-label-quoted-strict": ("client" + _L + 'secret=build(2, db' + _L + 'password="changeme")', "changeme"),
+    # TASK-41510: a one-word label (and ``api key``) is judged as a compound
+    # one is, so its real values stay masked, quoted JSON keys included...
+    "simple-token": ("tok" + "en=" + _F + "abc123def456", _F + "abc123def456"),
+    "simple-password-json": ('{"pass' + 'word": "Tr0ub4dor&3xyz"}', "Tr0ub4dor&3xyz"),
+    "simple-secret-capitals": ("SEC" + "RET: " + _P8 + "abc", _P8 + "abc"),
+    "simple-api-key-words": ("my API " + "key: " + _P8 + "abc123", _P8 + "abc123"),
+    "simple-apikey": ("api" + "key=" + _P8 + "abc123", _P8 + "abc123"),
+    "simple-dotted-password": ("db.pass" + "word=hunter2x", "hunter2x"),
+    "simple-hyphen-token": ("page-tok" + "en: " + _P8 + "abc", _P8 + "abc"),
+    "simple-code-default": ("pass" + 'word = os.getenv("DB_PASSWORD", "postgres")', "postgres"),
+    "simple-inner-label": ("client" + _L + "secret=build(2, db.pass" + "word=hunter2x)", "hunter2x"),
+    "simple-yaml-next-line": ("pass" + "word:\n  hunter2x", "hunter2x"),
+    "simple-yaml-next-line-crlf": ("tok" + "en:\r\n  " + _P8 + "abc", _P8 + "abc"),
+    "compound-yaml-next-line": ("client" + _L + "secret:\n    " + _G, _G),
+    "simple-yaml-next-line-colon": ("tok" + "en:\n  123456789:AAH" + _F + "dqTcvCH1vGWJxfSeof", "AAH" + _F + "dqTcvCH1vGWJxfSeof"),
+    # review r16tr-rev1 (a): a label after a "." that does not end a name
+    "after-index-dot": ("users[0].pass" + 'word = "Tr0ub4dor&3"', "Tr0ub4dor&3"),
+    "after-call-dot": ("get_user().tok" + 'en = "' + _P8 + '"', _P8),
+    "after-optional-chain": ("this.cfg?.sec" + 'ret = "' + _G + '"', _G),
+    "after-quoted-index": ("row['x'].pass" + "word = 'hunter2xyz'", "hunter2xyz"),
+    "jsonpath-root": ("$.pass" + "word: hunter2xyz", "hunter2xyz"),
+    "indented-leading-dot": ("  .pass" + 'word = "hunter2xyz"', "hunter2xyz"),
+    "after-index-dot-compound": ("users[0].client" + _L + 'secret = "' + _G + '"', _G),
+    # (b): a value on the line after "="
+    "next-line-after-equals-js": ("const pass" + 'word =\n  "Tr0ub4dor&3xyz";', "Tr0ub4dor&3xyz"),
+    "next-line-after-equals": ("pass" + "word =\n    hunter2xyz", "hunter2xyz"),
+    "next-line-after-equals-env": ("PASS" + "WORD=\n  hunter2xyz", "hunter2xyz"),
+    # (c): unindented, or after a blank line
+    "next-line-unindented": ("pass" + "word:\nhunter2xyz", "hunter2xyz"),
+    "next-line-after-blank": ("user" + "name: bob\npass" + "word:\n\n  hunter2xyz", "hunter2xyz"),
+    "next-line-prose": ("my pass" + "word:\nhunter2xyz", "hunter2xyz"),
+    "next-line-indented-prose": ("Use this pass" + "word:\n    hunter2xyz", "hunter2xyz"),
+    # coordinator ruling (review r16tr-rev1): a list item's value below it
+    "list-numbered": ("1. Pass" + "word:\n   hunter2xyz", "hunter2xyz"),
+    "list-dash-prose": ("- Your pass" + "word:\n  hunter2xyz", "hunter2xyz"),
+    "list-star": ("* API " + "key:\n  " + _P8 + "abc", _P8 + "abc"),
+    "list-plus": ("+ tok" + "en:\n    " + _P8, _P8),
+    # review r16tr-rev2 Critical 1: prose that starts with a code keyword
+    **{
+        f"prose-{name}": (text, "hunter2xyz")
+        for name, text in (
+            ("try", "try this pass" + "word:\nhunter2xyz"),
+            ("for", "for prod the pass" + "word:\nhunter2xyz"),
+            ("for-indented", "for staging use this tok" + "en:\n  hunter2xyz"),
+            ("with", "with admin rights the pass" + "word:\nhunter2xyz"),
+            ("if-comma", "if you need it, pass" + "word:\n    hunter2xyz"),
+            ("if-asked", "if asked, the pass" + "word:\nhunter2xyz"),
+            ("else", "else use this pass" + "word:\nhunter2xyz"),
+            ("case-hyphen", "case-sensitive pass" + "word:\nhunter2xyz"),
+            ("while", "while waiting, the pass" + "word:\nhunter2xyz"),
+            ("def", "def the pass" + "word:\nhunter2xyz"),
+            ("async", "async tok" + "en:\nhunter2xyz"),
+        )
+    },
+    # Critical 2: Unicode whitespace around the separator
+    **{
+        f"space-{name}": (text, "hunter2xyz")
+        for name, text in (
+            ("nbsp-colon", "Pass" + "word:\u00a0hunter2xyz"),
+            ("nbsp-equals", "pass" + "word\u00a0=\u00a0hunter2xyz"),
+            ("ideographic", "tok" + "en:\u3000hunter2xyz"),
+            ("form-feed", "pass" + "word:\x0chunter2xyz"),
+            ("vertical-tab", "pass" + "word:\x0bhunter2xyz"),
+            ("narrow-nbsp", "pass" + "word:\u202fhunter2xyz"),
+            ("next-line-char", "pass" + "word:\x85hunter2xyz"),
+        )
+    },
+    # Minor 2: a value below that starts with "-" or "#" (no space after)
+    "below-dash-value": ("pass" + "word:\n  -hunter2xyz", "hunter2xyz"),
+    "below-hash-value": ("pass" + "word:\n#hunter2xyz", "hunter2xyz"),
+    # Minor 3: an ellipsis before the label
+    "after-ellipsis": ("...pass" + "word: hunter2xyz", "hunter2xyz"),
+    "after-spaced-ellipsis": (" ...tok" + "en=hunter2xyz", "hunter2xyz"),
+    # the probe's "self.API key=" (base's \bapi matched after the dot)
+    "dotted-api-key": ("cfg.API " + "key: " + _P8 + "abc", _P8 + "abc"),
+    # review r16tr-rev4: "api key" after leading hyphens, as base's \bapi read it
+    "hyphen-api-key": ("-api " + "key: hunter2xyz", "hunter2xyz"),
+    "double-hyphen-api-key": ("--api " + "key=hunter2xyz", "hunter2xyz"),
+    # review r16tr-rev5: a label after a run of "-", "_" and "." that starts a word
+    "after-underscore-hyphen": ("_-pass" + "word:hunter2xyz", "hunter2xyz"),
+    "after-hyphen-dot": ("-.pass" + "word:hunter2xyz", "hunter2xyz"),
+    "after-hyphen-underscore-dotted": ("-_db.pass" + "word:hunter2xyz", "hunter2xyz"),
+    # review r16tr-rev3 Critical 2: base64 with "=" padding below a label
+    **{
+        f"base64-below-{name}": (text, value)
+        for name, text, value in (
+            ("token", "tok" + "en:\n  c2VjcmV0a2V5MTIz=", "c2VjcmV0a2V5MTIz="),
+            ("password", "pass" + "word:\nYWJjZGVmZ2hpams=", "YWJjZGVmZ2hpams="),
+            ("api-key", "api" + "_key:\n    c2VjcmV0a2V5MTIz=", "c2VjcmV0a2V5MTIz="),
+            ("equals", "pass" + "word =\n  YWJjZGVmZ2hpams=", "YWJjZGVmZ2hpams="),
+            ("after-blank", "sec" + "ret:\n\nc2VjcmV0a2V5MTIz=", "c2VjcmV0a2V5MTIz="),
+        )
+    },
+    # Important 1: Unicode whitespace in the indentation or blank lines below
+    **{
+        f"indent-below-{name}": (text, "hunter2xyz")
+        for name, text in (
+            ("nbsp", "pass" + "word:\n\u00a0\u00a0hunter2xyz"),
+            ("nbsp-blank-line", "pass" + "word:\n\u00a0\u00a0\nhunter2xyz"),
+            ("ideographic", "tok" + "en:\n\u3000hunter2xyz"),
+            ("tab-nbsp", "pass" + "word:\n\t\u00a0hunter2xyz"),
+        )
+    },
+    # Important 2: bare header words whose subject is not the label
+    **{
+        f"bare-header-{name}": (text, "hunter2xyz")
+        for name, text in (
+            ("for", "for pass" + "word:\nhunter2xyz"),
+            ("def", "def pass" + "word:\nhunter2xyz"),
+            ("async-for", "async for tok" + "en:\nhunter2xyz"),
+            ("with", "with pass" + "word:\nhunter2xyz"),
+            ("except", "except tok" + "en:\nhunter2xyz"),
+        )
+    },
+    # ...and a URL's ?key= value is masked whatever its shape, as logs mask it.
+    "url-key-placeholder": (
+        "https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&callback=init",
+        "YOUR_API_KEY",
+    ),
+    "url-key-constant": ("https://x.example/api?key=API" + _L + "KEY", "API_KEY"),
+    "url-key-template": ("https://x.example/api?key={api" + _L + "key}", "{api_key}"),
+    "url-key-word": ("https://example.com/search?key=python", "python"),
+    "url-key-path": ("https://s3.example.com/bucket?key=photos/2024/cat.jpg", "photos/2024/cat.jpg"),
+    "url-key-short": ("https://x.example/api?key=qwz&v=2", "qwz"),
 }
 
 #: name -> text that must survive a shared bundle unchanged.
@@ -1020,13 +1146,6 @@ _MUST_KEEP: dict[str, str] = {
     "constant-name-password": "db" + _L + "password=DB_PASSWORD_2",
     "pascal-name": "client" + _L + "secret=ClientSecret2",
     "code-call": "client" + _L + "secret=getClientSecret2()",
-    # rev4 (probe8): a URL's ?key= value judged as an api_key value.
-    "url-key-placeholder": "https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&callback=init",
-    "url-key-constant": "https://x.example/api?key=API" + _L + "KEY",
-    "url-key-template": "https://x.example/api?key={api" + _L + "key}",
-    # rev5 (probe10): a ?key= value with no token-shaped word.
-    "url-key-word": "https://example.com/search?key=python",
-    "url-key-path": "https://s3.example.com/bucket?key=photos/2024/cat.jpg",
     # rev6 (probe12): <name> placeholders from READMEs, kept under any label
     "angle-word": "db" + _L + "password=<letmein>",
     "angle-camel": "db" + _L + "password=<MyPassword>",
@@ -1080,6 +1199,22 @@ _MUST_KEEP: dict[str, str] = {
     # rev9 (probe17): comparisons
     "comparison-none": "if access" + _L + "token == None:",
     "comparison-two-names": "ok = refresh" + _L + "token == expected_token",
+    # TASK-41510: code and prose under a one-word label, which the older
+    # simple-label rule masked whole.
+    "simple-code-call": "tok" + "en = oauth.fetch_token(url,)",
+    "simple-code-getpass": "pass" + "word = getpass.getpass()",
+    "simple-code-environ": "sec" + 'ret = os.environ["SECRET"]',
+    "simple-none": "tok" + "en = None",
+    "simple-prose": "tok" + "en: the token expired at 10:30, retry_after=60",
+    "simple-api-key-prose": "API " + "key: see the provider console",
+    "simple-annotation": "pass" + "word: str | None = None",
+    "simple-comparison": "if tok" + "en == expected_token: return",
+    # review r16tr-rev1: a name before the label, and a call naming the label
+    "dotted-name-code": "db.pass" + 'word = os.getenv("X")',
+    "attribute-none": "self.tok" + "en = None",
+    "call-names-label": "pass" + 'word = request.form.get("password")',
+    "call-names-label-getenv": "sec" + 'ret = os.getenv("secret")',
+    "index-names-label": "pass" + 'word = request.form["password"]',
 }
 
 
@@ -1102,29 +1237,77 @@ def _imported_result(text: str) -> str:
     return imported.snapshot.turns[0].records[0].payload["result"]
 
 
+def _v1_imported(text: str) -> tuple[str, str, str]:
+    """Import a version-1 (``tldw-trajectory``) file holding ``text`` in a
+    message, the title and a tool payload (TASK-41603). Returns the message's
+    preview, the tool payload's text, and every string the import keeps."""
+    rows = [("message-1", "user", None), ("message-2", "assistant", None)]
+    rows.append(("message-2", "tool_result", json.dumps({"result": text})))
+    document = {
+        "format": trajectory_export.TRAJECTORY_EXPORT_FORMAT,
+        "version": trajectory_export.TRAJECTORY_EXPORT_VERSION,
+        "exported_at": FIXED_EXPORTED_AT,
+        "redacted": False,
+        "conversation": {"id": "conversation-1", "title": text},
+        "active_leaf_message_id": "message-2",
+        "messages": [
+            {
+                "id": f"message-{index}",
+                "sender": sender,
+                "content": content,
+                "timestamp": f"2026-08-14T12:00:0{index}",
+                "parent_message_id": "message-1" if index == 2 else None,
+                "usage_json": None,
+            }
+            for index, sender, content in ((1, "user", text), (2, "assistant", "done"))
+        ],
+        "trajectory_rows": [
+            {
+                "message_id": message_id,
+                "conversation_id": "conversation-1",
+                "turn_id": "turn-1",
+                "seq": seq,
+                "event_kind": kind,
+                "payload_json": payload_json,
+            }
+            for seq, (message_id, kind, payload_json) in enumerate(rows, start=1)
+        ],
+    }
+    imported = trajectory_import.load_imported_trace(document)
+    records = [record for turn in imported.snapshot.turns for record in turn.records]
+    message = next(record for record in records if record.kind == "user")
+    tool = next(record for record in records if record.kind == "tool_result")
+    return message.content_preview, tool.payload["result"], "\n".join(_strings(imported))
+
+
 @pytest.mark.parametrize("name", sorted(_MUST_MASK))
 def test_every_secret_in_the_must_mask_table_is_masked(name: str) -> None:
     """Review r15tr-rev3: masked whole in a shared bundle and a second pass
     changes nothing. An older bundle holding it imports, with the secret
-    masked (owner decision 2026-11-17, "Re-mask on import")."""
+    masked (owner decision 2026-11-17, "Re-mask on import"), and so does a
+    version-1 file holding it (TASK-41603)."""
     text, secret = _MUST_MASK[name]
 
     masked, changed = trajectory_export._credential_text(text)
     serialized, _payload = _export_bytes_with(text, "full_trace")
     imported = _imported_result(text)
+    v1_preview, v1_result, v1_kept = _v1_imported(text)
 
     assert changed and not _survives(secret, text, masked), masked
     assert trajectory_export._credential_text(masked) == (masked, False)
     assert secret.encode() not in serialized
     assert imported == masked and not _survives(secret, text, imported), imported
+    assert (v1_preview, v1_result) == (_preview(masked), masked), v1_result
+    assert text not in v1_kept
 
 
 @pytest.mark.parametrize("name", sorted(_MUST_KEEP))
 def test_every_look_alike_in_the_must_keep_table_is_kept_and_imports(name: str) -> None:
     """Review r15tr-rev3: kept unchanged in every profile, and an older bundle
-    holding it imports unchanged."""
+    holding it imports unchanged, as does a version-1 file (TASK-41603)."""
     text = _MUST_KEEP[name]
     assert trajectory_export._credential_text(text) == (text, False)
+    assert _v1_imported(text)[:2] == (_preview(text), text)
 
     for profile in ("safe_summary", "redacted_diagnostic", "full_trace"):
         snapshot = _snapshot(
@@ -1164,6 +1347,30 @@ def test_a_masked_label_value_keeps_its_closing_bracket_and_full_stop(
     assert trajectory_export._credential_text(text) == (expected, True)
 
 
+#: Lines below a label that ends its line and are not its value: the body
+#: of a code header whose subject is the label, a nested quoted key, the
+#: next field after an empty ``KEY=``, a YAML list item and a comment.
+_KEPT_BELOW = {
+    "block-if": "if tok" + "en:\n    return token",
+    "block-if-not": "if not pass" + 'word:\n    raise ValueError("missing")',
+    "block-class": "class Pass" + "word:\n    def __init__(self):",
+    "block-match": "match sec" + 'ret:\n    case "a": pass',
+    "nested-quoted-key": "sec" + 'ret:\n  "name": x',
+    # review r16tr-rev2: the code headers that keep the body below
+    "header-if-attribute": "if self.tok" + "en:\n    return self.token",
+    "header-elif": "elif pass" + "word:\n    pass",
+    "header-with-as": "with open(p) as tok" + "en:\n    return token.read()",
+    "header-for-in": "for x in tok" + "en:\n    yield x",
+    "header-except-as": "except KeyError as sec" + "ret:\n    raise",
+    # Minor 1: an empty KEY= before another field
+    "empty-key-chain": "OPENAI_API" + "_KEY=\nANTHROPIC_API" + "_KEY=\nMODEL=gpt-4o",
+    "empty-password-then-host": "DB_PASS" + "WORD=\nDB_HOST=localhost",
+    # Minor 2: a YAML list item and a comment
+    "list-items-below": "tok" + "en:\n  - first\n  - second",
+    "comment-below": "pass" + "word:\n# set it in the vault",
+}
+
+
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
@@ -1179,13 +1386,54 @@ def test_a_masked_label_value_keeps_its_closing_bracket_and_full_stop(
             "db" + "_password: correct horse battery staple, user=bob",
             "db" + "_password: [credential redacted], user=bob",
         ),
+        # review r16tr-rev3 Minor 1: a field after a non-breaking space
+        (
+            "client" + "_secret: x\u00a0user=bob",
+            "client" + "_secret: [credential redacted]\u00a0user=bob",
+        ),
+        # TASK-41510: a value on the indented line below a bare label is the
+        # label's; a nested name: line, a blank line and later lines are not.
+        (
+            "tok" + "en:\n  issuer: example\ndb.pass" + "word:\n  hunter2x\n  user: bob",
+            "tok" + "en:\n  issuer: example\ndb.pass" + "word:\n  [credential redacted]\n  user: bob",
+        ),
+        (
+            "user" + "name: bob\npass" + "word:\n\n  hunter2xyz\nhost: db",
+            "user" + "name: bob\npass" + "word:\n\n  [credential redacted]\nhost: db",
+        ),
+        # Reviews r16tr-rev1 Minor 3, rev2: lines below a label that are not
+        # its value (_KEPT_BELOW). Each is kept and the field after it is
+        # masked. (Not _MUST_KEEP rows: a preview joins the lines, and on one
+        # line the code is masked as before.)
+        *(
+            (shape + "\ntok" + "en: " + _P8, shape + "\ntok" + "en: [credential redacted]")
+            for shape in _KEPT_BELOW.values()
+        ),
+        # A list item is not a code block: the line below is judged as the
+        # label's value (coordinator ruling, review r16tr-rev1). "Go" starts
+        # an expression ("Go to Settings > Tokens"), masked whole; base masked
+        # the first word.
+        (
+            "1. Generate a tok" + "en:\n   Go to Settings > Tokens",
+            "1. Generate a tok" + "en:\n   [credential redacted]",
+        ),
     ],
-    ids=("function-word-token", "piped-fields", "comma-field"),
+    ids=(
+        "function-word-token",
+        "piped-fields",
+        "comma-field",
+        "nbsp-field",
+        "value-below",
+        "value-after-blank",
+        *_KEPT_BELOW,
+        "list-item-first-word",
+    ),
 )
 def test_a_masked_run_stops_before_the_next_field(text: str, expected: str) -> None:
     """Review r15tr-rev6: a value that runs on past its first word (a token
     after a function word, an unquoted passphrase) stops before the next
-    field, and the separator before that field stays visible."""
+    field, and the separator before that field stays visible. A value below
+    its label stops at its line (TASK-41510)."""
     assert trajectory_export._credential_text(text) == (expected, True)
 
 
@@ -1270,6 +1518,10 @@ def test_masking_never_caches_value_text() -> None:
             f'"GOCSPX-{_P8}{index}_secret": "x"',
             # rev12: a plain-word secret in a label position
             '"letmein' + _L + 'now": "x"',
+            # TASK-41510: simple labels, and a one-word secret as a label
+            "pass" + f"word: summer202{index}word",
+            "API " + f"key: {_P8}{index}",
+            f"{_P8}{index}: active",
             "correct" + _L + "horse" + _L + "battery" + _L + "staple: abc",
         ):
             trajectory_export._credential_text(text)
@@ -1317,6 +1569,25 @@ _ADVERSARIAL_TEXTS = {
     "quoted-runs": ('"client' + '_secret": "' + "x" * 2047 + '" ') * 100,
     "nested-labels": ("a_b=" + "client" + "_secret=") * 15_000,
     "quoted-prose-1mb": ('"client' + '_secret": "a b" ') * 40_000,
+    # TASK-41510: one-word labels are labels too.
+    "chained-simple-labels": "a=" * 100_000,
+    # review r16tr-rev1: one label per line, 150k lines (0.93 s; 5.6 s for
+    # the labels alone at 200k when each line end searched to the text's end).
+    "many-label-lines": ("tok" + "en: x9\n") * 150_000,
+    # review r16tr-rev2: CR-only lines whose value sits below the label (19.7 s
+    # at 80k lines when each looked back for an LF to the start of the text).
+    "cr-only-value-below": ("pass" + "word:\r  hunter2x\r") * 80_000,
+    # review r16tr-rev3: a separator holds one "."; a label after ".." ran on
+    # through every later ".." (47.7 s and 58.3 s at 40k).
+    "dot-runs": "..a" * 40_000,
+    "dot-runs-after": "a..." * 40_000,
+    # review r16tr-rev4: "api key" after leading hyphens, repeated
+    "hyphen-api-key-runs": ("-api " + "key ") * 40_000,
+    # review r16tr-rev5: a label may follow a "-_." run, matched once from its
+    # start (a leading run inside the label took 7.7 s here).
+    "separator-runs": "._." * 40_000,
+    "chained-simple-credential-labels-spaced": ("tok" + "en= ") * 30_000,
+    "api-words": "api " * 50_000 + "key",
 }
 
 
@@ -1344,8 +1615,12 @@ def test_escape_quoted_values_scan_in_linear_time() -> None:
     [
         ("client" + "_secret: the ", "client" + "_secret: thx "),
         ("db" + "_password=a b c ", "db" + "_password=abc "),
+        # review r16tr-rev1: a label on each line costs what one line of them does
+        ("tok" + "en: x9\n", "tok" + "en: x9 "),
+        # review r16tr-rev2: and so does a value below it on CR-only lines
+        ("pass" + "word:\r  x9\r", "pass" + "word: x9 "),
     ],
-    ids=("function-word-chain", "passphrase-chain"),
+    ids=("function-word-chain", "passphrase-chain", "label-lines", "cr-value-below"),
 )
 def test_runs_after_a_value_scan_in_linear_time(unit: str, plain_unit: str) -> None:
     """Review r15tr-rev6: each function word looked up to 2 KB ahead for a
@@ -2030,6 +2305,186 @@ def test_malformed_v2_structures_fail_closed(mutation, message: str) -> None:
 
     with pytest.raises(trajectory_import.TrajectoryImportError, match=message):
         trajectory_import.load_imported_trace(payload)
+
+
+#: TASK-41604: a credential-shaped value read from the file, in each place an
+#: import error quotes one.
+_ECHOED = "sk-" + _P8 + _P8
+
+
+def _with_echoed_event_id(payload: dict) -> dict:
+    """The bundle with its first event's id replaced by ``_ECHOED`` everywhere."""
+    event_id = payload["events"][0]["event_id"]
+    return json.loads(json.dumps(payload).replace(json.dumps(event_id), json.dumps(_ECHOED)))
+
+
+def _duplicate_decision(payload: dict) -> dict:
+    payload = _with_echoed_event_id(payload)
+    payload["manifest"]["privacy_decisions"].append(payload["manifest"]["privacy_decisions"][0])
+    return payload
+
+
+def _mismatched_provenance_state(payload: dict) -> dict:
+    payload["events"][0]["field_states"][_ECHOED] = "observed"
+    payload["events"][0]["field_provenance"][_ECHOED] = {
+        "state": "redacted",
+        "reason": "x",
+        "sensitivity": "x",
+    }
+    return payload
+
+
+def _unsupported_relationship(payload: dict) -> dict:
+    event_id = payload["events"][0]["event_id"]
+    payload["lineage"].append({"source": event_id, "target": event_id, "relationship": _ECHOED})
+    return payload
+
+
+def _set(path: tuple, value: object):
+    def mutate(payload: dict) -> dict:
+        target = payload
+        for key in path[:-1]:
+            target = target[key]
+        target[path[-1]] = value
+        return payload
+
+    return mutate
+
+
+@pytest.mark.parametrize(
+    ("mutation", "shown"),
+    [
+        (_set(("version",), _ECHOED), "'version' must be an integer, got '[credential redacted]'"),
+        (_set(("manifest", "profile"), _ECHOED), "manifest profile '[credential redacted]'"),
+        (
+            _set(("manifest", "privacy_inventory", _ECHOED), 0),
+            "'privacy_inventory' has unsupported fields: [credential redacted]",
+        ),
+        (
+            lambda p: _set(("events", 1, "event_id"), _ECHOED)(_set(("events", 0, "event_id"), _ECHOED)(p)),
+            "duplicate event_id '[credential redacted]'",
+        ),
+        (
+            _set(("events", 0, "usage", _ECHOED), 1),
+            "'events[0].usage' contains unsupported fields: [credential redacted]",
+        ),
+        (
+            _set(("events", 0, "field_provenance", _ECHOED), {}),
+            "'events[0].field_provenance.[credential redacted]' must include valid state",
+        ),
+        (
+            _mismatched_provenance_state,
+            "'events[0].field_provenance.[credential redacted].state' does not match "
+            "field_states.[credential redacted]",
+        ),
+        (
+            _set(("events", 0, "parent_event_id"), _ECHOED),
+            "dangling parent_event_id '[credential redacted]' at events[0]",
+        ),
+        (
+            _set(("manifest", "privacy_decisions", 0, "field"), _ECHOED),
+            "state does not match event field_provenance.[credential redacted]",
+        ),
+        (
+            _duplicate_decision,
+            "privacy_decisions: duplicate ('[credential redacted]', 'event_id')",
+        ),
+        (_unsupported_relationship, "unsupported relationship '[credential redacted]'"),
+        (
+            lambda _p: {"format": _ECHOED},
+            "'format' must be 'tldw-trajectory', got '[credential redacted]'",
+        ),
+        (
+            lambda _p: {"format": "tldw-trajectory", "version": _ECHOED},
+            "'version' must be an integer, got '[credential redacted]'",
+        ),
+    ],
+    ids=(
+        "version",
+        "profile",
+        "privacy-inventory-key",
+        "duplicate-event-id",
+        "usage-key",
+        "field-provenance-key",
+        "field-provenance-state",
+        "dangling-reference",
+        "decision-field",
+        "decision-duplicate",
+        "lineage-relationship",
+        "v1-format",
+        "v1-version",
+    ),
+)
+def test_an_import_error_never_shows_a_credential_from_the_file(mutation, shown: str) -> None:
+    """TASK-41604: an import error quotes a value from the file only masked
+    by the export's credential rules, for v2 bundles and v1 files alike."""
+    payload = mutation(_build(_snapshot()))
+
+    with pytest.raises(trajectory_import.TrajectoryImportError) as raised:
+        trajectory_import.load_imported_trace(payload)
+
+    assert shown in str(raised.value)
+    assert _P8 not in str(raised.value)
+
+
+def _deeply_nested_v2_bundle(depth: int) -> dict:
+    """A resigned bundle whose first event payload holds ``depth`` nested lists
+    (validated, digested and masked on import), built through JSON text so
+    no recursive Python helper touches it."""
+    payload = _build(_snapshot())
+    payload["events"][0]["payload"]["deep"] = "@@"
+    payload["integrity"].pop("digest")
+    nested = "[" * depth + "]" * depth
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    payload["integrity"]["digest"] = hashlib.sha256(
+        canonical.replace('"@@"', nested).encode("utf-8")
+    ).hexdigest()
+    return json.loads(json.dumps(payload).replace('"@@"', nested))
+
+
+@pytest.mark.parametrize(
+    "shape", ["v2-event-payload", "v1-format", "v1-unknown-field", "v1-tool-payload"]
+)
+def test_a_deeply_nested_file_fails_import_with_a_named_error(shape: str) -> None:
+    """TASK-41701: a file nested past the recursion limit where validation
+    or masking reaches (a v2 event's payload; a v1 file's ``format``, which
+    the error quotes, an unknown field or a tool payload) fails with one named
+    ``TrajectoryImportError``. A ``RecursionError`` escaped ``except
+    TrajectoryImportError`` in the Trace screen's Import, and on v1 masking
+    it read as a mapping failure (review r16tr-rev2)."""
+    depth = sys.getrecursionlimit() + 500
+    nested = "[" * depth + "]" * depth
+    v1 = {
+        "format": "tldw-trajectory",
+        "version": 1,
+        "exported_at": FIXED_EXPORTED_AT,
+        "redacted": False,
+        "conversation": {"id": "c"},
+        "messages": [
+            {
+                "id": "m",
+                "sender": "assistant",
+                "content": "done",
+                "timestamp": "2026-08-14T12:00:00",
+                "parent_message_id": None,
+                "usage_json": None,
+            }
+        ],
+        "trajectory_rows": [],
+    }
+    if shape == "v2-event-payload":
+        document = _deeply_nested_v2_bundle(depth)
+    elif shape == "v1-format":
+        document = json.loads('{"format": ' + nested + "}")
+    elif shape == "v1-unknown-field":
+        document = json.loads(json.dumps({**v1, "deep": "@@"}).replace('"@@"', nested))
+    else:
+        row = {"message_id": "m", "conversation_id": "c", "turn_id": "t", "seq": 1}
+        row |= {"event_kind": "tool_result", "payload_json": '{"r": ' + nested + "}"}
+        document = {**v1, "trajectory_rows": [row]}
+
+    with pytest.raises(trajectory_import.TrajectoryImportError, match="nested too deeply"):
+        trajectory_import.load_imported_trace(document)
 
 
 def test_resigned_lineage_must_exactly_match_event_reference_fields() -> None:
