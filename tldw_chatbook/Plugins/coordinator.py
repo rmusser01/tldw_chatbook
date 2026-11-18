@@ -1650,18 +1650,38 @@ class PluginCoordinator:
         return await self.finish_revocation(self.begin_uninstall(installation_id))
 
     async def lookup_operation(self, identity: str) -> OperationReceipt:
+        return (await self.lookup_operations((identity,)))[identity]
+
+    async def lookup_operations(self, identities) -> dict[str, OperationReceipt]:
+        """Look up many identities over one recovery pass (TASK-41109).
+
+        Each lookup used to run the whole recovery and verify every retained
+        transition, so reading N statuses cost N passes.
+        """
         self._require_worker()
         import re
+        from dataclasses import replace
 
-        nonce = None
-        if re.fullmatch(r"lr1\.[0-9a-f]{32}\.[0-9a-f]{32}", identity):
-            nonce = "".join(identity.split(".")[1:])
+        nonces = {
+            identity: (
+                "".join(identity.split(".")[1:])
+                if re.fullmatch(r"lr1\.[0-9a-f]{32}\.[0-9a-f]{32}", identity)
+                else None
+            )
+            for identity in identities
+        }
         receipts = await self.recover()
         if any(item.phase == "recovery_required" for item in receipts):
-            return OperationReceipt(
-                None, "recovery_required", False, request_id=identity if nonce else None
-            )
-        matches = []
+            return {
+                identity: OperationReceipt(
+                    None,
+                    "recovery_required",
+                    False,
+                    request_id=identity if nonce else None,
+                )
+                for identity, nonce in nonces.items()
+            }
+        retained = []
         marker = self.authority.load_marker()
         for receipt in receipts:
             result = (
@@ -1672,8 +1692,6 @@ class PluginCoordinator:
                 ]
             )
             if result["kind"] == "root_data":
-                from dataclasses import replace
-
                 group = result["root_result"]["group_id"]
                 pending_roots = [
                     row
@@ -1690,8 +1708,6 @@ class PluginCoordinator:
                     cleanup_pending=bool(pending_roots),
                 )
             if result["kind"] == "retain":
-                from dataclasses import replace
-
                 from .retention import cleanup_retained_operation
 
                 receipt = replace(
@@ -1704,27 +1720,41 @@ class PluginCoordinator:
                         )
                     ),
                 )
-            if receipt.operation_id == identity or (
-                nonce
-                and result["operation_id"].startswith("pi1.")
-                and self.authority.verify_operation_id(
+            retained.append((receipt, result))
+        issued_nonces = {}
+
+        def issued_nonce(index, result):
+            if index not in issued_nonces:
+                issued_nonces[index] = self.authority.verify_operation_id(
                     result["operation_id"], result
                 ).nonce
-                == nonce
-            ):
-                matches.append(receipt)
-        if len(matches) > 1:
-            raise ValueError("ambiguous retained request identity")
-        if matches:
-            from dataclasses import replace
+            return issued_nonces[index]
 
-            return replace(matches[0], request_id=identity if nonce else None)
-        return OperationReceipt(
-            None,
-            "unavailable_or_expired",
-            False,
-            request_id=identity if nonce else None,
-        )
+        found = {}
+        for identity, nonce in nonces.items():
+            matches = [
+                receipt
+                for index, (receipt, result) in enumerate(retained)
+                if receipt.operation_id == identity
+                or (
+                    nonce
+                    and result["operation_id"].startswith("pi1.")
+                    and issued_nonce(index, result) == nonce
+                )
+            ]
+            if len(matches) > 1:
+                raise ValueError("ambiguous retained request identity")
+            found[identity] = (
+                replace(matches[0], request_id=identity if nonce else None)
+                if matches
+                else OperationReceipt(
+                    None,
+                    "unavailable_or_expired",
+                    False,
+                    request_id=identity if nonce else None,
+                )
+            )
+        return found
 
     async def _revoke(self, target, operation_id, kind, *, review=None):
         from dataclasses import replace

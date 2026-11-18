@@ -1087,3 +1087,40 @@ async def test_public_cleaned_absence_requires_current_authenticated_root(
     finally:
         await case.service._call(lambda: usage.recovery.pop(ref.root_id))
     assert (await case.service.data_status((ref,)))[0]["cleaned_absent"] is True
+
+
+@pytest.mark.asyncio
+async def test_operation_refresh_reads_every_status_over_one_recovery_pass(
+    native_console, monkeypatch
+):
+    """TASK-41109: a refresh read each job's status in its own storage call,
+    and each call re-ran recovery over every retained transition (29 jobs took
+    30-75 s at load 57-70). One refresh now makes one recovery pass for the
+    page and one for all the statuses, and each batched status equals the
+    single read."""
+    from tldw_chatbook.UI.Plugins_Modules.operations import PluginOperations
+
+    case = native_console
+    installed = await case.install(enable=False)
+    for _ in range(3):
+        creation = await case.service.review_data_creation(installed.installation_id)
+        await case.service.create_data(creation, creation.operation_id)
+    coordinator = case.service._coordinator
+    recover, passes = coordinator.recover, []
+
+    async def counted():
+        passes.append(1)
+        return await recover()
+
+    monkeypatch.setattr(coordinator, "recover", counted)
+    owner = PluginOperations(case.service)
+    page = await owner.refresh()
+    assert len(page) == len(owner.jobs) >= 5  # install, trust and the creations
+    assert len(passes) == 2, passes
+    for identity, job in owner.jobs.items():
+        state = await case.service.operation_status(identity)
+        assert state["receipt"].phase != "unavailable_or_expired"
+        assert job.runtime_status == state and job.receipt == state["receipt"]
+    unknown = await case.service.operation_statuses(("missing", identity))
+    assert unknown["missing"]["receipt"].phase == "unavailable_or_expired"
+    assert unknown[identity] == state

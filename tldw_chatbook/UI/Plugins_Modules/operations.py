@@ -224,8 +224,14 @@ class PluginOperations:
                     installation_id=row["installation_id"],
                     action=row["kind"],
                 )
-        for identity, job in tuple(self.jobs.items()):
-            state = await self.service.operation_status(identity)
+        jobs = tuple(self.jobs.items())
+        # One storage call for every job's status, on the plugin storage
+        # thread; one call per job re-ran recovery each time (TASK-41109).
+        states = await self.service.operation_statuses(
+            tuple(identity for identity, _job in jobs)
+        )
+        for identity, job in jobs:
+            state = states[identity]
             if state["receipt"].phase != "unavailable_or_expired":
                 job.receipt, job.runtime_status = state["receipt"], state
         return tuple(self.jobs[key] for key in page_ids)

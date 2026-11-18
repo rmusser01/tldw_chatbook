@@ -1834,19 +1834,42 @@ print('PLUGIN_RESTORE_REVIEW_COMPLETE',flush=True)
 """
 
 
+# TASK-41104: a child whose process tree uses no CPU for this long has hung
+# (TASK-40306), at any load. Most restore lock waits poll, though (admission
+# waits with a deadline or cancel event, and `lock.acquire(timeout=0.05)`
+# loops), and a hang that keeps polling keeps using CPU: only its cap stops it.
+_RESTORE_CHILD_IDLE = 60
+# Each child's wall cap, from its slowest local run (shared 18-core host, load
+# 13-127; the children's CPU stays ~95 s in all, so the rest is contention). The
+# short children took at most 41 s (seed), 28 s and 20 s: about 4x the seed's.
+# The two restores took at most 359 s (first) and 355 s (again): about 2x. The
+# qualification lane records each child's CI time (below) to tighten these from.
+_RESTORE_CHILD_CAPS = {
+    "plugins": 160,
+    "first": 720,
+    "unchanged": 160,
+    "again": 710,
+    "changed": 160,
+}
+
+
 @platform_support.managed_runtime
-# M12: the macOS lane's pytest step already takes ~19 of its 30 minutes, so a hang
-# here must fail (with JUnit output, signal method) within 8 minutes. Measured on
-# a shared 18-core host: 4.0 min at load 15-20, 5.4-6.9 min at load 25-40. Two
-# Tools-group restores take 1.7-3.4 min each (mostly the restore journal's
-# per-record revalidation); everything else is under 30 s.
-@pytest.mark.timeout(480)
-def test_plugin_backup_restores_in_place_and_waits_for_authority_recovery(tmp_path):
+# The caps' sum plus a minute for the parent, so a stuck child always fails on
+# its own cap, by name: 1970 s, 2.4x the slowest loaded local run (831 s at load
+# 81-102; the old 480 s failed at load 74-99 while every child was busy). CI's
+# macOS qualification job (20-29 of its 30 minutes) may stop a polling hang in
+# a restore child before its cap does.
+@pytest.mark.timeout(sum(_RESTORE_CHILD_CAPS.values()) + 60)
+def test_plugin_backup_restores_in_place_and_waits_for_authority_recovery(
+    tmp_path, record_testsuite_property
+):
     """AC5/AC7/AC8/D1/D2 through the app's repository install path, actual
     capture, archive and same-profile replacement, twice: with plugins unchanged
     since the backup (Unlock recovers) and after a later plugin change (Unlock
     refuses truthfully; the backup's passphrase then adopts the restored
     authority, TASK-40308)."""
+    import resource  # POSIX only; this test runs only on Darwin.
+
     from Tests.Backup_Recovery.test_config_sibling_capture import _child
 
     home = tmp_path / "home"
@@ -1857,27 +1880,42 @@ def test_plugin_backup_restores_in_place_and_waits_for_authority_recovery(tmp_pa
 
     durations = {}
 
-    def run(script, *arguments, timeout):
+    def run(script, *arguments):
+        name = "-".join(arguments)
         started = time.monotonic()
+        spent = resource.getrusage(resource.RUSAGE_CHILDREN)
         try:
-            output = _child(home, script, *arguments, timeout=timeout, selector=selector)
+            output = _child(
+                home,
+                script,
+                *arguments,
+                timeout=_RESTORE_CHILD_CAPS[name],
+                selector=selector,
+                idle=_RESTORE_CHILD_IDLE,
+            )
         finally:
-            durations["-".join(arguments)] = round(time.monotonic() - started)
-            print("child seconds:", durations, flush=True)
+            used = resource.getrusage(resource.RUSAGE_CHILDREN)
+            cpu = used.ru_utime + used.ru_stime - spent.ru_utime - spent.ru_stime
+            durations[name] = (round(time.monotonic() - started), round(cpu))
+            print("child seconds (wall, cpu):", durations, flush=True)
+            # Kept in the qualification JUnit, so CI records each child's time.
+            record_testsuite_property(
+                "plugin_restore_child_" + name, "%d s wall, %d s cpu" % durations[name]
+            )
         print(*(line for line in output.splitlines() if line.startswith("PHASE")), sep="\n")
         return output
 
-    # A child's limit names the child that hung; the test's limit bounds the sum.
-    assert "PLUGIN_SEED_COMPLETE" in run(_PLUGIN_SEED, "plugins", timeout=60)
-    assert "PLUGIN_REPLACEMENT_COMPLETE" in run(_PLUGIN_BACKUP_RESTORE, "first", timeout=360)
-    unchanged = run(_PLUGIN_REOPEN, "unchanged", timeout=60)
+    # A hung child fails by name: once it stops using CPU, or at its cap if it polls.
+    assert "PLUGIN_SEED_COMPLETE" in run(_PLUGIN_SEED, "plugins")
+    assert "PLUGIN_REPLACEMENT_COMPLETE" in run(_PLUGIN_BACKUP_RESTORE, "first")
+    unchanged = run(_PLUGIN_REOPEN, "unchanged")
     assert "PLUGIN_RESTORE_REVIEW_COMPLETE" in unchanged
     # M4: the excluded fetch members survived the in-place restore (preserved,
     # not archived) and were deleted before the plugin re-verified and ran.
     for name in ("repository.git", "content", "host-git-config", "host-ssh-input"):
         assert f"REMOVED {name}\n" in unchanged, name
-    assert "PLUGIN_REPLACEMENT_COMPLETE" in run(_PLUGIN_BACKUP_RESTORE, "again", timeout=300)
-    changed = run(_PLUGIN_REOPEN, "changed", timeout=60)
+    assert "PLUGIN_REPLACEMENT_COMPLETE" in run(_PLUGIN_BACKUP_RESTORE, "again")
+    changed = run(_PLUGIN_REOPEN, "changed")
     assert "PLUGIN_RESTORE_REVIEW_COMPLETE" in changed and "ADOPTED\n" in changed
 
 

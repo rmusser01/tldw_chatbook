@@ -222,6 +222,7 @@ class PluginsScreen(BaseAppScreen):
             self._reload()
 
     async def _workspace(self):
+        """The active workspace record, or None for the global default."""
         app_owner = self.app_instance
         try:
             registry = app_owner.workspace_registry_service
@@ -229,8 +230,7 @@ class PluginsScreen(BaseAppScreen):
             registry = None
         if registry is None:
             return None
-        active = await asyncio.to_thread(registry.get_active_workspace)
-        return active.workspace_id if active is not None else None
+        return await asyncio.to_thread(registry.get_active_workspace)
 
     def _token(self):
         state = self.browse
@@ -258,7 +258,8 @@ class PluginsScreen(BaseAppScreen):
         )
 
     async def _current(self, token):
-        workspace = await self._workspace()
+        active = await self._workspace()
+        workspace = active.workspace_id if active is not None else None
         return self.is_running and token == self._token() and workspace == token[1]
 
     def _cancel_load(self):
@@ -278,6 +279,7 @@ class PluginsScreen(BaseAppScreen):
         )
 
     async def _load(self, generation):
+        from ...Workspaces.display_state import library_workspace_display_name
         from ..Plugins_Modules.browse_state import accept_response
         from ..Plugins_Modules.details import display_text
 
@@ -286,15 +288,23 @@ class PluginsScreen(BaseAppScreen):
         self._status("Loading cached metadata…")
         self._update_actions()
         try:
-            workspace = await self._workspace()
+            active = await self._workspace()
+            workspace = active.workspace_id if active is not None else None
             if not self.is_running or not accept_response(
                 generation, self.browse.request_generation
             ):
                 return
+            # The id scopes the token and staleness checks; the user reads
+            # the name (TASK-41103). The Static is markup=False: literal text.
             self.browse.workspace_id = workspace
+            name = (
+                library_workspace_display_name(active)
+                if active is not None
+                else "Global default"
+            )
             self.query_one("#plugins-scope", Static).update(
                 "Activation in: "
-                + display_text(workspace or "Global default", limit=256)
+                + display_text(name, limit=256)
                 + " | Installation: this device"
             )
             token = self._token()
