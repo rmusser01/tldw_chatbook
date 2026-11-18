@@ -2900,6 +2900,10 @@ class AgentService:
         self.prepare_provider_continuation_request = bool(
             prepare_provider_continuation_request
         )
+        if self.prepare_provider_continuation_request and not (
+            child_continuation_owner_key
+        ):  # a child's continuation would refuse later (TASK-41651)
+            raise ValueError("child_continuation_owner_key is required")
         self.child_continuation_owner_key = child_continuation_owner_key
         # Per-TURN fleet state, all owned by the primary run's thread (a
         # child never spawns -- contain_child_budget zeroes max_subagents,

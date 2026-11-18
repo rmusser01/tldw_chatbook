@@ -229,9 +229,18 @@ async def _spawn_turn(
     original_apply = hosted_provider_engine._apply_continuations
 
     def applied(record, messages, checkpoints, resolution):
-        # The continuation checkpoints each actor's request carried.
+        # The continuation checkpoints each actor's request carried, as
+        # (state, call ids).
         kind = getattr(current_run_actor(), "kind", None)
-        facts.applied.append((kind, [each.state for each in checkpoints]))
+        facts.applied.append(
+            (
+                kind,
+                [
+                    (each.state, tuple(c.call_id for r in each.rounds for c in r.calls))
+                    for each in checkpoints
+                ],
+            )
+        )
         return original_apply(record, messages, checkpoints, resolution)
 
     monkeypatch.setattr(hosted_provider_engine, "_apply_continuations", applied)
@@ -574,8 +583,16 @@ async def test_child_native_tool_round_completes(tmp_path, monkeypatch, capture)
     assert facts.persisted and set(facts.persisted) == {"primary"}, why
     assert [states for kind, states in facts.applied if kind == "subagent"] == [
         [],
-        ["active"],
+        [("active", ("call_child_1",))],
     ], why
+    # The primary's requests carry only its own checkpoint, never the child's.
+    assert ("primary", [("active", ("call_spawn_1",))]) in facts.applied, why
+    assert all(
+        ids == ("call_spawn_1",)
+        for kind, states in facts.applied
+        if kind == "primary"
+        for _, ids in states
+    ), why
     if capture == "capture_on":
         child = [call[4:] for call in facts.owned_calls if not call[0]]
         assert child == [("agent_first", "complete"), ("tool_loop", "complete")], why
@@ -635,9 +652,37 @@ async def test_child_native_round_when_the_parent_endpoint_has_no_continuations(
     assert facts.boundary_errors == [] and facts.refusals == [], why
     assert [states for kind, states in facts.applied if kind == "subagent"] == [
         [],
-        ["active"],
+        [("active", ("call_child_1",))],
     ], why
+    # The primary's requests carry only its own checkpoint, never the child's.
+    assert all(
+        ids == ("call_spawn_1",)
+        for kind, states in facts.applied
+        if kind == "primary"
+        for _, ids in states
+    ), why
     assert set(facts.persisted) <= {"primary"}, why
     if capture == "capture_on":
         child = [call[4:] for call in facts.owned_calls if not call[0]]
         assert child == [("agent_first", "complete"), ("tool_loop", "complete")], why
+
+
+async def test_a_service_that_prepares_continuations_needs_a_child_owner_key(tmp_path):
+    """TASK-41651: without the key a child's native round would only refuse
+    later ("Active provider continuation requires an owner"), so refuse now."""
+    from tldw_chatbook.Agents.agent_service import AgentService
+    from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
+
+    runs = AgentRunsDB(tmp_path / "runs.db", client_id="spawntrace")
+    try:
+        with pytest.raises(ValueError, match="child_continuation_owner_key"):
+            AgentService(
+                db=runs,
+                registry=ToolCatalogRegistry(),
+                chat_call=lambda **_: {},
+                prepare_provider_continuation_request=True,
+            )
+        # A host that prepares nothing needs no key.
+        AgentService(db=runs, registry=ToolCatalogRegistry(), chat_call=lambda **_: {})
+    finally:
+        runs.close()

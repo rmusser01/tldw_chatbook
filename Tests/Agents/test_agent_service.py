@@ -4887,6 +4887,7 @@ def test_current_continuation_projection_preserves_rows_and_other_owners(
         registry=ToolCatalogRegistry(),
         chat_call=chat,
         prepare_provider_continuation_request=True,
+        child_continuation_owner_key=CONTINUATION_OWNER_KEY,
     )
     call = service._make_call_model(
         AgentConfig(model="model", system_prompt="system", native_tools=True),
