@@ -633,11 +633,17 @@ class _BackendService:
                 projection_key,
             )
             from .console_execution_projection_values import encode_message_projection
+            from .console_display_poll import DisplayPublication, poll_response
 
             key = projection_key(result)
             current = key == self._projection_key
             request = self.backend.adapter._receipts[original.request_id][0]
             known = request.payload.get("known_display_revision")
+            poll = request.payload.get("display_poll")
+            if poll is not None and (
+                self._display_publication is None or not self._display_publication.matches(identity, poll)
+            ):
+                known = None
             if not current:
                 self._projection_messages = [
                     encode_message_projection(item) for item in result.messages
@@ -654,9 +660,6 @@ class _BackendService:
                 command.identity, result
             )
             message = ConsoleWireMessage(identity, "applied", "ReadProjection", body)
-            from .console_display_poll import DisplayPublication, poll_response
-
-            poll = request.payload.get("display_poll")
             self.channel.send(poll_response(message, poll, self._display_publication))
             self._display_publication = (
                 DisplayPublication(poll["attachment_id"], poll["visit"], message) if poll else None

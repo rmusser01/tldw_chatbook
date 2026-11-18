@@ -4,6 +4,7 @@ import asyncio
 import time
 from copy import deepcopy
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -97,6 +98,31 @@ def test_readiness_clock_update_publishes_no_unchanged_inspector_or_history_data
     assert not delta.payload["sections"]
     assert delta.payload["readiness"].keys() == {"captured_at_monotonic"}
     assert expand_projection_delta(delta, poll(), base) == changed
+
+
+def test_new_visit_reads_the_entire_transcript_even_if_revision_matches():
+    from tldw_chatbook.Chat.console_control_dispatch import ReadProjection
+    from tldw_chatbook.Chat.console_execution_projection_result import decode_projection_payload
+    from tldw_chatbook.Chat.console_execution_worker import _BackendService
+
+    body = projection_payload()
+    frame = decode_projection_payload(body)
+    adapter = SimpleNamespace(_receipts={})
+    backend = SimpleNamespace(_worker_service=None, adapter=adapter, presentation=SimpleNamespace(
+        projection_view=lambda identity, result: body["session_view"],
+    ))
+    wire = []
+    worker = _BackendService(backend, SimpleNamespace(send=wire.append))
+    for visit in (1, 2):
+        identity = full(body, f"poll-{visit}", visit).identity
+        request = ConsoleWireMessage(identity, "command", "ReadProjection", {
+            "known_display_revision": frame.display_revision, "known_marker_revision": frame.marker_revision,
+            "display_poll": poll(None, visit=visit),
+        })
+        adapter._receipts[identity.request_id] = (request,)
+        worker.applied(identity, ReadProjection(identity), frame)
+    assert wire[-1].kind == "applied"
+    assert len(wire[-1].payload["messages"]) == len(frame.messages)
 
 
 @pytest.mark.asyncio

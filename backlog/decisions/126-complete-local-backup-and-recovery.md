@@ -2343,7 +2343,16 @@ work. A client must never send SQL, executable objects or OS handles. Writer
 election and transport are local to the Windows user and admitted profile.
 Disconnect with an unknown commit outcome fails the operation without replay.
 Backup or restore must drain physical operations before replacing store files.
-The writer holds no transaction or recovery lease during a user decision or
-provider wait. External file or policy changes continue to require the original
+The writer closes each transaction and operation lease before the caller waits
+for a user decision or provider. It may retain an idle startup enrollment
+between commands if the original maintenance gate can revoke it. On maintenance
+intent, the owner closes intake, drains active work, releases the enrollment
+and permits exclusive backup or restore. It must freshly admit the replaced
+profile before accepting more work. In the first Windows implementation a warm
+step acquired storage three times in the client and nine in the service,
+including a new physical group. It took 369–511 ms against 14–26 ms through
+the previous runtime. Native contention, backup and restore tests must prove
+the idle writer yields before adopting this optimization.
+External file or policy changes continue to require the original
 live checks. Enabling this path requires exercising independent instances and
 real recovery as well as the ordinary mounted Console.

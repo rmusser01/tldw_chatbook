@@ -1012,15 +1012,22 @@ class ConsoleExecutionClient:
             if previous is not None and projection_key(previous)[:3] == binding
             else None
         )
-        payload = {"known_display_revision": known}
+        payload = {}
         if view is not None:
             previous_display = self._display_publication
             after = None
-            if previous_display is not None and known is not None and (
-                previous_display.attachment_id == attachment and previous_display.visit == visit
-            ):
-                after = previous_display.message.identity.request_id
+            if previous_display is not None and known is not None:
+                identity = previous_display.message.identity
+                if (
+                    previous_display.attachment_id == attachment and previous_display.visit == visit
+                    and (identity.source_revision, identity.session_id, identity.incarnation_id) == binding
+                    and identity.profile_epoch == self.profile_epoch and identity.service_epoch == self.service_epoch
+                ):
+                    after = identity.request_id
+            if after is None:
+                known = None
             payload["display_poll"] = {"attachment_id": attachment, "visit": visit, "after": after}
+        payload["known_display_revision"] = known
         payload["workspace_count_ids"] = list(self._workspace_count_ids)
         payload["known_marker_revision"] = previous.marker_revision if known is not None else None
         if _run_history is not None:
