@@ -20,7 +20,7 @@ dependencies:
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Every Library canvas `sync_state` recomposes all of the canvas's children. If an unrelated sync arrives while a click's `Pressed` message is still inside the canvas, the press is lost and the user's click does nothing.
+Every Library canvas `sync_state` recomposes all of the canvas's children. Most presses caught by such a recompose are still delivered, just late. A press **can be** lost when it is still below the canvas child the recompose removes at the moment that child stops taking messages; the user's click then does nothing. TASK-41532's control lost 1 press in 48 trials with an unawaited sync, and 5 in 48 with an awaited recompose.
 
 Found by TASK-41532 on the Media type-strip opener in `test_library_media_complete_facets_commit_during_initial_recovery[loading-All]`. The opener was pruned before its press reached the handler, and focus ended on the replacement type filter.
 
@@ -31,7 +31,7 @@ Until this is fixed, the test works around it by re-pressing the opener (`Tests/
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A pilot test presses a canvas button, forces an unrelated canvas sync before the press bubbles up, and shows the press handled; red before the fix
+- [ ] #1 A pilot test gates a press inside the canvas child until the recompose starts removing that child, and shows the press handled; red N of N before the fix
 - [ ] #2 The notes name what syncs the Media canvas while page 1 is held back in `[loading-All]`
 - [ ] #3 The re-press workaround in `test_library_media_complete_facets_commit_during_initial_recovery` is removed once the press can no longer be lost
 <!-- AC:END -->

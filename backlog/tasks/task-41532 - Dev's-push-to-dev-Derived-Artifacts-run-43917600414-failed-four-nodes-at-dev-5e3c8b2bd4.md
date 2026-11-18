@@ -4,7 +4,7 @@ title: "Dev's push-to-dev Derived Artifacts run 43917600414 failed four nodes at
 status: In Progress
 assignee:
 - '@claude'
-updated_date: '2026-11-18 04:31'
+updated_date: '2026-11-18 04:56'
 created_date: 2026-11-17 05:39
 labels:
 - follow-up
@@ -57,7 +57,9 @@ Test-only fixes for the three library_shell nodes (the rare one's cause was foun
 **Fixes** (`Tests/UI/test_library_shell.py`):
 - slash: after the row mounts, the test waits for the entry window to disarm, focuses the row, and waits until the row holds focus. Only then does it check the precondition and press `/`.
 - edit save: the wait now covers the interlock and both refresh calls. The exact `== +1` assertions stay after it.
-- `[loading-All]` (fix round 2): after the press, a bounded loop (30 s, matching the selector wait after it) waits for `type_choices_visible`. If the pressed opener has been pruned, the loop first drains every message pump from the canvas up to the screen (`call_later` a marker on each, in order), so any press still in flight is handled. It re-presses the live, unpruned replacement opener only if the strip is still closed. This works around TASK-41703. On a timeout, the message names the number of presses and the last opener's `disabled`, `display`, pruning and parent, plus the focused widget. `Button.press` does nothing on a disabled or undisplayed button, which is why those two are named.
+- `[loading-All]` (fix rounds 2-3): after the press, a bounded loop (30 s, matching the selector wait after it) waits for `type_choices_visible`. Once the pressed opener is detached (`parent is None`), the loop drains every message pump from the canvas up to the screen (`call_later` a marker on each, in order). It re-presses the live, unpruned replacement opener only if the strip is still closed after the drain. This works around TASK-41703.
+  - Why this never toggles twice: by the time the opener is detached, every queue being removed above it has emptied. A press that survived is already queued at or above the canvas, ahead of the markers, so it is handled before the drain ends. This rests on message order, not timing.
+  - Each marker wait is capped at the time left before the deadline. A `TimeoutError` or `NoMatches` inside the drain is caught, so a failure always ends in the loop's diagnostic. On a timeout, the message names the number of presses and the last opener's `disabled`, `display`, pruning and parent, plus the focused widget. `Button.press` does nothing on a disabled or undisplayed button, which is why those two are named.
 
 **Red before, green after.**
 - Base at `-n 4`, 12 repeats each (load 76-87): slash 2 of 12 red (`assert not True`, line 7300), edit save 2 of 12 red (`1 == (1 + 1)`). Slash serially: 3 of 4 red (load ~35).
@@ -94,3 +96,9 @@ Test-only fixes for the three library_shell nodes (the rare one's cause was foun
 - **TASK-41703** files the product defect: a background canvas recompose can drop a pending button press. The test comment cites it.
 - **Wording.** TASK-32301 now says Prompts and Conversations have no wait for loading rows (Skills has one) and gained AC#4 for the cold Prompts visit. The `display=False` clause and the round-0 diagnostic label are above.
 - **Re-run.** The changed nodes (5 cases), 8 repeats at `-n 4`: 40 of 40 (load 27-32). `[loading-All]` alone, 24 repeats at `-n 4`: 24 of 24 (load 28-32). Preflight passed.
+
+**Fix round 3 (review r16dc-rev3, 2026-11-18).**
+- **The drain no longer starts while the opener is only `_pruning`.** At that point a late press can still sit in the pruned toolbar's queue, below the canvas marker, and the round-2 trigger could then re-press ahead of it. The reviewer's plain-Textual probe (`pruning_trigger_probe.py`) forces that interleaving; re-run here: with the round-2 trigger, presses 3 and handler runs 3 (open, close, open) in 20 of 20 trials; with `parent is None` only, 1 and 1 in 20 of 20.
+- **Drain failures.** Temporary edits, reverted: the opener was removed so the drain runs, and `TimeoutError()` or `NoMatches()` was raised at the top of the drain. Each run ended in the loop's assertion, "1 type opener press(es) never opened the strip: last opener disabled=False, display=False, pruning=True, parent=None, ...". A first control that stubbed `screen.call_later` was invalid, because `pilot.pause` itself needs `call_later` (WaitForScreenTimeout).
+- **TASK-41703** now says a press *can* be lost when it is still below the canvas child the recompose removes at the moment that child stops taking messages, notes that most such presses are only late, and has a deterministic AC#1 (a gated press, red N of N before the fix).
+- **Re-run.** The changed nodes (5 cases), 8 repeats at `-n 4`: 40 of 40 (load 36-48). `[loading-All]` alone, 24 repeats at `-n 4`: 24 of 24 (load 38-50). Preflight passed.
