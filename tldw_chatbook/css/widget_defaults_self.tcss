@@ -1440,6 +1440,12 @@ ConsoleForkChatModal {
     background: $background 70%;
 }
 
+/* ===== WIDGET: ConsoleHeldToolSlotsModal (Widgets/Console/console_held_tool_slots.py) ===== */
+
+ConsoleHeldToolSlotsModal {
+    align: center middle;
+}
+
 /* ===== WIDGET: ConsoleLibraryAccessModal (Widgets/Console/console_library_access_modal.py) ===== */
 
 ConsoleLibraryAccessModal {
@@ -2022,6 +2028,20 @@ ActorPackImportReviewDialog #actor-pack-import-actions Button {
     width: auto;
     min-width: 11;
     margin-left: 1;
+}
+
+/* ===== WIDGET: ActorPackRecoveryNotice (Widgets/Persona_Widgets/actor_pack_recovery_notice.py) ===== */
+
+ActorPackRecoveryNotice {
+    height: auto;
+    padding: 0 1;
+    border: round $warning;
+}
+ActorPackRecoveryNotice > Static {
+    width: 1fr;
+}
+ActorPackRecoveryNotice > Button {
+    width: auto;
 }
 
 /* ===== WIDGET: BuddyCharacterReviewDialog (Widgets/Persona_Widgets/buddy_character_review.py) ===== */

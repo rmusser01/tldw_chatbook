@@ -45,6 +45,7 @@ async def run():
     entered, release = threading.Event(), threading.Event()
     held, invalid, foreign, observations = {}, [], [], []
     task = source = request = None
+    replaced = missing = object()
     tool = None
     facts = {'route': route, 'builder_entries': 0, 'foreign_accesses': foreign, 'observations': observations}
     class Foreign:
@@ -140,7 +141,15 @@ async def run():
         assert held['future'].running() and not task.done()
         assert held['read'] in (source.runtime_reads if route == 'skill' else request.reads)
         facts['actual_stock_captured_native_held'] = True
-        helper._source_wiring = Foreign()
+        if route == 'skill':
+            # TASK-41319 (ADR-356 rule 4): the skill source is decided by the
+            # app's slots, not the wiring module's pointer, so this case now
+            # swaps the app's local-skills slot for a foreign object that must
+            # refuse the held read without being read (TASK-41730).
+            replaced = vars(app)['_local_skills_service']
+            vars(app)['_local_skills_service'] = Foreign()
+        else:
+            helper._source_wiring = Foreign()
         if route == 'skill':
             call('source_current', source.source_current)
             call('current', source.current)
@@ -167,6 +176,8 @@ async def run():
             await asyncio.gather(asyncio.wrap_future(held['future']), return_exceptions=True)
             assert held['future'].done() and held['read'].retired.done()
         helper._source_wiring = original_pointer
+        if replaced is not missing:
+            vars(app)['_local_skills_service'] = replaced
         if tool is not None:
             for code in (invoke_code, builder.__code__):
                 sys.monitoring.set_local_events(tool, code, 0)

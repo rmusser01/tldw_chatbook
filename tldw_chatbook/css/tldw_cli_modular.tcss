@@ -7677,6 +7677,11 @@ ConsoleTurnFileCard.console-turn-file-card-selected .console-turn-file-header {
 }
 
 
+.console-transcript-cleanup-released.console-transcript-cleanup-released-group {
+    margin: $ds-space-0;
+}
+
+
 .console-transcript-annotations {
     width: $ds-width-fill;
     height: auto;

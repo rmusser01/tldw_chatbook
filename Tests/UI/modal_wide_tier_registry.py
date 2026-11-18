@@ -113,6 +113,8 @@ MODAL_WIDE_TIER_SKIPPED: dict[str, str] = {
     # -- modals added after wave 2, triaged 2026-10-23 (TASK-36382): the
     # first assertion's stale names had hidden them --
     "ConsoleMessageDeleteReceiptModal": "tiny delete receipt (base width 60)",
+    # TASK-41730: TASK-41307's list of held tool slots, one row each.
+    "ConsoleHeldToolSlotsModal": "compact held-slot list (base width 76)",
     "ConsolePromptDraftSaveDialog": "tiny save-draft confirm (base width 60)",
     "SessionSummaryDialog": "tiny summary dialog (base width 44)",
     "ThemeLeaveModal": "tiny leave confirmation (base width 60)",

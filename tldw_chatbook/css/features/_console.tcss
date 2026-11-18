@@ -1620,6 +1620,12 @@ ConsoleTurnFileCard.console-turn-file-card-selected .console-turn-file-header {
     color: $ds-text-muted;
 }
 
+/* TASK-41730: the explanation-and-action group sits flush; its children keep
+   the note's margin. */
+.console-transcript-cleanup-released.console-transcript-cleanup-released-group {
+    margin: $ds-space-0;
+}
+
 /* task-17169: inline review-note marker under an annotated message. A
    non-interactive Static (the note text IS the viewer), quiet like the
    citation chip but full-width so multi-line notes wrap. */
