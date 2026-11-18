@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import subprocess
 import sys
 import time
@@ -113,14 +114,71 @@ async def test_selected_original_enter_reaches_provider_and_durable_terminal(
                         submit_return,
                         values=True,
                     ):
-                        await pilot.press("enter")
-                        async with asyncio.timeout(10):
-                            while not received:
-                                await pilot.pause()
-                            receipt = received[0]
-                            assert await asyncio.shield(receipt.retired) is True
-                            while composer.draft_text():
-                                await pilot.pause()
+                        try:
+                            await pilot.press("enter")
+                            async with asyncio.timeout(10):
+                                while not received:
+                                    await pilot.pause()
+                                receipt = received[0]
+                                assert await asyncio.shield(receipt.retired) is True
+                                while composer.draft_text():
+                                    await pilot.pause()
+                        except BaseException:
+                            # Snapshot before App teardown can settle/cancel work.
+                            # Existing receipts and server clocks only: no added
+                            # tracing, callbacks, payloads, or successful-path I/O.
+                            operations = {
+                                "UpdateInputs", "ReceiveTurn", "ReadProjection",
+                                "CommitPlanAck", "ArchiveSendCheckpointAck",
+                            }
+                            events = {
+                                "commit_planned", "input_projected", "terminal",
+                                "failed", "archive_checkpoint",
+                            }
+                            pending = tuple(client._requests.values())
+                            receipts = received + [
+                                item for item in pending
+                                if item.operation in operations
+                                and all(item is not turn for turn in received)
+                            ]
+                            diagnostic = {
+                                "elapsed_seconds": time.monotonic() - started,
+                                "receive_turn_count": len(received),
+                                "provider_post_seconds": [
+                                    stamp - started for stamp in
+                                    accepted_process_provider.post_received_at
+                                ],
+                                "provider_reply_seconds": [
+                                    stamp - started for stamp in
+                                    accepted_process_provider.reply_sent_at
+                                ],
+                                "projection_lock_held": client._projection_lock.locked(),
+                                "projection_tasks": len(client._projection_reads),
+                                "draft_present": bool(composer.draft_text()),
+                                "receipts": [
+                                    {
+                                        "operation": item.operation,
+                                        "futures": {
+                                            name: {
+                                                "done": getattr(item, name).done(),
+                                                "cancelled": getattr(item, name).cancelled(),
+                                            }
+                                            for name in ("received", "applied", "retired")
+                                        },
+                                        "events": [
+                                            event.kind for event in item.events
+                                            if event.kind in events
+                                        ],
+                                    }
+                                    for item in receipts
+                                ],
+                            }
+                            encoded = json.dumps(diagnostic, sort_keys=True)
+                            request.node.user_properties.append(
+                                ("selected_enter_failure_state", encoded)
+                            )
+                            print("Selected Enter failure state:", encoded, file=sys.stderr)
+                            raise
                     request.node.user_properties.append(
                         (
                             "selected_enter_to_retired_seconds",
