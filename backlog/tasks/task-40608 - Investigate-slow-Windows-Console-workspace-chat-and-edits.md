@@ -79,6 +79,8 @@ Task62's measured preparation follow-up uses the [bounded sensitive database-pat
 
 The [installed hook-member grouping amendment](../decisions/126-complete-local-backup-and-recovery.md#task-40608--grouped-installed-hook-permission-members) applies the existing CONFIG/MCP batch to the hook scope's four declared members. ADR required: yes; amend ADR126. Preserve every member check and original reader, verify companion refusal and retained ownership on failed cleanup, then measure the actual backend without profiling alongside the container-reader change.
 
+The [newest-primary-run decision](../decisions/126-complete-local-backup-and-recovery.md#newest-primary-run-in-a-conversation) addresses the measured history scan in mounted log availability. Amend ADR-126 and append AgentRuns schema 32. Check the original row and ordering, bounded query work with a long history, upgrade of schema 31, recovery of earlier archives and refusal of unexpected schema objects. The fresh README and edit journeys retain their separate timing gate.
+
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes

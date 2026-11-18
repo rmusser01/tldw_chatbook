@@ -2306,3 +2306,19 @@ benefit for that protocol extension.
 The independent decision read already paints the original approval card, but the compatibility controller's pending-round getter still read only FULL. Consequently a mounted card could wait for an unrelated FULL before an observer could read its ordered call IDs. That getter may consume the same positively retired independent head in its exact source, session, incarnation, attachment and visible visit. It remains a value observer: original presentation checkpoints and ResolveDecision enforce answerability, identity and permission; no DTO becomes a grant.
 
 Each original FULL/head read captures the existing decision-hint token and latest resolving command sequence at issuance. Outstanding resolving request IDs remain observed until their own positive retirement or known admission refusal; a later refusal cannot conceal an earlier unsettled resolution. An unresolved or negatively retired resolution cannot supply an eligible observation. A new hint or resolving command invalidates earlier observations; a refusal or rollback does not restore the old observation automatically. A subsequent checked read may observe the original rolled-back state after positive retirement, or after a known admission refusal. The approval-presentation checkpoint itself does not resolve a round and therefore does not invalidate it. Among eligible same-scope observations, the later-issued original read wins; a clear is retained as a clear, including when an older head read finishes afterward. While no eligible observation exists, the getter withholds the head, including before the first independent head adoption. Clients/visits without a matching independent head continue using the original FULL when its observed context remains current. FULL work, its cadence and mandatory reconciliation remain unchanged; no wire command, polling loop, native read, readiness renewal or cross-lane projection merge is added.
+#### Newest primary run in a conversation
+
+The mounted display must still query AgentRuns for the current durable log
+target. On schema 31, SQLite sorted the eligible history for every such
+lookup. A conversation with 2,000 primary runs took 76,045 VM instructions
+to return its newest row. Use a schema 32 partial index ordered by
+`conversation_id, created_at DESC, id DESC` for rows matching
+`agent_kind = 'primary' AND status != 'superseded'`. Both existing readers
+keep their predicates, projections and tie-breaking order. SQLite maintains
+index membership in the transaction that changes a run.
+
+Append the installed 31-to-32 migration and its exact recovery catalog.
+Preserve recognition of earlier archives, qualify the migration in staging,
+and reject unexpected or incomplete schema objects. The index saves work
+as history grows. The original README journey starts with an empty history
+and still needs its own wall-clock qualification.

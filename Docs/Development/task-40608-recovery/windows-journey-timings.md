@@ -386,6 +386,23 @@ journeys and shutdown passed. README took 28.0708 s adjusted and edit took
 23.2481 s, with first HTTP at 12.9851 s and 6.3035 s. The original receipt
 SHA-256 is `baceaa64604db17c98219ceb4a464edf7c69ae63d8d0c5aa70f414fe25c7781c`.
 
+On the same Windows 10 host, three separate mounted regression tests on
+`9e0ee52112` passed in 193.38 s. They covered Home to Chat, Enter through
+the provider and durable terminal reply, and the saved-chat archive
+reservation and generation checks. This run exercised the displaced-visit
+publication fix. Its pytest duration includes all three setups and teardowns.
+
+A separate scheduling experiment timed complete warm storage leases with
+and without a competing Python arithmetic thread. Two samples per cell in
+mirrored order yielded quiet medians of 11.546 ms at CPython's default
+switch interval and 11.381 ms at 1 ms. Under synthetic load the same
+medians were 11.185 s and 11.171 s. All borrowers and the final native
+owner retired, and the original interval was restored. Changing the
+interpreter interval alone gave little relief in this experiment. The
+competing thread does different work from a Console turn. The completed
+numeric receipt has SHA-256
+`4bb0595f5c6f213e960c4a69515bff2a334d8d09d1d4b83f975e4cca61da9745`.
+
 The subsequent local-parent change on `cae5d57fea` was measured separately
 on Windows Server 2022. Each arm used two warmups and 21 timed complete warm
 lease acquisitions and closes in a fresh interpreter. The six alternating
