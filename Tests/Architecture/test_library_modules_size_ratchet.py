@@ -509,7 +509,21 @@ _BUDGETS: dict[str, int] = {
     # framework services; 29 group-(a) helpers; 37 group-(e) callables).
     # 2026-11-15, rebased onto dev cc6006fcf5: 6061 -> 6067 (the same +6),
     # measured; the binding counts above re-measured unchanged.
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 6067,
+    # 2026-11-15, TASK-36952.3.2 (media body move slice 2 of 8, the same
+    # sanctioned move): 6021 -> 7138 (+1117): 24 bodies byte-for-byte with
+    # their separators and a section comment (+1106), 2 callbacks out (-12),
+    # the `_local_source_counts` getter in (+6), imports (+2), prose (+15).
+    # 2026-11-15, TASK-36952.3.2 rebased onto 3.1's rebase onto dev
+    # cc6006fcf5: 6067 -> 7184 (the same +1117), measured.
+    # 2026-11-15, TASK-36952.3.2 fix round 1: 7138 -> 7150 (+12), prose only:
+    # module docstring item 3 now describes the widened one-claim-site guard.
+    # 2026-11-15, rebased onto 3.1's rebase onto dev cc6006fcf5: 7184 -> 7196
+    # (the same +12), measured.
+    # 2026-11-15, TASK-36952.3.2 rebase onto 3.1's fix round: 7150 -> 7151 (+1),
+    # prose only: the docstring's binding counts re-measured after this slice.
+    # 2026-11-15, rebased onto 3.1's rebase onto dev cc6006fcf5: 7196 -> 7197
+    # (the same +1), measured; the binding counts re-measured unchanged.
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 7197,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only

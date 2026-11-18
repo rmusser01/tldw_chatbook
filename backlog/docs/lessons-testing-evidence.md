@@ -97,6 +97,12 @@ Three traps cost a run each while finding it:
 
 **What to do.** When a Backup_Recovery claim says something "has no group", check which group: `data_groups.group_for_owner` (data groups) or `doc.dependency_groups` (per-item, written for every captured row). Pin a secrecy claim with a test that builds an archive holding the secret and drives the actual picker or preview, not the policy table.
 
+## A move can add failures inside a guard that is already red, and a pass/fail A/B cannot see them (TASK-36952.3.2, 2026-11-15)
+
+**Incident.** TASK-36952.3.2 moved the bulk-delete and Undo workers from `library_screen.py` into `library_media_controller.py`. `test_reviewed_diagnostic_changes_are_metadata_only` keys its reviewed labels by file path, and two of them (`"in bulk delete"`, `"Failed to restore a Library media item in bulk-delete undo"`) sat under the screen's key. After the move, each label found 0 calls in the screen. But the test was already red at base for two unrelated labels (one in `agent_service.py`, one in `console_chat_store.py`), so it was "failed" on both sides, and the Architecture comparison against the base failure list passed. Only its failure LIST showed the change: 2 entries at base, 4 at head. Re-keying the labels to the controller brought head back to the same 2.
+
+**What to do.** For every test that fails at base and also reads code your change moves or edits, compare the failure messages at base and head, not only pass or fail. A path-keyed guard is the likeliest case. Run it with `-vv -o truncation_limit_lines=0` on both trees and diff the lists.
+
 ## A process-wide `os.close` spy also counts another thread's closes, so a profile change moved a "pin count" (TASK-39114, 2026-11-10)
 
 **Incident.** `test_migration_immutable_failure_retains_complete_destination[True]` monkeypatched `os.close` and expected 6 closes after a failed view close, "Admission also owns two directory pins for a file-backed view." It failed `assert 4 == 6` on dev. A first-parent bisect over 905 commits (a `git archive` tree per step, one 4 s node) named 5a915a43e5, a test-only commit that moved `Tests/DB` to the bootstrap profile. Stacks recorded in the spy showed the two missing closes came from the `chatbook-storage-admission` hold thread (`admission._lock` and `native_files.pinned_directory`), which a per-test profile's admission happened to run in that window. The cleanup under test closed the same 4 descriptors under both profiles.

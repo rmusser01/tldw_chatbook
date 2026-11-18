@@ -342,3 +342,10 @@ a529dbd3ed0b13502b8d100e3053e0bea5baa119
 # edit is ruling R2's dropped `self._media_controller.` hop. Test edits are
 # receiver-only, AST-proven against the parent.
 0a1f4062fc47cda1adbe8b16b32f1509050684f0
+
+# TASK-36952.3.2, 2026-11-15 -- media body move slice 2 of 8. Twenty-four
+# LibraryScreen media bodies (the ADR-055 mutation interlock, bulk and
+# single-item delete, Undo, selection export, edit save) moved byte-for-byte
+# into LibraryMediaController with no token edit. Test edits are
+# receiver-only, AST-proven against the parent.
+632cf53183e1be001a67cd18a67ee710cd76f314
