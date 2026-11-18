@@ -130,6 +130,10 @@ _REMOTE_HTTP_WARNING = "Remote HTTP endpoints are not encrypted."
 REMOTE_ENDPOINT_SCHEME_REQUIRED = (
     "Remote endpoint URLs must include an HTTP or HTTPS scheme."
 )
+#: The refusal of a path that names a request route the adapter adds to its
+#: base, such as ``/responses`` or Anthropic's ``/v1/messages`` (review
+#: r16cu-rev3: it is not ambiguous, so it no longer says so).
+ENDPOINT_ROUTE_REFUSAL = "Endpoint path names a request route; enter the API base."
 _PROVIDER_KEY = re.compile(r"[a-z0-9_]+")
 _UNSAFE_UNICODE_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
 _HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
@@ -315,9 +319,7 @@ def _resolve_provider_endpoint(
     if any(segment in {".", ".."} for segment in segments):
         return _invalid_resolution(provider_key, "Endpoint path is ambiguous.")
     if _names_a_native_route(provider_key, segments):
-        return _invalid_resolution(
-            provider_key, "Endpoint path has ambiguous API suffixes."
-        )
+        return _invalid_resolution(provider_key, ENDPOINT_ROUTE_REFUSAL)
 
     netloc = _normalized_netloc(canonical_host, port)
     preset = _ENGINE_PRESETS.get(provider_key) or _route_owning_presets().get(
@@ -336,18 +338,18 @@ def _resolve_provider_endpoint(
     if native:
         # Only from a plain root: an API suffix before the route is ambiguous.
         suffix = (suffix[0], "chat_url") if suffix and suffix[1] == "origin" else None
-    if (
-        suffix is None
-        and (provider_key == "custom_hosted" or provider_key in _CLOUD_BASE_KEYS)
-        and not _names_a_route(segments)
+    if suffix is None and (
+        provider_key == "custom_hosted" or provider_key in _CLOUD_BASE_KEYS
     ):
         # TASK-40300, owner decision 2026-11-13: an OpenAI-compatible custom
         # endpoint's path is its API base even when its v1 is not the last
         # segment (DeepInfra /v1/openai, Cloudflare /v1/<acct>/<gw>/compat),
         # read as its custom-hosted engine reads it. A route is not a base
         # (chat would post to .../completions/chat/completions) and stays
-        # refused.
+        # refused, with the route reason (review r16cu-rev3).
         # TASK-41700: so is a first-party cloud provider's gateway base.
+        if _names_a_route(segments):
+            return _invalid_resolution(provider_key, ENDPOINT_ROUTE_REFUSAL)
         return _engine_preset_resolution(
             CUSTOM_HOSTED, provider_key, scheme, netloc, canonical_host, segments
         )

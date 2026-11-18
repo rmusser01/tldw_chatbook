@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-18 03:38
-updated_date: 2026-11-18 05:35
+updated_date: 2026-11-18 06:23
 labels:
 - follow-up
 - providers
@@ -70,4 +70,10 @@ Files: `tldw_chatbook/Provider_Contract/provider_endpoint_contract.py`, `Tests/C
 - M-3: the user-info traceback test moved from `Tests/LLM_Calls/test_hosted_chat.py` (nightly only) to `Tests/Chat/test_local_server_discovery.py::test_the_strict_transport_refuses_a_user_info_base_without_rendering_it`, with its `HostedHTTPTransportConfig` built inline. Negative control re-run there: with the refusal temporarily raised `from ValueError(<url>)` it failed on the assertion (the canary rendered in the chained `ValueError`); green after reverting.
 - Filed TASK-41704 (To Do) for the `/v1` append, at the coordinator's request.
 - Reruns: the gateway, Make-default, cloud-adapter, scheme-line and moved nodes, 207 passed (`-n 4`). Covering set (the same 114 files, `-n 4`, load 8-42): 575 failed / 7624 passed (one more pass: the moved test). Against the previous round's head run, two failing functions are new (`test_console_native_chat_flow.py`'s two delete-preview tests, the known `RecoveryRequired` family); both also fail with this round's source changes reverted, and two earlier failures passed this time. Serial size ratchets 232 passed; `ruff_gate.py` OK; preflight passed. `console_session_settings.py` has no size row.
+
+**Review r16cu-rev3 round (2026-11-18).**
+- M-1: route refusals had reused "Endpoint path has ambiguous API suffixes.", though such a path is not ambiguous. Every route refusal, the native rule and the relaxed reading's `_names_a_route` (cloud keys and custom-hosted), now reads `ENDPOINT_ROUTE_REFUSAL`, "Endpoint path names a request route; enter the API base."; genuinely ambiguous paths keep the old copy. `test_a_gateway_path_keeps_every_host_and_shape_refusal` asserts the new copy for every generic and native route row (each family), and `test_an_api_route_is_not_a_custom_endpoint_base` (6 nodes) is rewritten on purpose to it: all 7 nodes red with 8ea4d001e1's contract, green after.
+- M-2: the User Guide's config-file workaround for TASK-41704 now says to change that provider's model or key in the config file too, because saving its Settings card writes the address again with `/v1` added. Both docs quote the route refusal.
+- Suggestion: TASK-41704 gained AC#4 (the User Guide's known-gap sentence is removed).
+- Reruns: the gateway, cloud-adapter, Make-default, scheme-line, route and moved nodes, 212 passed (`-n 4`). The contract and session-settings covering files (32, `-n 4`, load 7-11): 404 failed / 4442 passed; the two failing functions not in the previous run's list both fail with this round's change reverted (one `RecoveryRequired`, one that passes alone at head). Preflight passed.
 

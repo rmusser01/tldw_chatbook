@@ -4,7 +4,7 @@ title: "Saving a native cloud provider's own base URL in Settings appends /v1 an
 status: To Do
 assignee: []
 created_date: 2026-11-18 05:33
-updated_date: 2026-11-18 05:33
+updated_date: 2026-11-18 06:23
 labels:
 - follow-up
 - providers
@@ -32,4 +32,5 @@ Confirmed to predate TASK-41522 and TASK-41700 (review r16cu-rev2, identical at 
 - [ ] #1 Saving each native cloud provider's own documented base, or a gateway base without `v1`, writes it unchanged, and the adapter posts to the right URL
 - [ ] #2 Project-instruction keys for values saved before the fix still resolve, or are migrated, with a test
 - [ ] #3 Tests pin Google, Cohere and one gateway base, red before the fix
+- [ ] #4 The User Guide's known-gap sentence about the `/v1` append is removed
 <!-- AC:END -->

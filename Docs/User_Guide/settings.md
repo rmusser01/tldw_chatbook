@@ -396,10 +396,13 @@ default is `https://api.anthropic.com/v1`, so its gateway base ends in
 `/anthropic/v1`. The host is checked as any endpoint's is. A gateway address
 that names a request route, such as `…/openai/responses`, is refused, and so is
 a provider's own route pasted into its Endpoint: Anthropic's `/v1/messages`,
-Cohere's `/v2/chat` or Google's `…:generateContent`. One known gap: **s** adds
+Cohere's `/v2/chat` or Google's `…:generateContent` ("Endpoint path names a
+request route; enter the API base."). One known gap: **s** adds
 `/v1` to an address whose path has no `v1`, so Google's own
 `https://generativelanguage.googleapis.com/v1beta` is saved as `…/v1beta/v1`;
-until that is fixed, set such an address as `api_base_url` in the config file.
+until that is fixed, set such an address as `api_base_url` in the config file,
+and change that provider's model or key there too, because saving its card in
+Settings writes the address again, with `/v1` added.
 
 MLX-LM is reached at `http://<host>:<port>/v1`, built from
 `[api_settings.local_mlx_lm]` `host` and `port` (127.0.0.1 and 8080 when

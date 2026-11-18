@@ -3083,14 +3083,18 @@ def test_an_api_route_is_not_a_custom_endpoint_base(path):
         validate_entry,
     )
 
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+        ENDPOINT_ROUTE_REFUSAL,
+    )
+
     config = _entry_config(f"http://localhost:8000{path}")
 
     assert load_custom_endpoints(config) == {}
-    assert custom_endpoint_refusals(config) == {
-        "box": "Endpoint path has ambiguous API suffixes."
-    }
+    # Rewritten on purpose (review r16cu-rev3): a route is refused as a route,
+    # not as an ambiguous path.
+    assert custom_endpoint_refusals(config) == {"box": ENDPOINT_ROUTE_REFUSAL}
     assert validate_entry("Box", "openai_compatible", f"http://localhost:8000{path}") == [
-        "Endpoint path has ambiguous API suffixes."
+        ENDPOINT_ROUTE_REFUSAL
     ]
 
 
@@ -4623,13 +4627,22 @@ def test_a_gateway_path_keeps_every_host_and_shape_refusal():
     """TASK-41700 AC#2: a gateway path changes no host, user-info, zone-id,
     query or fragment refusal, and a route or an ambiguous path is still not
     a base, for every first-party cloud provider."""
-    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import endpoint_refusal
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+        ENDPOINT_ROUTE_REFUSAL,
+        endpoint_refusal,
+    )
 
     for provider in sorted({case.split("-")[0] for case in _GATEWAY_POSTS}):
         routes = () if provider == "zai" else _GATEWAY_ROUTE_SHAPES
         native = _NATIVE_ROUTE_SHAPES.get(provider, ())
-        for endpoint in (*_GATEWAY_REFUSED_SHAPES, *routes, *native):
+        for endpoint in _GATEWAY_REFUSED_SHAPES:
             assert endpoint_refusal(provider, endpoint), (provider, endpoint)
+        # Review r16cu-rev3: a route is refused as a route, not as ambiguous.
+        for endpoint in (*routes, *native):
+            assert endpoint_refusal(provider, endpoint) == ENDPOINT_ROUTE_REFUSAL, (
+                provider,
+                endpoint,
+            )
 
 
 def test_the_shared_local_transport_keeps_its_recovery_wrapper():
