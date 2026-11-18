@@ -373,7 +373,7 @@ async def _refresh_current_selected_view(screen, client, visit, checkpoint) -> b
     if _defer_selected_refresh(screen, client, visit):
         return False
     client.require_view(screen, visit)
-    if not apply_console_process_projection(screen, client, projection, visit=visit):
+    if not await apply_console_process_projection(screen, client, projection, visit=visit):
         return False
     if not sync_selected_controls(screen):
         return False

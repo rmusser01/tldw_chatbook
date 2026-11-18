@@ -47,6 +47,9 @@ _TRANSCRIPT_METHODS = tuple(
     for name in (
         "set_model_thinking_visible",
         "set_messages",
+        "refresh_messages",
+        "_transcript_rows",
+        "_flat_transcript_rows",
         "sync_jump_indicator",
     )
 )
@@ -103,7 +106,7 @@ def _require_sources() -> None:
         raise RuntimeError("Console projection presentation source changed")
 
 
-def apply_console_process_projection(
+async def apply_console_process_projection(
     screen: ChatScreen,
     client: ConsoleExecutionClient,
     projection: ConsoleProjection,
@@ -119,8 +122,9 @@ def apply_console_process_projection(
         visit: Parent attachment visit captured for this presentation request.
 
     Returns:
-        Whether the synchronous original presentation calls ran. This does not
-        acknowledge native retirement, row mounting, paint, or other UI surfaces.
+        Whether the original row reconciliation completed for this still-current
+        publication. This does not acknowledge native retirement, compositor
+        paint, or other UI surfaces.
 
     Raises:
         TypeError: A receiver is outside the fixed original presentation cohort.
@@ -185,7 +189,8 @@ def apply_console_process_projection(
     if screen._pending_console_swipe_selection is not None:
         transcript.pending_selection_id = screen._pending_console_swipe_selection
         screen._pending_console_swipe_selection = None
-    transcript.set_model_thinking_visible(screen._show_model_thinking())
+    show_thinking = screen._show_model_thinking()
+    transcript.set_model_thinking_visible(show_thinking)
     rows = projection.messages
     ack = getattr(screen, "_console_send_ack", None)
     if ack is not None:
@@ -198,5 +203,54 @@ def apply_console_process_projection(
         _require_methods(ack, _ACK_PROJECT)
         rows = ack.project(projection.session_id, rows)
     transcript.set_messages(rows, session_id=projection.session_id)
+    # Reuse the original widget's complete row signatures, including ACK
+    # stand-ins and thinking. A periodic identical FULL must not dismiss an
+    # open message menu merely because it decoded new message objects.
+    row_signature = tuple((row.key, row.signature) for row in transcript._transcript_rows())
+    rendered_key = (
+        client, visit, projection.source_revision, projection.session_id,
+        projection.incarnation_id, transcript, show_thinking, row_signature,
+    )
+    if getattr(screen, "_console_process_transcript_rendered", None) != rendered_key:
+        screen._console_process_transcript_rendered = None
+        await transcript.refresh_messages()
+    _require_sources()
+    _require_methods(screen, _SCREEN_METHODS)
+    _require_methods(transcript, _TRANSCRIPT_METHODS)
+    if (
+        client._view is not screen or client._visit != visit
+        or client._projection is not projection
+        or projection.source_revision != client._source_revision
+        or client._disposed or client._shutdown_task is not None
+        or client._channel_error is not None or _TORN_DOWN[0](screen)
+        or screen._message is not message
+        or getattr(screen, "_console_send_ack", None) is not ack
+    ):
+        return False
+    try:
+        if (
+            screen.app is not client._app or screen.app_instance is not client._app
+            or not screen.is_current or not screen.is_mounted
+            or not transcript.is_mounted or transcript._closing or transcript._closed
+            or transcript.screen is not screen
+            or screen.query_one("#console-native-transcript", ConsoleTranscript) is not transcript
+        ):
+            return False
+    except (NoActiveAppError, NoScreen, QueryError):
+        return False
+    if (
+        tuple((row.key, row.signature) for row in transcript._transcript_rows()) != row_signature
+        or set(transcript._row_widgets) != {key for key, _signature in row_signature}
+        or any(
+            transcript._row_signatures.get(key) != signature
+            or transcript._row_widgets[key].parent is not transcript
+            or not transcript._row_widgets[key].is_attached
+            for key, signature in row_signature
+        )
+    ):
+        if getattr(screen, "_console_process_transcript_rendered", None) == rendered_key:
+            screen._console_process_transcript_rendered = None
+        return False
+    screen._console_process_transcript_rendered = rendered_key
     transcript.sync_jump_indicator(projection.run_state.status.value)
     return True
