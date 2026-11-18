@@ -218,7 +218,11 @@ MAX_SINGLE_ROUTE_ADDED_LOC = 135_111
 #: 2026-10-31). Its ``Notes.agent_lessons`` import moved into the one function
 #: that uses it, so it adds one module, not two. The review service a first
 #: send also imported stays out: an ordinary turn no longer loads it.
-MAX_FIRST_SEND_WARMUP_ADDED_MODULES = 94
+#: 2026-11-18, PR #3571: explicit ADR-097 owner exception, 94 -> 98.
+#: Dev measures 99; this branch defers RAG capture and measures 98. Four
+#: existing ordinary-turn modules now enter this census. No spare headroom;
+#: retain the original snapshot so their names remain visible on a breach.
+MAX_FIRST_SEND_WARMUP_ADDED_MODULES = 98
 
 _CENSUS_SCRIPT = """
 import json
