@@ -1295,11 +1295,27 @@ class ConsoleWorkspaceContextTray(
                 return True
         return False
 
+    async def mount_composed_widgets(self, widgets: list[Widget]) -> None:
+        """Finish the initial child mount before a newer rebuild can enter."""
+        # Textual's recompose batch holds this lock, but its initial mount
+        # does not. A rebuild could otherwise mount its replacement children
+        # before the first compose mounts the same IDs. Reuse that same lock;
+        # the waiting rebuild will compose the latest state after this mount.
+        async with self.lock:
+            if not self.is_attached or self._pruning or self._closing:
+                return
+            await super().mount_composed_widgets(widgets)
+
     async def recompose(self) -> None:
-        """Rebuild, then say so: the screen re-applies its out-of-band controls."""
-        await super().recompose()
-        if self.is_attached:
-            self.post_message(self.Recomposed())
+        """Serialize the rebuild and its retained-filter/focus bookkeeping."""
+        async with self.lock:
+            if not self.is_attached or self._pruning or self._closing:
+                return
+            # Capture the retained row and focus only after the prior mount
+            # settles. The existing inner Textual batch uses this RLock too.
+            await super().recompose()
+            if self.is_attached and not self._pruning and not self._closing:
+                self.post_message(self.Recomposed())
 
     def _can_skip_recompose(self, state: ConsoleWorkspaceContextState) -> bool:
         """Return True only when the mounted DOM already IS ``state``'s DOM.
