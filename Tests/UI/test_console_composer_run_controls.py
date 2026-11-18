@@ -334,18 +334,18 @@ async def test_running_stop_is_painted_whole_inside_the_action_row(size, request
             await _start_held_run(console, composer, pilot)
             actions = composer.query_one("#console-composer-actions")
             stop = composer.query_one("#console-stop-generation", Button)
+            redirect = composer.query_one("#console-redirect-generation", Button)
             screen_region = host.screen.region
-            # Neutral settle: Stop has been through a layout pass and the
-            # row's laid-out width has caught up with its budget (whatever
-            # that budget is) before geometry is read. Review: settling on
-            # the row alone once read Stop as Region(0, 0, 0, 0) -- the row
-            # already sat at its budget before `display: block` was laid
-            # out. Both hold on pre-fix code too (Stop laid out at x=83..238,
-            # off-screen), so this waits; the assertions below decide.
+            # Stop can be laid out during preparation, before active generation
+            # shows and lays out Redirect. Wait for each visible control.
             await _settle(
                 pilot,
-                lambda: stop.region.width > 0
-                and actions.region.width == actions.styles.width.value,
+                lambda: (
+                    composer.run_active
+                    and stop.region.width > 0
+                    and actions.region.width == actions.styles.width.value
+                    and (not redirect.display or redirect.region.width > 0)
+                ),
             )
 
             assert stop.focusable, "a displayed Stop must be keyboard-reachable"
@@ -361,7 +361,6 @@ async def test_running_stop_is_painted_whole_inside_the_action_row(size, request
             )
             assert _painted_at(host, stop), f"Stop is not painted at {size}"
 
-            redirect = composer.query_one("#console-redirect-generation", Button)
             if redirect.display:
                 assert redirect.region.width >= cell_len("Redirect") + 2, (
                     f"Redirect label clipped at {size}: {redirect.region}"

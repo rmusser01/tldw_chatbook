@@ -12,6 +12,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from .console_chat_controller import (
+        ConsoleChatController,
+        _OrdinaryNativeCommitOwner,
+    )
     from .console_chat_store import (
         ConsoleChatStore,
         ConsoleDurableAcceptanceFingerprint,
@@ -311,6 +315,63 @@ def _controller_ordinary_native_commit_tasks(
                 if session_id is None or owner.session.id == session_id
             )
         )
+
+
+def _ordinary_native_stop_owners(
+    controller: ConsoleChatController, session_id: str
+) -> Iterator[_OrdinaryNativeCommitOwner]:
+    return (
+        owner
+        for owner in controller._ordinary_native_commits.values()
+        if owner.session.id == session_id
+        and not owner.task.done()
+        and controller._ordinary_native_commit_current(owner)
+    )
+
+
+def ordinary_native_commit_stop_available(
+    controller: ConsoleChatController, session_id: str
+) -> bool:
+    """Read the current native save owner without waiting on its lock."""
+    if not controller._ordinary_native_commits:
+        return False
+    lock = controller._active_submit_tasks_lock
+    if not lock.acquire(blocking=False):
+        return False
+    try:
+        return any(
+            not owner.explicit_stop
+            for owner in _ordinary_native_stop_owners(controller, session_id)
+        )
+    finally:
+        lock.release()
+
+
+def request_ordinary_native_commit_stop(
+    controller: ConsoleChatController, session_id: str
+) -> bool:
+    """Stop at the existing save or postcommit settlement boundary."""
+    if not controller._ordinary_native_commits:
+        return False
+    cancel = set()
+    with controller._active_submit_tasks_lock:
+        owners = tuple(_ordinary_native_stop_owners(controller, session_id))
+        for owner in owners:
+            owner.explicit_stop = True
+            preparation_id = owner.acceptance.preparation_id
+            if preparation_id in controller._durable_postcommit_continuations:
+                # Accepted effects must finish before the same owner settles Stop.
+                owner.caller_cancelled = True
+            else:
+                cancel.add(owner.task)
+    if not owners:
+        return False
+    controller._signal_stop(session_id=session_id)
+    controller.prompt_queue_coordinator.pause_for_stop(session_id)
+    for task in cancel:
+        if task is not asyncio.current_task():
+            task.cancel()
+    return True
 
 
 def _controller_ordinary_native_commit_retirements(

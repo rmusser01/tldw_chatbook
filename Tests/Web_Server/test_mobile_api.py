@@ -5,9 +5,8 @@ shapes/statuses, the unknown-session 404, the text bounds, and the
 ``mobile_surface`` registration gate — plus the task-5 event stream
 WebSocket (``GET /api/v1/mobile/stream``): subprotocol upgrade auth, the
 server->client event frames, the JSON ping/pong contract, and the 4401 /
-1011 close codes. The engine is NOT under test here — the service is
-injected as a fake (Task 3's ``test_mobile_service.py`` owns the engine
-behavior).
+1011 close codes. Most tests inject a fake service. The accepted-turn
+cancel regression drives the real engine across the HTTP boundary.
 """
 
 from __future__ import annotations
@@ -21,9 +20,16 @@ import pytest
 from aiohttp import WSMsgType, WSServerHandshakeError
 from aiohttp.test_utils import TestClient, TestServer
 
+from Tests.console_provider_doubles import AgentModeGateway
 from tldw_chatbook.Canvas.web_auth import CSRF_HEADER_NAME, build_web_auth_policy
 from tldw_chatbook.Canvas.config_policy import build_canvas_config_policy
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleDispatchRecoveryKind,
+    ConsoleRunStatus,
+)
+from tldw_chatbook.Chat.console_turn_preparation import ConsoleTurnPreparationState
 from tldw_chatbook.Web_Server import mobile_api, serve
+from tldw_chatbook.Web_Server.mobile_service import MobileChatService
 from tldw_chatbook.Web_Server.session_store import WebSessionStore
 
 pytestmark = [
@@ -404,7 +410,7 @@ def _mobile_server(
     tmp_path,
     policy,
     *,
-    service: FakeMobileService | None = None,
+    service: FakeMobileService | MobileChatService | None = None,
     provider_gateway: Any | None = None,
 ):
     """Build a config-free served server, injecting only what is given.
@@ -457,7 +463,7 @@ async def _app_without_control_broker(server):
 
 
 @asynccontextmanager
-async def _logged_in_client(tmp_path, *, service: FakeMobileService):
+async def _logged_in_client(tmp_path, *, service: FakeMobileService | MobileChatService):
     """Yield one token-authenticated TestClient against a fresh server."""
 
     policy = build_web_auth_policy(
@@ -1000,6 +1006,114 @@ async def test_cancel_maps_the_service_bool(
         assert idle.status == 200
         assert (await idle.json()) == {"ok": False}
         assert service.calls.count(("cancel", {"session_id": "s-known"})) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("window", ["before-reply", "native-postcommit"])
+async def test_cancel_stops_exact_accepted_mobile_turn(
+    tmp_path, monkeypatch, window
+) -> None:
+    gateway = AgentModeGateway()
+    service = MobileChatService(data_dir=tmp_path / "engine", provider_gateway=gateway)
+    held, release = asyncio.Event(), asyncio.Event()
+    try:
+        session = await service.create_session(title="Mobile Stop target")
+        sibling = await service.create_session(title="Different mobile chat")
+        session_id = session["id"]
+        engine = service._require_engine()
+        controller, store = engine.controller, engine.store
+
+        async def hold():
+            if not held.is_set():
+                held.set()
+                await release.wait()
+
+        if window == "native-postcommit":
+            original_effect = controller._run_durable_postcommit_effect
+
+            async def hold_after_input(preparation_id, name, callback, *, fingerprint):
+                result = await original_effect(
+                    preparation_id, name, callback, fingerprint=fingerprint
+                )
+                if name == "staged_input_clearing":
+                    await hold()
+                return result
+
+            monkeypatch.setattr(
+                controller, "_run_durable_postcommit_effect", hold_after_input
+            )
+        else:
+            admit = controller.hook_admission_reason
+
+            async def hold_accepted_admission():
+                if store.dispatch_recovery_for_session(session_id):
+                    await hold()
+                return await admit()
+
+            monkeypatch.setattr(
+                controller, "hook_admission_reason", hold_accepted_admission
+            )
+        async with _logged_in_client(tmp_path, service=service) as client:
+            headers = {CSRF_HEADER_NAME: await _csrf(client)}
+            url = f"/api/v1/mobile/conversations/{session_id}"
+            sent = await client.post(
+                f"{url}/messages", json={"text": "Stop this turn"}, headers=headers
+            )
+            assert sent.status == 202, await sent.text()
+            await asyncio.wait_for(held.wait(), timeout=30)
+            turn = service._turn_tasks[session_id]
+            preparation = store.preparation_for_session(session_id)
+            recovery = store.dispatch_recovery_for_session(session_id)
+            if window == "native-postcommit":
+                assert controller._ordinary_native_commit_tasks(session_id) == (turn,)
+            else:
+                assert preparation.state is ConsoleTurnPreparationState.ACCEPTED
+                assert controller._ordinary_native_commit_tasks(session_id) == ()
+            assert recovery.kind is ConsoleDispatchRecoveryKind.ACCEPTED
+            assert recovery.preparation_id == preparation.preparation_id
+            assert recovery.runtime_active and not recovery.in_flight
+            assert session_id not in controller._active_stream_tasks
+            assert gateway.stream_calls == []
+            store.switch_session(sibling["id"])
+
+            stopped = await client.post(f"{url}/cancel", headers=headers)
+            assert stopped.status == 200 and await stopped.json() == {"ok": True}
+            if window == "native-postcommit":
+                assert not turn.done() and not turn.cancelling()
+                release.set()
+            await asyncio.wait_for(asyncio.shield(turn), timeout=15)
+            assert (
+                controller.run_state_for(session_id).status is ConsoleRunStatus.STOPPED
+            )
+            assert (
+                controller.run_state_for(sibling["id"]).status is ConsoleRunStatus.IDLE
+            )
+            assert store.dispatch_recovery_for_session(session_id) is None
+            assert store.preparation_for_session(session_id) is None
+            assert store.get_message(recovery.assistant_message_id).status == "stopped"
+            persisted = engine.storage.chachanotes.get_message_by_id(
+                recovery.assistant_message_id
+            )
+            assert persisted["assistant_generation_state"] == "stopped"
+            assert gateway.stream_calls == []
+
+            next_send = await client.post(
+                f"{url}/messages", json={"text": "Send after Stop"}, headers=headers
+            )
+            assert next_send.status == 202
+            await asyncio.wait_for(
+                asyncio.shield(service._turn_tasks[session_id]), timeout=30
+            )
+            assert gateway.stream_calls
+            messages = (await service.session_messages(session_id))["messages"]
+            assert any(
+                row["role"] == "assistant" and row["content"] == gateway.final_answer
+                for row in messages
+            )
+    finally:
+        release.set()
+        await asyncio.wait_for(service.shutdown(), timeout=15)
 
 
 @pytest.mark.asyncio

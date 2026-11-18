@@ -19458,6 +19458,9 @@ class ChatScreen(BaseAppScreen):
         runtime = getattr(self, "_console_runtime_ref", None)
         store = runtime.chat_store if runtime is not None else None
         active_session_id = store.active_session_id if store is not None else None
+        visible_session_id = self._console_visible_draft_session_id
+        if visible_session_id is not None and active_session_id != visible_session_id:
+            return
         image_edit = (
             self._image._h3_image_edit_registry().request_cancel(active_session_id)
             if active_session_id is not None
@@ -19494,10 +19497,7 @@ class ChatScreen(BaseAppScreen):
             rule_check = rules is not None and rules.state(
                 active_session_id or ""
             ).phase in {"drafting", "testing", "checking"}
-            if controller is None or not controller.stop_active_run():
-                self.app_instance.notify(
-                    "No active Console run to stop.", severity="warning"
-                )
+            if not run_controls.request_controller_stop(self, controller):
                 return
             # Rule cancellation projects its own controls without reading config.
             if not rule_check:
@@ -21478,7 +21478,8 @@ class ChatScreen(BaseAppScreen):
             has_draft=composer.has_sendable_payload(),  # TASK-33620.15.22
             run_active=run_active,
             stop_available=run_active
-            or bool(getattr(controller, "is_stop_allowed", False)),
+            or bool(getattr(controller, "is_stop_allowed", False))
+            or run_controls.preparation_stop_available(self),
             can_save_chatbook=can_save_chatbook,
             send_blocked=send_blocked,
             dispatch_recovery_blocked=dispatch_recovery_blocked,

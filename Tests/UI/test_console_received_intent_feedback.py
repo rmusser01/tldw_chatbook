@@ -1045,22 +1045,63 @@ async def test_send_feedback_survives_preparation_and_provider_wait(route, monke
                 case.probe.release.set()
 
 
-async def test_stopping_received_send_clears_feedback_and_keeps_draft(monkeypatch):
-    async with _received_console_case(monkeypatch, "feedback-stop") as case:
+@pytest.mark.parametrize("route", ["shortcut", "button"])
+async def test_stopping_received_send_clears_feedback_and_keeps_draft(
+    monkeypatch, route
+):
+    async with _received_console_case(
+        monkeypatch, f"feedback-stop-{route}", durable=True
+    ) as case:
+        _install_received_wire_reply(monkeypatch, case)
         frames = _NaturalRunFeedbackFrames(case)
         with frames.installed():
             _send(case, "enter")
-            await _held_received_record(case)
+            record = await _held_received_record(case)
             assert await _until(lambda: ("Sending", _RUN_FEEDBACK) in frames.frames, 2)
-            case.controller.stop_active_run()
+            stop = case.console.query_one("#console-stop-generation", Button)
+            assert stop.display and not stop.disabled
+            assert stop.region and stop.region.overlaps(case.console.region)
+            assert case.console.check_action("stop_console_run", ())
+            assert not case.console.query_one("#console-redirect-generation").display
+
+            _key(case.host, "x", "x")
+            revised = f"{case.draft}x"
+            assert await _until(lambda: case.composer.draft_text() == revised, 2)
+            if route == "shortcut":
+                _key(case.host, "ctrl+g", "\x07")
+            else:
+                stop.press()
+            assert await _until(lambda: record.task.cancelling() > 0, 2)
+            assert not case.probe.release.is_set() and not case.probe.release_timed_out
             case.probe.release.set()
+            await _turn_settles(case, record.task)
             assert await _until(
-                lambda: not case.runtime.has_custodied_turns(case.session.id), 15
+                lambda: (
+                    not _run_segment(case.console)[0]
+                    and not stop.display
+                    and not case.console.check_action("stop_console_run", ())
+                ),
+                5,
             )
-            assert await _until(lambda: not _run_segment(case.console)[0], 5)
-            assert case.composer.draft_text() == case.draft
-            assert case.store.session_draft(case.session.id) == case.draft
+            assert case.composer.draft_text() == revised
+            assert case.store.session_draft(case.session.id) == revised
             assert case.provider_calls == []
+
+        _send(case, "enter")
+        assert await _until(
+            lambda: any(
+                message.role.value == "assistant"
+                and message.status == "complete"
+                and message.content == "received intent reply"
+                for message in case.store.messages_for_session(case.session.id)
+            ),
+            _SETTLE_SECONDS,
+        )
+        (reply,) = case.provider_calls
+        assert any(
+            row["role"] == "user" and row["content"] == revised
+            for row in reply["messages_payload"]
+        )
 
 
 async def test_unrelated_acknowledgement_does_not_admit_a_blocked_pressed_capture(
