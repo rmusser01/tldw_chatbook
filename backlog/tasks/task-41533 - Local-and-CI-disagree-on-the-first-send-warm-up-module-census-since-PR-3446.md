@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-17 05:39
-updated_date: 2026-11-18 07:12
+updated_date: 2026-11-18 07:59
 labels:
 - follow-up
 - tests
@@ -72,6 +72,11 @@ Reported by the coordinator at the filing review (round 15). Since PR #3446 (mer
 - Red at this base: `assert 99 <= 94` and `assert 688 < 688`.
 - Green after, 3 of 3 serial runs: `first-send-warmup: 94/94`, `boot-import-weight: 687/688`. The refreshed `first_send_warmup.json` matches the census's module set and listed entries exactly.
 - No other boot budget moved: the preimport route walk stays 558/558, and the UI-ready census reads 1039/1040. That is one lower, because `chachanotes_sql_steps` is no longer resident on a warm boot.
-- Covering tests: see the report. `Tests/Performance/test_first_send_warmup_gc_overlap.py` fails 8 cases at this base for its own reason: it calls `preimport_first_send_modules(app)`, but the function now also takes `on_complete`. #3533 fixes that call.
+- Covering tests, `-n 4`, load 15-35:
+  - `test_console_first_send_preimport`, `test_console_first_send_import_cycles`, `test_console_first_send_review_imports`, `test_console_relay_approval_integration`, the boot budget files, `test_app_startup_delegation`, `test_console_approval_critical_gate`, `test_app_import_diet_closure` and the v87 migration test all passed. The only failures in that batch (132 passed, 8 failed) are the 8 cases of `test_first_send_warmup_gc_overlap`. That test calls `preimport_first_send_modules(app)`, but the function now also takes `on_complete`; the same 8 fail at the base. #3533 fixes that call.
+  - The ordinary-tree, SSH-custody, archive-recovery-dispatch, workflow-scheduling and Canvas files gave 523 passed, 70 failed. The base (67583dfa72), run with the same command, fails the same 70 nodes. The Canvas startup cases among them fail on the known local `RecoveryRequired: raw_source_selection_changed`.
+- `Tests/Architecture`, serial: 1471 passed, 5 failed, 5 skipped. All 5 also fail at the base: the app string-lookup census `[Widgets]`, the layer map (`config.py` -> `Chat.console_provider_endpoints`), the persistent diagnostic inventory, and the two timer-path inventory nodes. The module-size row for `ChaChaNotes_DB.py` passes at 22545.
+- UI-ready census after these changes: 1039/1040 on 3 of 3 runs.
+- `./scripts/preflight.sh` passes.
 
 **Files.** `tldw_chatbook/Chat/console_first_send_modules.py`, `tldw_chatbook/Chat/console_ordinary_tree.py`, `tldw_chatbook/Canvas/native_authority.py`, `tldw_chatbook/DB/ChaChaNotes_DB.py`, `Tests/Performance/test_screen_preimport_payload_budget.py` (budget comment), `Tests/Performance/boot_budget_snapshots/first_send_warmup.json`, `Tests/Performance/boot_budget_snapshots/boot_import_modules.txt`, `Tests/Architecture/test_module_size_ratchet.py`. The lesson is in `backlog/docs/lessons-testing-evidence.md` ("Local fails, CI passes" was never checked against CI's log for the same tree).
