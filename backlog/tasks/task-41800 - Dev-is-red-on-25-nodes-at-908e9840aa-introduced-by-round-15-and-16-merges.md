@@ -63,5 +63,7 @@ Five independent fixes, one commit group each:
   - Five modules the built Console already holds left the first-send warm-up: lazy and TYPE_CHECKING imports in the Canvas modules and `console_ordinary_tree`, and `app_served` dropped from `FIRST_SEND_MODULES`. The warm-up is now 94 of 94.
   - `app_skill_wiring.source_current()` again refuses a replaced wiring pointer before any wiring read. #3583 had removed that check along with its code-identity capsules.
 
+Review (Opus, READY) also found `Tests/UI/test_roleplay_stylesheet.py::test_no_full_app_test_pushes_roleplay_without_its_sheet` red on dev in the required UI lane: #3599's real-app notice test pushed `PersonasScreen` before loading its sheet. It now calls `_ensure_screen_owned_css("personas")` first.
+
 Not fixed here: `test_deep_link_library_route_lands_its_canvas_over_restored_state` (ScreenStackError at shutdown) fails 2 of 3 runs on dev and on this branch. Open PR #3621 already guards that exact read in `_library_emergency_return_eligibility`. QA `test_project_chat_uat[fenced]` failed once in CI and passes locally.
 <!-- SECTION:NOTES:END -->
