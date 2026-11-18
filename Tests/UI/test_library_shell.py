@@ -13208,6 +13208,13 @@ async def test_library_media_complete_facets_commit_during_initial_recovery(
                     and not screen.query_one(
                         "#library-media-canvas", LibraryMediaCanvas
                     )._recompose_required
+                    and not screen._library_pending_list_entry_focus
+                    and not screen.query_one(
+                        "#library-media-canvas", LibraryMediaCanvas
+                    ).recompose_in_flight
+                    and not screen.query_one(
+                        "#library-media-canvas", LibraryMediaCanvas
+                    ).has_pending_recompose_callback
                     and bool(screen.query("#library-media-type-filter"))
                 ),
                 message="Complete facets never reached the settled Media canvas.",
@@ -13224,6 +13231,9 @@ async def test_library_media_complete_facets_commit_during_initial_recovery(
                     message="Initial page failure never reached recovery state.",
                 )
 
+            if commit_phase == "loading":
+                assert controller.loading
+                assert not service.page_release.is_set()
             requested_before = controller.requested_scope
             opener = screen.query_one("#library-media-type-filter", Button)
             opener.press()
