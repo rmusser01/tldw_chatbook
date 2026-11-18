@@ -3762,7 +3762,6 @@ async def test_watchlists_tab_strip_hit_regions_match_its_painted_labels(size):
 
     async with host.run_test(size=size) as pilot:
         screen = _active_destination_screen(host)
-        await pilot.pause(0.2)
 
         for section_id, label in SECTIONS:
             # Recomputed every iteration, not captured once up front: the
@@ -3775,6 +3774,10 @@ async def test_watchlists_tab_strip_hit_regions_match_its_painted_labels(size):
             # exists to catch in the *app* -- it must not reintroduce the
             # same class of bug in the *test*.
             strip = screen.query_one("#wl-tabs")
+            # A mounted strip can still have no published layout on a busy runner.
+            async with asyncio.timeout(6):
+                while strip.region.width <= 0 or strip.region.height <= 0:
+                    await pilot.pause(0.01)
             row = strip.region.y
             painted = "".join(
                 segment.text for segment in screen._compositor.render_strips()[row]

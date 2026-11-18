@@ -204,7 +204,8 @@ async def _wait(pilot, predicate, tries: int = 100) -> None:
 async def _fresh_readiness_display(console, pilot) -> None:
     """Warm the checked readiness display the poll paints through (TASK-38958).
 
-    The display lasts a second. Under load a test's setup outlived it, so the
+    The display lasts a second. A still-valid old read can expire inside the
+    synchronous poll, so request a new read. Under load setup outlived it, so the
     poll's control bar refused the expired display and left the header to its
     0.2 s replay, after the test's one pause. With a fresh display the poll
     paints the header itself, before it returns. Call it before changing the
@@ -216,6 +217,7 @@ async def _fresh_readiness_display(console, pilot) -> None:
 
     projection = ConsoleReadinessConfigProjection.for_screen(console)
     for _ in range(100):
+        projection.run(lambda: None, life=0)
         if await projection.warm():
             return
         await pilot.pause(0.02)
@@ -1025,7 +1027,9 @@ async def test_a_refused_active_llama_cpp_reaches_the_console_status_row(
         assert harness.screen is switcher
         assert _rail_text(console, "#workbench-header-status") == refused
         await switcher.action_dismiss_popover()
-        await _console_settled(console, pilot, lambda r: r.blocker is not None)
+        await _console_settled(
+            console, pilot, lambda r: r.blocker is not None, lambda _r: refused
+        )
         assert _rail_text(console, "#workbench-header-status") == refused
         assert _rail_text(console, "#console-model-section-recovery") == refused
 

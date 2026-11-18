@@ -25981,3 +25981,21 @@ opens. A follow-up trace caught layout and control refresh in the same loop
 gap while the activation was already suspended. The exact-source repeat
 passed all 12. Measure the longest loop gap and Return-to-paint separately,
 and keep the first run and repeat beside the instrumented comparison.
+## PR #3571: observe a completed UI publication (2026-11-17)
+
+Derived Artifacts failed the Watchlists painted-tab test with row zero's border
+instead of `Read`, and the restored-profile approval test with an old approval
+button still attached after its review text vanished. Both passed unchanged
+locally. Delaying the real strip's first layout and the old button's Unmount
+handler reproduced the exact assertions. The repaired tests wait, with a bound,
+for nonzero strip geometry and a replacement requirements summary plus removal
+of both review controls. They still assert every painted-label hit and real
+click, the approved generation, and sync remaining pending. A removed sibling
+or an elapsed pause is not proof that an asynchronous list has been published.
+
+PR #3571's November 18 UI26 run repeated TASK-38958's stale readiness header.
+`warm()` can accept a display partway through its one-second lifetime; a
+synchronous poll can then outlive it. Requesting a real new read (`life=0`)
+before settling evidence passes the valid-but-aged-display control (both
+wording cases red before, green after). Both cases still fail with poll refresh
+removed. Keep the immediate header assertion and the original expiry guard.

@@ -234,6 +234,93 @@ def test_isolated_preimport_uses_the_selected_core_checkout(tmp_path):
     assert Path(result.stdout.strip()).resolve() == expected.resolve()
 
 
+@pytest.mark.parametrize("capture", ["staged", "prepared", "prepared_fallback"])
+def test_cold_evidence_import_preserves_the_request_session_off_loop(tmp_path, capture):
+    """A worker import may yield to a tab switch, never to new authority."""
+    _run_isolated(
+        tmp_path,
+        r"""
+import asyncio
+import importlib
+import sys
+import threading
+from types import SimpleNamespace as NS
+
+from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle
+from tldw_chatbook.Event_Handlers.Chat_Events import chat_rag_events as events
+
+kind = sys.argv[1]
+name = "tldw_chatbook.RAG_Search.scope_evidence"
+assert name not in sys.modules
+main = threading.current_thread()
+entered, release = threading.Event(), threading.Event()
+session = NS(id="chat-a", persisted_conversation_id="conversation-a",
+             workspace_id="workspace-a", rag_scope_holder=None)
+active = [session]
+events._active_console_session = lambda app: active[0]
+app = NS(services=NS(storage=None, workspace=None,
+                    chat=NS(citation_trace_repository=None)))
+bundle = EvidenceBundle(bundle_id="empty", query="query", source="test", references=())
+real_load = importlib._bootstrap._find_and_load
+calls = []
+
+def load(module_name, import_):
+    if module_name != name or module_name in sys.modules:
+        return real_load(module_name, import_)
+    assert threading.current_thread() is not main, "cold RAG import on UI thread"
+    entered.set()
+    assert release.wait(5), "import was never released"
+    module = real_load(module_name, import_)
+    attribute = ("capture_console_staged_evidence" if kind == "staged"
+                 else "capture_console_prepared_evidence")
+    original = getattr(module, attribute)
+
+    async def capture(*args, **kwargs):
+        assert threading.current_thread() is main
+        assert asyncio.get_running_loop() is loop
+        identity = (module.request_scope_session_for(kwargs.get("session"))
+                    if kind != "staged" else None)
+        identity = identity or kwargs["active_session"]()
+        assert (identity.id, identity.persisted_conversation_id, identity.workspace_id) == (
+            "chat-a", "conversation-a", "workspace-a"), identity
+        calls.append(True)
+        return await original(*args, **kwargs)
+
+    setattr(module, attribute, capture)
+    return module
+
+importlib._bootstrap._find_and_load = load
+
+async def run():
+    global loop
+    loop = asyncio.get_running_loop()
+    if kind == "staged":
+        task = asyncio.create_task(events.capture_console_staged_evidence_for_chat(
+            app, NS(payload={"evidence_bundle": bundle.to_payload()}), user_message="query"))
+    else:
+        task = asyncio.create_task(events.capture_console_prepared_evidence_for_chat(
+            app, bundle, user_message="query", session=session if kind == "prepared" else None))
+    try:
+        async with asyncio.timeout(5):
+            while not entered.is_set():
+                if task.done():
+                    await task
+                await asyncio.sleep(0.001)
+        active[0] = NS(id="chat-b", workspace_id="workspace-b")
+        session.workspace_id = "edited-after-admission"
+        release.set()
+        result = await task
+        assert result.context is None and result.citation_builder is None
+        assert calls == [True]
+    finally:
+        release.set()
+
+asyncio.run(run())
+""",
+        capture,
+    )
+
+
 @pytest.fixture(scope="module")
 def pass_outcome(tmp_path_factory) -> dict:
     """Run the app's pre-import pass in a fresh interpreter (sys.modules is global)."""

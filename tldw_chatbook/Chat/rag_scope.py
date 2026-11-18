@@ -714,3 +714,46 @@ TagLister = Callable[[str], Awaitable[tuple[TagCount, ...]]]
 SORT_RECENT = "recent"
 SORT_TITLE = "title"
 SORT_TYPE = "type"
+
+
+@dataclass(frozen=True)
+class RequestScopeSession:
+    """Immutable request-start identity used for both scope reads."""
+
+    id: Any
+    persisted_conversation_id: Any
+    workspace_id: Any
+    rag_scope_holder: SessionScopeHolder | None
+
+
+def request_scope_session_for(session: Any) -> RequestScopeSession | None:
+    """Copy one Console session's scope identity (the turn's own session).
+
+    The session's ``"global"`` sentinel and the registry's Default workspace
+    are one state (task-15120 owner ruling), and only the latter has a
+    registry row, so the scope read uses the registry's spelling.
+    """
+
+    if session is None:
+        return None
+    try:
+        from .console_chat_models import CONSOLE_GLOBAL_WORKSPACE_ID
+        from ..Workspaces.models import DEFAULT_WORKSPACE_ID
+
+        holder = getattr(session, "rag_scope_holder", None)
+        workspace_id = getattr(session, "workspace_id", None)
+        if workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID:
+            workspace_id = DEFAULT_WORKSPACE_ID
+        return RequestScopeSession(
+            id=getattr(session, "id", None),
+            persisted_conversation_id=getattr(
+                session, "persisted_conversation_id", None
+            ),
+            workspace_id=workspace_id,
+            rag_scope_holder=holder if isinstance(holder, SessionScopeHolder) else None,
+        )
+    except Exception:
+        logger.warning(
+            "RAG session identity unavailable; reason=session_identity_read_failure"
+        )
+        return None

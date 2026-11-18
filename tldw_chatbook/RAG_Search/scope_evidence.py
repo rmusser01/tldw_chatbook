@@ -40,10 +40,12 @@ from ..Chat.rag_scope import (
     SOURCE_TYPE_NOTE,
     EffectiveScope,
     RagScope,
+    RequestScopeSession as RequestScopeSession,
     ScopeCache,
     SessionScopeHolder,
     parse_scope,
     resolve_effective_scope,
+    request_scope_session_for as request_scope_session_for,
 )
 from ..DB.base_db import run_owned_db_call
 from .local_citation_capture import (
@@ -79,16 +81,6 @@ class LocalRagContextResult:
 
 
 @dataclass(frozen=True)
-class RequestScopeSession:
-    """Immutable request-start identity used for both scope reads."""
-
-    id: Any
-    persisted_conversation_id: Any
-    workspace_id: Any
-    rag_scope_holder: SessionScopeHolder | None
-
-
-@dataclass(frozen=True)
 class _PromptAuthorizationResult:
     """Authorized candidates plus whether every authority read completed."""
 
@@ -98,39 +90,6 @@ class _PromptAuthorizationResult:
 
 class _ScopeExistenceReadError(RuntimeError):
     """A scoped dangling-id authority read did not complete."""
-
-
-def request_scope_session_for(session: Any) -> RequestScopeSession | None:
-    """Copy one Console session's scope identity (the turn's own session).
-
-    The session's ``"global"`` sentinel and the registry's Default workspace
-    are one state (task-15120 owner ruling), and only the latter has a
-    registry row, so the scope read uses the registry's spelling.
-    """
-
-    if session is None:
-        return None
-    try:
-        from ..Chat.console_chat_models import CONSOLE_GLOBAL_WORKSPACE_ID
-        from ..Workspaces.models import DEFAULT_WORKSPACE_ID
-
-        holder = getattr(session, "rag_scope_holder", None)
-        workspace_id = getattr(session, "workspace_id", None)
-        if workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID:
-            workspace_id = DEFAULT_WORKSPACE_ID
-        return RequestScopeSession(
-            id=getattr(session, "id", None),
-            persisted_conversation_id=getattr(
-                session, "persisted_conversation_id", None
-            ),
-            workspace_id=workspace_id,
-            rag_scope_holder=holder if isinstance(holder, SessionScopeHolder) else None,
-        )
-    except Exception:
-        logger.warning(
-            "RAG session identity unavailable; reason=session_identity_read_failure"
-        )
-        return None
 
 
 def _sensitive_fetchall(
