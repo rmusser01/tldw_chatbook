@@ -115,7 +115,7 @@ async def test_hidden_checkpoint_revokes_before_waiting_for_actual_display_retir
             assert all(task.done() for task in full.tasks.values())
             assert not expired.is_set()
             message = messages[1]
-            command = backend.adapter._receipts[message.identity.request_id][2]
+            command = backend.adapter._commands[message.identity.request_id]
             await service.finish(message, command, prior)
             frames = []
             while not channel.outbox.empty():
