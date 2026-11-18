@@ -1,5 +1,65 @@
 # Foreground and approval tracing recovery
 
+## G69 backend scheduling experiment recovery
+
+The matched scheduling experiment changes Windows wait resolution and CPython's
+switch interval inside one disposable backend process. Reproduce it with the
+following source revisions and the [original helper](scheduling/backend_wait_resolution.py).
+
+| Input | Exact revision or SHA-256 |
+|---|---|
+| Product commit | `b334c52d7e3c2e69957158632e8c696982132e11` |
+| Original baseline commit | `b6b53f084a63058ca4b4dac99e074cff42192f7e` |
+| Original `Tests/QA/test_task40608.py` | `448015c99604ce96754436c7dc4f784daed6241bed99062cb8d6ab6e66cbe850` |
+| Original `Tests/QA/task40608_trace.py` | `afe87984e26d77b86c80f5f034881717e82b3ecc8681b56fe6ea2148f0073a6c` |
+| Unmodified lab guard `task40608_lab_observer.py` | `ac8722fd2121b213073dbf9a75d2679d196eae35593dfb613556b946ba7a5369` |
+| Preserved scheduling helper | `a66bdfc60981dc6fc31a5fe33bd0b0cf034d6a32b76dd56181b308d8e030c8e9` |
+
+Prepare two fresh disposable replays with those product and original QA bytes,
+the established reviewed environment, and independent unused private labels.
+Verify the hashes above before installation. Copy the helper unchanged into each
+replay as `task40608_backend_wait_resolution.py`. Inside the original guard's
+`run_backend`, wrap only its unique original worker entry, after the backend
+guard has started:
+
+```python
+from task40608_backend_wait_resolution import backend_interval
+with backend_interval(observation, "default"):  # Second replay: "1ms".
+    runpy.run_module("tldw_chatbook.Chat.console_execution_worker", run_name="__main__")
+```
+
+Before running, verify that removing precisely that import/context wrapper
+restores the original guard AST, that all other guard bodies and both original
+QA files remain unchanged, and that the disposable manifest pins the actual
+helper and modified guard bytes. Run the ordinary exhaustive replay verification
+and guarded runner with the explicitly reviewed local PowerShell executable and
+private parent. Refuse an existing private run directory or active coordinator;
+coordinate the host slot independently. Run stock then treatment serially, with
+identical observation and original assertions. Do not write paired qualification
+ledgers. This recovery method intentionally contains no host launch configuration,
+private profile, prior receipts or reconstructed environment.
+
+Both arms require Windows CPython 3.12, Windows build at least 19041 and a stock
+5 ms interpreter interval. Both load `winmm.dll` using System32-only lookup. The
+stock arm changes neither setting; treatment requires successful
+`timeBeginPeriod(1)` and sets the interpreter interval to 1 ms. The backend guard
+owns the context for the original worker's entire lifetime. Its `finally` restores
+the interpreter interval and independently balances a successful period request
+with `timeEndPeriod(1)`, including ordinary exceptions and `SystemExit`.
+
+The exclusively created `backend-wait-resolution-<pid>.jsonl` records and flushes
+`entered` and `restored`, with monotonic/process-CPU clocks and numeric settings.
+Accept a completed diagnostic only when both rows match the same backend/run/arm,
+the entered interval matches the arm, and the closing row reports `entered`,
+`active_unchanged`, `restored` and `period_cleanup_ok` all true. Treatment also
+requires `period_requested` and `period_ended` true; stock requires both false.
+Verify the original application, guard and physical-retirement receipts independently.
+
+If a crash interrupts the record before `restored`, preserve the partial
+evidence and mark the run incomplete. Confirm that its backend has exited
+before restarting with a fresh process and replay. Each process owns and
+balances its own timer request.
+
 ## Failed backend commands and retirement
 
 The [failure observer](retirement-failure/observer.py) captures the backend's existing command and physical-retirement warnings. It records the operation, stage, source-verified code locations and the last failed retirement check. It writes each record immediately into the disposable profile so a crash can leave evidence before shutdown. The capture is capped at 32 failures and excludes exception text and frame locals.

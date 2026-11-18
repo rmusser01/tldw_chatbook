@@ -3,3 +3,4 @@ test_task40608.py text eol=crlf
 task40608_trace.py text eol=lf whitespace=-blank-at-eof
 summarize.py text eol=lf whitespace=-blank-at-eof
 retirement-failure/* text eol=lf
+scheduling/backend_wait_resolution.py -text
