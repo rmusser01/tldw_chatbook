@@ -215,6 +215,13 @@ async def test_suspended_library_gates_ingest_dom_work_until_resume(
             NavigateToScreen("library", {LIBRARY_NAV_CONTEXT_INGEST: True})
         )
         assert app.screen is library
+        # switch_screen only posts ScreenResume; wait for the resume to run.
+        deadline = asyncio.get_running_loop().time() + 30.0
+        while (
+            dynamic.call_count < 1
+            and asyncio.get_running_loop().time() < deadline
+        ):
+            await pilot.pause()
         assert dynamic.call_count >= 1, (
             "resume must run exactly one ingest-UI reconciliation for the "
             "events gated while suspended"

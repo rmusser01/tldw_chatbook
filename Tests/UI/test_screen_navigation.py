@@ -4935,7 +4935,11 @@ async def test_scope_recovery_mirror_mounts_nothing_once_the_app_is_exiting():
                 and not app.screen._rag_search_state.panel_refresh_lock.locked()
             )
 
-        assert await _settle(pilot, settled), "the Search canvas never showed its recovery"
+        # The boot runs a 7 s animated splash first; wait it out on its own.
+        await _wait_for_initial_screen(pilot)
+        assert await _settle(pilot, settled, timeout=30), (
+            "the Search canvas never showed its recovery"
+        )
         screen = app.screen
         recovery = screen.query_one("#library-rag-scope-recovery")
         real_remove = recovery.remove
@@ -5853,12 +5857,15 @@ async def _settle(pilot, predicate, *, timeout: float = 15.0) -> bool:
 # states the destination. GENERIC entries (bare ``NavigateToScreen("library")``
 # with no nav-context -- the nav-bar tab button's and the "Switch to
 # Library" palette command's own shape) land ONE canonical surface: the
-# hub on a first visit, or the last-visited canvas on a revisit
-# (restore-over-reset -- a workbench should not lose your place). These
-# three pilot round trips pin that contract directly against the real
-# navigation orchestration (``TldwCli.handle_screen_navigation`` /
-# ``ScreenStateStore`` / ``LibraryScreen.save_state``/``restore_state``/
-# ``apply_navigation_context``) rather than re-deriving it, matching
+# landing, on a first visit and on every revisit. A qualifying previous
+# scope is offered by the landing's Continue, not reopened; drafts such as
+# the RAG query are kept. The route is reusable, so a revisit resumes the installed
+# instance and takes the landing through ``apply_generic_reentry``
+# (TASK-41500) instead of ``restore_state``. These pilot round trips pin
+# that contract directly against the real navigation orchestration
+# (``TldwCli.handle_screen_navigation`` / ``LibraryScreen.save_state`` /
+# ``apply_generic_reentry`` / ``apply_navigation_context``) rather than
+# re-deriving it, matching
 # ``test_rapid_tab_switch_storm_leaves_no_zombie_widgets``'s real-screen
 # harness pattern above.
 async def _wait_for_initial_screen(pilot) -> None:
@@ -6007,6 +6014,8 @@ async def test_reused_library_reentry_shows_the_landing_and_keeps_its_live_state
     resumes the installed instance and skips ``restore_state``. The landing
     must still be on screen, not only the row id reset. What reuse keeps on
     purpose is the instance itself and its live state, here the RAG draft.
+    Keyboard focus must not stay on the removed Search canvas: it lands on a
+    live widget in the focus chain, as on a fresh landing (the nav bar).
     """
     from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH
 
@@ -6018,6 +6027,9 @@ async def test_reused_library_reentry_shows_the_landing_and_keeps_its_live_state
         library = app.screen
         assert library._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
         library._rag_search_state.query = "roadmap notes"
+        assert await _settle(pilot, lambda: bool(library.query("#library-rag-query-input")))
+        library.query_one("#library-rag-query-input", Input).focus()
+        await pilot.pause()
 
         await app.handle_screen_navigation(NavigateToScreen("home"))
         await app.handle_screen_navigation(NavigateToScreen("library"))

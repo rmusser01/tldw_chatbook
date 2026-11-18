@@ -4,7 +4,7 @@ title: "Library re-entry no longer returns to the landing and the RAG scope reco
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-17 05:27
-updated_date: 2026-11-18 03:06
+updated_date: 2026-11-18 04:40
 labels:
 - follow-up
 - library
@@ -77,9 +77,9 @@ Found by TASK-41127 (libtests, round 15) and left red as product defects. Librar
 Setup and teardown each took under 1 s.
 
 **Ratchets (owner rule 2026-10-04, measured, dated notes).**
-- `library_screen.py`: 38282 -> 38280 lines, 1379 -> 1380 methods.
-- `app_navigation.py`: 1208 -> 1219.
-- `library_rag_search_controller.py`: 2056 -> 2061.
+- `library_screen.py` grew: measured 38272 -> 38280 lines (+8) and 1379 -> 1380 methods (+1). Its budget moves 38282 -> 38280 lines and 1379 -> 1380 methods.
+- `app_navigation.py`: measured 1208 -> 1219 (+11), budget the same.
+- `library_rag_search_controller.py`: measured 2056 -> 2061 (+5), budget the same.
 
 **Diagnostic inventory.** One added statement, reviewed with `--statements` before `--write`: `logger.warning("Generic re-entry failed (route={}, exception_category={}).", current_tab_value, type(exc).__name__)`. It writes the canonical route id and the exception class name only, so no user content, secrets or paths reach the log. Files: `Docs/security/production-diagnostic-inventory.json`.
 
@@ -90,4 +90,22 @@ Setup and teardown each took under 1 s.
 - Tests: `Tests/UI/test_screen_navigation.py`, `Tests/UI/test_library_screen_reuse.py`, the three ratchet files.
 - Census: `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`.
 - Docs: the two User Guide pages, `backlog/docs/lessons-textual.md`.
+
+**Fix round 1 (review r16lb-rev1).** All of these are new commits on top of 3d21cc7fdd.
+- **Critical: the round-0 covering run missed a laned file.** `Tests/UI/test_library_reader_console_delete_refresh.py` is a whole-file census entry, and its `_return_to_library` did a bare return that expected the reused Library to still show Conversations. It now reopens Conversations from the landing (`#library-row-browse-conversations`); the module docstring and `Docs/User_Guide/library/media-and-conversations.md` say the same.
+  - The miss: my covering scan only read test bodies, and this file's return lives in a helper.
+  - This round I grepped every bare-return site under `Tests/`: `NavigateToScreen("library")`, `TAB_LIBRARY`, `navigate_library_home`, ctrl+3 and `switch_tab`. Of the laned ones, only this file expected the old canvas.
+  - The others are first visits or assert only the screen type: `test_console_runtime_ownership.py` (derived-artifacts lane), the `test_library_shell.py` re-entry node, and `Tests/Performance/test_ui_latency_guardrails.py` and `test_textual_css_fastpath.py`, whose Library visit is a first one, or one where Library is already on the landing.
+- **The exit-fence test was flaky.** Its one 15 s wait also covered the 7 s splash. It now waits for the initial screen first, then up to 30 s for the recovery. Temporarily parametrized ×12 at `-n 4`: 12/12 at load 21-28, 12/12 at load 28-36 beside a second `-n 4` run, and 24/24 more at load 27-36.
+- **Focus after a reused bare return.** A probe compared a fresh landing with a reused return through `NavigateToScreen("library")` and through ctrl+3. All three put focus on the Library screen's own nav-bar button, `NavigationButton#nav-home`, which is attached and in the focus chain. The nav bar and the palette post the same `NavigateToScreen` as ctrl+3. A reused return therefore matches a fresh landing, and the Search input it left is not kept focused. The reuse test now pins that focus ends on a live widget in the focus chain, with the RAG input focused before the trip.
+- **Minors.**
+  - `test_suspended_library_gates_ingest_dom_work_until_resume` waits, bounded, for the resume before it asserts.
+  - The ratchet note now says the file grew.
+  - The Media Reader passage says the item reopens when you open Media again (its rail row or Continue).
+  - The task-2858 comment in `test_screen_navigation.py` states the landing contract.
+- **Re-measured, serial with the lane flags, load 25-62.**
+  - The reuse test, now with the focus pin: 11.1-18.7 s call, up to 1.9 s teardown.
+  - The exit-fence test: 11.1 s.
+  - The reader-refresh file, both nodes in one process with the bare-return nodes, `test_console_runtime_ownership.py` and the `test_library_shell.py` re-entry node: 99 passed, 1 xfailed, at load 49.
+  - The perf-guard files (`test_ui_latency_guardrails.py`, `test_textual_css_fastpath.py`, `test_home_hidden_completion.py`): 14 of 15 passed at load 80-90. The miss was `test_destination_tour_stays_under_switch_budgets`, on ctrl+9 to Settings at 10.2 s. That tour opens Library once, fresh, so this hook is not involved, and the node passed alone at load 57-79.
 
