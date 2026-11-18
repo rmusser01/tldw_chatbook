@@ -354,6 +354,38 @@ work. All twelve turns completed with their expected five or six loopback
 requests, ordered approvals and original file checks.
 [Numeric report, source pins and work counts](original-journey/qc-windows10-results.json)
 
+### Periodic display work during Send
+
+The separate `g62reads1` Windows 10 run on the same frozen product passed
+both original journeys and shutdown. The client issued 14 full-display reads
+starting during README and 15 during edit. Each request had its own waiter.
+Each turn retried one passive read after expiry. The two new attempts spent
+0.106 s and 0.696 s, respectively, inside the locked read.
+
+| Full-display read, clipped to the original Send and reply marks | README | Approved edit |
+|---|---:|---:|
+| Passive reads overlapping Send → first HTTP | 5.014 s | 2.914 s |
+| Passive reads overlapping first HTTP → reply | 4.388 s | 7.346 s |
+| Explicit read before acknowledging the draft | 0.303 s | 0.272 s |
+| Explicit read at turn completion | 0.912 s | 0.951 s |
+
+The original Send-to-first-HTTP intervals were 10.155 s and 6.076 s.
+The enclosing Send-to-reply intervals were 23.706 s and 25.144 s before
+human-wait deductions. The table uses the union of client read intervals,
+including time spent waiting on the backend. It includes the overlap of
+reads already in flight at Send. A foreground turn can run during a
+passive read. Only the explicit pre-acknowledgement and terminal rows
+directly measure those Send waits. The original receipt SHA-256 is
+`9a655432c6d70d59a504c4f8a4e2d9cedea2545e32bc2bbc2f9b6ff826f2644e`;
+the numeric interval stream has SHA-256
+`b43578acdc630f4a8cd33e64c46e096b67f08be6a4b88bb7846d7991d75c1bbe`.
+
+The subsequent clean, separately run `g63shared1` on `b334c52d7e`
+includes the shared display decoder and lexical parent reuse. Both original
+journeys and shutdown passed. README took 28.0708 s adjusted and edit took
+23.2481 s, with first HTTP at 12.9851 s and 6.3035 s. The original receipt
+SHA-256 is `baceaa64604db17c98219ceb4a464edf7c69ae63d8d0c5aa70f414fe25c7781c`.
+
 The subsequent local-parent change on `cae5d57fea` was measured separately
 on Windows Server 2022. Each arm used two warmups and 21 timed complete warm
 lease acquisitions and closes in a fresh interpreter. The six alternating
