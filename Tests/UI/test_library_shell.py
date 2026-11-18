@@ -7296,10 +7296,13 @@ async def test_slash_focuses_the_prompts_filter_not_the_rail_search(tmp_path):
             screen = _active_library_screen(host)
             await _wait_for_library_shell(screen, pilot)
             screen.query_one("#library-row-browse-prompts").press()
-            await _wait_for_selector(
+            row = await _wait_for_selector(
                 screen, pilot, f"#library-prompt-row-{prompt_id}"
             )
+            # Entry focus may land on the filter before the prompt rows mount.
+            screen.set_focus(row)
             await pilot.pause()
+            assert screen.focused is row
 
             prompts_filter = screen.query_one("#library-prompts-filter", Input)
             rail_search = screen.query_one("#library-search-input", Input)
@@ -10239,10 +10242,16 @@ async def test_library_media_edit_save_stays_gated_through_detail_refresh() -> N
             assert len(service.update_calls) == 1
 
             service.detail_release.set()
+            controller = screen._library_media_browse_controller
+            # Interlock release schedules the page and facet refreshes.
             await _wait_for_condition(
                 pilot,
-                lambda: not screen._media_state.bulk_delete_in_flight,
-                message="Media edit interlock never released after detail refresh.",
+                lambda: (
+                    not screen._media_state.bulk_delete_in_flight
+                    and controller.freshness == "fresh"
+                    and not controller.facet_loading
+                ),
+                message="Media edit never released the interlock and refreshed page and facets.",
             )
             assert len(service.update_calls) == 1
             assert len(service.search_calls) == initial_searches + 1
@@ -13125,6 +13134,8 @@ async def test_library_media_initial_error_is_unknown_and_retry_is_unique() -> N
                 controller.applied_result is not None
                 and controller.applied_result.total == 2
                 and not screen.query("#library-media-retry")
+                and str(screen.query_one("#library-media-title", Static).renderable)
+                == "Media (2)"
                 and getattr(screen.focused, "id", None) == "library-media-type-filter"
             ),
             message=lambda: (
@@ -13443,9 +13454,9 @@ async def test_library_media_durable_mutation_gates_and_refreshes_applied_scope(
                 lambda: (
                     controller.applied_scope == MediaBrowseScope()
                     and bool(controller.type_options)
-                    and bool(screen.query("#library-media-next"))
+                    and not screen.query_one("#library-media-next", Button).disabled
                 ),
-                message="Initial Media page and facets never settled.",
+                message="Initial Media page and facets never enabled Next.",
             )
             screen.query_one("#library-media-next", Button).press()
             await _wait_for_condition(
@@ -17121,12 +17132,15 @@ async def test_browse_row_error_callout_remounts_when_the_failure_shape_changes(
             lambda: notes.calls > calls_before,
             message="Retry never re-ran the source snapshot.",
         )
+        # A remounted Static can be in the DOM before Textual lays it out.
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_source_load_failure() is None
-            and len(screen.query("#library-canvas-error")) == 1
-            and isinstance(screen.query_one("#library-canvas-error"), Static),
-            message="The denied snapshot never remounted the bare error surface.",
+            lambda: (
+                screen._library_source_load_failure() is None
+                and len(screen.query("#library-canvas-error")) == 1
+                and bool(screen.query_one("#library-canvas-error", Static).outer_size)
+            ),
+            message="The denied snapshot never laid out the remounted bare error surface.",
         )
         node = screen.query_one("#library-canvas-error", Static)
         assert not list(node.query(Button))
@@ -24537,20 +24551,18 @@ async def test_library_shell_blank_note_untouched_is_gc_from_real_db_on_rail_swi
 
         # Leave via a rail-row press (not Back/Escape) without ever typing.
         screen.query_one("#library-row-browse-media").press()
+        # The DB commit can precede the rail handler's route change.
         for _ in range(150):
-            if (
-                await app.notes_scope_service.count_notes(
-                    scope="local_note", user_id="default_user"
-                )
-                == 0
-            ):
+            note_count = await app.notes_scope_service.count_notes(
+                scope="local_note", user_id="default_user"
+            )
+            if note_count == 0 and screen._library_selected_row_id == "browse-media":
                 break
             await pilot.pause(0.02)
-        else:
-            raise AssertionError(
-                "The untouched blank note was never GC'd from the real DB "
-                "via a rail-row switch."
-            )
+        assert note_count == 0, (
+            "The untouched blank note was never GC'd from the real DB "
+            "via a rail-row switch."
+        )
         assert screen._library_selected_row_id == "browse-media"
 
 
@@ -36934,7 +36946,11 @@ async def test_background_recompose_restores_focus_on_a_route_without_a_list_row
         selector = f"#library-row-{LIBRARY_ROW_BROWSE_COLLECTIONS}"
         screen.query_one(selector).press()
         await _wait_for_selector(screen, pilot, "#library-collections-reader-shell")
-        # The press rebuilds the rail; focus the row it mounts selected.
+        # Entry can rebuild the selected rail again when the capture loads.
+        await _wait_for_worker_group_to_drain(
+            host, pilot, screen, "library_collections_capture_entry"
+        )
+        await pilot.pause()
         await _wait_for_condition(
             pilot,
             lambda: screen.query_one(selector).has_class("library-rail-row-selected"),
