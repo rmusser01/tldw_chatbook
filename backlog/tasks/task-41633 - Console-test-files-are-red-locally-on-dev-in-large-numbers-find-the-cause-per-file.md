@@ -99,6 +99,8 @@ ADR required: no (test-only fixes and cause records; no product change)
   - Serially, 4 of the 27 passed: `test_cancelled_unmounted_drain_finishes_latest_plan`, `test_console_workspace_conversation_row_switches_native_tab`, `test_mounted_console_cancel_latest_waiter_keeps_durable_c` and `test_roleplay_repair_marker_retries_partial_then_consumes`.
   All of these are follow-ups.
 
+**Final tip runs** (one file per run, `-n 4`, load 70-90): right_rail 37/37 passed; change_turn_tracking 1 failed/103 passed (the ordering node); rail_reconciliation 54/54 passed; workbench 4 failed/72 passed; scope_row 2/41, of which the RAG-scope-button node passes alone; internals_decomposition 5/137 (the two cursor-glyph nodes, approvals, staged tray body, and `test_console_send_without_ready_runtime_keeps_setup_block_tooltip_only`, red in 2 of 3 runs); native_transcript 12/156. `./scripts/preflight.sh` passed.
+
 **AC #3.** Every cause this task could fix in the tests is fixed. The coordinator files the rest as follow-ups from the stream report, with the node ids named above. This stream may not create task ids. AC #3 stays open until they are filed.
 
 **Lanes.** No lane file was edited. The new module markers make three census node ids in `test_console_session_settings.py` `bootstrap_profile`. They still pass `scripts/check_ui_pr_gate_census.py`, but TASK-32873's rule for such nodes is for the coordinator to apply. None of the ten files is newly green as a whole except `test_console_right_rail.py` (37 passed at `-n 4` in 188 s at load 86).
