@@ -1974,6 +1974,12 @@ In the eleven-node source fixture, parent-path projections fell from 74 to 31.
 This count measures Python work. The complete warm lease and its close are
 the boundaries for measuring native performance.
 
+Six alternating pairs on Windows Server 2022 compared `495b3249e9` and
+`cae5d57fea`. With 21 measured acquisitions and closes per arm, the median
+of the six arm medians fell from 9.5510 ms to 9.1160 ms. All six pairs
+improved. The original Windows 10 journeys have a separate time limit.
+[Component measurement](https://github.com/rmusser01/tldw_chatbook/actions/runs/44339331162/job/134924638726)
+
 All ordinary opens, borrowed `dir_fd` paths, bootstrap/control readers and
 custom callers retain full qualification. The Task17 requirement for those
 relative control-file opens is unchanged. No public `skip_ntfs` switch, volume

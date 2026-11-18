@@ -339,6 +339,16 @@ including the original bounded Enter test and the Settings navigation cases.
 | Clean pair on `495b3249e9` (`qc`) | README baseline / candidate | Approved edit baseline / candidate | Original assertions and shutdown |
 |---|---:|---:|---|
 | 1 | 326.2255 s / 24.1755 s | 459.1983 s / 24.5370 s | Both sides passed. Candidate first HTTP arrived at 9.7183 s and 7.4541 s. |
+| 2 | Pending / 24.3015 s | Pending / 22.1905 s | Candidate passed. First HTTP arrived at 12.3709 s and 5.8483 s. |
+
+The subsequent local-parent change on `cae5d57fea` was measured separately
+on Windows Server 2022. Each arm used two warmups and 21 timed complete warm
+lease acquisitions and closes in a fresh interpreter. The six alternating
+baseline / candidate medians in milliseconds were 9.6109 / 9.1920,
+9.5522 / 9.0898, 9.6072 / 9.0797, 9.4681 / 9.0776, 9.5498 / 9.1422 and
+9.5168 / 9.1685. Across those six medians the saving was 0.4350 ms per
+lease (4.55%). The Windows 10 journey batch above pins the earlier revision.
+[Hosted component samples and driver](https://github.com/rmusser01/tldw_chatbook/actions/runs/44339331162/job/134924638726)
 
 Batch `q5` started its first clean baseline on Windows 10 at 07:59 UTC on November 18. The driver pinned candidate `a3bf91340319ad7ad60177a37a537ca46364c2e3` and configuration SHA-256 `6af37c73d99d05badc21dc5b570104a3b513414cd213af8cc9464df362f62f93`. Its order is B1/C1, C2/B2, B3/C3. The earlier q4 plan never launched. A separate native component test accepted the corrected rail Apply, then the mounted-writer test failed in its subsequent visible read. Those tests contribute no journey times.
 
@@ -912,6 +922,14 @@ and tool execution. External edits still require bounded reconciliation for
 config, character, workspace and file state. A closed view or a newer source
 cannot receive an earlier publication. Existing readers of durable state retain
 their ordered commit boundaries.
+
+The owner can publish a generation for each store it writes. A separate
+process with sufficient rights can still change a file or its permissions.
+Windows directory notifications omit changes to the watched directory itself
+and may discard events on overflow. Directory oplock breaks for child changes
+can be advisory. Either mechanism can signal that a derived view needs
+refreshing. Replacing fresh checks would require an enforceable ownership
+contract covering every external writer. [Directory notifications](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-readdirectorychangesw) · [Directory oplocks](https://learn.microsoft.com/en-us/windows/win32/api/winioctl/ni-winioctl-fsctl_request_oplock) · [Windows file access rights](https://learn.microsoft.com/en-us/windows/win32/fileio/file-security-and-access-rights)
 
 The g47d model-to-model intervals totaled 28.842 s across both journeys.
 Of that time, 9.153 s was in approval rounds, 5.991 s in local tool calls
