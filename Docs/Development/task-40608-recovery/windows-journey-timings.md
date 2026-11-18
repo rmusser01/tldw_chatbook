@@ -4,24 +4,28 @@ TASK-40608 measures from Send to the persisted reply, subtracting only the origi
 
 ## Where the time goes
 
-The first complete pair on the contained backend, `q91c1`, provides these raw intervals on the original Send clock. Approval time is included in the arrows. The application-time gate uses the fixture’s separately recorded disclosure and approval waits. Exact `fs_edit` invocation and approval stages from the instrumented run are [below](#completed-instrumented-windows-journeys-g47d).
+The latest completed candidate in batch `qa`, `qa1c2` on frozen `e4fa0ea67d`, provides these raw intervals on the original Send clock. Each arrow subtracts its two adjacent recorded timestamps; intervals containing approvals include those waits. The application-time gate uses the fixture’s separately recorded disclosure and approval waits. Exact `fs_edit` invocation and approval stages from the instrumented run are [below](#completed-instrumented-windows-journeys-g47d).
 
 ```mermaid
 flowchart LR
-    RS["README Send"] -->|"0.091 s"| RF["Sending painted"]
-    RF -->|"10.400 s, includes disclosure"| RH["First HTTP"]
-    RH -->|"12.366 s, two approvals"| RL["Fifth HTTP"]
-    RL -->|"1.609 s"| RR["README persisted"]
-    RR -->|"1.262 s"| RV["Verified"]
-    ES["Edit Send"] -->|"4.361 s"| EF["Sending painted"]
-    EF -->|"3.566 s"| EH["First HTTP"]
-    EH -->|"12.637 s, includes read approval"| EA["fs_edit approval observed"]
-    EA -->|"1.333 s"| EC["Once clicked"]
-    EC -->|"2.813 s"| EN["Fifth HTTP"]
-    EN -->|"5.216 s, includes diff approval"| EL["Sixth HTTP"]
-    EL -->|"2.864 s"| ER["Edit reply persisted"]
-    ER -->|"0.477 s"| EV["Verified"]
+    RS["README Send"] -->|"0.136 s"| RF["Sending painted"]
+    RF -->|"11.543 s"| RD["Project disclosure painted"]
+    RD -->|"0.381 s measured wait"| RC["Proceed clicked"]
+    RC -->|"1.246 s"| RH["First HTTP"]
+    RH -->|"15.466 s, two approvals"| RL["Fifth HTTP"]
+    RL -->|"1.318 s"| RR["README persisted"]
+    RR -->|"0.700 s"| RV["Verified"]
+    ES["Edit Send"] -->|"6.361 s"| EF["Sending painted"]
+    EF -->|"2.059 s"| EH["First HTTP"]
+    EH -->|"18.074 s, includes read approval"| EA["fs_edit approval observed"]
+    EA -->|"0.665 s measured wait"| EC["Once clicked"]
+    EC -->|"3.511 s"| EN["Fifth HTTP"]
+    EN -->|"5.466 s, includes diff approval"| EL["Sixth HTTP"]
+    EL -->|"2.728 s"| ER["Edit reply persisted"]
+    ER -->|"0.935 s"| EV["Verified"]
 ```
+
+The arrows sum to 30.0909 s raw for README and 38.8634 s raw for edit, before the separate verification arrows. Both journeys passed their original assertions and shutdown. The source is `original-journey-e4fa0eclean/replay-runs/qa1c2/progress.jsonl`, SHA-256 `69a9b8d97d8134ee912f9de6189719a313a5029406beab2d31a7445c4d472089`, verified against the pair driver’s artifact ledger. Arrow labels are rounded independently. These intervals locate elapsed time; they do not attribute it all to the operation named at the next node.
 
 On `g29` (`50e868df9f`), the README journey passed every original assertion. The arrows use adjacent timestamps on the original journey clock. The last two events happen after the timed reply.
 
@@ -214,7 +218,7 @@ Batch `q5` started its first clean baseline on Windows 10 at 07:59 UTC on Novemb
 |---|---|---|---|---|
 | `qa` | 1 | 351.8018 s / 29.5092 s | 407.0190 s / 29.6705 s | Both sides passed the original assertions and shutdown. Candidate first HTTP arrived at 12.3762 s and 7.5064 s. Both journeys exceeded five seconds. |
 | `qa` | 2 | 310.5606 s / 28.5109 s | 440.1165 s / 35.9651 s | Candidate `qa1c2` followed by baseline `qa1b2`. Both passed the original assertions and shutdown. |
-| `qa` | 3 | Pending | Pending | Candidate `e4fa0ea67d` includes the independent completed-history query and resize fix. Frozen configuration SHA-256 `334f106cb818be84841ad9e17bbc869d5efa4b8771b69197966942f3fcc31a6a`. |
+| `qa` | 3 | 327.1632 s / 27.1404 s raw to persisted reply only | 418.4522 s / — | Baseline `qa1b3` passed and shut down. Candidate `qa1c3` verified README, then edit Send failed before Sending painted or a provider request. The original fixture is still waiting; this pair is incomplete. Frozen candidate `e4fa0ea67d`, configuration SHA-256 `334f106cb818be84841ad9e17bbc869d5efa4b8771b69197966942f3fcc31a6a`. |
 | `q9` | 1 | 294.9706 s / 23.2802 s | 416.4471 s / 30.0985 s | Both sides passed every original check and shutdown. Candidate first HTTP arrived at 10.4910 s and 7.9268 s (baseline 89.0301 s and 110.7063 s). Both miss five seconds. |
 | `q9` | 2, first attempt | — / 27.0388 s to persisted reply | — / — | Candidate `q91c2` painted the README answer. Verification of completed run history raised `ConsoleReadinessExpired` after the database returned the rows. The driver stopped before edit Send or the second baseline. |
 | `q9` | 2, resumed | — / — | — / — | On the identical frozen candidate, `q92c2` waited 300 s for the workspace name field. Textual reported an uncaught `ConsoleDisplayExpired` from the deferred rail resize callback. Neither Send ran. The ledger retained pair 1 and pairs 2–3 remain incomplete. |
@@ -229,6 +233,10 @@ Batch `q5` started its first clean baseline on Windows 10 at 07:59 UTC on Novemb
 | `q3` | 2–3 | — / — | — / — | The driver stopped at the failed first pair. |
 
 Times in the pair table use the benchmark's original adjusted duration. A dash means there is no measurement for that cell. With each new Windows result, append its run ID and commit, retain failed rows and update the diagram to the latest measured path. For a performance claim, record the comparable before/after boundary, wall-time delta, available work count and source receipt. Publish qualifying pair rows separately from instrumented replays.
+
+Batch `qa` currently has two completed pairs, so no three-pair median is reported. During `qa1b3` README, separate source-only staging for `g57` created 10,120 hardlinks over 20.640 s (12:27:43.614–12:28:04.254 UTC). This was no additional application workload, but filesystem contention could affect that baseline interval. Keep the measured duration unchanged and retain this caveat when reporting pair 3; the overlap does not provide a measured correction to subtract.
+
+The third baseline’s original receipt SHA-256 is `76812e87f3933d2e54d23f521f11d4f3eab2eb63518c25f0074ab74111f4663a`, verified against the driver ledger; it records passed/complete. The still-running third candidate has no final original receipt. Its progress records README verification at Send +27.5626 s, then edit Send at 12:39:23 UTC. The first parent failure at 12:39:24 UTC was `ConsoleChannelLost` from `dispatch_send:247`, where the original terminal/positive-retirement check failed. Repeated `ConsoleRemoteFailure` from `_read_projection_locked:1000` followed at 12:39:27 UTC. The clean runner discards backend stderr, so these parent locations do not identify the original backend refusal or prove its cause. Keep this partial result out of paired medians.
 
 On q91c2 the original history reader requested a full display projection for its database rows. The frame had 93 ms of display readiness left at capture. By the time the parent tried to adopt it the deadline had passed by 16 ms. The first README HTTP request arrived at 12.8151 s and the answer persisted at 28.5004 s. The receipt SHA-256 is `b633501f1d5e89b05cbe9dd55ee6f8d31c61b84db60c26821cc73c3561698e11`. Pair 1 remains the only completed pair in this attempt.
 
