@@ -1183,7 +1183,10 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-17, TASK-41564 (standing fix-over-ratchet rule above):
     # pinned safe-alias reads add eight generated lines; fresh build is 5,860.
     "tldw_chatbook/Tools/remote_worker_bundle.py": 5860,
-    "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py": 5532,
+    # TASK-41501, 2026-11-18 (owner rule 2026-10-04): 5530 -> 5544 (+14), measured;
+    # liveness checks before late worker and mount queries on a removed screen.
+    # 2026-11-19 rebase onto dev 8be7babc14: measured 5544.
+    "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py": 5544,
     # PR #3361, 2026-11-07 (owner size waiver, 2026-11-02 audit TASK-38580..38613):
     # 5167 -> 5189 (+22), TASK-38589 decodes legacy SSE streams as UTF-8 at four sites.
     # 2026-11-18, TASK-41522 (owner rule: raise by the change's own lines): +13,

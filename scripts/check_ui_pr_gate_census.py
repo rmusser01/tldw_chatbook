@@ -1167,6 +1167,12 @@ MINIMUM_FILES = 2250
 # nodes, the prune-safe type filter pin and the two Collections reader pins at
 # the tail. The floor is the measured entry count.
 MINIMUM_FILES = 2417
+MINIMUM_FILES = 2265
+MINIMUM_FILES = 2263
+MINIMUM_FILES = 2255
+# TASK-41501, TASK-41506 (2026-11-18): append six test_screen_navigation.py
+# nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2423
 
 
 def read_census(path: Path) -> list[str]:

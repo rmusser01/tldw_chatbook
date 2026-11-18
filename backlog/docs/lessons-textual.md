@@ -431,6 +431,17 @@ retains its result while covered and retries after `ScreenResume`; configure and
 error updates remain owned by the mounted modal. All three covered-completion
 cases pass. Use exact top-screen identity for dismissal, never `is_current`.
 
+**It also outlives its own screen (TASK-41501, 2026-11-18).** Because the callback
+goes to `app.screen`, a screen navigated away from still runs its queued callbacks,
+on the screen that replaced it. The navigation storm node crashed 3 of 3 that way:
+Workflows' `call_after_refresh(self._refresh_authoring)` ran on Schedules or Home
+after Workflows had unmounted (a probe at the query read `attached=False`,
+`pruning=True`, `closed=True`, current screen Home), and its `is_mounted` check, still
+True, let it query `WorkflowLibrary`. A callback deferred this way must check
+`is_attached and not _pruning` itself; a removed screen's workers need the same check
+after each await, since Textual cancels them only at the screen's own Unmount, after
+its children are gone.
+
 ## A pane whose content just fits flips its scrollbar on focus — reserve the gutter
 
 **TASK-33007.6, 2026-10-04.** Folding the rarely used Providers & Models controls

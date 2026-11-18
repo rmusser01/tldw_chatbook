@@ -1297,16 +1297,13 @@ async def test_rapid_tab_switch_storm_leaves_no_zombie_widgets():
     the wedged state the instance cache used to produce, where the compositor
     froze on a stale frame and dead pumps swallowed every click.
     """
-    app = _build_test_app()
+    app = _build_unsplashed_test_app()
 
     async with app.run_test(size=(160, 40)) as pilot:
         # Wait for the app's own initial navigation screen before storming --
         # in production the nav bar only exists once that screen is mounted,
         # so a pre-boot NavigateToScreen is unreachable by real input.
-        await _settle(pilot, lambda: type(app.screen).__name__ != "Screen")
-        assert type(app.screen).__name__ != "Screen", (
-            "app never mounted its initial screen"
-        )
+        await _wait_for_initial_screen(pilot)
         routes = ("home", "library", "workflows", "schedules")
         for _round in range(3):
             for route in routes:
@@ -1315,8 +1312,9 @@ async def test_rapid_tab_switch_storm_leaves_no_zombie_widgets():
         # Let the queued switches drain, then prove the app still navigates.
         app.post_message(NavigateToScreen("library"))
         zombies: list = []
-        for _ in range(200):
-            await pilot.pause(0.02)
+
+        def drained() -> bool:
+            nonlocal zombies
             if type(app.screen).__name__ == "LibraryScreen" and app.screen.is_running:
                 # TASK-1230: `handle_screen_navigation` now runs each
                 # attempt as its own worker (`_dispatch_screen_navigation`)
@@ -1340,8 +1338,10 @@ async def test_rapid_tab_switch_storm_leaves_no_zombie_widgets():
                     for widget in app.screen.walk_children()
                     if not widget.is_running
                 ]
-                if not zombies:
-                    break
+                return not zombies
+            return False
+
+        await _settle(pilot, drained)
         assert type(app.screen).__name__ == "LibraryScreen"
         assert app.screen.is_running
         assert not zombies, f"zombie widgets on active screen: {zombies[:5]}"
@@ -1409,7 +1409,7 @@ async def test_overlapping_navigate_requests_complete_in_fifo_order() -> None:
     """
     from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
 
-    app = _build_test_app()
+    app = _build_unsplashed_test_app()
     mounted_order: list[str] = []
     original_on_mount = BaseAppScreen.on_mount
 
@@ -1436,10 +1436,7 @@ async def test_overlapping_navigate_requests_complete_in_fifo_order() -> None:
         patch.object(type(app), "_complete_screen_navigation", _delayed_complete),
     ):
         async with app.run_test(size=(160, 40)) as pilot:
-            await _settle(pilot, lambda: type(app.screen).__name__ != "Screen")
-            assert type(app.screen).__name__ != "Screen", (
-                "app never mounted its initial screen"
-            )
+            await _wait_for_initial_screen(pilot)
             # Deliberately NOT clearing `mounted_order` here: the app's own
             # delayed initial-tab switch (a known cold-start gotcha -- it
             # can re-navigate to "chat" shortly after the placeholder
@@ -1494,6 +1491,118 @@ async def test_overlapping_navigate_requests_complete_in_fifo_order() -> None:
 
 
 @pytest.mark.asyncio
+async def test_workflows_and_schedules_updates_after_removal_touch_no_controls():
+    """TASK-41501: a late update must not query a removed screen's controls.
+
+    Workflows defers ``_refresh_authoring``, ``_show_status`` and
+    ``_layout_panes`` with ``call_after_refresh``, which Textual forwards to
+    whichever screen is current. In the storm node they ran on Schedules or
+    Home after Workflows had unmounted, and ``is_mounted`` (still True) let
+    them query ``WorkflowLibrary`` and ``#workflow-panes``. Schedules' load
+    and reachability workers reach ``_render_table``, the follow button and
+    ``_refresh_owner_select`` after their awaits the same way, and a
+    Schedules screen removed before it composed still gets its Mount.
+    """
+    from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
+        SchedulesWorkbench,
+    )
+    from tldw_chatbook.UI.Screens.workflows_screen import WorkflowsScreen
+
+    app = _build_unsplashed_test_app()
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await _wait_for_initial_screen(pilot)
+        app.post_message(NavigateToScreen("workflows"))
+        assert await _settle(
+            pilot,
+            lambda: isinstance(app.screen, WorkflowsScreen) and app.screen._loaded,
+        ), "Workflows never loaded its authoring controls"
+        workflows = app.screen
+        app.post_message(NavigateToScreen("schedules"))
+        assert await _settle(
+            pilot,
+            lambda: (
+                isinstance(app.screen, SchedulesWorkbench)
+                and app.screen.is_mounted
+                and not workflows.is_attached
+            ),
+        ), "Workflows was never removed"
+        schedules = app.screen
+        app.post_message(NavigateToScreen("home"))
+        assert await _settle(pilot, lambda: not schedules.is_attached), (
+            "Schedules was never removed"
+        )
+
+        errors = []
+        for name, call in (
+            ("workflows status", workflows._show_status),
+            ("workflows refresh", workflows._refresh_authoring),
+            ("workflows library", workflows._show_library),
+            ("workflows layout", workflows._layout_panes),
+            ("schedules table", schedules._render_table),
+            ("schedules follow", schedules._update_follow_button_state),
+            ("schedules owner", schedules._refresh_owner_select),
+            ("schedules mount", schedules.on_mount),
+        ):
+            try:
+                result = call()
+                if asyncio.iscoroutine(result):
+                    await result
+            except Exception as exc:  # noqa: BLE001 - collected for the assert
+                errors.append((name, exc))
+        assert not errors, f"a late update queried a removed screen: {errors}"
+
+
+@pytest.mark.asyncio
+async def test_workflows_load_after_the_exit_fence_posts_no_status():
+    """TASK-41501: the FIFO node's teardown failure, made deterministic.
+
+    The mount worker awaits authoring init, then recomposes the authoring
+    panes in. Once shutdown sets the app's ``_exit`` fence, ``recompose``
+    returns without rebuilding, so the worker went on with a controller
+    but the unavailable layout: its load failed on the missing editor, it
+    reported "Definitions could not be loaded", and the deferred status
+    update raised ``NoMatches '#workflows-editor'``.
+    """
+    from tldw_chatbook.UI.Screens.workflows_screen import WorkflowsScreen
+
+    app = _build_unsplashed_test_app()
+    real_ensure = app.ensure_workflow_authoring
+    held = asyncio.Event()
+    release = asyncio.Event()
+
+    async def held_ensure():
+        held.set()
+        await release.wait()
+        await real_ensure()
+
+    app.ensure_workflow_authoring = held_ensure
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await _wait_for_initial_screen(pilot)
+        app.post_message(NavigateToScreen("workflows"))
+        await asyncio.wait_for(held.wait(), timeout=15)
+        screen = app.screen
+        assert isinstance(screen, WorkflowsScreen)
+        (worker,) = [w for w in screen.workers if w.group == "workflows-mount-load"]
+        errors = []
+        app._exit = True
+        try:
+            release.set()
+            await asyncio.wait_for(worker.wait(), timeout=15)
+            try:
+                screen._show_status()
+            except Exception as exc:  # noqa: BLE001 - collected for the assert
+                errors.append(exc)
+        finally:
+            app._exit = False
+            release.set()
+        assert screen.controller is not None, "authoring init never ran"
+        assert not errors, f"a status update queried missing controls: {errors}"
+        assert screen._error == "", f"the load reported a failure: {screen._error!r}"
+
+
+@pytest.mark.asyncio
 async def test_navigation_keypress_during_splash_is_safely_ignored():
     """Regression lock for the F9-during-splash crash (task-1339).
 
@@ -1510,13 +1619,14 @@ async def test_navigation_keypress_during_splash_is_safely_ignored():
     def force_splash_config(section, key=None, default=None):
         # ``_build_test_app`` only patches config lookups during __init__, so
         # compose() at run_test time would read the real user config; force a
-        # deterministic splash here so "splash still active at press time"
-        # does not depend on the developer's machine. 1.5s matches the real
-        # default; pressing at 0.3s leaves ~1.2s of splash window.
+        # deterministic splash here. TASK-41505: it outlasts any wait, so only
+        # the key closes it and "splash still active at press time" no longer
+        # depends on the load (a 0.3 s pause ran past a 1.5 s splash at load
+        # about 100).
         if section == "splash_screen":
             splash_defaults = {
                 "enabled": True,
-                "duration": 1.5,
+                "duration": 120.0,
                 "skip_on_keypress": True,
                 "show_progress": True,
                 "card_selection": "random",
@@ -1526,22 +1636,30 @@ async def test_navigation_keypress_during_splash_is_safely_ignored():
 
     with patch_app_global("get_cli_setting", side_effect=force_splash_config):
         async with app.run_test(size=(120, 35)) as pilot:
-            await pilot.pause(0.3)
+            # The key reaches the splash once it has taken focus.
+            assert await _settle(
+                pilot,
+                lambda: (
+                    app._splash_screen_widget is not None
+                    and app.focused is app._splash_screen_widget
+                ),
+            ), "the splash never took focus"
             assert app.splash_screen_active, "splash must still be active at press time"
             assert not getattr(app, "_initial_screen_pushed", False)
 
             await pilot.press("f4")  # F4 = Settings destination; must not crash
-            await pilot.pause(0.2)
 
             # Wait for startup to finish: splash dismissed, initial screen pushed.
-            for _ in range(60):
-                await pilot.pause(0.05)
-                if not app.splash_screen_active and getattr(
-                    app, "_initial_screen_pushed", False
-                ):
-                    break
+            await _settle(
+                pilot,
+                lambda: (
+                    not app.splash_screen_active
+                    and getattr(app, "_initial_screen_pushed", False)
+                ),
+            )
             assert not app.splash_screen_active, "splash never dismissed"
             assert app._initial_screen_pushed, "initial screen never mounted"
+            await pilot.pause()  # let a leaked F4 navigation, if any, be handled
 
             # The swallowed navigation must not have landed on Settings; the
             # app settles on its configured initial screen instead.
@@ -4529,7 +4647,7 @@ async def test_research_workspace_runs_round_trip_restores_independent_context(
         },
     )
     set_app_global(monkeypatch, "get_user_data_dir", lambda: tmp_path)
-    app = _build_test_app()
+    app = _build_unsplashed_test_app()
     app.server_notes_workspace_service = _AvailableServerWorkspaceService()
     app.server_context_provider = SimpleNamespace(
         get_active_context=lambda: server_context
@@ -4575,10 +4693,10 @@ async def test_research_workspace_runs_round_trip_restores_independent_context(
 
         await app.handle_screen_navigation(NavigateToScreen("research_workspace"))
         restored = app.screen
-        for _ in range(100):
-            await pilot.pause(0.02)
+
+        def server_catalog_ready() -> bool:
             state = restored.controller.catalog_state
-            if (
+            return bool(
                 state is not None
                 and state.data_source is WorkspaceDataSource.SERVER
                 and state.recovery is None
@@ -4587,8 +4705,9 @@ async def test_research_workspace_runs_round_trip_restores_independent_context(
                 and restored.pane_preferences == server_preferences
                 and "Server catalog ready"
                 in str(restored.query_one("#research-workspace-status").render())
-            ):
-                break
+            )
+
+        await _settle(pilot, server_catalog_ready)
         assert type(restored).__name__ == "ResearchWorkspaceScreen"
         assert restored is not first_workspace
         assert restored.controller.selected_data_source is WorkspaceDataSource.SERVER
@@ -4620,7 +4739,7 @@ async def test_library_screen_round_trip_returns_to_landing_with_rag_draft():
     """
     from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH
 
-    app = _build_test_app()
+    app = _build_unsplashed_test_app()
 
     async with app.run_test(size=(170, 48)) as pilot:
         await _settle(pilot, lambda: type(app.screen).__name__ != "Screen")
@@ -4697,7 +4816,7 @@ async def test_console_staged_live_work_launch_survives_navigate_away_and_back()
     from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 
-    app = _build_test_app()
+    app = _build_unsplashed_test_app()
     app.pending_handoffs.stage(
         HandoffChannel.CONSOLE_LIVE_WORK,
         ConsoleLiveWorkLaunch.from_values(
@@ -4797,7 +4916,7 @@ async def test_skills_route_lands_on_library_with_skills_row_selected():
     """
     from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SKILLS
 
-    app = _build_test_app()
+    app = _build_unsplashed_test_app()
 
     async with app.run_test(size=(170, 48)) as pilot:
         await _settle(pilot, lambda: type(app.screen).__name__ != "Screen")
@@ -4828,7 +4947,7 @@ async def test_search_route_lands_on_library_rag_canvas():
     """
     from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH
 
-    app = _build_test_app()
+    app = _build_unsplashed_test_app()
 
     async with app.run_test(size=(170, 48)) as pilot:
         await _settle(pilot, lambda: type(app.screen).__name__ != "Screen")
@@ -4857,7 +4976,7 @@ async def test_study_screen_escape_returns_to_library_study_staging_canvas():
     in ``test_destination_headers.py`` for that half of the fix); this
     covers the actual round trip out.
     """
-    app = _build_test_app()
+    app = _build_unsplashed_test_app()
 
     async with app.run_test(size=(170, 48)) as pilot:
         await _settle(pilot, lambda: type(app.screen).__name__ != "Screen")
@@ -4893,7 +5012,7 @@ async def test_boot_with_search_default_tab_lands_on_library_rag_canvas():
     """
     from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH
 
-    app = _build_test_app(configured_default="search")
+    app = _build_unsplashed_test_app(configured_default="search")
 
     async with app.run_test(size=(170, 48)) as pilot:
         await _settle(
@@ -4920,7 +5039,7 @@ async def test_scope_recovery_mirror_mounts_nothing_once_the_app_is_exiting():
     """
     from textual.widget import MountError
 
-    app = _build_test_app(configured_default="search")
+    app = _build_unsplashed_test_app(configured_default="search")
 
     async with app.run_test(size=(170, 48)) as pilot:
 
@@ -4935,7 +5054,6 @@ async def test_scope_recovery_mirror_mounts_nothing_once_the_app_is_exiting():
                 and not app.screen._rag_search_state.panel_refresh_lock.locked()
             )
 
-        # The boot runs a 7 s animated splash first; wait it out on its own.
         await _wait_for_initial_screen(pilot)
         assert await _settle(pilot, settled, timeout=30), (
             "the Search canvas never showed its recovery"
@@ -5011,32 +5129,33 @@ async def test_boot_with_mcp_default_tab_lands_on_settings_tools_hub(request):
     from tldw_chatbook.state.settings_config_models import SettingsCategoryId
     from tldw_chatbook.UI.Screens.settings_tools_hub import ToolsHubPanel
 
-    app = _build_test_app(configured_default="mcp")
+    app = _build_unsplashed_test_app(configured_default="mcp")
+
+    def hub_settled() -> bool:
+        if type(app.screen).__name__ != "SettingsScreen":
+            return False
+        panes = list(app.screen.query(ToolsHubPanel))
+        workbench = panes[0].workbench if panes else None
+        if workbench is None or workbench.is_loading or workbench._reloading:
+            return False
+        # Pane registration precedes its deferred Tools/Permissions/Audit
+        # mounts. Ending run_test here used to prune their Select children
+        # during Compose, then Textual's Mount queried the removed overlay.
+        canvases = workbench.query(
+            "#mcp-mode-canvas-tools, #mcp-mode-canvas-permissions, "
+            "#mcp-mode-canvas-audit"
+        )
+        return len(canvases) == 3 and all(
+            node.is_mounted for node in workbench.walk_children()
+        )
 
     async with app.run_test(size=(170, 48)) as pilot:
-        # The search/prompts siblings above poll 150 x 0.02 s; a private
-        # profile boots the real app from a cold profile directory, which
-        # takes longer than that fixed loop -- wait on a deadline instead.
-        deadline = time.monotonic() + 20.0
-        while time.monotonic() < deadline:
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ != "SettingsScreen":
-                continue
-            panes = list(app.screen.query(ToolsHubPanel))
-            workbench = panes[0].workbench if panes else None
-            if workbench is None or workbench.is_loading or workbench._reloading:
-                continue
-            # Pane registration precedes its deferred Tools/Permissions/Audit
-            # mounts. Ending run_test here used to prune their Select children
-            # during Compose, then Textual's Mount queried the removed overlay.
-            canvases = workbench.query(
-                "#mcp-mode-canvas-tools, #mcp-mode-canvas-permissions, "
-                "#mcp-mode-canvas-audit"
-            )
-            if len(canvases) == 3 and all(
-                node.is_mounted for node in workbench.walk_children()
-            ):
-                break
+        # TASK-41505: a private profile boots the real app from a cold
+        # profile directory. One 20 s deadline used to cover the 7 s splash,
+        # that boot and the hub's load, and ran out at load about 100; the
+        # boot and the hub now each get their own wait, with no splash.
+        await _wait_for_initial_screen(pilot)
+        await _settle(pilot, hub_settled, timeout=30)
 
         assert type(app.screen).__name__ == "SettingsScreen"
         settings = app.screen
@@ -5068,7 +5187,7 @@ async def test_mcp_deep_link_with_explicit_context_lands_on_tools_hub(request):
     from tldw_chatbook.state.settings_config_models import SettingsCategoryId
     from tldw_chatbook.UI.Screens.settings_tools_hub import ToolsHubPanel
 
-    app = _build_test_app()
+    app = _build_unsplashed_test_app()
 
     async with app.run_test(size=(170, 48)) as pilot:
         # The navigation handler drops requests posted before the initial
@@ -5113,7 +5232,7 @@ async def test_tools_settings_deep_link_with_profile_payload_lands(request):
     from tldw_chatbook.state.settings_config_models import SettingsCategoryId
     from tldw_chatbook.UI.Screens.settings_tools_hub import ToolsHubPanel
 
-    app = _build_test_app()
+    app = _build_unsplashed_test_app()
 
     async with app.run_test(size=(170, 48)) as pilot:
         deadline = time.monotonic() + 20.0
@@ -5174,7 +5293,7 @@ async def test_search_all_palette_command_lands_on_library_with_honest_toast():
     from tldw_chatbook.app import QuickActionsProvider
     from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH
 
-    app = _build_test_app()
+    app = _build_unsplashed_test_app()
     notices: list[tuple[str, str]] = []
 
     async with app.run_test(size=(170, 48)) as pilot:
@@ -5219,7 +5338,7 @@ async def test_media_route_round_trips_to_the_library_media_row():
     """
     from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_MEDIA
 
-    app = _build_test_app()
+    app = _build_unsplashed_test_app()
 
     async with app.run_test(size=(170, 48)) as pilot:
         await _settle(pilot, lambda: type(app.screen).__name__ != "Screen")
@@ -5265,7 +5384,7 @@ async def test_search_route_round_trips_to_the_library_rag_row():
     """
     from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH
 
-    app = _build_test_app()
+    app = _build_unsplashed_test_app()
 
     async with app.run_test(size=(170, 48)) as pilot:
         await _settle(pilot, lambda: type(app.screen).__name__ != "Screen")
@@ -5772,7 +5891,11 @@ async def test_navigation_timeout_does_not_cancel_the_in_flight_save(monkeypatch
     assert notifications, "the user must be told the switch was abandoned"
 
     # Give the shielded save the time it needs to finish on its own.
-    await asyncio.sleep(1.0)
+    deadline = time.monotonic() + 15.0
+    while not (reconciled["done"] or reconciled["cancelled"]):
+        if time.monotonic() >= deadline:
+            break
+        await asyncio.sleep(0.01)
 
     assert not reconciled["cancelled"], (
         "the in-flight save was cancelled; its reconciliation never ran, so the "
@@ -5827,6 +5950,19 @@ async def test_broken_screen_content_degrades_instead_of_killing_a_running_app()
         await pilot.press("tab")
         await pilot.pause()
         assert app.is_running, "app must stay responsive after the failed compose"
+
+
+def _build_unsplashed_test_app(**kwargs):
+    """``_build_test_app`` with the 7 s boot splash skipped (TASK-41506).
+
+    The real-app nodes here test routes and screens, not the splash, and the
+    splash was most of each one's time. ``_cli_no_splash`` is the
+    ``--no-splash`` seam; both boot paths run ``_push_initial_screen``.
+    ``test_navigation_keypress_during_splash_is_safely_ignored`` keeps it.
+    """
+    app = _build_test_app(**kwargs)
+    app._cli_no_splash = True
+    return app
 
 
 async def _settle(pilot, predicate, *, timeout: float = 15.0) -> bool:
@@ -5891,7 +6027,7 @@ async def test_generic_library_entry_lands_hub_on_first_visit():
     hub/landing canvas (``_library_selected_row_id == ""``), never a
     specific canvas by accident.
     """
-    app = _build_test_app()
+    app = _build_unsplashed_test_app()
 
     async with app.run_test(size=(160, 40)) as pilot:
         await _wait_for_initial_screen(pilot)
@@ -5910,7 +6046,7 @@ async def test_prompt_receipt_owner_vetoes_real_app_navigation_until_settlement(
         PromptDeleteReceiptEntry,
     )
 
-    app = _build_test_app()
+    app = _build_unsplashed_test_app()
 
     async with app.run_test(size=(160, 40)) as pilot:
         await _wait_for_initial_screen(pilot)
@@ -5950,7 +6086,7 @@ async def test_deep_link_library_route_lands_its_canvas_over_restored_state():
         LIBRARY_ROW_INGEST_MEDIA,
     )
 
-    app = _build_test_app()
+    app = _build_unsplashed_test_app()
 
     async with app.run_test(size=(160, 40)) as pilot:
         await _wait_for_initial_screen(pilot)
@@ -5984,7 +6120,7 @@ async def test_generic_reentry_returns_to_library_landing():
     """
     from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH
 
-    app = _build_test_app()
+    app = _build_unsplashed_test_app()
 
     async with app.run_test(size=(160, 40)) as pilot:
         await _wait_for_initial_screen(pilot)
@@ -6019,7 +6155,7 @@ async def test_reused_library_reentry_shows_the_landing_and_keeps_its_live_state
     """
     from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH
 
-    app = _build_test_app()
+    app = _build_unsplashed_test_app()
 
     async with app.run_test(size=(160, 40)) as pilot:
         await _wait_for_initial_screen(pilot)
@@ -6073,7 +6209,7 @@ async def test_late_completions_after_the_exit_fence_skip_the_empty_stack():
     """
     from textual.app import ScreenStackError
 
-    app = _build_test_app()
+    app = _build_unsplashed_test_app()
 
     async with app.run_test(size=(160, 40)) as pilot:
         await _wait_for_initial_screen(pilot)
@@ -6163,6 +6299,16 @@ async def test_late_completions_after_the_exit_fence_skip_the_empty_stack():
         assert home._home_pending_refresh_sync is pending
 
 
+def _nav_strip_clips(app) -> bool:
+    """The nav strip has laid out wider than its region and shows its hint."""
+    strips = app.query("#nav-destination-strip")
+    hints = app.query("#nav-overflow-hint")
+    if not strips or not hints:
+        return False
+    strip = strips.first()
+    return bool(hints.first().display and strip.virtual_size.width > strip.region.width)
+
+
 @pytest.mark.asyncio
 async def test_nav_bar_uses_overflow_instead_of_truncating_at_160_cols():
     """All destinations keep full labels through the overflow control."""
@@ -6174,7 +6320,7 @@ async def test_nav_bar_uses_overflow_instead_of_truncating_at_160_cols():
 
     app = TestApp()
     async with app.run_test(size=(160, 40)) as pilot:
-        await pilot.pause(0.5)
+        await _settle(pilot, lambda: _nav_strip_clips(app))
         nav = pilot.app.query_one(MainNavigationBar)
         strip = nav.query_one("#nav-destination-strip")
         hint = nav.query_one("#nav-overflow-hint", Button)
@@ -6207,13 +6353,18 @@ async def test_nav_bar_overflow_menu_reaches_undigitized_destinations():
 
     app = TestApp()
     async with app.run_test(size=(110, 32)) as pilot:
-        await pilot.pause(0.5)
+        await _settle(pilot, lambda: _nav_strip_clips(app))
         nav = pilot.app.query_one(MainNavigationBar)
         hint = nav.query_one("#nav-overflow-hint", Button)
         assert hint.display, "overflow affordance must show when the strip clips"
 
         hint.press()
-        await pilot.pause(0.5)
+        await _settle(
+            pilot,
+            lambda: (
+                type(app.screen).__name__ == "NavOverflowMenu" and app.screen.is_mounted
+            ),
+        )
         menu = pilot.app.screen_stack[-1]
         assert menu.__class__.__name__ == "NavOverflowMenu"
 
@@ -6234,7 +6385,13 @@ async def test_nav_bar_overflow_menu_reaches_undigitized_destinations():
         assert "(current)" in str(menu.query_one("#nav-overflow-console", Button).label)
 
         menu.query_one("#nav-overflow-logs", Button).press()
-        await pilot.pause(0.5)
+        await _settle(
+            pilot,
+            lambda: (
+                "logs" in app.nav_requests
+                and type(app.screen).__name__ != "NavOverflowMenu"
+            ),
+        )
 
         assert "logs" in app.nav_requests
         assert pilot.app.screen_stack[-1].__class__.__name__ != "NavOverflowMenu"
