@@ -10647,9 +10647,8 @@ def test_remove_target_worktree_real_git_resumes_namespace_checkpoints(
     target = run_root / "candidate"
     _add_real_worktree(repository, target, branch="candidate")
     admin = _linked_worktree_admin(target)
-    removable_admin_entry = next(
-        entry.name for entry in admin.iterdir() if entry.name != "gitdir"
-    )
+    removable_admin_entry = "HEAD"
+    assert stat.S_ISREG((admin / removable_admin_entry).lstat().st_mode)
     admin_metadata = admin.stat()
     admin_identity = (admin_metadata.st_dev, admin_metadata.st_ino)
     target_metadata = target.stat()

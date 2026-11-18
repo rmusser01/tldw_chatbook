@@ -56,6 +56,9 @@ def _screen(tmp_path, monkeypatch):
     context_spend_for_test(screen)._console_settings_context_estimate_for_session = (
         lambda *_args, **_kwargs: ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
     )
+    # This constructor-free fixture has no composer or runtime-owned launch.
+    screen._context_spend._console_composer_or_none = lambda: None
+    screen._context_spend._pending_launch = lambda: None
     screen._provider_readiness_app_config = lambda: {
         "api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:9099"}}
     }

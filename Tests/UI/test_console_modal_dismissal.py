@@ -504,6 +504,18 @@ def _model_popover_factory() -> ConsoleModelPopover:
 
 TASK2_MODAL_CONTRACTS = (
     _Task2ModalContract(
+        ConsoleHeldToolSlotsModal,
+        lambda: ConsoleHeldToolSlotsModal(
+            {"held-1": ("fs_read", False)}, lambda _key: False
+        ),
+        "#console-held-tool-slots",
+        None,
+        "Console Held tool slots status segment",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task2ModalContract(
         ConsoleWorkspaceFilesModal,
         _workspace_files_factory,
         "#console-workspace-files-modal",
@@ -1167,7 +1179,6 @@ _ROOT_INVENTORY_ONLY_MODAL_TYPES = (
     ConsoleEditThinkingModal,
     ConsoleEndpointTemplateModal,
     ConsoleForkChatModal,
-    ConsoleHeldToolSlotsModal,
     ConsoleHooksReviewModal,
     ConsoleLibraryAccessModal,
     ConsoleMessageDeleteReceiptModal,
@@ -1824,8 +1835,9 @@ class _SyntheticDeclaredOwner:
 
 
 def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
-    assert len(TASK2_MODAL_CONTRACTS) == 16
+    assert len(TASK2_MODAL_CONTRACTS) == 17
     assert {contract.modal_type.__name__ for contract in TASK2_MODAL_CONTRACTS} == {
+        "ConsoleHeldToolSlotsModal",
         "ConsoleWorkspaceFilesModal",
         "AutoSpeakConsentModal",
         "ConsoleSummarizePreviewModal",
@@ -2504,6 +2516,40 @@ async def test_task2_contract_selector_exists_and_escape_returns_cancel_result(
         await pilot.pause()
 
     assert app.results == [contract.cancel_result]
+
+
+@pytest.mark.parametrize("source", ["visible", "escape", "backdrop"])
+@pytest.mark.asyncio
+async def test_held_tool_slots_cancel_preserves_capacity(source: str) -> None:
+    app = _Task2Harness()
+    released = []
+
+    def release(key: str) -> bool:
+        released.append(key)
+        return True
+
+    slots = {"held-1": ("fs_read", False)}
+    modal = ConsoleHeldToolSlotsModal(slots, release)
+    opener = Button("Open held slots")
+    async with app.run_test(size=(100, 40)) as pilot:
+        await app.screen.mount(opener)
+        opener.focus()
+        await pilot.pause()
+        host = app.screen
+        await app.push_screen(modal, callback=app.results.append)
+        await pilot.pause()
+        if source == "visible":
+            await pilot.click("#console-held-tool-slots-close")
+        elif source == "escape":
+            await pilot.press("escape")
+        else:
+            await pilot.click(offset=(0, 0))
+        await pilot.pause()
+        assert app.screen is host
+        assert app.focused is opener
+    assert app.results == [None]
+    assert released == []
+    assert modal.slots == slots
 
 
 @pytest.mark.parametrize("source", ["visible", "escape", "backdrop"])

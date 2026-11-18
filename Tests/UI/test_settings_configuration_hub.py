@@ -1264,6 +1264,7 @@ def test_settings_ownership_records_cover_categories_and_runtime_boundaries():
         "console.sidechat_model",
         "console.sidechat_prompt_template",
         "console.background_effects.*",
+        "console.os_notifications.*",
         # task-15512: same commit as the context-window entry above
         # (2d88425ba) -- new owned sections, tuple left behind.
         "console.conversation_budget_*",
