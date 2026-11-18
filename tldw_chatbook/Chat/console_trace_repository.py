@@ -3448,13 +3448,17 @@ class ConsoleTraceRepository:
             turn_id: Saved user-turn identity whose replay is being considered.
 
         Returns:
-            Whether any call for this owner and turn remains unresolved.
+            Whether any of the owner's own calls for this turn remains
+            unresolved. A spawned child's calls never block it (TASK-41310).
         """
         # The existing owner-order index starts with (owner_id, turn_id).
         return (
             cursor.execute(
-                """SELECT 1 FROM console_trace_calls
+                """SELECT 1 FROM console_trace_calls AS call
                 WHERE owner_id = ? AND turn_id = ? AND state IN (?, ?, ?, ?)
+                  AND NOT EXISTS (
+                    SELECT 1 FROM console_trace_child_segments AS link
+                     WHERE link.segment_id = call.segment_id)
                 LIMIT 1""",
                 (
                     owner_id,

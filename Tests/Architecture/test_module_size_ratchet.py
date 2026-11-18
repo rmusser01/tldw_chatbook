@@ -949,7 +949,9 @@ _BUDGETS: dict[str, int] = {
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
     # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):
     # the storage provider reaches the per-run BuiltinToolProvider (+8 on 12,091).
-    "tldw_chatbook/Chat/console_agent_bridge.py": 10084,
+    # 2026-11-17, TASK-41310 B review: 10084 -> 10111 (+27), exact measurement.
+    # The factory verifies a child route names its spawning turn.
+    "tldw_chatbook/Chat/console_agent_bridge.py": 10111,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # TASK-36944.2, 2026-11-03: +6 for the public `setting` Console reads.
@@ -1146,7 +1148,9 @@ _BUDGETS: dict[str, int] = {
     # raises the row): crosses 4000 at 4017, exact measurement. The owner-
     # approved child trace segments (ADR-337 amendment 2026-11-17): create and
     # read a child run's segment, and its owner resolution.
-    "tldw_chatbook/Chat/console_trace_repository.py": 4017,
+    # 2026-11-17, TASK-41310 B: 4017 -> 4021 (+4), exact measurement. A
+    # child's open calls never block the parent's turn.
+    "tldw_chatbook/Chat/console_trace_repository.py": 4021,
     "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,
     "tldw_chatbook/MCP/unified_control_plane_service.py": 6049,

@@ -382,3 +382,34 @@ def test_a_live_retention_root_keeps_the_link_and_segment_through_gc(db):
         assert _rows(db, f"SELECT COUNT(*) FROM {table} WHERE {column} = ?", value) == [
             (1,)
         ], table
+
+
+def test_an_unresolved_child_call_never_blocks_the_parents_turn(db):
+    """Owner decision 2026-11-17: a child's open call is not the parent's."""
+    repository = ConsoleTraceRepository()
+    _conversation, owner_id, root_id, policy_id, _node = _root_graph(db, repository)
+    child = _child(db, repository, owner_id, "turn-1")
+
+    def reserve(segment_id, run_id):
+        with db.transaction(immediate=True) as cursor:
+            repository.reserve_call(
+                cursor,
+                owner_id=owner_id,
+                segment_id=segment_id,
+                turn_id="turn-1",
+                run_id=run_id,
+                call_sequence=0,
+                idempotency_key="open-" + run_id,
+                policy_id=policy_id,
+            )
+
+    def blocked():
+        with db.transaction(immediate=True) as cursor:
+            return repository.has_unresolved_call_for_turn(
+                cursor, owner_id=owner_id, turn_id="turn-1"
+            )
+
+    reserve(child.segment_id, child.run_id)
+    assert blocked() is False
+    reserve(root_id, "parent-run")
+    assert blocked() is True

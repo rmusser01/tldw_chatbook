@@ -1718,3 +1718,66 @@ def test_typed_admission_failure_discards_private_cause_and_context() -> None:
     assert raised.value.__context__ is None
     assert getattr(raised.value, "private", None) is None
     assert getattr(raised.value, "__notes__", None) is None
+
+
+def test_child_route_names_a_turn_only_with_actor_chain_and_no_saved_rows() -> None:
+    """TASK-41310: parent_revision_id is the child call's only link to its turn."""
+    module = provenance_module
+    turn = new_opaque_id()
+    child_route = module.request_route_provenance(
+        module.ConsoleRequestRoute.AGENT_FIRST,
+        actor_id=new_opaque_id(),
+        chain_id=new_opaque_id(),
+        parent_revision_id=turn,
+    )
+    policy = _policy()
+    common = dict(
+        system=(),
+        memory=(),
+        mandatory=(),
+        compactable=(),
+        active_thinking=(),
+        active_continuations=(),
+        tools=(),
+        capture_policy=policy,
+        metadata=(child_route,),
+    )
+    ConsoleRequestProvenance(
+        **common,
+        active_request=(_artifact(TraceProvenanceSource.ACTIVE_REQUEST, policy),),
+    )
+    with pytest.raises(TraceProvenanceAlignmentError, match="saved message rows"):
+        ConsoleRequestProvenance(
+            **common, active_request=(SavedRevisionTraceProvenance(new_opaque_id()),)
+        )
+    with pytest.raises(TraceProvenanceAlignmentError, match="actor and chain"):
+        module.request_route_provenance(
+            module.ConsoleRequestRoute.LLAMA_FALLBACK, parent_revision_id=turn
+        )
+
+
+def test_factory_refuses_a_child_route_that_names_another_turn(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentTraceRequestFactory
+
+    module = provenance_module
+    turn, other = new_opaque_id(), new_opaque_id()
+
+    def prepared(parent_revision_id):
+        route = module.request_route_provenance(
+            module.ConsoleRequestRoute.AGENT_FIRST,
+            actor_id=new_opaque_id(),
+            chain_id=new_opaque_id(),
+            parent_revision_id=parent_revision_id,
+        )
+        return SimpleNamespace(
+            semantic=SimpleNamespace(provenance=SimpleNamespace(metadata=(route,)))
+        )
+
+    factory = object.__new__(ConsoleAgentTraceRequestFactory)
+    monkeypatch.setattr(ConsoleAgentTraceRequestFactory, "_turn_revision_id", lambda _: turn)
+    factory.verify_child_route(prepared(turn))
+    for wrong in (other, None):
+        with pytest.raises(TraceProvenanceAlignmentError, match="spawning turn"):
+            factory.verify_child_route(prepared(wrong))

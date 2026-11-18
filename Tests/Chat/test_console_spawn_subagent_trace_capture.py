@@ -52,7 +52,16 @@ def _sse(delta: dict, finish: str) -> bytes:
     return (body + "data: [DONE]\n\n").encode()
 
 
-async def _spawn_turn(tmp_path, monkeypatch, task: str) -> SimpleNamespace:
+async def _spawn_turn(
+    tmp_path,
+    monkeypatch,
+    task: str,
+    *,
+    child_tool=False,
+    tamper_parent=False,
+    tasks=None,
+    tamper_child_route=False,
+) -> SimpleNamespace:
     """Send one Capture-On turn whose model spawns a child; return the facts."""
     import httpx
     import urllib3
@@ -70,7 +79,7 @@ async def _spawn_turn(tmp_path, monkeypatch, task: str) -> SimpleNamespace:
     from tldw_chatbook.Chat.console_trace_runtime import ConsoleTraceBoundaryFactory
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
-    facts = SimpleNamespace(wire=[], refusals=[], boundary_errors=[])
+    facts = SimpleNamespace(wire=[], refusals=[], boundary_errors=[], tools=[])
     # The child re-resolves the inherited custom endpoint from app config,
     # which conftest redirects into the test root; refuse outside it.
     assert config.get_cli_config_path().is_relative_to(
@@ -105,6 +114,60 @@ async def _spawn_turn(tmp_path, monkeypatch, task: str) -> SimpleNamespace:
             )
             raise
 
+    if tamper_parent:
+        from tldw_chatbook.Chat.console_trace_service import ConsoleTraceService
+
+        original_delta = ConsoleTraceService.prepare_current_surface_delta
+
+        def changed_parent_history(service, cursor, **kwargs):
+            # The parent's own follow-up arrives with its first user row
+            # changed; its root surface must refuse it as before.
+            if kwargs["route_identity"] == "tool_loop" and (
+                current_run_actor().kind == "primary"
+            ):
+                values = list(kwargs["values"])
+                index = next(
+                    i
+                    for i, value in enumerate(values)
+                    if hasattr(value, "get") and value.get("role") == "user"
+                )
+                values[index] = {**values[index], "content": "a different question"}
+                kwargs["values"] = tuple(values)
+            return original_delta(service, cursor, **kwargs)
+
+        monkeypatch.setattr(
+            ConsoleTraceService, "prepare_current_surface_delta", changed_parent_history
+        )
+    if tamper_child_route == "missing":
+        from tldw_chatbook.Chat.console_agent_bridge import (
+            ConsoleAgentTraceRequestFactory,
+        )
+
+        original_build = ConsoleAgentTraceRequestFactory.build
+
+        def parent_shaped(factory, *args, **kwargs):
+            # A child request built as if it were the parent's: no turn named.
+            return original_build(factory, *args, **{**kwargs, "child": False})
+
+        monkeypatch.setattr(ConsoleAgentTraceRequestFactory, "build", parent_shaped)
+    elif tamper_child_route:
+        from tldw_chatbook.Chat.console_agent_bridge import (
+            ConsoleAgentTraceRequestFactory,
+        )
+        from tldw_chatbook.Chat.console_trace_models import new_opaque_id
+
+        original_turn = ConsoleAgentTraceRequestFactory._turn_revision_id
+        asked = []
+
+        def drifting_turn(factory):
+            # The route is built with the real turn; the dispatch-time
+            # derivation then disagrees.
+            asked.append(1)
+            return original_turn(factory) if len(asked) == 1 else new_opaque_id()
+
+        monkeypatch.setattr(
+            ConsoleAgentTraceRequestFactory, "_turn_revision_id", drifting_turn
+        )
     monkeypatch.setattr(ConsoleTraceBoundaryFactory, "__call__", boundary)
 
     async def metadata(transport, request):
@@ -125,17 +188,37 @@ async def _spawn_turn(tmp_path, monkeypatch, task: str) -> SimpleNamespace:
         kind = getattr(current_run_actor(), "kind", None)
         roles = [message["role"] for message in request["messages"]]
         facts.wire.append((kind, roles))
+        facts.tools.append(
+            (
+                kind,
+                [
+                    (tool.get("function") or tool).get("name")
+                    for tool in request.get("tools") or ()
+                ],
+            )
+        )
         if kind == "primary" and "tool" not in roles:
-            call = {
-                "index": 0,
-                "id": "call_spawn_1",
-                "type": "function",
-                "function": {
-                    "name": "spawn_subagent",
-                    "arguments": json.dumps({"task": task}),
-                },
-            }
-            body = _sse({"tool_calls": [call]}, "tool_calls")
+            calls = [
+                {
+                    "index": index,
+                    "id": f"call_spawn_{index + 1}",
+                    "type": "function",
+                    "function": {
+                        "name": "spawn_subagent",
+                        "arguments": json.dumps({"task": each}),
+                    },
+                }
+                for index, each in enumerate(tasks or (task,))
+            ]
+            body = _sse({"tool_calls": calls}, "tool_calls")
+        elif child_tool and kind != "primary" and len(roles) == 2:
+            # A fenced call: the child's own tool round without a provider
+            # continuation (native child rounds on this endpoint fail before
+            # any trace, Capture Off too; see the task notes).
+            from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
+
+            call = json.dumps({"name": "get_current_datetime", "arguments": {}})
+            body = _sse({"content": f"{FENCE_OPEN}\n{call}\n```"}, "stop")
         else:
             text = "parent final" if kind == "primary" else "child done"
             body = _sse({"content": text}, "stop")
@@ -183,9 +266,9 @@ async def _spawn_turn(tmp_path, monkeypatch, task: str) -> SimpleNamespace:
                     (row["agent_kind"], row["status"])
                     for row in runs.list_runs(session.persisted_conversation_id)
                 )
-                if any(kind == "subagent" for kind, _ in facts.runs) and all(
-                    status != "running" for _, status in facts.runs
-                ):
+                if sum(kind == "subagent" for kind, _ in facts.runs) >= len(
+                    tasks or (task,)
+                ) and all(status != "running" for _, status in facts.runs):
                     break
                 await asyncio.sleep(0.05)
         facts.calls = [
@@ -193,6 +276,24 @@ async def _spawn_turn(tmp_path, monkeypatch, task: str) -> SimpleNamespace:
             for row in chat.get_connection().execute(
                 "SELECT route_identity, state, omission_reason_code "
                 "FROM console_trace_calls ORDER BY created_at, call_sequence"
+            )
+        ]
+        # (on the owner's root segment, owner, turn, run, route, state)
+        facts.owned_calls = [
+            tuple(row)
+            for row in chat.get_connection().execute(
+                "SELECT call.segment_id = owner.root_segment_id, call.owner_id,"
+                " call.turn_id, call.run_id, call.route_identity, call.state"
+                " FROM console_trace_calls AS call JOIN console_trace_owners AS owner"
+                " ON owner.owner_id = call.owner_id"
+                " ORDER BY call.created_at, call.call_sequence"
+            )
+        ]
+        facts.links = [
+            tuple(row)
+            for row in chat.get_connection().execute(
+                "SELECT segment_id, owner_id, turn_id, run_id"
+                " FROM console_trace_child_segments"
             )
         ]
         facts.omitted_nodes = (
@@ -205,6 +306,7 @@ async def _spawn_turn(tmp_path, monkeypatch, task: str) -> SimpleNamespace:
         )
         return facts
     finally:
+        await controller.shutdown()
         config.save_setting_to_cli_config(
             "custom_endpoints", "spawntrace", old_endpoint
         )
@@ -216,7 +318,7 @@ async def _spawn_turn(tmp_path, monkeypatch, task: str) -> SimpleNamespace:
 async def test_parent_follow_up_after_native_spawn_keeps_capture(tmp_path, monkeypatch):
     """The parent's request after the spawn result is admitted and captured."""
     facts = await _spawn_turn(tmp_path, monkeypatch, "Say child done.")
-    why = vars(facts)
+    why = str(vars(facts))
     assert facts.result.accepted and facts.result.provider_started, why
     primary = [roles for kind, roles in facts.wire if kind == "primary"]
     assert primary == [["system", "user"], ["system", "user", "assistant", "tool"]], why
@@ -226,21 +328,101 @@ async def test_parent_follow_up_after_native_spawn_keeps_capture(tmp_path, monke
     assert all(call[1:] == ("complete", None) for call in facts.calls), why
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="TASK-41310: a child's request has no trace owner of its own; "
-    "awaiting the trace-ownership decision for child calls",
-)
 @pytest.mark.parametrize(
-    "task",
-    ["Say child done.", DRAFT],
-    ids=["own-task", "task-equals-user-message"],
+    ("task", "child_tool"),
+    [("Say child done.", False), (DRAFT, False), ("Say child done.", True)],
+    ids=["own-task", "task-equals-user-message", "child-tool-loop"],
 )
 async def test_child_request_after_native_spawn_reaches_provider(
-    tmp_path, monkeypatch, task
+    tmp_path, monkeypatch, task, child_tool
 ):
-    """Capture On must not stop a spawned child before its provider call."""
-    facts = await _spawn_turn(tmp_path, monkeypatch, task)
-    why = vars(facts)
-    assert any(kind == "subagent" for kind, _ in facts.wire), why
+    """Capture On traces a spawned child in its own segment of the parent's turn."""
+    facts = await _spawn_turn(tmp_path, monkeypatch, task, child_tool=child_tool)
+    why = str(vars(facts))
+    child_wire = [roles for kind, roles in facts.wire if kind == "subagent"]
+    assert child_wire and child_wire[0][-1] == "user", why
+    assert len(child_wire) == (2 if child_tool else 1), why
     assert ("subagent", "done") in facts.runs, why
+    assert facts.boundary_errors == [] and facts.refusals == [], why
+    assert facts.omitted_nodes == 0, why
+    parent = [call for call in facts.owned_calls if call[0]]
+    child = [call for call in facts.owned_calls if not call[0]]
+    assert [call[4:] for call in parent] == [
+        ("agent_first", "complete"),
+        ("tool_loop", "complete"),
+    ], why
+    assert [call[4:] for call in child] == [("agent_first", "complete")] + (
+        [("tool_loop", "complete")] if child_tool else []
+    ), why
+    # Same owner and turn as the parent; its own run, in its own linked segment.
+    (owner_id, turn_id, parent_run) = parent[0][1:4]
+    assert {call[1:3] for call in child} == {(owner_id, turn_id)}, why
+    assert {call[3] for call in child} != {parent_run}, why
+    assert [link[1:] for link in facts.links] == [(owner_id, turn_id, child[0][3])], why
+
+
+async def test_parent_surface_still_refuses_a_changed_history_beside_a_child(
+    tmp_path, monkeypatch
+):
+    """A child's segment never widens what the parent's own surface admits."""
+    facts = await _spawn_turn(
+        tmp_path, monkeypatch, "Say child done.", tamper_parent=True
+    )
+    why = str(vars(facts))
+    assert [kind for kind, _ in facts.wire].count("primary") == 1, why
+    assert [error[0] for error in facts.boundary_errors] == ["primary"], why
+    # The child still went out, traced in its own segment (its settlement
+    # waits on the parent's turn, which this refusal ended).
+    assert [call[4] for call in facts.owned_calls if not call[0]] == ["agent_first"], (
+        why
+    )
+    assert len(facts.links) == 1, why
+    assert ("subagent", "done") in facts.runs, why
+
+
+@pytest.mark.parametrize(
+    "tasks",
+    [("Say child done.", "Say it again."), ("Say child done.", "Say child done.")],
+    ids=["two-siblings", "respawn-same-task-text"],
+)
+async def test_sibling_children_each_get_their_own_segment_under_one_turn(
+    tmp_path, monkeypatch, tasks
+):
+    """Two children of one turn never share a segment, even for equal task text."""
+    facts = await _spawn_turn(tmp_path, monkeypatch, tasks[0], tasks=tasks)
+    why = str(vars(facts))
+    assert facts.boundary_errors == [] and facts.refusals == [], why
+    assert [kind for kind, _ in facts.runs].count("subagent") == 2, why
+    parent = [call for call in facts.owned_calls if call[0]]
+    child = [call for call in facts.owned_calls if not call[0]]
+    (owner_id, turn_id) = parent[0][1:3]
+    assert len(child) == 2 and {call[1:3] for call in child} == {(owner_id, turn_id)}, why
+    assert len({call[3] for call in child}) == 2, why
+    assert len({link[0] for link in facts.links}) == 2, why
+    assert {link[1:3] for link in facts.links} == {(owner_id, turn_id)}, why
+
+
+async def test_a_child_cannot_spawn_a_grandchild(tmp_path, monkeypatch):
+    """Nested children are structurally unsupported: the child is never offered
+    the spawn tool, so there is no grandchild call to trace."""
+    facts = await _spawn_turn(tmp_path, monkeypatch, "Say child done.")
+    why = str(vars(facts))
+    parent_tools = [tools for kind, tools in facts.tools if kind == "primary"]
+    child_tools = [tools for kind, tools in facts.tools if kind == "subagent"]
+    assert child_tools and parent_tools, why
+    assert all("spawn_subagent" in tools for tools in parent_tools[:1]), why
+    assert all("spawn_subagent" not in tools for tools in child_tools), why
+
+
+@pytest.mark.parametrize("tamper", [True, "missing"], ids=["drifted", "missing"])
+async def test_a_child_route_naming_another_turn_is_refused_before_dispatch(
+    tmp_path, monkeypatch, tamper
+):
+    """The adapter re-derives the spawning turn and refuses a drifted or
+    missing one, through the real ``chat_call_impl`` path."""
+    facts = await _spawn_turn(
+        tmp_path, monkeypatch, "Say child done.", tamper_child_route=tamper
+    )
+    why = str(vars(facts))
+    assert [kind for kind, _ in facts.wire].count("subagent") == 0, why
+    assert not any(status == "done" for kind, status in facts.runs if kind == "subagent"), why

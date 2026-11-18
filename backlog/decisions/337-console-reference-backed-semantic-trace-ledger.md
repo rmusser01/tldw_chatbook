@@ -1042,6 +1042,38 @@ per-link range reads and the replacement rows' lineage trigger. It is paid once,
 by the send after the rewrite. Ordinary sends, which the 10 ms reservation gate
 measures, take no new work.
 
+### Amendment 2026-11-17 (owner decision, TASK-41310): a spawned child's calls have their own segment
+
+Decision 3 of ADR-092 captures surviving fleet calls, but this ledger had no
+owner for them. A child's request carries no saved revision of its own (its
+system prompt and task are new rows), so the runtime refused it as
+`trace_owner_unavailable`; a task byte-equal to a saved user message borrowed
+that message's reference and the child was then judged against the parent's turn
+and surface. Every sub-agent failed under Capture On, the shipped default.
+
+1. A child's provider calls belong to the parent's owner and to the spawning
+   turn, under the child's own run identity (its actor and chain).
+2. Each child run has one root-less segment of its own, linked to that owner and
+   turn by its run identity (`console_trace_child_segments`, schema v87). The
+   child's surface fence compares only against that segment. Nothing a child
+   sends can append to, replace in, or be judged against the parent's surface,
+   and the parent's own refusals are unchanged.
+3. The child's request names the spawning turn in its route provenance
+   (`parent_revision_id`); its rows never reuse the parent's saved references.
+   The turn comes from the admitted request the parent run was built from, not
+   from anything the child produced.
+4. Ownership guards treat a linked child segment as owned exactly like its
+   owner's root. A child segment is never a fork parent, and a fork does not
+   carry the source's child segments.
+5. Retention follows the owner: GC keeps a child segment while its owner is
+   attached or retained, and collects it after detachment.
+6. An unresolved child call never blocks the parent's turn
+   (`has_unresolved_call_for_turn` counts only the owner's own segments); it is
+   abandoned on restart like any fleet child.
+
+Readers that walk the owner's root lineage do not show child calls yet; that is
+a follow-up, not a change to this contract.
+
 ## Renumbering provenance
 
 Renumbered from ADR-097 to ADR-337 on 2026-11-03 under TASK-36943.3 (owner decision 2026-10-25: the younger file of a shared number is renumbered). ADR-097 now refers to 097-boot-budget-ratchets.md.
