@@ -7296,10 +7296,20 @@ async def test_slash_focuses_the_prompts_filter_not_the_rail_search(tmp_path):
             screen = _active_library_screen(host)
             await _wait_for_library_shell(screen, pilot)
             screen.query_one("#library-row-browse-prompts").press()
-            await _wait_for_selector(
-                screen, pilot, f"#library-prompt-row-{prompt_id}"
+            row_id = f"library-prompt-row-{prompt_id}"
+            await _wait_for_selector(screen, pilot, f"#{row_id}")
+            # TASK-41532: the entry fallback may focus the filter before rows land.
+            await _wait_for_condition(
+                pilot,
+                lambda: not screen._library_pending_list_entry_focus,
+                message="Prompts entry focus never settled.",
             )
-            await pilot.pause()
+            screen.query_one(f"#{row_id}").focus()
+            await _wait_for_condition(
+                pilot,
+                lambda: getattr(screen.focused, "id", None) == row_id,
+                message=lambda: f"The prompt row never took focus: {screen.focused!r}",
+            )
 
             prompts_filter = screen.query_one("#library-prompts-filter", Input)
             rail_search = screen.query_one("#library-search-input", Input)
@@ -10239,10 +10249,16 @@ async def test_library_media_edit_save_stays_gated_through_detail_refresh() -> N
             assert len(service.update_calls) == 1
 
             service.detail_release.set()
+            controller = screen._library_media_browse_controller
+            # Interlock release schedules the page and facet refreshes.
             await _wait_for_condition(
                 pilot,
-                lambda: not screen._media_state.bulk_delete_in_flight,
-                message="Media edit interlock never released after detail refresh.",
+                lambda: (
+                    not screen._media_state.bulk_delete_in_flight
+                    and controller.freshness == "fresh"
+                    and not controller.facet_loading
+                ),
+                message="Media edit never released the interlock and refreshed page and facets.",
             )
             assert len(service.update_calls) == 1
             assert len(service.search_calls) == initial_searches + 1
@@ -20949,6 +20965,8 @@ class _TouchingNotesScopeService(StaticLibraryNotesScopeService):
                 else note
                 for note in self.notes
             )
+            if isinstance(result, dict):
+                result = {**result, "last_modified": stamp}
         return result
 
 

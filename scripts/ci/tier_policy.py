@@ -158,7 +158,7 @@ def main() -> None:
     }
     if light and kind == "push":
         # PR qualification already covers the diff; this checks the merged tree.
-        # Activation requires protected dev with PR-only updates (ADR-360).
+        # Activation requires protected dev with PR-only updates (ADR-366).
         plan = {"full": False, "targets": BASE_TESTS, "reason": "Merged dev smoke"}
     elif light:
         base = pr.get("base", {}).get("sha") if pr else event.get("before")

@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -73,6 +73,8 @@ def _popup_labels(popup) -> list[str]:
 @pytest.mark.asyncio
 async def test_slash_opens_popup_and_typing_filters():
     app = _build_test_app()
+    # Keep registry-order assertions independent of persisted command usage.
+    app.console_prompt_history_factory = lambda: _seeded_history()
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
@@ -141,6 +143,8 @@ async def test_enter_accepts_and_inserts_without_sending():
 @pytest.mark.asyncio
 async def test_down_up_navigates_and_tab_accepts():
     app = _build_test_app()
+    # These ordinal key presses start from the unranked registry order.
+    app.console_prompt_history_factory = lambda: _seeded_history()
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 

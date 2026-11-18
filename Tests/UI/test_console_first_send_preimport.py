@@ -18,6 +18,7 @@ import asyncio
 import builtins
 import contextlib
 import importlib.util
+import inspect
 import json
 import os
 import subprocess
@@ -33,7 +34,6 @@ from Tests.private_profile import private_profile_test
 pytestmark = pytest.mark.bootstrap_profile
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SNAPSHOT = REPO_ROOT / "Tests/Performance/boot_budget_snapshots/ui_ready_modules.txt"
 
 #: The live first-send record (origin/dev 4de437a5c5, 2026-10-19): the modules
 #: the send imported on the UI loop between Enter and the provider call,
@@ -139,10 +139,6 @@ import sys
 import tldw_chatbook.app as app_module
 import tldw_chatbook.UI.Screens.chat_screen  # noqa: F401  (the initial route)
 
-# Loaded by the app and its initial route: resident at UI-ready in a live app.
-resident = sorted(
-    m for m in sys.modules if m == "tldw_chatbook" or m.startswith("tldw_chatbook.")
-)
 from tldw_chatbook.MCP import server
 
 expected = json.loads(sys.argv[1])
@@ -182,7 +178,6 @@ print(
             "at_routes": at_routes,
             "after": after,
             "manifest_parses": len(parses),
-            "resident": resident,
         }
     )
 )
@@ -195,7 +190,7 @@ def _run_isolated(
     """Run ``script`` in a fresh interpreter with a scratch HOME (sys.modules is global)."""
     home, data, config_dir = (tmp_path / n for n in ("home", "data", "config"))
     for directory in (home, data, config_dir):
-        directory.mkdir(mode=0o700)
+        directory.mkdir(mode=0o700, exist_ok=True)
     env = {
         **os.environ,
         "HOME": str(home),
@@ -243,6 +238,97 @@ def pass_outcome(tmp_path_factory) -> dict:
     )
     line = next(x for x in result.stdout.splitlines() if x.startswith("PASS_JSON:"))
     return json.loads(line[len("PASS_JSON:") :])
+
+
+def _mounted_pass_outcome(tmp_path: Path, omitted: tuple[str, ...] = ()) -> dict:
+    """Measure stock startup and its completed warm pass in a fresh interpreter."""
+    from Tests.Performance.test_ui_ready_module_census import (
+        _PROBE_CONFIG_TOML,
+        install_flag_time_snapshot,
+    )
+
+    script = (
+        """
+import asyncio
+import json
+import os
+import sys
+from pathlib import Path
+
+config = Path(os.environ["XDG_CONFIG_HOME"]) / "config.toml"
+config.write_text(sys.argv[1])
+os.environ["TLDW_CONFIG_PATH"] = str(config)
+os.environ["TLDW_SCREEN_PREIMPORT"] = "0"
+FLAG_TIME_MODULES = []
+"""
+        + inspect.getsource(install_flag_time_snapshot)
+        + """
+async def main():
+    from tldw_chatbook.app import TldwCli
+
+    install_flag_time_snapshot(TldwCli, FLAG_TIME_MODULES)
+    app = TldwCli()
+    deferred = app._schedule_deferred_startup_work
+    prerequisites = None
+
+    def before_deferred():
+        nonlocal prerequisites
+        prerequisites = {
+            name: name in sys.modules for name in (
+                "tldw_chatbook.app_served", "tldw_chatbook.Guardian.settings"
+            )
+        }
+        return deferred()
+
+    app._schedule_deferred_startup_work = before_deferred
+    async with app.run_test(size=(120, 40)):
+        while not app._ui_ready:
+            await asyncio.sleep(0.005)
+        assert prerequisites and all(prerequisites.values()), prerequisites
+        if sys.argv[3] == "seed":
+            return
+        ready = sorted(
+            m for m in FLAG_TIME_MODULES
+            if m.startswith("tldw_chatbook") and sys.modules.get(m) is not None
+        )
+        from tldw_chatbook.Chat import console_first_send_modules as warm
+
+        omitted = json.loads(sys.argv[2])
+        assert set(omitted) <= set(warm.FIRST_SEND_MODULES)
+        warm.FIRST_SEND_MODULES = tuple(m for m in warm.FIRST_SEND_MODULES if m not in omitted)
+        completed = []
+        finish = app._finish_first_send_warmup
+
+        def finished():
+            result = finish()
+            completed.append(True)
+            return result
+
+        app._finish_first_send_warmup = finished
+        app._pause_between_preimports = lambda gap: None
+        await asyncio.to_thread(app._preimport_heavy_screens)
+        assert completed == [True], "production warm pass did not complete"
+        after = sorted(
+            m for m, module in sys.modules.copy().items()
+            if m.startswith("tldw_chatbook") and module is not None
+        )
+        print("STARTUP_JSON:" + json.dumps({"ready": ready, "after": after}))
+
+asyncio.run(main())
+"""
+    )
+    # As in the boot census, seed the profile first so migration-only imports
+    # cannot be mistaken for modules resident on an ordinary subsequent boot.
+    args = (_PROBE_CONFIG_TOML, json.dumps(omitted))
+    _run_isolated(tmp_path, script, *args, "seed")
+    result = _run_isolated(tmp_path, script, *args, "measure")
+    line = next(x for x in result.stdout.splitlines() if x.startswith("STARTUP_JSON:"))
+    return json.loads(line[len("STARTUP_JSON:") :])
+
+
+@pytest.fixture(scope="module")
+def startup_outcome(tmp_path_factory) -> dict:
+    return _mounted_pass_outcome(tmp_path_factory.mktemp("first_send_startup"))
 
 
 #: The pass as it runs live: the screen routes, then the warm-up, each
@@ -734,27 +820,13 @@ def test_a_failing_warm_up_ends_quietly_after_the_screen_routes(monkeypatch, bro
 
 
 def _warm_at_ui_ready(outcome: dict) -> set[str]:
-    """The ``tldw_chatbook`` modules a send's import finds already loaded.
-
-    The ADR-097 snapshot (what a live app has loaded at ``_ui_ready``, mount
-    work included) united with what importing the app and its initial route
-    loads in a fresh interpreter: the census checks the snapshot's count, not
-    its contents, so a module that became resident since its last re-pin is
-    missing from it.
-    """
-    snapshot = {
-        line for line in SNAPSHOT.read_text().splitlines() if not line.startswith("#")
-    }
-    return snapshot | set(outcome["resident"])
+    """Modules observed synchronously at the real mounted UI-ready boundary."""
+    return set(outcome["ready"])
 
 
-def _covered_by_the_warm_up() -> set[str]:
-    """``FIRST_SEND_MODULES`` and their parent packages."""
-    from tldw_chatbook.Chat.console_first_send_modules import FIRST_SEND_MODULES
-
-    return set(FIRST_SEND_MODULES) | {
-        name.rsplit(".", depth)[0] for name in FIRST_SEND_MODULES for depth in (1, 2)
-    }
+def _covered_by_the_warm_up(outcome: dict) -> set[str]:
+    """Actual post-ready residency after the real routes and warm pass finish."""
+    return set(outcome["after"]) - _warm_at_ui_ready(outcome)
 
 
 def _not_warmed(
@@ -767,8 +839,8 @@ def _not_warmed(
     }
 
 
-def test_the_send_guard_counts_a_module_resident_at_ui_ready_as_warm(pass_outcome):
-    """The guard's warm set is what a live app has loaded, not only the snapshot.
+def test_the_send_guard_counts_a_module_resident_at_ui_ready_as_warm(startup_outcome):
+    """The guard uses measured residency rather than a historical cold record.
 
     The ADR-097 census enforces the snapshot's count, not its contents, and on
     origin/dev 7700c63a68 it lacks ``pricing_display``, which the listed
@@ -777,20 +849,52 @@ def test_the_send_guard_counts_a_module_resident_at_ui_ready_as_warm(pass_outcom
     rebuild fell inside the send's frames, the harness guard below failed on
     correct code (1 run in 26, this record).
     """
-    warm = _warm_at_ui_ready(pass_outcome)
+    warm = _warm_at_ui_ready(startup_outcome)
     resident_dispatch = "tldw_chatbook.Chat.console_received_dispatch"
-    assert resident_dispatch in pass_outcome["resident"]
+    assert resident_dispatch in warm
     assert _not_warmed({resident_dispatch: "spend projection"}, warm, set()) == {}
     flake = {
         "tldw_chatbook.UI.Console_Modules.pricing_display": "pricing_snapshot_options"
     }
-    assert _not_warmed(flake, warm, _covered_by_the_warm_up()) == {}
-    # Still a guard: the send's own lazy modules are not warm at UI-ready.
+    assert _not_warmed(flake, warm, _covered_by_the_warm_up(startup_outcome)) == {}
+    # Historical send imports can become resident as startup evolves; the two
+    # deliberately lazy Library modules must still be cold at both boundaries.
     record = {
         f"tldw_chatbook.{name}": "live"
         for name in LIVE_FIRST_SEND_IMPORTS + LIVE_LIBRARY_FIRST_SEND_IMPORTS
     }
-    assert _not_warmed(record, warm, set()) == record
+    library = {
+        f"tldw_chatbook.{name}": "live" for name in LIVE_LIBRARY_FIRST_SEND_IMPORTS
+    }
+    assert _not_warmed(library, warm, set()) == library
+    assert (
+        _not_warmed(record, warm, _covered_by_the_warm_up(startup_outcome)) == library
+    )
+
+
+def test_send_guard_requires_the_reply_steps_transitive_warm_closure(
+    startup_outcome, tmp_path
+):
+    """Omitting the reply step leaves its real ordinary-turn dependencies cold."""
+    record = {
+        "tldw_chatbook.Agents.execution_capacity": "ordinary submission",
+        "tldw_chatbook.Chat.console_ordinary_tree": "ordinary submission",
+    }
+    assert _not_warmed(record, _warm_at_ui_ready(startup_outcome), set()) == record
+    assert not _not_warmed(
+        record,
+        _warm_at_ui_ready(startup_outcome),
+        _covered_by_the_warm_up(startup_outcome),
+    )
+    omitted = _mounted_pass_outcome(
+        tmp_path, ("tldw_chatbook.Chat.console_agent_reply",)
+    )
+    assert (
+        _not_warmed(
+            record, _warm_at_ui_ready(omitted), _covered_by_the_warm_up(omitted)
+        )
+        == record
+    )
 
 
 #: Frames that mark the send's own work (the acknowledgement, admission and run
@@ -927,8 +1031,8 @@ def test_cold_send_load_recorder_observes_module_scope_external_dependencies(
 
 
 @pytest.mark.asyncio
-async def test_a_harness_send_imports_nothing_lazy_beyond_the_list(pass_outcome):
-    """Every import a send runs inside a function is warm at UI-ready or listed.
+async def test_a_harness_send_imports_nothing_lazy_beyond_the_list(startup_outcome):
+    """Each function-local send import is resident after stock startup and warming.
 
     The mounted harness's send (llama.cpp, a held gateway, no agent tools)
     covers admission, hooks and the durable commit; the live record covers
@@ -936,8 +1040,8 @@ async def test_a_harness_send_imports_nothing_lazy_beyond_the_list(pass_outcome)
     send's own frames are recorded whether or not the module is already
     loaded, so the check does not depend on what earlier tests imported.
     Which UI-loop work lands inside those frames depends on timing (the
-    cost chip's rebuild sometimes does), so "warm" is everything resident at
-    UI-ready, not only the snapshot's possibly stale contents.
+    cost chip's rebuild sometimes does). Both boundaries are measured in a
+    fresh mounted app, independently of this pytest process's imports.
     """
     from Tests.UI.test_console_send_acknowledgement import (
         build,
@@ -947,8 +1051,8 @@ async def test_a_harness_send_imports_nothing_lazy_beyond_the_list(pass_outcome)
         until,
     )
 
-    ready = _warm_at_ui_ready(pass_outcome)
-    covered = _covered_by_the_warm_up()
+    ready = _warm_at_ui_ready(startup_outcome)
+    covered = _covered_by_the_warm_up(startup_outcome)
 
     host, gateway, _timeline = build()
     async with host.run_test(size=(160, 45)) as pilot:
@@ -1011,7 +1115,7 @@ class _EvidenceLibrary:
 @pytest.mark.asyncio
 @private_profile_test
 async def test_an_automatic_library_send_loads_only_the_two_library_modules_lazily(
-    pass_outcome,
+    startup_outcome,
     request,
     monkeypatch,
     tmp_path,
@@ -1043,13 +1147,18 @@ async def test_an_automatic_library_send_loads_only_the_two_library_modules_lazi
     private_root = Path(os.environ["TLDW_TEST_CONFIG_ROOT"]).resolve(strict=True)
     assert config_module.get_cli_config_path().resolve().is_relative_to(private_root)
     assert config_module.save_setting_to_cli_config("console", "agent_runtime", False)
-    ready = _warm_at_ui_ready(pass_outcome)
-    covered = _covered_by_the_warm_up()
+    ready = _warm_at_ui_ready(startup_outcome)
+    covered = _covered_by_the_warm_up(startup_outcome)
     host, gateway, _timeline = build()
     app = host.app_instance
     app.app_config.setdefault("console", {})["agent_runtime"] = False
     db = CharactersRAGDB(tmp_path / "notes.sqlite", client_id="first-send-imports")
-    request.addfinalizer(db.close_connection)
+
+    def retire_notes():
+        with db.quiesce_connections(timeout_seconds=5):
+            assert db.registered_connection_count() == 0
+
+    request.addfinalizer(retire_notes)
     app.chachanotes_db = db
     app._wire_chat_conversation_services()
     note_id = db.add_note(title="Lighthouse keeping notes", content=_EVIDENCE)
@@ -1093,16 +1202,16 @@ async def test_an_automatic_library_send_loads_only_the_two_library_modules_lazi
                 host.app_instance, "_pause_between_preimports", lambda gap: None
             )
             await asyncio.to_thread(host.app_instance._preimport_heavy_screens)
-            assert completed == [
-                True
-            ], "first-send preimport did not finish manifest prime"
-            assert (
-                warm.FIRST_SEND_MODULES[-1] in sys.modules
-            ), "last first-send module absent"
+            assert completed == [True], (
+                "first-send preimport did not finish manifest prime"
+            )
+            assert warm.FIRST_SEND_MODULES[-1] in sys.modules, (
+                "last first-send module absent"
+            )
             pair = {f"tldw_chatbook.{name}" for name in LIVE_LIBRARY_FIRST_SEND_IMPORTS}
-            assert pair.isdisjoint(
-                sys.modules
-            ), f"Library modules already resident: {pair & sys.modules.keys()}"
+            assert pair.isdisjoint(sys.modules), (
+                f"Library modules already resident: {pair & sys.modules.keys()}"
+            )
             assert {
                 "pr3339_cold_dependency_probe",
                 "pr3339_cold_dependency_probe.child",

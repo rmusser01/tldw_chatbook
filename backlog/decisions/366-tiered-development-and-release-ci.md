@@ -1,4 +1,4 @@
-# ADR-360: Tiered development and release CI
+# ADR-366: Tiered development and release CI
 
 Status: Proposed; activation requires live qualification
 Date: 2026-11-13
@@ -33,3 +33,7 @@ Keep the opt-in unset until live qualification finishes. Retain a successful hos
 ## Alternatives and limits
 
 Weekly-only regression delays attribution across many changes; nightly bounds that delay. Running the whole test tree per commit recreates the throughput problem. Automatically inferred import coverage is unsound for plugins, dynamic imports and data fixtures; use an explicit map with conservative fallback. The small initial map limits speedup until more subsystem smoke selections are measured and reviewed. Smoke success is not proof that unselected integrations work; that feedback moves to nightly. Five to ten minutes is a target, not a measured promise.
+
+## Renumbering provenance
+
+Renumbered from ADR-360 on 2026-11-18 after dev908e9840 brought in the older beautifulsoup4 decision (Date2026-10-11); this policy was drafted on 2026-11-13. The current sweep covered1090refs,393decision trees,1143distinct decision blobs and55worktrees. The highest filename/header claim was365, so366 follows the canonical highest-plus-one rule without backfilling. Policy semantics and the older merged decision remain unchanged. Evidence: /tmp/tldw-light-ci-policy-adr-reservation-sweep.json.

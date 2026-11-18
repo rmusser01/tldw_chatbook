@@ -33,6 +33,7 @@ from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from Tests.private_profile import private_profile_test
 from loguru import logger
 from textual.app import App
 from textual import events
@@ -679,7 +680,8 @@ def test_library_prompt_editor_mode_reads_profile_preference_fail_closed(
     assert screen._prompts_state.editor_mode == expected
 
 
-def test_library_prompt_forced_advanced_does_not_change_remembered_basic():
+@private_profile_test
+def test_library_prompt_forced_advanced_does_not_change_remembered_basic(request):
     app = _build_test_app()
     app.app_config.setdefault("library", {})["prompt_editor_mode"] = "basic"
     screen = LibraryScreen(app)

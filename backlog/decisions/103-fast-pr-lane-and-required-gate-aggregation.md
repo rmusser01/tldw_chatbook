@@ -7,7 +7,7 @@ Supersedes: N/A
 
 ## Proposed tier-policy amendment (2026-11-13)
 
-[ADR-360](360-tiered-development-and-release-ci.md) records the owner-requested
+[ADR-366](366-tiered-development-and-release-ci.md) records the owner-requested
 opt-in dev smoke, nightly regression and exact-candidate release policy. Existing
 requirements below remain active until that rollout qualifies and is enabled.
 

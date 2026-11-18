@@ -1998,7 +1998,7 @@ jobs:
 
   library-shell-dev:
     needs: [preflight]
-    # ADR-360: once tiered CI is enabled this runs nightly, not after every merge.
+    # ADR-366: once tiered CI is enabled this runs nightly, not after every merge.
     # The historical rationale and exact test census below remain unchanged.
     # TASK-39153 (owner decision 2026-11-10, "Push-to-dev job only"):
     # Tests/UI/test_library_shell.py runs whole, split by node, on every push
