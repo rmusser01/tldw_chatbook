@@ -995,7 +995,8 @@ class ConsolePromptQueueUIController:
             stamp_queue_user_origin,
         )
 
-        # The capture registers this exact copy; the queued seal accepts only it.
+        # The stamp registers this exact copy in the capture's witness; the
+        # queued seal accepts only it.
         return stamp_queue_user_origin(
             configuration, runtime.issue_user_proof(session_id)
         )

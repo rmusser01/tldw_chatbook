@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import threading
 from dataclasses import replace
-from types import SimpleNamespace
+from functools import partial
+from types import MethodType, SimpleNamespace
 
 import pytest
 
@@ -658,3 +659,129 @@ async def test_unbound_mcp_store_is_no_mcp_source_on_the_runtime_route(
     assert dict(result.mcp_definition_maximum) == {}
     assert result.mcp_definition_sources == ()
     assert result.mcp_definition_complete is True
+
+
+# --- TASK-41644 review: bound-method checks without __func__ identity ---
+
+
+class _AlwaysEqual:
+    """A callable that claims to equal every function (an impostor)."""
+
+    def __eq__(self, other):
+        return True
+
+    def __call__(self, *args, **kwargs):
+        raise AssertionError("the impostor must never run")
+
+
+class _ImpostorSlot:
+    """A class-level replacement that binds the impostor on every read."""
+
+    def __get__(self, instance, owner):
+        return MethodType(_AlwaysEqual(), instance)
+
+
+class _MountedOwner:
+    def _build_console_turn_execution_context(self, session_id):
+        raise AssertionError("not called by the capture under test")
+
+    def _build_console_turn_capture_selection(self, session_id, *, scratch_owner):
+        return SimpleNamespace(rag_defaults=None)
+
+
+class _MountedScreen:
+    def _console_runtime(self):
+        raise AssertionError("not called by the capture under test")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "attack",
+    [
+        "none",
+        "instance_builder",
+        "instance_selector",
+        "instance_runtime",
+        "class_builder",
+        "class_runtime",
+    ],
+)
+async def test_mounted_capture_refuses_an_always_equal_bound_impostor(
+    monkeypatch, attack
+):
+    """``==`` lets the function answer for itself, so it cannot decide alone."""
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+    from tldw_chatbook.Chat import console_configuration_preparation as prep
+    from tldw_chatbook.UI.Console_Modules import turn_admission
+
+    owner, screen, app = _MountedOwner(), _MountedScreen(), SimpleNamespace()
+    owner._scratch_snapshot_provider = partial(lambda screen, session_id: None, screen)
+    screen._session, screen.app_instance = owner, app
+    controller = SimpleNamespace(app=app, store=SimpleNamespace(), _scratch_spaces=object())
+    monkeypatch.setattr(prep, "standard_console_configuration_sources", lambda *a, **k: True)
+    monkeypatch.setattr(
+        turn_admission,
+        "stock_mounted_capture",
+        lambda owner: (owner._build_console_turn_capture_selection, lambda adapter: True),
+    )
+    monkeypatch.setattr(turn_admission, "policy_producers_current", lambda: True)
+    holder, name = {
+        "instance_builder": (owner, "_build_console_turn_execution_context"),
+        "instance_selector": (owner, "_build_console_turn_capture_selection"),
+        "instance_runtime": (screen, "_console_runtime"),
+        "class_builder": (_MountedOwner, "_build_console_turn_execution_context"),
+        "class_runtime": (_MountedScreen, "_console_runtime"),
+    }.get(attack, (None, None))
+
+    async def capture(controller, session_id, *, require_current, **_):
+        require_current()  # the stock seam is current
+        if holder is owner or holder is screen:
+            setattr(holder, name, MethodType(_AlwaysEqual(), holder))
+        elif holder is not None:
+            monkeypatch.setattr(holder, name, _ImpostorSlot())
+        require_current()
+        return "captured"
+
+    monkeypatch.setattr(prep, "capture_runtime_configuration_owned", capture)
+    captured = prep.capture_mounted_configuration_owned(
+        controller,
+        "session",
+        owner,
+        owner._build_console_turn_execution_context,
+        require_current=lambda: None,
+    )
+    if attack == "none":
+        assert await captured == "captured"
+    else:
+        with pytest.raises(RecoveryRequired, match="console_snapshot_owner_changed"):
+            await captured
+
+
+def test_composition_mcp_capture_refuses_a_rebound_checker(monkeypatch):
+    """The registered checker decides; a different module binding is refused.
+
+    Rebinding the registration tuple and the module attribute together is
+    accepted, as is an in-place ``__code__`` swap: ADR-356 rule 4 takes the
+    registration and current state, not code identity (TASK-41644).
+    """
+    from tldw_chatbook.Agents import mcp_tool_provider as provider_source
+    from tldw_chatbook.Chat import console_chat_controller as controller_source
+    from tldw_chatbook.Chat import console_configuration_preparation as prep
+    from tldw_chatbook.MCP import console_snapshot
+
+    def registered(controller):
+        return True
+
+    monkeypatch.setattr(controller_source, "_stock_console_tool_composition_current", registered)
+    monkeypatch.setattr(controller_source, "_CONSOLE_TOOL_COMPOSITION_CHECKER", (registered,))
+    monkeypatch.setattr(provider_source, "controller_factory_current", lambda factory: True)
+    monkeypatch.setattr(provider_source, "console_preparation_pipeline_current", lambda source: True)
+    monkeypatch.setattr(console_snapshot, "standard_console_catalog_sources", lambda service: True)
+    creator = controller_source.ConsoleChatController.__new__(
+        controller_source.ConsoleChatController
+    )
+    assert prep._composition_mcp_capture_current(creator, object())
+    monkeypatch.setattr(
+        controller_source, "_stock_console_tool_composition_current", lambda controller: True
+    )
+    assert not prep._composition_mcp_capture_current(creator, object())
