@@ -980,6 +980,15 @@ class ConsoleFleetWakeCoordinator:
                 self._pending[authorization.conversation_id] = bucket
         return True
 
+    def _back_off(self, conversation_id):
+        """Retry a delivery that failed before choosing a chain, after the delay.
+
+        A ``_pause`` with no chain wrote nothing durable, blocked nothing and
+        cleared this retry deadline, so the delivery's ``retry_soon`` ran it
+        again at once: 5,239 deliveries in 22 s (review r16co-rev1).
+        """
+        self._retry_after[conversation_id] = time.monotonic() + self.RETRY_DELAY_SECONDS
+
     async def _pause(self, conversation_id, chain_id, reason, *, review=False):
         # The loaded owner only: the lazy ``code_review`` property would build
         # (and import) the review stack on ordinary wake paths.
@@ -1133,9 +1142,7 @@ class ConsoleFleetWakeCoordinator:
             # could build the skill trust a cold Console lacks (TASK-41507).
             await publish_cold_skill_trust(self._controller.app)
             if ledger is None:
-                await self._pause(
-                    conversation_id, None, "history_unavailable", review=True
-                )
+                self._back_off(conversation_id)
                 return
             with self._registry_lock:
                 bucket = dict(self._pending.get(conversation_id) or {})
@@ -1343,7 +1350,9 @@ class ConsoleFleetWakeCoordinator:
             logger.warning(
                 "wake delivery failed (exception_type={})", type(exc).__name__
             )
-            if authorization is None or not authorization.preflight_refused:
+            if authorization is None and chain_id is None:
+                self._back_off(conversation_id)  # nothing claimed or chosen
+            elif authorization is None or not authorization.preflight_refused:
                 await self._pause(
                     conversation_id, chain_id, "interrupted_work", review=True
                 )

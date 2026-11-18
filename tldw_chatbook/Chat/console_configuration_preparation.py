@@ -166,8 +166,10 @@ async def publish_cold_skill_trust(app: Any) -> None:
         return
     except RecoveryRequired:
         pass
-    if scope is not None:  # the gate mount discovery keeps ahead of this build
-        scope._enforce_policy("skills.context.list.local")
+    # No skills.context.list.local gate here: a server runtime source denies
+    # it, yet capture reads local records without it (_visible_records) and
+    # the composer's preparation builds this service without it. Gating here
+    # refused cold sends that work (r16co-rev1).
     service = await app.ensure_local_skill_trust_service()
     # Keep one another owner installed meanwhile, as Console preparation does.
     if vars(local).get("_trust_service") is None:
