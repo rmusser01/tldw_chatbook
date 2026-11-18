@@ -32,8 +32,10 @@ its 30 s deadline expiry was misread as app latency.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -84,6 +86,25 @@ _SETTLE_INTERVAL = 0.05
 #: the budget. A count, not a clock: the loop is many per second on any CPU.
 IDLE_WINDOW_SECONDS = 1.0
 IDLE_CONSOLE_SYNC_LIMIT = 1
+_PROBE_PHASES = []
+
+
+def _probe_stamp():
+    return time.monotonic(), time.process_time(), time.thread_time()
+
+
+def _probe_phase(phase, expected, stamp, pilot):
+    now = _probe_stamp()
+    _PROBE_PHASES.append(
+        {
+            "phase": phase,
+            "expected": expected,
+            "screen": type(pilot.app.screen).__name__,
+            "wall": round(now[0] - stamp[0], 4),
+            "process_cpu": round(now[1] - stamp[1], 4),
+            "loop_thread_cpu": round(now[2] - stamp[2], 4),
+        }
+    )
 
 
 def _scratch_env(monkeypatch: pytest.MonkeyPatch) -> Path:
@@ -112,13 +133,19 @@ async def _wait_for_screen(pilot, expected: str, budget: float) -> tuple[bool, f
     """Press-and-wait helper; returns (arrived, elapsed_seconds)."""
     deadline = asyncio.get_running_loop().time() + budget
     while asyncio.get_running_loop().time() < deadline:
+        stamp = _probe_stamp()
         await pilot.pause()
+        _probe_phase("arrival_pause", expected, stamp, pilot)
         if type(pilot.app.screen).__name__ == expected:
             break
     arrived = type(pilot.app.screen).__name__ == expected
-    for _ in range(_SETTLE_PASSES):
+    for index in range(_SETTLE_PASSES):
+        stamp = _probe_stamp()
         await asyncio.sleep(_SETTLE_INTERVAL)
+        _probe_phase(f"settle_sleep_{index}", expected, stamp, pilot)
+        stamp = _probe_stamp()
         await pilot.pause()
+        _probe_phase(f"settle_pause_{index}", expected, stamp, pilot)
     return arrived, budget - (deadline - asyncio.get_running_loop().time())
 
 
@@ -161,24 +188,34 @@ async def test_destination_tour_stays_under_switch_budgets(
 
         monkeypatch.setattr(chat_screen, "_sync_native_console_chat_ui", counted)
         failures: list[str] = []
+        tour_phases = []
         for key, expected in DESTINATION_TOUR:
+            _PROBE_PHASES.clear()
             t0 = asyncio.get_running_loop().time()
+            stamp = _probe_stamp()
             await pilot.press(key)
+            _probe_phase("press", expected, stamp, pilot)
             arrived, _ = await _wait_for_screen(
                 pilot, expected, SCREEN_SWITCH_BUDGET_SECONDS
             )
             elapsed = asyncio.get_running_loop().time() - t0
+            tour_phases.extend(_PROBE_PHASES)
             if not arrived:
                 failures.append(
                     f"{key} -> {expected}: NEVER ARRIVED "
-                    f"(stuck on {type(pilot.app.screen).__name__})"
+                    f"(stuck on {type(pilot.app.screen).__name__})\n"
+                    + json.dumps(_PROBE_PHASES)
                 )
             elif elapsed > SCREEN_SWITCH_BUDGET_SECONDS:
-                failures.append(f"{key} -> {expected}: {elapsed:.1f}s > budget")
+                failures.append(
+                    f"{key} -> {expected}: {elapsed:.1f}s > budget\n"
+                    + json.dumps(_PROBE_PHASES)
+                )
             if arrived and expected == "ChatScreen":
                 await check_idle("Console")
 
         await check_idle("app after the tour")
+        (REPO_ROOT / "latency-phases.json").write_text(json.dumps(tour_phases))
         assert not failures, "Screen-switch latency guardrail tripped:\n" + "\n".join(
             failures
         )

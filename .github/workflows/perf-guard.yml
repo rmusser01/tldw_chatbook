@@ -140,6 +140,14 @@ jobs:
             Tests/Utils/test_ui_responsiveness_stall_persist.py \
             -v --timeout=300
 
+      - name: Retain diagnostic latency phase metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: latency-phase-metrics
+          path: latency-phases.json
+          retention-days: 7
+
       # TASK-33620.15.3 (2026-10-20): ADR-198's GC policy and its idle heap
       # re-freeze. The leak-bound tests (the real collector and real Textual
       # widgets, each with a negative control) ran only in the full-tree runs,
