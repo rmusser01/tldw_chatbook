@@ -1,6 +1,6 @@
 {
   "qualifying": false,
-  "observer_sha256": "1acd0faff36828e2ed4da21d7d6487a0b8809bd6f8b6947514f9dbacd36046a0",
+  "observer_sha256": "c7ae39c937ecda1cb5e0f48ffa5fdd587d9c1b234d4a98b54c9fd2028d278895",
   "sources": {
     "tldw_chatbook/Chat/console_execution_worker.py": "0ad665a4993d9a894ded98502169a6cf8bde1cefd3bb4e3ff6a3322ef7498297",
     "tldw_chatbook/Chat/console_execution_retirement.py": "e51ebdcafe3af0c79541f5f5a34139dfc0c4a6b8ec58bcc283e2be1d659caa35"
@@ -18,6 +18,14 @@
     "tldw_chatbook/Chat/console_domain_display.py": "95091ba53a1d552bc9e02cb0c3bf3a71b9d9a8fbf2edb664c4adccf20c6492d7",
     "tldw_chatbook/Chat/console_backend_view_lifecycle.py": "a3b27a9d2e1300bd969e02cccd00d12aada5a3355557f713c73e76301d0645a9",
     "tldw_chatbook/Chat/console_backend_send_capture.py": "a2ae85d1d7139c0a38879390229a5f9631730c24aae891bb2096355dd4e7cf5e",
-    "tldw_chatbook/Chat/console_runtime.py": "6a47a5be6ac583305c4f912179dbbfb18e95dc25e7bf64d8e51cd18c1246b6b6"
+    "tldw_chatbook/Chat/console_runtime.py": "6a47a5be6ac583305c4f912179dbbfb18e95dc25e7bf64d8e51cd18c1246b6b6",
+    "tldw_chatbook/Chat/console_configuration_preparation.py": "a8daadf6822d96eefd9d6a09b06ce95cf3d54fab744e14826140a6ab0196f874",
+    "tldw_chatbook/Chat/console_received_dispatch.py": "d6ddb5714f19cca48eadf9595c3a2ca74233af287d2fa200b204040ff639aff2",
+    "tldw_chatbook/Chat/console_library_preparation.py": "a36ab6ca93121bb281a6f810906e6717bf457554283afce5b9a29bb40d0b0fd9",
+    "tldw_chatbook/Chat/library_preparation.py": "2a109803aca537c0de9e11b430686f302fe5ab57278370c209d974d1fca5799e",
+    "tldw_chatbook/Chat/console_prompt_mixins.py": "d4a698ab0e878b184dcdafe6b25e83284b348210fc6424be2a70a14dc2fc2f05",
+    "tldw_chatbook/Chat/console_hook_preparation.py": "1804154a83ebf05e2eb59dbe28276f6d1ad785b0b77a5fdca78b43c5ab43c602",
+    "tldw_chatbook/MCP/console_snapshot.py": "3a43c7aaa2188e28cd64a3f36c4b8fc8a8c11f933acdd90d0113bf79e0e1f9da",
+    "tldw_chatbook/Backup_Recovery/runtime_producer_lifetime.py": "782938cb6fe186525d31688bba32204a3af8df133d2bfc3faf1252d96798034c"
   }
 }

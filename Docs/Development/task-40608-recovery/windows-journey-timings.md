@@ -16,6 +16,16 @@ This diagnostic began after the separate `qa1c3` Send had already failed.
 That fixture was still polling during `g57s`. Neither failed edit supplies
 a qualifying time.
 
+On the same frozen product, `g58r` recorded the failing resource inside
+the final configuration read. The original callback and worker had both
+finished. Of two enrolled SQLite connections, the last was still open when
+the original retirement check ran. The edit received its Applied acknowledgement
+and its terminal failure, with `Retired=false`. This identifies the callback
+on `g58r`; read ordinals vary across runs. The process exited with code 1 and
+the guard did not certify shutdown. The original `qa1c3` and `g57s` waits
+were still polling during this separate diagnostic. The retirement receipt
+has SHA-256 `3e86ea5b5d702c5bc5d57685f5c7ef12a104c52725fb791d8a09cc0f48d979e2`.
+
 The latest completed candidate in batch `qa`, `qa1c2` on frozen `e4fa0ea67d`, provides these raw intervals on the original Send clock. Each arrow subtracts its two adjacent recorded timestamps; intervals containing approvals include those waits. The application-time gate uses the fixture’s separately recorded disclosure and approval waits. Exact `fs_edit` invocation and approval stages from the instrumented run are [below](#completed-instrumented-windows-journeys-g47d).
 
 ```mermaid

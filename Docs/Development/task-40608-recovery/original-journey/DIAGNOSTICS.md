@@ -245,3 +245,14 @@ identities against the frozen product and selected dependency sources at
 shutdown. The source-only kit includes the reviewed parent and child installer,
 the analyzer, and offline controls for thread attribution, source drift and
 incomplete results. [Stack sampler kit](windows-stack-sampling.zip) · [SHA-256](windows-stack-sampling.sha256)
+
+The `g58r` diagnostic adds a checkpoint after the original README verification.
+Both sampler processes validate their own code locations and clocks before
+writing. A separate observer records which original retirement predicate
+refused and the resource counts from that read. The observer uses the existing
+check results and retained objects. In this disposable diagnostic, the polling
+coroutine can fail promptly if the same accepted Send has already received an
+authenticated terminal failure and negative retirement. The original paired
+runner retains its normal wait. The g58 manifest SHA-256 is
+`1ad7aac74ec1724675fffbba074c21d55462d39dda88370b3a7792ac71124e28`.
+[Checkpoint and failure-wait sources](windows-stack-checkpoint-5a8b73.zip) · [SHA-256](windows-stack-checkpoint-5a8b73.sha256) · [Retirement observer and controls](retirement-failure/)
