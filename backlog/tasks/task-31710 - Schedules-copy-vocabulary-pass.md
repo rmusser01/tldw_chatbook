@@ -75,4 +75,7 @@ AC#3 sweep scope gap: the original pass scoped the `--`->em-dash sweep to `.py` 
 Docs/User_Guide/schedules.md was stale for AC#1/AC#2 (title, intro sentence, and the Create chooser's "Reminder…" button copy) -- CLAUDE.md requires the matching User_Guide page be updated alongside a screen's UI copy change. Updated the three stale strings and added a dated "Copy synced with code" note.
 
 Modified (this round): tldw_chatbook/Scheduling/services/scheduling_service.py, Docs/User_Guide/schedules.md.
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/schedules.md`: Text-parity fix only, not independently re-verified live in the TUI.
 <!-- SECTION:NOTES:END -->

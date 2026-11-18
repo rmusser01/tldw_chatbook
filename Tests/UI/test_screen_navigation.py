@@ -640,29 +640,39 @@ async def test_screen_navigation_always_constructs_fresh_instances(monkeypatch):
     swallowed every subsequent click -- a permanent, exception-free freeze.
     Every navigation must therefore construct a FRESH screen instance; this
     test fails if instance reuse ever returns.
+
+    The one sanctioned reuse is an INSTALLED instance of a route flagged
+    ``ScreenRoute.reusable`` (5eca00a482, TASK-24452), which is suspended,
+    never unmounted, so the race above cannot start; Library (7992124e8d,
+    TASK-31521) and Console (fed0b7257a, TASK-31520) opted in, so this lock
+    now drives two routes that did not (Settings and Logs).
     """
+    from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_route
+
+    assert not resolve_screen_route("settings").reusable
+    assert not resolve_screen_route("logs").reusable
     app = _build_test_app()
-    constructed = {"chat": 0, "library": 0}
+    constructed = {"settings": 0, "logs": 0}
 
-    class FakeChatScreen:
-        screen_name = "chat"
-
-        def __init__(self, app_instance):
-            self.app_instance = app_instance
-            constructed["chat"] += 1
-
-    class FakeLibraryScreen:
-        screen_name = "library"
+    class FakeSettingsScreen:
+        screen_name = "settings"
 
         def __init__(self, app_instance):
             self.app_instance = app_instance
-            constructed["library"] += 1
+            constructed["settings"] += 1
+
+    class FakeLogsScreen:
+        screen_name = "logs"
+
+        def __init__(self, app_instance):
+            self.app_instance = app_instance
+            constructed["logs"] += 1
 
     def fake_resolve(target):
-        if target == "chat":
-            return "chat", "chat", FakeChatScreen
-        if target == "library":
-            return "library", "library", FakeLibraryScreen
+        if target == "settings":
+            return "settings", "settings", FakeSettingsScreen
+        if target == "logs":
+            return "logs", "logs", FakeLogsScreen
         return target, target, None
 
     switched_screens = []
@@ -679,11 +689,11 @@ async def test_screen_navigation_always_constructs_fresh_instances(monkeypatch):
         # startup complete so the pre-initial-screen guard lets them through.
         app._initial_screen_pushed = True
 
-        await app.handle_screen_navigation(NavigateToScreen("chat"))
-        await app.handle_screen_navigation(NavigateToScreen("library"))
-        await app.handle_screen_navigation(NavigateToScreen("chat"))
+        await app.handle_screen_navigation(NavigateToScreen("settings"))
+        await app.handle_screen_navigation(NavigateToScreen("logs"))
+        await app.handle_screen_navigation(NavigateToScreen("settings"))
 
-    assert constructed == {"chat": 2, "library": 1}
+    assert constructed == {"settings": 2, "logs": 1}
     assert switched_screens[0] is not switched_screens[2]
 
 
@@ -1293,10 +1303,7 @@ async def test_rapid_tab_switch_storm_leaves_no_zombie_widgets():
         # Wait for the app's own initial navigation screen before storming --
         # in production the nav bar only exists once that screen is mounted,
         # so a pre-boot NavigateToScreen is unreachable by real input.
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ != "Screen":
-                break
+        await _settle(pilot, lambda: type(app.screen).__name__ != "Screen")
         assert type(app.screen).__name__ != "Screen", (
             "app never mounted its initial screen"
         )
@@ -1340,10 +1347,7 @@ async def test_rapid_tab_switch_storm_leaves_no_zombie_widgets():
         assert not zombies, f"zombie widgets on active screen: {zombies[:5]}"
         # One more hop for responsiveness.
         app.post_message(NavigateToScreen("home"))
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "HomeScreen":
-                break
+        await _settle(pilot, lambda: type(app.screen).__name__ == "HomeScreen")
         assert type(app.screen).__name__ == "HomeScreen"
         assert app.screen.is_running
 
@@ -1432,10 +1436,7 @@ async def test_overlapping_navigate_requests_complete_in_fifo_order() -> None:
         patch.object(type(app), "_complete_screen_navigation", _delayed_complete),
     ):
         async with app.run_test(size=(160, 40)) as pilot:
-            for _ in range(150):
-                await pilot.pause(0.02)
-                if type(app.screen).__name__ != "Screen":
-                    break
+            await _settle(pilot, lambda: type(app.screen).__name__ != "Screen")
             assert type(app.screen).__name__ != "Screen", (
                 "app never mounted its initial screen"
             )
@@ -1467,11 +1468,13 @@ async def test_overlapping_navigate_requests_complete_in_fifo_order() -> None:
             # differs run to run and isn't itself the property under
             # test. The FIFO check below, on `mounted_order`, is.
             this_tests_targets = {"home", "library", "workflows"}
-            for _ in range(150):
-                await pilot.pause(0.02)
-                seen = {name for name in mounted_order if name in this_tests_targets}
-                if len(seen) >= 3:
-                    break
+            await _settle(
+                pilot,
+                lambda: len(
+                    {name for name in mounted_order if name in this_tests_targets}
+                )
+                >= 3,
+            )
 
     # `mounted_order` can also carry the app's own cold-start noise (its
     # delayed initial-tab switch to "chat"; see above) and
@@ -1925,6 +1928,28 @@ async def test_file_notes_mutation_admitted_during_flush_vetoes_navigation(
     mutation.release()
 
 
+class _FilesLeaveSeamsIdle:
+    """The Files leave seams these probes reach with nothing open.
+
+    7cf89de6c0 (2026-08-29) made the Files exits cancel a visible path task
+    first (``cancel_path_task``) and evacuate focus from the workspace only
+    while it is attached (``is_attached``); 579135667a (2026-09-08,
+    task-32055) made ``_flush_active_file_notes`` abandon an in-flight
+    structural wait (``cancel_structural_wait``) and 203f4dc633 (2026-09-10,
+    task-32102) passed ``leaving=True``. An unmounted
+    ``LibraryFileNotesWorkspace`` with neither open is unattached and returns
+    False from both cancels, so the exit goes on.
+    """
+
+    is_attached = False
+
+    def cancel_path_task(self):
+        return False
+
+    def cancel_structural_wait(self, *, leaving=False):
+        return False
+
+
 @pytest.mark.asyncio
 async def test_file_notes_source_transition_blocks_mutation_through_recompose(
     monkeypatch,
@@ -1938,7 +1963,7 @@ async def test_file_notes_source_transition_blocks_mutation_through_recompose(
     owner = app.file_notes_session_owner
     binding = owner.select_root(tmp_path / "notes")
 
-    class WorkspaceProbe:
+    class WorkspaceProbe(_FilesLeaveSeamsIdle):
         async def flush_pending_work(self):
             return not owner.mutation_active(binding)
 
@@ -1990,7 +2015,7 @@ async def test_file_notes_create_route_returns_to_database_notes(monkeypatch):
     app = _build_test_app()
     transition_events = []
 
-    class WorkspaceProbe:
+    class WorkspaceProbe(_FilesLeaveSeamsIdle):
         async def flush_pending_work(self):
             transition_events.append("flushed")
             return True
@@ -2030,19 +2055,15 @@ async def test_file_notes_collections_source_transition_blocks_mutation_through_
         NoteFlushOutcome,
         NoteFlushOutcomeKind,
     )
-    from tldw_chatbook.UI.Screens.library_screen import (
-        LibraryEntryReconcileResult,
-        LibraryScreen,
-    )
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
     app = _build_test_app()
     owner = app.file_notes_session_owner
     binding = owner.select_root(tmp_path / "notes")
-    sync_returned = asyncio.Event()
     reconcile_started = asyncio.Event()
     finish_reconcile = asyncio.Event()
 
-    class WorkspaceProbe:
+    class WorkspaceProbe(_FilesLeaveSeamsIdle):
         async def flush_pending_work(self):
             return not owner.mutation_active(binding)
 
@@ -2055,19 +2076,25 @@ async def test_file_notes_collections_source_transition_blocks_mutation_through_
     screen._notes_state.file_notes_workspace = workspace
     screen._notes_state.source = "files"
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
-    screen._library_collections_loaded = False
 
-    async def sync_collections_panel(*, refresh_snapshot, wait_for_recompose):
-        assert refresh_snapshot is True
-        assert wait_for_recompose is True
-        screen._library_collections_loaded = True
-        sync_returned.set()
+    # 5dd1077df6 (2026-09-01) retired the generic Collections panel and its
+    # ``_sync_collections_panel`` snapshot reconcile. A Collections rail
+    # switch now awaits the destination canvas reconcile itself (on this
+    # unmounted screen, the whole-screen ``recompose`` fallback) and only
+    # then starts the capture-entry load as a worker.
+    async def reconcile_canvas():
         reconcile_started.set()
         admission = owner.admit_mutation(binding)
         assert admission.lease is None
         assert admission.reason == "transition_active"
         await finish_reconcile.wait()
-        return LibraryEntryReconcileResult.APPLIED
+
+    capture_loads = []
+
+    def run_worker(work, **kwargs):
+        # Close the captured coroutine so it never warns as never-awaited.
+        work.close()
+        capture_loads.append(kwargs.get("group"))
 
     async def flush_note():
         # task-3316: this stub MUST honour ``_flush_library_note_save``'s
@@ -2080,11 +2107,8 @@ async def test_file_notes_collections_source_transition_blocks_mutation_through_
     async def flush_editor():
         return True
 
-    monkeypatch.setattr(
-        screen,
-        "_sync_collections_panel",
-        sync_collections_panel,
-    )
+    monkeypatch.setattr(screen, "recompose", reconcile_canvas)
+    monkeypatch.setattr(screen, "run_worker", run_worker)
     monkeypatch.setattr(screen, "refresh", lambda *, recompose: None)
     monkeypatch.setattr(screen, "_flush_library_note_save", flush_note)
     monkeypatch.setattr(screen, "_flush_library_prompt_save", flush_editor)
@@ -2094,20 +2118,20 @@ async def test_file_notes_collections_source_transition_blocks_mutation_through_
         screen._select_library_rail_row(LIBRARY_ROW_BROWSE_COLLECTIONS)
     )
     await _wait_for_background_signal(
-        sync_returned, source_switch, what="the Collections snapshot refresh"
-    )
-    await _wait_for_background_signal(
-        reconcile_started, source_switch, what="the Collections targeted reconcile"
+        reconcile_started, source_switch, what="the Collections canvas reconcile"
     )
 
     assert reconcile_started.is_set()
     assert not source_switch.done()
+    assert capture_loads == []
     admission = owner.admit_mutation(binding)
     assert admission.lease is None
     assert admission.reason == "transition_active"
 
     finish_reconcile.set()
     await _await_background_task(source_switch, what="the Collections source switch")
+    assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
+    assert capture_loads == ["library_collections_capture_entry"]
     after_recompose = owner.try_acquire_mutation(binding)
     assert after_recompose is not None
     after_recompose.release()
@@ -2128,7 +2152,7 @@ async def test_file_notes_mutation_admitted_during_source_flush_vetoes_switch(
     flush_started = asyncio.Event()
     finish_flush = asyncio.Event()
 
-    class WorkspaceProbe:
+    class WorkspaceProbe(_FilesLeaveSeamsIdle):
         async def flush_pending_work(self):
             flush_started.set()
             await finish_flush.wait()
@@ -2221,7 +2245,7 @@ async def test_action_library_notes_files_back_returns_to_database(
     owner = app.file_notes_session_owner
     binding = owner.select_root(tmp_path / "notes")
 
-    class WorkspaceProbe:
+    class WorkspaceProbe(_FilesLeaveSeamsIdle):
         async def flush_pending_work(self):
             return not owner.mutation_active(binding)
 
@@ -2286,7 +2310,7 @@ async def test_action_library_notes_files_back_cancels_open_reload_confirmation_
     confirmation_open = True
     cancel_returns = []
 
-    class WorkspaceProbe:
+    class WorkspaceProbe(_FilesLeaveSeamsIdle):
         async def flush_pending_work(self):
             assert not confirmation_open, (
                 "back-mid-confirmation must cancel the pending reload "
@@ -2414,8 +2438,16 @@ def test_files_back_navigation_workspace_contract_matches_real_workspace():
         "flush_pending_work",
         "acquire_transition",
         "cancel_reload_confirmation",
+        # 7cf89de6c0 / 579135667a / 203f4dc633: see ``_FilesLeaveSeamsIdle``.
+        "cancel_path_task",
+        "cancel_structural_wait",
     }
-    assert called == probe_contract, (
+    # 7cf89de6c0: once the Database shell is mounted, the retained return
+    # hides the workspace widget (``workspace.display = False``). No probe
+    # reaches it (these screens are unmounted, so that query fails and the
+    # return recomposes instead), and every Widget has ``display``.
+    widget_writes = {"display"}
+    assert called == probe_contract | widget_writes, (
         "the Files-mode back-navigation seams now touch a different "
         f"workspace contract ({sorted(called)}) than the pinned probe "
         f"contract ({sorted(probe_contract)}) -- update every "
@@ -2441,6 +2473,10 @@ def test_files_back_navigation_workspace_contract_matches_real_workspace():
     assert not inspect.iscoroutinefunction(LibraryFileNotesWorkspace.acquire_transition)
     assert not inspect.iscoroutinefunction(
         LibraryFileNotesWorkspace.cancel_reload_confirmation
+    )
+    assert not inspect.iscoroutinefunction(LibraryFileNotesWorkspace.cancel_path_task)
+    assert not inspect.iscoroutinefunction(
+        LibraryFileNotesWorkspace.cancel_structural_wait
     )
     assert isinstance(
         inspect.getattr_static(LibraryFileNotesWorkspace, "reload_confirmation_active"),
@@ -2898,16 +2934,19 @@ def test_library_screen_bindings_are_all_gated_or_universal():
     actions legitimately apply -- each one must either be gated (``check_
     action`` returns ``False``) or be explicitly declared universal below
     (works identically on every surface, so ``True`` would be correct
-    even on the landing). Nothing is declared universal today; the
-    allowlist exists so a genuinely screen-wide binding could be added
-    later without failing this test for the right reason.
+    even on the landing) or declared landing-active below (deliberately
+    widened to the landing, as ctrl+n was). Every mismatch is reported at
+    once, so one stale gate cannot hide another behind it (TASK-41127
+    review r15lt-rev1).
     """
     from textual.binding import Binding
 
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
     # Shift+F6 is the one screen-wide Binding: the shared pane-focus helper
-    # resolves only visible targets and safely no-ops when none exist.  "/"
+    # resolves only visible targets and safely no-ops when none exist.
+    # TASK-41303 removed the landing gate that merge resolution a62d92f590
+    # had put on it (owner ruling: Shift+F6 works wherever F6 does).  "/"
     # (focus search) is also screen-wide but is not a Binding (see
     # ``LibraryScreen.on_key``), so it never appears in this audit. Neither
     # does F6 (next pane): it stays the app-global binding (ADR-299; pinned
@@ -2925,6 +2964,11 @@ def test_library_screen_bindings_are_all_gated_or_universal():
     universal_actions = frozenset(
         {"focus_previous_workbench_pane", "focus_next", "focus_previous"}
     )
+    # d00812ac44 (2026-09-09, task-32138): ctrl+n (New note) works on the
+    # landing too -- ``check_action("library_notes_new")`` passes with no row
+    # selected, on purpose -- so it reaches F1 there; it is not universal (it
+    # stays gated on the other non-Notes canvases).
+    landing_actions = frozenset({"library_notes_new"})
 
     app = _build_test_app()
     screen = LibraryScreen(app)
@@ -2938,19 +2982,66 @@ def test_library_screen_bindings_are_all_gated_or_universal():
 
     assert actions, "BINDINGS must not be empty for this audit to mean anything"
 
+    mismatches = []
     for action in sorted(actions):
         result = screen.check_action(action, ())
-        if action in universal_actions:
-            assert result is True, (
-                f"{action!r} is declared universal but check_action "
-                f"returned {result!r} on the landing."
-            )
-        else:
-            assert result is False, (
+        if action in universal_actions | landing_actions:
+            if result is not True:
+                mismatches.append(
+                    f"{action!r} is declared active on the landing but "
+                    f"check_action returned {result!r} there."
+                )
+        elif result is not False:
+            mismatches.append(
                 f"{action!r} has no check_action gate (or its gate passes "
                 "on the bare landing) -- it will leak into F1's help "
                 "panel on every Library surface (LIB-09 contamination)."
             )
+    assert not mismatches, "\n".join(mismatches)
+
+
+@pytest.mark.asyncio
+async def test_shift_f6_walks_the_landing_panes_back_the_way_f6_came():
+    """TASK-41303: Shift+F6 on the bare landing undoes F6.
+
+    ``check_action`` used to keep Shift+F6 off whenever no rail row was
+    selected (merge resolution a62d92f590), so on the landing the key did
+    nothing while F6 cycled the panes. Pressed for real: the gate lives in
+    ``check_action``, which a direct action call would skip. F6 is the
+    app-global binding, which the harness lacks, so it is driven through
+    the screen action it delegates to.
+    """
+    from Tests.UI.test_library_shell import (
+        LIBRARY_TEST_SIZE,
+        LibraryHarness,
+        _active_library_screen,
+        _wait_for_condition,
+        _wait_for_library_shell,
+    )
+
+    host = LibraryHarness(_build_test_app())
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        assert screen._library_selected_row_id == ""
+
+        screen.action_focus_next_workbench_pane()
+        await pilot.pause()
+        first = screen.focused
+        screen.action_focus_next_workbench_pane()
+        await pilot.pause()
+        second = screen.focused
+        assert first is not None and second is not None
+        assert second is not first, "the landing offers fewer than two panes"
+
+        await pilot.press("shift+f6")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.focused is first,
+            message=lambda: (
+                f"Shift+F6 left focus on {screen.focused!r}, not {first!r}"
+            ),
+        )
 
 
 def test_action_show_workbench_help_lists_reader_action_keys(monkeypatch):
@@ -3056,14 +3147,16 @@ def test_action_show_workbench_help_includes_landing_footer_keys(monkeypatch):
     never a ``Binding``) must not render an EMPTY panel.
 
     Before this fix ``action_show_workbench_help`` only listed check_action-
-    filtered ``BINDINGS`` entries -- and ``test_library_screen_bindings_are_
-    all_gated_or_universal`` above pins that EVERY ``BINDINGS`` action gates
-    ``False`` on the bare landing, so the panel rendered a title and a Close
-    button and nothing else. Yet the landing footer teaches four real keys
-    (``/``, ``i``, ``n``, F6 -- ``LIBRARY_LANDING_SHORTCUTS``,
-    ``_register_footer_shortcuts``) that never reach a ``Binding`` (``/``
-    and the hub accelerators are ``on_key`` wiring; F6 is the app-global
-    pane-cycle key). F1 must now include that same per-mode footer set, so
+    filtered ``BINDINGS`` entries, and on the bare landing every one of them
+    then gated ``False``, so the panel rendered a title and a Close button
+    and nothing else. Yet the landing footer teaches four real keys (``/``,
+    ``i``, ``ctrl+n``, F6 -- ``LIBRARY_LANDING_SHORTCUTS``,
+    ``_register_footer_shortcuts``), most of which never reach a
+    ``Binding`` (``/`` and the hub accelerators are ``on_key`` wiring; F6 is
+    the app-global pane-cycle key). Since d00812ac44 (task-32138) ctrl+n is a
+    landing-active ``Binding`` as well, and since TASK-41303 Shift+F6 is too
+    (``test_library_screen_bindings_are_all_gated_or_universal`` pins both).
+    F1 must include that same per-mode footer set, so
     the landing's F1 is never empty and matches what the footer already
     teaches -- including F6, which task-2860's reserved-global filtering
     drops from the FOOTER's compact rendering but must still reach F1 (F1
@@ -3104,7 +3197,9 @@ def test_action_show_workbench_help_includes_landing_footer_keys(monkeypatch):
     # LIBRARY_LANDING_SHORTCUTS -- the exact keys the landing footer teaches.
     assert "/" in keys
     assert "i" in keys
-    assert "n" in keys
+    # d00812ac44 (2026-09-09, task-32138): the landing's new-note chip is
+    # ctrl+n (it works on the landing too), no longer the bare "n".
+    assert "ctrl+n" in keys
     assert "F6" in keys
     # Minor #2 (same review): the title must not leak the raw class name.
     # task-4023 (dev) then added a mode suffix for F1 honesty, so the title
@@ -3173,7 +3268,9 @@ def test_action_library_media_viewer_back_returns_to_list_and_refocuses_it():
     worker_requests = []
     scheduled = []
     screen.refresh = lambda recompose=False: refresh_calls.append(recompose)
-    screen.call_after_refresh = lambda callback: focus_calls.append(callback)
+    screen.call_after_refresh = lambda callback, *args: focus_calls.append(
+        (callback, args)
+    )
     # task-21116: the exit now schedules a targeted viewer->list canvas
     # swap via ``call_next`` instead of an inline whole-screen recompose;
     # capture the continuation so this synchronous harness can drive it.
@@ -3210,10 +3307,20 @@ def test_action_library_media_viewer_back_returns_to_list_and_refocuses_it():
     assert timer_calls == [
         (
             LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS,
-            screen._disarm_library_list_entry_focus,
+            # TASK-41129: the window closes through the bound that lands a
+            # Notes entry still waiting for rows, then disarms.
+            screen._expire_library_list_entry_focus,
         )
     ]
-    assert focus_calls == [screen._focus_library_list_entry]
+    # 02b0866c1a (2026-09-10, Qodo #3 on PR #2585): the entry focus is the
+    # generation-guarded continuation, so a disarm between the schedule and
+    # the callback stands it down instead of pulling focus back.
+    assert focus_calls == [
+        (
+            screen._focus_library_list_entry_if_current,
+            (screen._library_list_entry_focus_generation,),
+        )
+    ]
     # With a page already applied, the exit must NOT re-request it:
     # ``_load_library_media_list_if_needed`` is for deep-link entries that
     # never applied a page (f86c636af). A worker request here would mean
@@ -3312,6 +3419,10 @@ async def test_action_library_note_editor_back_honors_dirty_guard():
 
     screen._flush_library_note_save = flush_clean
     screen._refresh_local_source_snapshot = lambda: None
+    restored = []
+    screen._restore_library_notes_focus_identity = restored.append
+    # The projection's follow-up also queues the tree-root load on the pump.
+    screen.call_later = lambda *args, **kwargs: None
     focus_calls = []
     screen.call_after_refresh = lambda callback, *args: focus_calls.append(callback)
 
@@ -3319,7 +3430,16 @@ async def test_action_library_note_editor_back_honors_dirty_guard():
 
     assert screen._notes_state.view == "list"
     assert refresh_calls == [True]
-    assert focus_calls == [screen._restore_library_notes_focus_identity]
+    # 0509134982 (2026-08-25, PR #2095): the exit syncs the Notes canvas and
+    # restores focus from that sync's own follow-up (queued after the
+    # whole-screen fallback on this unmounted screen), not from a bare
+    # after-refresh restore.
+    [projection_done] = focus_calls
+    assert restored == []
+    projection_done()
+    assert [(identity.stage, identity.region) for identity in restored] == [
+        ("notes", "navigator")
+    ]
 
 
 @pytest.mark.asyncio
@@ -3372,7 +3492,8 @@ async def test_action_library_prompt_editor_back_honors_dirty_guard():
     # requests (whose reply recomposes), not by a direct ``refresh`` call.
     assert len(browse_requests) == 1, "the exit must refetch the prompts page"
     assert refresh_calls == []
-    assert focus_calls == [screen._focus_library_list_entry]
+    # 02b0866c1a (2026-09-10): the generation-guarded entry focus.
+    assert focus_calls == [screen._focus_library_list_entry_if_current]
 
 
 def test_action_library_list_focus_rail_focuses_search_input(monkeypatch):
@@ -3391,7 +3512,17 @@ def test_action_library_list_focus_rail_focuses_search_input(monkeypatch):
         disabled = False
 
     fake_input = _FakeInput()
-    monkeypatch.setattr(screen, "query_one", lambda *a, **k: fake_input)
+    queried = []
+
+    class _FakeRail:
+        def query_one(self, selector, *_args):
+            queried.append(selector)
+            return fake_input
+
+    # 7cf89de6c0 (2026-08-29): the hop resolves its target inside the active
+    # rail (``_focus_library_rail_action`` -> ``_active_library_rail``), not
+    # by a screen query.
+    monkeypatch.setattr(screen, "_active_library_rail", lambda: _FakeRail())
     monkeypatch.setattr(
         screen,
         "set_focus",
@@ -3400,6 +3531,7 @@ def test_action_library_list_focus_rail_focuses_search_input(monkeypatch):
 
     screen.action_library_list_focus_rail()
 
+    assert queried == ["#library-search-input"]
     assert focused_widgets == [fake_input]
 
 
@@ -3429,7 +3561,9 @@ def test_compose_content_reapplies_pending_list_entry_focus_on_every_recompose()
     screen._library_pending_list_entry_focus = True
 
     focus_calls = []
-    screen.call_after_refresh = lambda callback: focus_calls.append(callback)
+    screen.call_after_refresh = lambda callback, *args: focus_calls.append(
+        (callback, args)
+    )
     screen._register_footer_shortcuts = lambda: None
     screen._library_rail_preferences = lambda: None
 
@@ -3445,7 +3579,23 @@ def test_compose_content_reapplies_pending_list_entry_focus_on_every_recompose()
             # test checks (the flag-consume runs before any of that).
             pass
 
-    assert focus_calls == [screen._focus_library_list_entry] * 2
+    # 02b0866c1a (2026-09-10, Qodo #3 on PR #2585): the entry focus is the
+    # generation-guarded continuation, so a disarm between the schedule and
+    # the callback stands it down instead of pulling focus back.
+    # Only the focus re-requests are this test's subject: 9de08fa193
+    # (2026-08-26) also queues the ordinary rail-width contract sync from
+    # ``compose_content``, which is not a focus grab.
+    focus_requests = [
+        call
+        for call in focus_calls
+        if "focus_library_list_entry" in getattr(call[0], "__name__", "")
+    ]
+    assert focus_requests == [
+        (
+            screen._focus_library_list_entry_if_current,
+            (screen._library_list_entry_focus_generation,),
+        )
+    ] * 2
     assert screen._library_pending_list_entry_focus is True
 
 
@@ -3493,17 +3643,29 @@ def test_arm_library_list_entry_focus_schedules_immediate_attempt_and_settle_tim
 
     focus_calls = []
     timer_calls = []
-    screen.call_after_refresh = lambda callback: focus_calls.append(callback)
+    screen.call_after_refresh = lambda callback, *args: focus_calls.append(
+        (callback, args)
+    )
     screen.set_timer = lambda delay, callback: timer_calls.append((delay, callback))
 
     screen._arm_library_list_entry_focus()
 
     assert screen._library_pending_list_entry_focus is True
-    assert focus_calls == [screen._focus_library_list_entry]
+    # 02b0866c1a (2026-09-10, Qodo #3 on PR #2585): the entry focus is the
+    # generation-guarded continuation, so a disarm between the schedule and
+    # the callback stands it down instead of pulling focus back.
+    assert focus_calls == [
+        (
+            screen._focus_library_list_entry_if_current,
+            (screen._library_list_entry_focus_generation,),
+        )
+    ]
     assert timer_calls == [
         (
             LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS,
-            screen._disarm_library_list_entry_focus,
+            # TASK-41129: the window closes through the bound that lands a
+            # Notes entry still waiting for rows, then disarms.
+            screen._expire_library_list_entry_focus,
         )
     ]
 
@@ -3543,7 +3705,8 @@ def test_arm_library_list_entry_focus_twice_cancels_the_stale_timer_handle():
 
     app = _build_test_app()
     screen = LibraryScreen(app)
-    screen.call_after_refresh = lambda callback: None
+    # 02b0866c1a: the scheduled entry focus now carries the arm generation.
+    screen.call_after_refresh = lambda callback, *args: None
 
     created_timers: list[_FakeTimer] = []
 
@@ -3739,7 +3902,7 @@ def test_on_key_disarm_is_a_harmless_noop_when_nothing_is_armed():
     assert screen._library_pending_list_entry_focus is False
 
 
-def test_on_descendant_focus_disarms_when_focus_leaves_the_armed_list():
+def test_on_descendant_focus_disarms_when_focus_leaves_the_armed_list(monkeypatch):
     """task-2856 review round 2: ``on_descendant_focus`` is what catches
     focus changes ``on_key`` cannot -- a mouse click never reaches
     ``on_key`` at all. Focus landing on any widget that is NOT a row of
@@ -3755,13 +3918,23 @@ def test_on_descendant_focus_disarms_when_focus_leaves_the_armed_list():
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
     screen._library_pending_list_entry_focus = True
 
-    foreign_widget = SimpleNamespace(has_class=lambda name: False)
+    # ``id``: a live bubble is also remembered as Notes authority focus,
+    # which reads the widget's id.
+    foreign_widget = SimpleNamespace(id=None, has_class=lambda name: False)
+    # 3915a2da2c (2026-08-30): a queued bubble whose widget no longer holds
+    # focus is stale and owns no authority, so the foreign widget must be the
+    # screen's focused widget for its bubble to count.
+    monkeypatch.setattr(
+        LibraryScreen, "focused", property(lambda _screen: foreign_widget)
+    )
     screen.on_descendant_focus(SimpleNamespace(widget=foreign_widget))
 
     assert screen._library_pending_list_entry_focus is False
 
 
-def test_on_descendant_focus_does_not_disarm_for_the_systems_own_row_refocus():
+def test_on_descendant_focus_does_not_disarm_for_the_systems_own_row_refocus(
+    monkeypatch,
+):
     """The system's own ``_focus_library_list_entry()`` call ALSO posts a
     ``DescendantFocus`` (Textual posts it for every focus change,
     including programmatic ``.focus()`` calls) -- that case must NOT
@@ -3777,7 +3950,12 @@ def test_on_descendant_focus_does_not_disarm_for_the_systems_own_row_refocus():
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
     screen._library_pending_list_entry_focus = True
 
-    own_row = SimpleNamespace(has_class=lambda name: name == "library-media-row")
+    own_row = SimpleNamespace(
+        id=None, has_class=lambda name: name == "library-media-row"
+    )
+    # Focused for real (3915a2da2c): a stale bubble returns early, which
+    # would leave the flag armed whatever this branch did.
+    monkeypatch.setattr(LibraryScreen, "focused", property(lambda _screen: own_row))
     screen.on_descendant_focus(SimpleNamespace(widget=own_row))
 
     assert screen._library_pending_list_entry_focus is True
@@ -4271,11 +4449,20 @@ async def test_main_navigation_route_ids_match_shell_destinations():
 async def test_screen_navigation_routes_reach_real_app_handler():
     app = _build_test_app()
     captured_destinations = []
+    switched = []
 
     async def fake_switch_screen(screen):
         captured_destinations.append(type(screen).__name__)
+        switched.append(screen)
 
     app.switch_screen = fake_switch_screen
+    # 939dee8dc2 (2026-09-04, PR #2365): the handler commits a route (and
+    # sets ``current_tab``) only once the new screen owns the top of
+    # Textual's stack. This fake switch never touches the stack, so it
+    # stands in for that ownership as well.
+    app._navigation_target_owns_stack = lambda screen: bool(switched) and (
+        switched[-1] is screen
+    )
 
     cases = [
         ("chatbooks", "ChatbooksScreen"),
@@ -4316,10 +4503,12 @@ def test_primary_routed_screens_use_base_app_screen():
 
 # --- Cross-visit state persistence (real save_state/restore_state) --------
 #
-# Screens are never cached/reused (see
+# Most screens are rebuilt on every visit (see
 # ``test_screen_navigation_always_constructs_fresh_instances`` above), so
-# continuity across a visit depends entirely on ``_screen_states``
-# (``save_state``/``restore_state``). These are round-trip pilots through the
+# their continuity across a visit depends on ``_screen_states``
+# (``save_state``/``restore_state``); the routes flagged ``ScreenRoute.
+# reusable`` (Library 7992124e8d, Console fed0b7257a) resume their installed
+# instance instead. These are round-trip pilots through the
 # REAL navigation path -- ``NavigateToScreen`` posted, drained via bounded
 # polling (the storm pilot's idiom above), real widgets mutated the way a
 # user would -- not direct calls into ``save_state``/``restore_state``.
@@ -4452,18 +4641,16 @@ async def test_library_screen_round_trip_returns_to_landing_with_rag_draft():
     app = _build_test_app()
 
     async with app.run_test(size=(170, 48)) as pilot:
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ != "Screen":
-                break
+        await _settle(pilot, lambda: type(app.screen).__name__ != "Screen")
 
         app.post_message(NavigateToScreen("search"))
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
-                "#library-rag-query-input"
-            ):
-                break
+        await _settle(
+            pilot,
+            lambda: (
+                type(app.screen).__name__ == "LibraryScreen"
+                and app.screen.query("#library-rag-query-input")
+            ),
+        )
         assert type(app.screen).__name__ == "LibraryScreen"
 
         app.screen.query_one("#library-rag-query-input", Input).value = "roadmap notes"
@@ -4474,21 +4661,21 @@ async def test_library_screen_round_trip_returns_to_landing_with_rag_draft():
         assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
 
         app.post_message(NavigateToScreen("home"))
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "HomeScreen":
-                break
+        await _settle(pilot, lambda: type(app.screen).__name__ == "HomeScreen")
         assert type(app.screen).__name__ == "HomeScreen"
 
         app.post_message(NavigateToScreen("library"))
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "LibraryScreen" and (
-                app.screen.query("#library-hub-explore-all")
-                or app.screen.query("#library-rail-explore-all")
-                or app.screen.query("#library-row-browse-search")
-            ):
-                break
+        await _settle(
+            pilot,
+            lambda: (
+                type(app.screen).__name__ == "LibraryScreen"
+                and (
+                    app.screen.query("#library-hub-explore-all")
+                    or app.screen.query("#library-rail-explore-all")
+                    or app.screen.query("#library-row-browse-search")
+                )
+            ),
+        )
 
         restored_screen = app.screen
         assert type(restored_screen).__name__ == "LibraryScreen"
@@ -4496,10 +4683,7 @@ async def test_library_screen_round_trip_returns_to_landing_with_rag_draft():
         assert restored_screen._library_selected_row_id == ""
 
         await app.handle_screen_navigation(NavigateToScreen("search"))
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if app.screen.query("#library-rag-query-input"):
-                break
+        await _settle(pilot, lambda: app.screen.query("#library-rag-query-input"))
 
         restored_screen = app.screen
         assert restored_screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
@@ -4513,10 +4697,9 @@ async def test_console_staged_live_work_launch_survives_navigate_away_and_back()
     launch must survive a REAL screen swap, not merely a same-screen
     refresh.
 
-    ``ChatScreen`` is never cached/reused across navigation (see
-    ``test_screen_navigation_always_constructs_fresh_instances`` above) --
-    ``_create_navigation_screen`` builds a brand new instance every time, so
-    ``_pending_console_launch_context`` (screen-instance state set in
+    When this was written ``ChatScreen`` was never cached/reused across
+    navigation -- ``_create_navigation_screen`` built a brand new instance
+    every time, so ``_pending_console_launch_context`` (screen-instance state set in
     ``ChatScreen.__init__``) started life on the OLD instance and is gone
     unless ``save_state``/``restore_state`` carries it to the new one.
     Before this fix, neither method touched the launch at all, so
@@ -4524,6 +4707,10 @@ async def test_console_staged_live_work_launch_survives_navigate_away_and_back()
     item with no error and no user-visible warning -- the live critique
     blamed Library's "Run" action for this, but Run is pure; screen
     teardown on ANY navigation away was the actual destroyer.
+
+    fed0b7257a (2026-09-05, TASK-31520) made the Console route reusable: its
+    installed instance is suspended on the way out and resumed on the way
+    back, so the launch now survives on the very instance that staged it.
     """
     from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
@@ -4542,12 +4729,13 @@ async def test_console_staged_live_work_launch_survives_navigate_away_and_back()
     )
 
     async with app.run_test(size=(170, 48)) as pilot:
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "ChatScreen" and app.screen.query(
-                "#console-pending-launch-card"
-            ):
-                break
+        await _settle(
+            pilot,
+            lambda: (
+                type(app.screen).__name__ == "ChatScreen"
+                and app.screen.query("#console-pending-launch-card")
+            ),
+        )
         assert type(app.screen).__name__ == "ChatScreen"
         first_screen = app.screen
         assert first_screen._pending_console_launch_context is not None
@@ -4555,25 +4743,23 @@ async def test_console_staged_live_work_launch_survives_navigate_away_and_back()
         assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
 
         app.post_message(NavigateToScreen("home"))
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "HomeScreen":
-                break
+        await _settle(pilot, lambda: type(app.screen).__name__ == "HomeScreen")
         assert type(app.screen).__name__ == "HomeScreen"
         assert app.screen is not first_screen
 
         app.post_message(NavigateToScreen("chat"))
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "ChatScreen" and app.screen.query(
-                "#console-pending-launch-card"
-            ):
-                break
+        await _settle(
+            pilot,
+            lambda: (
+                type(app.screen).__name__ == "ChatScreen"
+                and app.screen.query("#console-pending-launch-card")
+            ),
+        )
 
         restored_screen = app.screen
         assert type(restored_screen).__name__ == "ChatScreen"
-        # A genuinely fresh instance, not a cached/reused one.
-        assert restored_screen is not first_screen
+        # fed0b7257a: the suspended Console instance is resumed, not rebuilt.
+        assert restored_screen is first_screen
         assert restored_screen._pending_console_launch_context is not None
         assert restored_screen._pending_console_launch_context.title == "Daily digest"
         assert restored_screen.query_one("#console-pending-launch-card")
@@ -4602,18 +4788,16 @@ async def test_prompts_route_lands_on_library_with_prompts_row_selected():
     app = _build_test_app()
 
     async with app.run_test(size=(170, 48)) as pilot:
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ != "Screen":
-                break
+        await _settle(pilot, lambda: type(app.screen).__name__ != "Screen")
 
         app.post_message(NavigateToScreen("prompts"))
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
-                "#library-row-browse-prompts"
-            ):
-                break
+        await _settle(
+            pilot,
+            lambda: (
+                type(app.screen).__name__ == "LibraryScreen"
+                and app.screen.query("#library-row-browse-prompts")
+            ),
+        )
 
         assert type(app.screen).__name__ == "LibraryScreen"
         assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
@@ -4634,18 +4818,16 @@ async def test_skills_route_lands_on_library_with_skills_row_selected():
     app = _build_test_app()
 
     async with app.run_test(size=(170, 48)) as pilot:
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ != "Screen":
-                break
+        await _settle(pilot, lambda: type(app.screen).__name__ != "Screen")
 
         app.post_message(NavigateToScreen("skills"))
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
-                "#library-row-browse-skills"
-            ):
-                break
+        await _settle(
+            pilot,
+            lambda: (
+                type(app.screen).__name__ == "LibraryScreen"
+                and app.screen.query("#library-row-browse-skills")
+            ),
+        )
 
         assert type(app.screen).__name__ == "LibraryScreen"
         assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
@@ -4667,18 +4849,16 @@ async def test_search_route_lands_on_library_rag_canvas():
     app = _build_test_app()
 
     async with app.run_test(size=(170, 48)) as pilot:
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ != "Screen":
-                break
+        await _settle(pilot, lambda: type(app.screen).__name__ != "Screen")
 
         app.post_message(NavigateToScreen("search"))
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
-                "#library-row-browse-search"
-            ):
-                break
+        await _settle(
+            pilot,
+            lambda: (
+                type(app.screen).__name__ == "LibraryScreen"
+                and app.screen.query("#library-row-browse-search")
+            ),
+        )
 
         assert type(app.screen).__name__ == "LibraryScreen"
         assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
@@ -4698,25 +4878,20 @@ async def test_study_screen_escape_returns_to_library_study_staging_canvas():
     app = _build_test_app()
 
     async with app.run_test(size=(170, 48)) as pilot:
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ != "Screen":
-                break
+        await _settle(pilot, lambda: type(app.screen).__name__ != "Screen")
 
         app.post_message(NavigateToScreen("study"))
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "StudyScreen":
-                break
+        await _settle(pilot, lambda: type(app.screen).__name__ == "StudyScreen")
         assert type(app.screen).__name__ == "StudyScreen"
 
         await pilot.press("escape")
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
-                "#library-row-create-study"
-            ):
-                break
+        await _settle(
+            pilot,
+            lambda: (
+                type(app.screen).__name__ == "LibraryScreen"
+                and app.screen.query("#library-row-create-study")
+            ),
+        )
 
         assert type(app.screen).__name__ == "LibraryScreen"
         assert app.screen._library_selected_row_id == "create-study"
@@ -4739,12 +4914,13 @@ async def test_boot_with_search_default_tab_lands_on_library_rag_canvas():
     app = _build_test_app(configured_default="search")
 
     async with app.run_test(size=(170, 48)) as pilot:
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
-                "#library-row-browse-search"
-            ):
-                break
+        await _settle(
+            pilot,
+            lambda: (
+                type(app.screen).__name__ == "LibraryScreen"
+                and app.screen.query("#library-row-browse-search")
+            ),
+        )
 
         assert type(app.screen).__name__ == "LibraryScreen"
         assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
@@ -4764,12 +4940,13 @@ async def test_boot_with_prompts_default_tab_lands_on_library_with_prompts_row_s
     app = _build_test_app(configured_default="prompts")
 
     async with app.run_test(size=(170, 48)) as pilot:
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
-                "#library-row-browse-prompts"
-            ):
-                break
+        await _settle(
+            pilot,
+            lambda: (
+                type(app.screen).__name__ == "LibraryScreen"
+                and app.screen.query("#library-row-browse-prompts")
+            ),
+        )
 
         assert type(app.screen).__name__ == "LibraryScreen"
         assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_PROMPTS
@@ -4959,10 +5136,7 @@ async def test_search_all_palette_command_lands_on_library_with_honest_toast():
     notices: list[tuple[str, str]] = []
 
     async with app.run_test(size=(170, 48)) as pilot:
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ != "Screen":
-                break
+        await _settle(pilot, lambda: type(app.screen).__name__ != "Screen")
 
         app.notify = lambda message_text, **kwargs: notices.append(
             (str(message_text), kwargs.get("severity", ""))
@@ -4971,12 +5145,13 @@ async def test_search_all_palette_command_lands_on_library_with_honest_toast():
         provider = QuickActionsProvider(screen=app.screen)
         provider.execute_quick_action("search_all")
 
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
-                "#library-row-browse-search"
-            ):
-                break
+        await _settle(
+            pilot,
+            lambda: (
+                type(app.screen).__name__ == "LibraryScreen"
+                and app.screen.query("#library-row-browse-search")
+            ),
+        )
 
         assert type(app.screen).__name__ == "LibraryScreen"
         assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
@@ -5005,35 +5180,31 @@ async def test_media_route_round_trips_to_the_library_media_row():
     app = _build_test_app()
 
     async with app.run_test(size=(170, 48)) as pilot:
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ != "Screen":
-                break
+        await _settle(pilot, lambda: type(app.screen).__name__ != "Screen")
 
         app.post_message(NavigateToScreen("media"))
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
-                "#library-row-browse-media"
-            ):
-                break
+        await _settle(
+            pilot,
+            lambda: (
+                type(app.screen).__name__ == "LibraryScreen"
+                and app.screen.query("#library-row-browse-media")
+            ),
+        )
         assert type(app.screen).__name__ == "LibraryScreen"
         assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
 
         app.post_message(NavigateToScreen("home"))
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "HomeScreen":
-                break
+        await _settle(pilot, lambda: type(app.screen).__name__ == "HomeScreen")
         assert type(app.screen).__name__ == "HomeScreen"
 
         app.post_message(NavigateToScreen("media"))
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
-                "#library-row-browse-media"
-            ):
-                break
+        await _settle(
+            pilot,
+            lambda: (
+                type(app.screen).__name__ == "LibraryScreen"
+                and app.screen.query("#library-row-browse-media")
+            ),
+        )
 
         restored_screen = app.screen
         assert type(restored_screen).__name__ == "LibraryScreen"
@@ -5055,35 +5226,31 @@ async def test_search_route_round_trips_to_the_library_rag_row():
     app = _build_test_app()
 
     async with app.run_test(size=(170, 48)) as pilot:
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ != "Screen":
-                break
+        await _settle(pilot, lambda: type(app.screen).__name__ != "Screen")
 
         app.post_message(NavigateToScreen("search"))
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
-                "#library-row-browse-search"
-            ):
-                break
+        await _settle(
+            pilot,
+            lambda: (
+                type(app.screen).__name__ == "LibraryScreen"
+                and app.screen.query("#library-row-browse-search")
+            ),
+        )
         assert type(app.screen).__name__ == "LibraryScreen"
         assert app.screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
 
         app.post_message(NavigateToScreen("home"))
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "HomeScreen":
-                break
+        await _settle(pilot, lambda: type(app.screen).__name__ == "HomeScreen")
         assert type(app.screen).__name__ == "HomeScreen"
 
         app.post_message(NavigateToScreen("search"))
-        for _ in range(150):
-            await pilot.pause(0.02)
-            if type(app.screen).__name__ == "LibraryScreen" and app.screen.query(
-                "#library-row-browse-search"
-            ):
-                break
+        await _settle(
+            pilot,
+            lambda: (
+                type(app.screen).__name__ == "LibraryScreen"
+                and app.screen.query("#library-row-browse-search")
+            ),
+        )
 
         restored_screen = app.screen
         assert type(restored_screen).__name__ == "LibraryScreen"
@@ -5620,6 +5787,26 @@ async def test_broken_screen_content_degrades_instead_of_killing_a_running_app()
         assert app.is_running, "app must stay responsive after the failed compose"
 
 
+async def _settle(pilot, predicate, *, timeout: float = 15.0) -> bool:
+    """Pause until ``predicate()`` holds or ``timeout`` wall-clock seconds pass.
+
+    TASK-41127 review r15lt-rev1: the route and boot waits here were fixed
+    pause loops (150 x ``pilot.pause(0.02)``, nominally 3 s). A pause count
+    is not a time budget: under load each pause runs long and the loop ran out
+    first (search-route passed 0 of 3 at load 46 with it, and passed with 30 s).
+    Same shape as ``Tests/UI/test_library_shell.py``'s ``_wait_for_condition``,
+    but it returns whether the predicate held instead of raising, so each
+    caller keeps the assertion (and failure message) it already makes.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        await pilot.pause(0.02)
+        if predicate():
+            return True
+        if time.monotonic() >= deadline:
+            return False
+
+
 # --- task-2858 (LIB-03 -> AC#1): entry routing + canvas restoration -------
 #
 # Direction (recorded in the task's Implementation Notes): EXPLICIT deep
@@ -5635,7 +5822,7 @@ async def test_broken_screen_content_degrades_instead_of_killing_a_running_app()
 # ``ScreenStateStore`` / ``LibraryScreen.save_state``/``restore_state``/
 # ``apply_navigation_context``) rather than re-deriving it, matching
 # ``test_rapid_tab_switch_storm_leaves_no_zombie_widgets``'s real-screen
-# harness pattern immediately above.
+# harness pattern above.
 async def _wait_for_initial_screen(pilot) -> None:
     """Poll until the app's own startup navigation has pushed a real screen.
 
@@ -5648,10 +5835,8 @@ async def _wait_for_initial_screen(pilot) -> None:
     dropped with no error and no way to retry.
     """
     app = pilot.app
-    for _ in range(150):
-        await pilot.pause(0.02)
-        if getattr(app, "_initial_screen_pushed", False):
-            return
+    if await _settle(pilot, lambda: getattr(app, "_initial_screen_pushed", False)):
+        return
     raise AssertionError("app never finished pushing its initial screen")
 
 
@@ -5796,7 +5981,10 @@ async def test_nav_bar_uses_overflow_instead_of_truncating_at_160_cols():
         assert strip.virtual_size.width > strip.region.width
         for destination in SHELL_DESTINATION_ORDER:
             button = nav.query_one(f"#nav-{destination.destination_id}")
-            assert str(button.label).endswith(destination.label)
+            # b7dd8e53f2 (2026-09-08): Console's label always reserves a
+            # trailing attention-glyph cell (blank here), so geometry never
+            # shifts when the badge toggles; the full label precedes it.
+            assert str(button.label).rstrip().endswith(destination.label)
 
 
 @pytest.mark.asyncio

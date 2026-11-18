@@ -80,11 +80,7 @@ class ArchiveSearchService:
         # around its existing enumeration, including bounded per-row snapshot projection.
         try:
             with (
-                operation_owned_connection(
-                    self.workspace_registry.db,
-                    operation_deadline=time.monotonic()
-                    + max(0.0, deadline - self.monotonic()),
-                ),
+                operation_owned_connection(self.workspace_registry.db),
                 self.workspace_registry.db.connection(
                     operation_deadline=time.monotonic()
                     + max(0.0, deadline - self.monotonic())
@@ -208,11 +204,7 @@ class ArchiveSearchService:
             )
         data = request.model_dump(mode="json")
         try:
-            with operation_owned_connection(
-                self.chat_service.db,
-                operation_deadline=time.monotonic()
-                + max(0.0, deadline - self.monotonic()),
-            ):
+            with operation_owned_connection(self.chat_service.db):
                 raw = self.chat_service.query_archive_recovery_page(
                     data,
                     workspace_rows,

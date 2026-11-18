@@ -1,6 +1,8 @@
 """Pure local-server discovery tests (task-188) using httpx.MockTransport."""
 
 import errno
+import itertools
+import re
 import tomllib
 from pathlib import Path
 from types import SimpleNamespace
@@ -3439,20 +3441,24 @@ def test_detach_moves_conversations_whose_own_url_the_custom_provider_accepts(mo
         (
             {"temperature": 5},
             "Provider blocked: this custom endpoint is not loaded: 'temperature' "
-            "must be between 0.0 and 2.0. Fix it in config.toml, or delete the "
-            "entry in Settings ▸ Custom endpoints.",
+            "must be between 0.0 and 2.0. Fix it in config.toml (see 'Custom "
+            "endpoints' in the User Guide's Settings page), or delete the entry "
+            "in Settings ▸ Custom endpoints.",
         ),
         (
             {"bogus": 1},
             "Provider blocked: this custom endpoint is not loaded: unknown "
-            "sampling param 'bogus'. Fix it in config.toml, or delete the entry "
+            "sampling param 'bogus'. Fix it in config.toml (see 'Custom "
+            "endpoints' in the User Guide's Settings page), or delete the entry "
             "in Settings ▸ Custom endpoints.",
         ),
     ],
 )
 def test_a_custom_endpoint_not_loaded_says_where_its_reason_can_be_fixed(params, copy):
     """Review r14ep-rev3 Mi-1: the copy ran the reason into the next sentence
-    and sent a sampling-params refusal to Settings, which cannot edit params."""
+    and sent a sampling-params refusal to Settings, which cannot edit params.
+    TASK-41146: the config.toml advice names the guide section that lists
+    the params keys and ranges."""
     from tldw_chatbook.Chat.custom_endpoint_registry import missing_custom_endpoint_copy
 
     url = "http://127.0.0.1:8000/v1?token=not-a-real-secret" if not params else "http://127.0.0.1:8000/v1"
@@ -3579,8 +3585,10 @@ async def test_mlx_sends_to_its_own_host_and_port_never_the_shipped_api_url(user
     """Review r14ep-rev4 C-1: round 4b pinned ``[api_settings.local_mlx_lm]
     api_url``, which the shipped template sets to a placeholder and MLX-LM
     ignores, so every MLX send went there. Console checks and pins the URL MLX-LM
-    builds from its host and port, or its 8080 default."""
+    builds from its host and port, or its 8080 default. (TASK-41145: the
+    template no longer ships that placeholder; one saved earlier stays.)"""
     config = _merged(user)
+    config["api_settings"]["local_mlx_lm"]["api_url"] = "http://localhost:5678/v1/chat/completions"
     assert config["api_settings"]["local_mlx_lm"]["api_url"] != pinned
 
     await _assert_ready_and_pinned("mlx_lm", config, pinned)
@@ -3758,3 +3766,1032 @@ def test_a_refused_entry_renames_and_counts_but_offers_no_duplicate():
     assert validate_display_name(" ") == ["Display name is required."]
     screen = SimpleNamespace(_custom_endpoints_view_config=lambda: config)
     assert custom_endpoints_summary(screen).startswith("1 named endpoint ·")
+
+
+#: TASK-41132: hosts ``inet_aton`` reads as an IPv4 address through hex or
+#: octal parts, or fewer than four parts.
+_NUMERIC_IPV4_HOSTS = ("0x7f.1", "0x7f000001", "0177.0.0.1", "0X7F.0.0.1")
+
+
+@pytest.mark.parametrize("host", _NUMERIC_IPV4_HOSTS)
+def test_a_host_inet_aton_reads_as_an_address_is_refused_like_127_1(host):
+    """TASK-41132: ``127.1`` is refused because a resolver expands it into an
+    address its dotted form hides. ``0x7f.1`` and ``0x7f000001`` expand the
+    same way, but passed as DNS names, so loopback rules and identity
+    comparisons saw a different host from the one dialled."""
+    import socket
+
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+        canonical_endpoint_host,
+        endpoint_refusal,
+    )
+
+    assert socket.inet_aton(host) == socket.inet_aton("127.0.0.1")
+    assert canonical_endpoint_host(host) is None
+    refused = endpoint_refusal("vllm", "http://127.1:8000/v1")
+    assert endpoint_refusal("vllm", f"http://{host}:8000/v1") == refused != ""
+    assert endpoint_refusal("custom", f"http://{host}:8000/v1", custom_endpoint=True) == refused
+
+
+@pytest.mark.parametrize("host", ["0xdeadbeef.example.com", "0x7f.lan", "1.example.com"])
+def test_a_name_with_a_number_like_label_is_still_a_name(host):
+    """TASK-41132: only a host every label of which is a number is read as an
+    address; a name that merely has one keeps working."""
+    import socket
+
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+        canonical_endpoint_host,
+        endpoint_refusal,
+    )
+
+    with pytest.raises(OSError):
+        socket.inet_aton(host)
+    assert canonical_endpoint_host(host) == host
+    assert endpoint_refusal("vllm", f"http://{host}:8000/v1") == ""
+
+
+#: TASK-41143: Settings saves a custom slot's readiness key, and only the
+#: Console's alias table maps it onto the slot's chat handler.
+_CUSTOM_SLOTS = (
+    ("custom", "custom-openai-api", "http://127.0.0.1:1234/v1"),
+    ("custom_2", "custom-openai-api-2", "http://127.0.0.1:5678/v1"),
+)
+
+
+@pytest.mark.parametrize(("provider", "handler", "endpoint"), _CUSTOM_SLOTS)
+def test_permission_summaries_activate_on_a_ready_custom_slot(provider, handler, endpoint):
+    """TASK-41143: a Permission summaries provider saved as ``custom`` or
+    ``custom_2`` stayed off: ``chat_dispatch_name`` could not map it, and
+    nothing said why. With the slot's endpoint saved where Settings saves it,
+    the summary runs on the slot's handler and pins that endpoint."""
+    from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+    from tldw_chatbook.Library.ingest_analysis import chat_dispatch_name
+
+    api_settings = _merged({"api_settings": {provider: {"api_url": endpoint}}})["api_settings"]
+    assert get_provider_readiness(provider, {"api_settings": api_settings}, environ={}).ready
+
+    resolution, out, calls = _summary_calls(provider, api_settings)
+
+    assert chat_dispatch_name(provider) == handler
+    assert resolution.active is True
+    assert resolution.dispatch_name == handler
+    assert out == "ok"
+    assert [call["api_base_url"] for call in calls] == [endpoint]
+
+
+@pytest.mark.parametrize(("provider", "handler", "endpoint"), _CUSTOM_SLOTS)
+def test_ingest_analysis_resolves_a_custom_slot_to_its_handler(provider, handler, endpoint):
+    """TASK-41143: a ready ``[analysis_defaults] provider = "custom"`` was
+    refused as "not supported for ingest analysis"."""
+    from tldw_chatbook.Library.ingest_analysis import resolve_ingest_analysis_provider
+
+    config = _merged(
+        {
+            "analysis_defaults": {"provider": provider, "model": "m"},
+            "api_settings": {provider: {"api_url": endpoint}},
+        }
+    )
+
+    resolution = resolve_ingest_analysis_provider(config, environ={})
+
+    assert resolution.ready is True, resolution.short_reason
+    assert resolution.dispatch_name == handler
+
+
+@pytest.mark.parametrize(("provider", "handler", "endpoint"), _CUSTOM_SLOTS)
+def test_dreams_resolves_a_custom_slot_to_its_handler(provider, handler, endpoint, monkeypatch):
+    """TASK-41143: Dreams falls back to ``[chat_defaults] provider``, saved as
+    a readiness key, and raised "Dreams provider/model unavailable" for
+    ``custom`` and ``custom_2``."""
+    from tldw_chatbook.Dreams import story_service
+
+    captured: list[dict] = []
+    monkeypatch.setattr(
+        story_service,
+        "chat_api_call",
+        lambda **kwargs: captured.append(kwargs) or {"choices": [{"message": {"content": "ok"}}]},
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Dreams.settings.get_cli_setting",
+        lambda section, key, default=None: default,
+    )
+    monkeypatch.setattr(
+        story_service,
+        "load_cli_config_and_ensure_existence",
+        lambda **kw: _merged(
+            {
+                "chat_defaults": {"provider": provider, "model": "m"},
+                "api_settings": {provider: {"api_url": endpoint}},
+            }
+        ),
+    )
+
+    chat = story_service.resolve_dreams_chat()
+    chat(messages_payload=[{"role": "user", "content": "hi"}], streaming=False)
+
+    assert [call["api_endpoint"] for call in captured] == [handler]
+
+
+@pytest.mark.parametrize("session_url", [None, "http://127.0.0.1:8000/v1"])
+def test_detach_never_moves_conversations_to_an_unknown_family(session_url, monkeypatch):
+    """TASK-41144: an entry whose family Chatbook does not know (hand-written
+    in config.toml) moved its conversations to a provider named after the
+    family string, which no adapter serves, so every later send from them
+    failed. Detach now refuses with a reason; nothing moves or is deleted,
+    and the copy names the entry, never the family string or its URL."""
+    from tldw_chatbook.UI.Screens import settings_provider_view_model as view_model
+
+    deleted = []
+    monkeypatch.setattr(
+        view_model,
+        "delete_settings_from_cli_config",
+        lambda section, keys: deleted.append((section, keys)) or True,
+    )
+    store = _ReferencingStore(session_url)
+
+    with pytest.raises(view_model.DetachRefused) as caught:
+        view_model.detach_and_delete_entry(
+            _entry_config("http://127.0.0.1:8000/v1", family="vllm_native"), store, "custom-ep:box"
+        )
+
+    assert store.replaced == [] and deleted == []
+    copy = caught.value.user_copy
+    assert copy.startswith("Detach blocked:") and "'Box'" in copy
+    assert "vllm_native" not in copy and "127.0.0.1" not in copy
+
+
+def test_an_unknown_family_entry_with_no_conversations_still_deletes(monkeypatch):
+    """TASK-41144: with nothing to move, Detach only deletes the entry."""
+    from tldw_chatbook.UI.Screens import settings_provider_view_model as view_model
+
+    deleted = []
+    monkeypatch.setattr(
+        view_model,
+        "delete_settings_from_cli_config",
+        lambda section, keys: deleted.append((section, keys)) or True,
+    )
+
+    view_model.detach_and_delete_entry(
+        _entry_config("http://127.0.0.1:8000/v1", family="vllm_native"), None, "custom-ep:box"
+    )
+
+    assert deleted == [("custom_endpoints", ["box"])]
+
+
+# --- TASK-41131: chat_api_call callers outside Console -----------------------
+
+#: The refused shapes, plus TASK-41132's hexadecimal host.
+_DISPATCH_REFUSED_BASES = {**_CONTRACT_REFUSED_BASES, "hex-host": "http://0x7f.1:8000"}
+#: Each local and custom dispatch name, the table and key its adapter reads
+#: when the call pins no endpoint, and its route (``_with_path``).
+_DISPATCH_OWN_ENDPOINTS = (
+    ("local-llm", ("api_settings", "local-llm"), "api_url", "vllm"),
+    ("vllm", ("api_settings", "vllm"), "api_url", "vllm"),
+    ("local_vllm", ("api_settings", "local_vllm"), "api_url", "vllm"),
+    ("ollama", ("api_settings", "ollama"), "api_url", "vllm"),
+    ("local_ollama", ("api_settings", "local_ollama"), "api_url", "vllm"),
+    ("oobabooga", ("api_settings", "ooba_api"), "api_ip", "vllm"),
+    ("tabbyapi", ("api_settings", "tabby_api"), "api_url", "vllm"),
+    ("aphrodite", ("api_settings", "aphrodite_api"), "api_url", "vllm"),
+    ("custom-openai-api", ("api_settings", "custom"), "api_url", "vllm"),
+    ("custom-openai-api-2", ("custom_openai_api_2",), "api_ip", "vllm"),
+    ("koboldcpp", ("api_settings", "koboldcpp"), "api_url", "koboldcpp"),
+    ("llama_cpp", ("api_settings", "llama_cpp"), "api_url", "llama_cpp"),
+    ("custom-hosted", ("api_settings", "custom"), "api_url", "vllm"),
+    ("together", ("api_settings", "together"), "api_base_url", "vllm"),
+)
+_ECHO_PARTS = ("fe80", "bad.corp", "127.1", "cher", "mode=fast", "part", "pw@", "0x7f")
+
+
+class _RecordingSession:
+    """A requests session that records each POST and answers 200."""
+
+    def __init__(self, posts):
+        self.posts = posts
+
+    def post(self, url, **_kwargs):
+        self.posts.append(url)
+        return SimpleNamespace(
+            status_code=200,
+            headers={},
+            text="",
+            raise_for_status=lambda: None,
+            json=lambda: {
+                "choices": [{"message": {"role": "assistant", "content": "ok"}}],
+                "results": [{"text": "ok"}],
+            },
+            close=lambda: None,
+        )
+
+    def close(self):
+        pass
+
+
+def _local_world(monkeypatch, config):
+    """The local adapters and the hosted engine read ``config``; each POST
+    lands in the list returned, and none reaches a socket."""
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local as local_calls
+    from tldw_chatbook.LLM_Calls import hosted_chat
+    from tldw_chatbook.LLM_Calls import hosted_provider_engine as engine
+    from tldw_chatbook.LLM_Calls import provider_sessions
+
+    snapshot = SimpleNamespace(values=config)
+    posts: list[str] = []
+    monkeypatch.setattr(local_calls, "get_runtime_config_snapshot", lambda: snapshot)
+    monkeypatch.setattr(local_calls, "load_settings", lambda *a, **k: config)
+    monkeypatch.setattr(engine, "get_runtime_config_snapshot", lambda: snapshot)
+    for module in (local_calls, hosted_chat):
+        monkeypatch.setattr(
+            module, "create_pooled_default_session", lambda **_kw: _RecordingSession(posts)
+        )
+    monkeypatch.setattr(provider_sessions, "get_session", lambda _key, factory: factory())
+    return posts
+
+
+def _contract_reason(dispatch, endpoint):
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import endpoint_refusal
+
+    key = {"koboldcpp": "koboldcpp", "llama_cpp": "llama_cpp"}.get(dispatch, "custom")
+    if dispatch in {"custom-hosted", "together"}:
+        key = dispatch
+    return endpoint_refusal(key, endpoint)
+
+
+def _dispatch(name, **kwargs):
+    from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+
+    return chat_api_call(
+        name,
+        [{"role": "user", "content": "x"}],
+        api_key="not-a-real-key-0000",
+        model="m",
+        streaming=False,
+        **kwargs,
+    )
+
+
+@pytest.mark.parametrize(("dispatch", "table", "key", "route"), _DISPATCH_OWN_ENDPOINTS)
+def test_chat_api_call_never_reaches_an_endpoint_the_contract_refuses(
+    dispatch, table, key, route, monkeypatch
+):
+    """TASK-41131: only Console checked endpoints, so the same configured or
+    pinned endpoint reached the network from every other ``chat_api_call``
+    caller. Each local and custom adapter now refuses it, from its own table
+    or pinned, before any request, with the contract's reason."""
+    from tldw_chatbook.Provider_Contract import ChatConfigurationError
+
+    for shape, pinned in itertools.product(sorted(_DISPATCH_REFUSED_BASES), (False, True)):
+        endpoint = _with_path(route, _DISPATCH_REFUSED_BASES[shape])
+        config: dict = {}
+        node = config
+        for part in table:
+            node = node.setdefault(part, {})
+        node[key] = _with_path(route, _SAFE_LOOPBACK) if pinned else endpoint
+        posts = _local_world(monkeypatch, config)
+
+        with pytest.raises(ChatConfigurationError) as caught:
+            _dispatch(dispatch, api_base_url=endpoint if pinned else None)
+
+        assert posts == [], (shape, pinned)
+        reason = _contract_reason(dispatch, endpoint)
+        assert reason and str(caught.value).endswith(reason), (shape, pinned, str(caught.value))
+        assert caught.value.status_code is None
+        assert not [part for part in _ECHO_PARTS if part in str(caught.value)], shape
+
+
+@pytest.mark.parametrize("dispatch", ["mlx_lm", "local_mlx_lm"])
+def test_chat_api_call_never_reaches_an_mlx_host_the_contract_refuses(dispatch, monkeypatch):
+    """TASK-41131: MLX-LM builds its URL from ``host`` and ``port``, which no
+    non-Console caller checked."""
+    from tldw_chatbook.Provider_Contract import ChatConfigurationError
+
+    for host in ("127.1", "-bad.corp", "bücher.example", "localhost..", "0x7f.1"):
+        posts = _local_world(monkeypatch, {"api_settings": {dispatch: {"host": host, "port": 8000}}})
+
+        with pytest.raises(ChatConfigurationError):
+            _dispatch(dispatch)
+
+        assert posts == [], host
+
+
+def test_dreams_never_sends_to_an_endpoint_the_contract_refuses(monkeypatch):
+    """TASK-41131: Dreams calls ``chat_api_call`` unpinned, so the adapter
+    sent to whatever its table held."""
+    from tldw_chatbook.Dreams import story_service
+    from tldw_chatbook.Provider_Contract import ChatConfigurationError
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Dreams.settings.get_cli_setting",
+        lambda section, key, default=None: default,
+    )
+    for shape, base in sorted(_DISPATCH_REFUSED_BASES.items()):
+        endpoint = _with_path("vllm", base)
+        config = {"api_settings": {"vllm": {"api_url": endpoint}}}
+        posts = _local_world(monkeypatch, config)
+        monkeypatch.setattr(
+            story_service,
+            "load_cli_config_and_ensure_existence",
+            lambda config=config, **kw: {
+                **config, "chat_defaults": {"provider": "vllm", "model": "m"}
+            },
+        )
+        chat = story_service.resolve_dreams_chat()
+
+        with pytest.raises(ChatConfigurationError) as caught:
+            chat(messages_payload=[{"role": "user", "content": "hi"}], streaming=False)
+
+        assert posts == [], shape
+        assert str(caught.value).endswith(_contract_reason("vllm", endpoint)), shape
+
+
+def test_summarization_never_sends_to_an_endpoint_the_contract_refuses(monkeypatch):
+    """TASK-41131: the summarizers call ``chat_api_call`` unpinned; the refusal
+    comes back in-band, with the contract's reason."""
+    from tldw_chatbook.LLM_Calls import Summarization_General_Lib as summarization
+
+    monkeypatch.setattr(summarization, "_readiness_credential", lambda _endpoint: (None, None))
+    monkeypatch.setattr(
+        summarization, "get_cli_setting", lambda section, key, default=None: default
+    )
+    for shape, base in sorted(_DISPATCH_REFUSED_BASES.items()):
+        endpoint = _with_path("vllm", base)
+        posts = _local_world(
+            monkeypatch, {"api_settings": {"vllm": {"api_url": endpoint, "model": "m"}}}
+        )
+
+        out = summarization._summarize_via_chat_api("vllm", None, "text", "p", None, None, False)
+
+        assert posts == [], shape
+        assert out.startswith("vLLM Summarization: Unexpected error occurred:"), shape
+        assert out.endswith(_contract_reason("vllm", endpoint)), shape
+
+
+#: TASK-41131 keeps-working checks: what each local and custom dispatch posts
+#: to with the shipped config (and the adapter's own table, where the
+#: template ships none), before and after the contract check.
+_SHIPPED_DISPATCH_POSTS = (
+    ("local-llm", {}, "http://localhost:8000/v1/chat/completions"),
+    ("vllm", {}, "http://localhost:8000/v1/chat/completions"),
+    ("local_vllm", {}, "http://localhost:8008/v1/chat/completions"),
+    ("ollama", {}, "http://localhost:11434/v1/chat/completions"),
+    ("local_ollama", {}, "http://localhost:5678/v1/chat/completions"),
+    ("custom-openai-api", {}, "http://localhost:1234/v1/chat/completions"),
+    ("koboldcpp", {}, "http://localhost:5001/api/v1/generate"),
+    ("llama_cpp", {}, "http://localhost:8080/v1/chat/completions"),
+    ("local_llamacpp", {}, "http://localhost:8001/v1/chat/completions"),
+    ("local_llamafile", {}, "http://localhost:8001/v1/chat/completions"),
+    ("strata", {}, "http://127.0.0.1:8080/v1/chat/completions"),
+    ("local_mlx_lm", {}, "http://127.0.0.1:8080/v1/chat/completions"),
+    (
+        "oobabooga",
+        {"api_settings": {"ooba_api": {"api_ip": "http://127.0.0.1:5000/v1"}}},
+        "http://127.0.0.1:5000/v1/chat/completions",
+    ),
+    (
+        "tabbyapi",
+        {"api_settings": {"tabby_api": {"api_url": "http://127.0.0.1:5000"}}},
+        "http://127.0.0.1:5000/v1/chat/completions",
+    ),
+    (
+        "aphrodite",
+        {"api_settings": {"aphrodite_api": {"api_url": "http://gpu-box.lan:2242/v1"}}},
+        "http://gpu-box.lan:2242/v1/chat/completions",
+    ),
+    (
+        # TASK-41145 owner decision 2026-11-16: the slot Settings writes.
+        "custom-openai-api-2",
+        {"api_settings": {"custom_2": {"api_url": "http://kobold_cpp:5678/v1/chat/completions"}}},
+        "http://kobold_cpp:5678/v1/chat/completions",
+    ),
+    (
+        "vllm",
+        {"api_settings": {"vllm": {"api_url": "http://[fe80::1]:8000/v1"}}},
+        "http://[fe80::1]:8000/v1/chat/completions",
+    ),
+    (
+        "local_mlx_lm",
+        {"api_settings": {"local_mlx_lm": {"host": "gpu-box.lan", "port": 9000}}},
+        "http://gpu-box.lan:9000/v1/chat/completions",
+    ),
+)
+
+
+def test_an_ordinary_local_config_still_posts_where_it_did(monkeypatch):
+    """TASK-41131: the check refuses only what the contract refuses; every
+    shipped endpoint, and the adapters' own tables, post where they did."""
+    for dispatch, user, posted in _SHIPPED_DISPATCH_POSTS:
+        posts = _local_world(monkeypatch, _merged(user))
+
+        reply = _dispatch(dispatch)
+
+        assert posts == [posted], dispatch
+        assert reply["choices"][0]["message"]["content"] == "ok", dispatch
+
+
+def test_every_engine_preset_still_resolves_its_shipped_base():
+    """TASK-41131: the hosted engine's base resolution is checked too; every
+    preset's shipped base, and a relaxed custom-hosted base, still resolve."""
+    from tldw_chatbook.LLM_Calls.hosted_provider_engine import resolve_hosted_request
+    from tldw_chatbook.provider_registry import ALL_RECORDS, RECORDS_BY_KEY
+
+    config = _merged({})
+    resolved = {
+        record.key: resolve_hosted_request(
+            record,
+            explicit_api_key="not-a-real-key-0000",
+            explicit_model="m",
+            app_config=config,
+            environ={},
+        ).base_url
+        for record in ALL_RECORDS
+        if record.engine_driven and record.default_base_url
+    }
+    shipped = {
+        key: config["api_settings"].get(key, {}).get("api_base_url") or RECORDS_BY_KEY[key].default_base_url
+        for key in resolved
+    }
+
+    assert resolved == shipped
+    relaxed = resolve_hosted_request(
+        RECORDS_BY_KEY["custom-hosted"],
+        explicit_api_key="not-a-real-key-0000",
+        explicit_base_url="https://api.deepinfra.com/v1/openai",
+        explicit_model="m",
+        app_config=config,
+        environ={},
+    )
+    assert relaxed.base_url == "https://api.deepinfra.com/v1/openai"
+
+
+def test_the_shared_local_transport_keeps_its_recovery_wrapper():
+    """Review r15ep-rev1 M-1: inserting the refusal helper between
+    ``@_provider_recovery.unqualified`` and the transport moved the decorator
+    onto the helper, so local sends and streams lost recovery admission."""
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local as local_calls
+
+    transport = local_calls._chat_with_openai_compatible_local_server
+    assert transport.__wrapped__.__name__ == "_chat_with_openai_compatible_local_server"
+    assert not hasattr(local_calls._refuse_a_refused_endpoint, "__wrapped__")
+
+
+#: Review r15ep-rev1 M-2: the name each refusal shows and the provider key it
+#: carries.
+_REFUSAL_NAMES = {
+    "local-llm": ("Local-LLM", "local-llm"),
+    "vllm": ("vLLM", "vllm"),
+    "local_vllm": ("vLLM", "local_vllm"),
+    "ollama": ("Ollama", "ollama"),
+    "local_ollama": ("Ollama", "local_ollama"),
+    "oobabooga": ("Oobabooga (OpenAI Extension)", "oobabooga"),
+    "tabbyapi": ("TabbyAPI", "tabbyapi"),
+    "aphrodite": ("Aphrodite Engine", "aphrodite"),
+    "custom-openai-api": ("Custom OpenAI", "custom-openai-api"),
+    "custom-openai-api-2": ("Custom OpenAI API 2", "custom-openai-api-2"),
+    "koboldcpp": ("KoboldCpp", "koboldcpp"),
+    "llama_cpp": ("Llama.cpp", "llama_cpp"),
+    "custom-hosted": ("Custom Hosted", "custom-hosted"),
+    "together": ("Together", "together"),
+}
+
+
+@pytest.mark.parametrize(("dispatch", "table", "key", "route"), _DISPATCH_OWN_ENDPOINTS)
+def test_a_refusal_names_the_adapter_and_carries_its_key(dispatch, table, key, route, monkeypatch):
+    """Review r15ep-rev1 M-2: the copy read "Custom_openai_api_2 API URL" and
+    "mlx_lm API URL", and the provider was a display name."""
+    from tldw_chatbook.Provider_Contract import ChatConfigurationError
+
+    config: dict = {}
+    node = config
+    for part in table:
+        node = node.setdefault(part, {})
+    node[key] = _with_path(route, "http://127.1:8000")
+    _local_world(monkeypatch, config)
+
+    with pytest.raises(ChatConfigurationError) as caught:
+        _dispatch(dispatch)
+
+    name, provider = _REFUSAL_NAMES[dispatch]
+    assert str(caught.value).startswith(f"{name} API ")
+    assert caught.value.provider == provider
+
+
+@pytest.mark.parametrize("dispatch", ["mlx_lm", "local_mlx_lm"])
+def test_an_mlx_refusal_names_mlx_lm_and_carries_its_key(dispatch, monkeypatch):
+    """Review r15ep-rev1 M-2."""
+    from tldw_chatbook.Provider_Contract import ChatConfigurationError
+
+    _local_world(monkeypatch, {"api_settings": {dispatch: {"host": "127.1", "port": 8000}}})
+
+    with pytest.raises(ChatConfigurationError) as caught:
+        _dispatch(dispatch)
+
+    assert str(caught.value).startswith("MLX-LM API URL: ")
+    assert caught.value.provider == dispatch
+
+
+@pytest.mark.asyncio
+async def test_an_eval_never_retries_an_endpoint_refusal():
+    """Review r15ep-rev1 I-2: Evals retried a contract refusal as an API
+    error and reported it as a connection failure; nothing can succeed on a
+    retry, so it fails at once, non-retryable, with the contract's reason."""
+    from tldw_chatbook.Evals.eval_runner import ErrorHandler
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local as local_calls
+
+    attempts: list[int] = []
+
+    async def operation():
+        attempts.append(1)
+        local_calls._refuse_a_refused_endpoint("vLLM", "http://127.1:8000/v1")
+
+    with pytest.raises(Exception) as caught:
+        await ErrorHandler(max_retries=3, retry_delay=0.001).with_retry(
+            operation, "s1", provider="vllm"
+        )
+
+    context = caught.value.context
+    assert attempts == [1]
+    assert context.is_retryable is False
+    assert _contract_reason("vllm", "http://127.1:8000/v1") in context.message
+    assert "connect" not in context.message.lower()
+
+
+@pytest.mark.parametrize(
+    "configured",
+    [
+        "http://127.1:8080",
+        "http://0x7f.1:8080/v1",
+        "http://user:pw@127.0.0.1:8080",
+        "http://-bad.corp:8080/completion",
+        "http://127.0.0.1:8080/v1?token=not-a-real-secret",
+    ],
+)
+def test_the_word_bench_never_targets_an_endpoint_the_contract_refuses(configured):
+    """Review r15ep-rev1 I-3: the Evals word bench posts to
+    ``[api_settings.llama_cpp] api_url`` through its own httpx client, so a
+    refused URL was benched; normalising to the root even dropped the query.
+    A refused URL now reads as not configured."""
+    from tldw_chatbook.UI.Evals import sample_bench
+
+    app_config = {"api_settings": {"llama_cpp": {"api_url": configured}}}
+
+    assert sample_bench.configured_llama_cpp_url(app_config) is None
+
+
+@pytest.mark.parametrize(
+    "configured",
+    [
+        "http://localhost:8080/completion",
+        # The bench's own route, which the llama.cpp chat reading refuses as
+        # ambiguous; the bench sends to the root (test_evals_empty_states).
+        "http://localhost:8080/v1/completions",
+    ],
+)
+def test_the_word_bench_still_targets_an_accepted_endpoint(configured):
+    """Review r15ep-rev1 I-3 control: the check reads the URL the bench
+    sends to, its root, with the host, user info and query typed."""
+    from tldw_chatbook.UI.Evals import sample_bench
+
+    app_config = {"api_settings": {"llama_cpp": {"api_url": configured}}}
+
+    assert sample_bench.configured_llama_cpp_url(app_config) == "http://localhost:8080"
+
+
+#: Owner decision 2026-11-16 (TASK-41145): Custom OpenAI API 2 reads its
+#: endpoint where Settings writes it.
+_CUSTOM_2_SLOT = {
+    "api_settings": {
+        "custom_2": {"api_url": "http://127.0.0.1:5678/v1", "api_key": "not-a-real-key-0000"}
+    }
+}
+_CUSTOM_2_POST = "http://127.0.0.1:5678/v1/chat/completions"
+
+
+def test_a_dreams_send_on_custom_2_reaches_the_endpoint_settings_saved(monkeypatch):
+    """Review r15ep-rev1 I-1: custom_2 resolved ready and mapped to its
+    handler, then every Dreams send failed with "api_ip required", because
+    the handler read only the top-level ``[custom_openai_api_2] api_ip``."""
+    from tldw_chatbook.Dreams import story_service
+
+    config = _merged({**_CUSTOM_2_SLOT, "chat_defaults": {"provider": "custom_2", "model": "m"}})
+    posts = _local_world(monkeypatch, config)
+    monkeypatch.setattr(
+        "tldw_chatbook.Dreams.settings.get_cli_setting",
+        lambda section, key, default=None: default,
+    )
+    monkeypatch.setattr(story_service, "load_cli_config_and_ensure_existence", lambda **kw: config)
+
+    reply = story_service.resolve_dreams_chat()(
+        messages_payload=[{"role": "user", "content": "hi"}], streaming=False
+    )
+
+    assert posts == [_CUSTOM_2_POST]
+    assert reply["choices"][0]["message"]["content"] == "ok"
+
+
+def test_an_ingest_analysis_on_custom_2_reaches_the_endpoint_settings_saved(monkeypatch):
+    """Review r15ep-rev1 I-1: the ingest analysis call (unpinned) failed the
+    same way, reported only as an analysis warning."""
+    from tldw_chatbook.Library.ingest_analysis import resolve_ingest_analysis_provider
+    from tldw_chatbook.Local_Ingestion import local_file_ingestion
+
+    config = _merged({**_CUSTOM_2_SLOT, "analysis_defaults": {"provider": "custom_2", "model": "m"}})
+    posts = _local_world(monkeypatch, config)
+    resolution = resolve_ingest_analysis_provider(config, environ={})
+
+    text, failure = local_file_ingestion._run_chat_analysis(
+        api_name=resolution.dispatch_name,
+        api_key=resolution.api_key,
+        content="text",
+        custom_prompt="p",
+        system_prompt="s",
+        analysis_call={"model": "m"},
+    )
+
+    assert posts == [_CUSTOM_2_POST]
+    assert (text, failure) == ("ok", None)
+
+
+@pytest.mark.parametrize(
+    "legacy",
+    [
+        # Set explicitly: the merged view carries it as the slot's api_url.
+        "http://legacy-box.lan:5000/v1/chat/completions",
+        # At its code default: the bridge leaves the slot alone and the
+        # adapter falls back to load_settings' ``custom_openai_api_2.api_ip``.
+        "http://127.0.0.1:5000/v1/chat/completions",
+    ],
+)
+def test_custom_2_still_reads_its_legacy_api_ip_when_the_slot_has_none(
+    legacy, tmp_path, monkeypatch
+):
+    """Owner decision 2026-11-16: the legacy ``[API] custom_openai2_api_ip``
+    (``load_settings`` builds ``custom_openai_api_2.api_ip`` from it) stays the
+    fallback, so a config that set only it keeps sending there. Review
+    r15ep-rev2 M-2: through a real scratch file, not a patched loader."""
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local as local_calls
+    from tldw_chatbook.LLM_Calls import provider_sessions
+
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        toml.dumps(
+            {
+                "API": {"custom_openai2_api_ip": legacy},
+                "api_settings": {"custom_2": {"api_url": ""}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    select_config_source(monkeypatch, config_path, vars(local_calls))
+    posts: list[str] = []
+    monkeypatch.setattr(
+        local_calls, "create_pooled_default_session", lambda **_kw: _RecordingSession(posts)
+    )
+    monkeypatch.setattr(provider_sessions, "get_session", lambda _key, factory: factory())
+
+    _dispatch("custom-openai-api-2")
+
+    assert posts == [legacy]
+
+
+def test_custom_2_without_an_endpoint_names_the_setting_to_fill(monkeypatch):
+    """Review r15ep-rev2 M-1: the copy named only the legacy ``api_ip``."""
+    from tldw_chatbook.Provider_Contract import ChatConfigurationError
+
+    config = _merged({})
+    config["api_settings"]["custom_2"]["api_url"] = ""
+    _local_world(monkeypatch, config)
+
+    with pytest.raises(ChatConfigurationError) as caught:
+        _dispatch("custom-openai-api-2")
+
+    assert "[api_settings.custom_2] api_url" in str(caught.value)
+
+
+# --- TASK-41145, owner decision 2026-11-16: "Settings edits host/port" -------
+
+#: Typed MLX-LM endpoints, and the host and port each is saved as.
+_MLX_ACCEPTED = (
+    ("http://gpu-box.lan:9000/v1", "gpu-box.lan", 9000),
+    ("http://gpu-box.lan:9000", "gpu-box.lan", 9000),
+    ("http://gpu-box.lan:9000/v1/", "gpu-box.lan", 9000),
+    ("localhost:9000", "localhost", 9000),
+    ("http://[::1]:9000/v1", "[::1]", 9000),
+)
+
+
+_MLX_REFUSED_ENDPOINTS = (
+    "https://gpu-box.lan:9000/v1",
+    "http://gpu-box.lan:9000/v1/chat/completions",
+    "http://gpu-box.lan:9000/mlx/v1",
+    "http://user:pw@gpu-box.lan:9000/v1",
+    "http://127.1:9000/v1",
+)
+
+
+def _mlx_refused():
+    """Each refused MLX-LM endpoint and the copy that refuses it."""
+    from tldw_chatbook.Chat.provider_setup_persistence import (
+        MLX_HTTPS_REFUSAL,
+        MLX_PATH_REFUSAL,
+    )
+
+    return dict(
+        zip(
+            _MLX_REFUSED_ENDPOINTS,
+            (
+                MLX_HTTPS_REFUSAL,
+                MLX_PATH_REFUSAL,
+                MLX_PATH_REFUSAL,
+                "Endpoint URL must not include user information.",
+                "Endpoint URL must include a valid host and port.",
+            ),
+            strict=True,
+        )
+    )
+
+
+def _applied(config, mutation):
+    """``config`` with a provider setup mutation's writes and deletes applied."""
+    import copy
+
+    out = copy.deepcopy(config)
+    for section, values in mutation.section_values.items():
+        node = out
+        for part in section.split("."):
+            node = node.setdefault(part, {})
+        node.update(values)
+    for section, keys in mutation.delete_keys.items():
+        node = out
+        for part in section.split("."):
+            node = node.get(part, {})
+        for key in keys:
+            node.pop(key, None)
+    return out
+
+
+def _mlx_draft(endpoint):
+    return ProviderSetupDraft(
+        provider="local_mlx_lm",
+        model="m",
+        endpoint=endpoint,
+        credential_source="none",
+        credential_revision=0,
+        draft_generation=1,
+    )
+
+
+@pytest.mark.parametrize(("endpoint", "host", "port"), _MLX_ACCEPTED)
+def test_saving_an_mlx_endpoint_writes_the_host_and_port_the_adapter_reads(
+    endpoint, host, port, monkeypatch
+):
+    """TASK-41145: Settings' (and first-run setup's) save wrote the endpoint
+    to ``[api_settings.local_mlx_lm] api_url``, which ``chat_with_mlx_lm``
+    never reads, so chats still went to 127.0.0.1:8080. The save now writes
+    ``host`` and ``port``, leaves ``api_url`` alone, and the adapter calls
+    the saved address."""
+    config = _merged({})
+    placeholder = config["api_settings"]["local_mlx_lm"].get("api_url")
+
+    mutation = build_provider_setup_mutation(_mlx_draft(endpoint), config)
+    written = mutation.section_values["api_settings.local_mlx_lm"]
+    saved = _applied(config, mutation)
+    posts = _local_world(monkeypatch, saved)
+    _dispatch("local_mlx_lm")
+
+    assert (written["host"], written["port"]) == (host, port)
+    assert "api_url" not in written
+    assert saved["api_settings"]["local_mlx_lm"].get("api_url") == placeholder
+    assert posts == [f"http://{host}:{port}/v1/chat/completions"]
+
+
+def test_an_mlx_save_refuses_what_host_and_port_cannot_express():
+    """TASK-41145: https, a path other than /v1 and user info cannot be
+    saved as a host and port; the save refuses with copy that says why."""
+    from tldw_chatbook.Chat.provider_setup_persistence import mlx_endpoint_refusal
+
+    for endpoint, copy_ in _mlx_refused().items():
+        assert mlx_endpoint_refusal(endpoint) == copy_, endpoint
+        with pytest.raises(ValueError, match=re.escape(copy_)):
+            build_provider_setup_mutation(_mlx_draft(endpoint), _merged({}))
+
+
+def test_first_run_setup_reads_and_writes_mlx_host_and_port():
+    """TASK-41145: first-run setup showed the template's unused ``api_url``
+    placeholder as MLX-LM's endpoint and saved the typed one to it."""
+    from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
+
+    config = _merged({"api_settings": {"local_mlx_lm": {"host": "gpu-box.lan", "port": 9000}}})
+
+    def draft(endpoint):
+        return wizard_state.FirstRunProviderDraft(
+            "local_mlx_lm", endpoint, wizard_state.ProviderCredentialDraft("none", "", 0)
+        )
+
+    shown = wizard_state.resolve_first_run_provider_draft(draft(""), config)
+    mutation = wizard_state.build_first_run_provider_commit(
+        draft("http://other-box.lan:9100/v1"), "m", config
+    )
+
+    assert shown.endpoint == "http://gpu-box.lan:9000/v1"
+    written = mutation.section_values["api_settings.local_mlx_lm"]
+    assert (written["host"], written["port"]) == ("other-box.lan", 9100)
+    assert "api_url" not in written
+    for endpoint, copy_ in _mlx_refused().items():
+        with pytest.raises(ValueError, match=re.escape(copy_)):
+            wizard_state.build_first_run_provider_commit(draft(endpoint), "m", config)
+
+
+@pytest.mark.parametrize("endpoint", ["http://gpu-box.lan:9000/v1", *_MLX_REFUSED_ENDPOINTS])
+def test_make_default_writes_mlx_host_and_port(
+    tmp_path, monkeypatch, _reset_console_default_intents, endpoint
+):
+    """TASK-41145: Chat settings' Make default wrote MLX-LM's endpoint to the
+    ``api_url`` its adapter ignores. It writes ``host`` and ``port``, and
+    refuses what they cannot express, writing nothing."""
+    config_path = tmp_path / "config.toml"
+    placeholder = "http://localhost:5678/v1/chat/completions"
+    config_path.write_text(
+        toml.dumps(
+            {
+                "api_settings": {"local_mlx_lm": {"api_url": placeholder}},
+                "chat_defaults": {"provider": "openai", "model": "old-model"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    select_config_source(monkeypatch, config_path, vars(defaults_module))
+    before = config_path.read_bytes()
+    refusal = _mlx_refused().get(endpoint, "")
+
+    outcome = defaults_module.apply_console_default_intent(
+        defaults_module.ConsoleDefaultMutationIntent(
+            generation=1,
+            action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+            provider_config_key="local_mlx_lm",
+            literal_model_id="mlx-model",
+            field_mask=FULL_MODEL_DEFAULT_FIELDS,
+            values={"temperature": 0.25},
+            endpoint_patch=defaults_module.ConsoleEndpointPatch(
+                endpoint, "local_mlx_lm", True, True
+            ),
+        )
+    )
+
+    assert defaults_module.console_default_endpoint_refusal("local_mlx_lm", endpoint) == refusal
+    if refusal:
+        assert outcome.file_replaced is False
+        assert config_path.read_bytes() == before
+    else:
+        assert outcome.runtime_published is True, outcome
+        saved = tomllib.loads(config_path.read_text(encoding="utf-8"))["api_settings"]["local_mlx_lm"]
+        assert (saved["host"], saved["port"], saved["api_url"]) == ("gpu-box.lan", 9000, placeholder)
+
+
+def test_the_shipped_mlx_table_holds_the_host_and_port_its_adapter_reads():
+    """TASK-41145 AC#2: the template shipped an ``api_url`` placeholder
+    (localhost:5678) that MLX-LM never reads, which Settings then showed as
+    its endpoint. It ships the adapter's own defaults instead."""
+    from tldw_chatbook.config import DEFAULT_CONFIG_FROM_TOML
+
+    table = DEFAULT_CONFIG_FROM_TOML["api_settings"]["local_mlx_lm"]
+
+    assert "api_url" not in table
+    assert (table["host"], table["port"]) == ("127.0.0.1", 8080)
+
+
+# --- TASK-41145 ruling 2026-11-17: an explicit legacy custom_2 endpoint is not
+# silently redirected -----------------------------------------------------------
+
+_LEGACY_CUSTOM_2 = "http://legacy-box.lan:5000/v1/chat/completions"
+_CUSTOM_2_PLACEHOLDER = "http://localhost:5678/v1/chat/completions"
+
+
+@pytest.mark.parametrize(
+    ("user", "sent"),
+    [
+        # Legacy set explicitly, the slot still the template's placeholder.
+        ({"API": {"custom_openai2_api_ip": _LEGACY_CUSTOM_2}}, _LEGACY_CUSTOM_2),
+        # ...or blanked: the legacy endpoint is kept.
+        (
+            {
+                "API": {"custom_openai2_api_ip": _LEGACY_CUSTOM_2},
+                "api_settings": {"custom_2": {"api_url": ""}},
+            },
+            _LEGACY_CUSTOM_2,
+        ),
+        # A slot the user edited wins.
+        (
+            {
+                "API": {"custom_openai2_api_ip": _LEGACY_CUSTOM_2},
+                "api_settings": {"custom_2": {"api_url": "http://slot-box.lan:5678/v1"}},
+            },
+            "http://slot-box.lan:5678/v1/chat/completions",
+        ),
+        # The legacy key at its shipped default is not an explicit choice.
+        (
+            {"API": {"custom_openai2_api_ip": "http://127.0.0.1:5000/v1/chat/completions"}},
+            _CUSTOM_2_PLACEHOLDER,
+        ),
+    ],
+)
+def test_an_explicit_legacy_custom_2_endpoint_is_not_redirected(user, sent, monkeypatch):
+    """TASK-41145 ruling 2026-11-17: reading ``[api_settings.custom_2] api_url``
+    first moved a profile that set ``[API] custom_openai2_api_ip`` onto the
+    template's localhost:5678 placeholder. The merged view (every reader's)
+    keeps the explicit legacy endpoint until the slot holds a real one."""
+    from tldw_chatbook.Chat.console_provider_endpoints import adapter_own_endpoint
+
+    config = _merged(user)
+    assert config["api_settings"]["custom_2"]["api_url"] in {sent, sent.removesuffix("/chat/completions")}
+    posts = _local_world(monkeypatch, config)
+
+    _dispatch("custom-openai-api-2")
+
+    assert posts == [sent]
+    own = adapter_own_endpoint("custom-openai-api-2", config)
+    assert own.removesuffix("/chat/completions") == sent.removesuffix("/chat/completions")
+    assert user.get("api_settings", {}).get("custom_2", {}).get("api_url") != _LEGACY_CUSTOM_2
+
+
+def test_the_loaded_settings_keep_an_explicit_legacy_custom_2_endpoint(tmp_path, monkeypatch):
+    """TASK-41145 ruling 2026-11-17: ``load_settings`` (the adapter's read) is
+    built from the same merged view; the file itself is never written."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        toml.dumps({"API": {"custom_openai2_api_ip": _LEGACY_CUSTOM_2}}), encoding="utf-8"
+    )
+    before = config_path.read_bytes()
+    config_module = select_config_source(monkeypatch, config_path)
+
+    settings = config_module.load_settings(force_reload=True)
+
+    assert settings["api_settings"]["custom_2"]["api_url"] == _LEGACY_CUSTOM_2
+    assert config_path.read_bytes() == before
+
+
+#: Review r15ep-rev2: an MLX-LM table as the old template wrote it.
+_OLD_TEMPLATE_MLX = {
+    "api_settings": {
+        "local_mlx_lm": {
+            "api_url": "http://localhost:5678/v1/chat/completions",
+            "model": "custom-model-gamma",
+        }
+    }
+}
+
+
+@pytest.mark.parametrize(
+    ("user", "configured"),
+    [
+        ({}, []),
+        (_OLD_TEMPLATE_MLX, []),
+        ({"api_settings": {"local_mlx_lm": {"host": "gpu-box.lan", "port": 9000}}}, ["local_mlx_lm"]),
+    ],
+)
+def test_mlx_counts_as_configured_only_for_a_host_and_port_the_user_set(user, configured):
+    """Review r15ep-rev2 I-2: Settings' "Configured" list compared the
+    endpoint keys, so the old template's ignored ``api_url`` placeholder
+    (the new template ships none) made MLX-LM read Configured in every
+    profile written from it, and a host and port the user set did not."""
+    from tldw_chatbook.UI.Screens.settings_provider_view_model import configured_provider_keys
+    from tldw_chatbook.UI.Screens.settings_screen import PROVIDER_ENDPOINT_KEYS
+
+    catalog = [SimpleNamespace(readiness_key="local_mlx_lm")]
+
+    keys = configured_provider_keys(catalog, _merged(user), PROVIDER_ENDPOINT_KEYS, environ={})
+
+    assert sorted(keys) == configured
+
+
+@pytest.mark.parametrize(
+    ("user", "listed"),
+    [
+        ({}, "http://127.0.0.1:8080/v1"),
+        (_OLD_TEMPLATE_MLX, "http://127.0.0.1:8080/v1"),
+        (
+            {"api_settings": {"local_mlx_lm": {"host": "gpu-box.lan", "port": 9000}}},
+            "http://gpu-box.lan:9000/v1",
+        ),
+    ],
+)
+def test_mlx_discovery_lists_the_host_and_port_its_send_uses(user, listed):
+    """Review r15ep-rev2: model discovery and auto-refresh read MLX-LM's
+    ``api_url``, so a fresh or host-and-port profile listed nothing and an
+    old-template profile listed the ignored localhost:5678 placeholder."""
+    from tldw_chatbook.LLM_Provider_Catalog.local_llm_provider_catalog_service import (
+        LocalLLMProviderCatalogService,
+    )
+
+    service = LocalLLMProviderCatalogService.__new__(LocalLLMProviderCatalogService)
+
+    endpoint = service._resolve_endpoint(
+        provider_key="local_mlx_lm", saved_settings=_merged(user), staged_settings=None
+    )
+    draft = service._resolve_endpoint(
+        provider_key="local_mlx_lm",
+        saved_settings=_merged(user),
+        staged_settings={"api_settings": {"local_mlx_lm": {"api_url": "http://draft-box.lan:9100/v1"}}},
+    )
+
+    assert endpoint == listed
+    assert draft == "http://draft-box.lan:9100/v1"

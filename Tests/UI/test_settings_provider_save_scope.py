@@ -316,3 +316,248 @@ async def test_a_stored_koboldcpp_chat_route_refuses_only_saves_that_write_it(
     windows = saved["model_capabilities"]["models"]
     assert windows["kobold-model"]["context_window"] == 4096
 
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_mlx_settings_edits_the_host_and_port_its_send_uses(
+    request, monkeypatch
+) -> None:
+    """TASK-41145 (owner decision 2026-11-16, "Settings edits host/port"):
+    Settings showed and saved MLX-LM's endpoint as ``api_url``, which
+    ``chat_with_mlx_lm`` never reads, so chats still went to 127.0.0.1:8080.
+    The field now shows the host and port (a saved ``api_url`` is ignored),
+    refuses what they cannot express, and saves them; the send then posts to
+    the saved address."""
+    from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+    from tldw_chatbook.Chat.provider_setup_persistence import MLX_HTTPS_REFUSAL
+    from tldw_chatbook.config import (
+        load_cli_config_and_ensure_existence,
+        save_settings_to_cli_config,
+    )
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local as local
+    from tldw_chatbook.LLM_Calls import provider_sessions
+
+    requests = []
+
+    class _Session:
+        def post(self, url, **kwargs):
+            requests.append(url)
+            return httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": "synthetic-mlx-reply"}}]},
+                request=httpx.Request("POST", url),
+            )
+
+    monkeypatch.setattr(local, "create_pooled_default_session", lambda **kw: _Session())
+    monkeypatch.setattr(provider_sessions, "get_session", lambda _key, factory: factory())
+    ignored = "http://localhost:5678/v1/chat/completions"
+    assert save_settings_to_cli_config({"api_settings.local_mlx_lm": {"api_url": ignored}})
+    host = DestinationHarness(_build_test_app(), "settings")
+
+    async def _save(screen, pilot, endpoint: str) -> str:
+        screen.query_one("#settings-provider-endpoint-value", Input).value = endpoint
+        screen.query_one("#settings-model-value", Input).value = "mlx-model"
+        return await _save_provider_card(screen, pilot)
+
+    async with host.run_test(size=(211, 44)) as pilot:
+        screen = _active_destination_screen(host)
+        screen._select_category(SettingsCategoryId.PROVIDERS_MODELS.value)
+        await _wait_for_selector(screen, pilot, "#settings-model-value", timeout=30.0)
+        provider = screen.query_one("#settings-provider-value", Select)
+        provider.value = "local_mlx_lm"
+        screen.handle_provider_value_changed(Select.Changed(provider, "local_mlx_lm"))
+        await pilot.pause()
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        assert endpoint.value == "http://127.0.0.1:8080/v1"
+
+        assert await _save(screen, pilot, "https://gpu-box.lan:9000/v1") == MLX_HTTPS_REFUSAL
+        assert load_cli_config_and_ensure_existence(force_reload=True)["api_settings"][
+            "local_mlx_lm"
+        ].get("host", "127.0.0.1") == "127.0.0.1"
+        result = await _save(screen, pilot, "http://gpu-box.lan:9000/v1")
+        assert result.startswith("Provider settings saved"), result
+
+    saved = load_cli_config_and_ensure_existence(force_reload=True)["api_settings"]["local_mlx_lm"]
+    assert (saved["host"], saved["port"], saved["api_url"]) == ("gpu-box.lan", 9000, ignored)
+    reply = chat_api_call(
+        "local_mlx_lm",
+        [{"role": "user", "content": "synthetic prompt"}],
+        model="mlx-model",
+        streaming=False,
+    )
+    assert reply["choices"][0]["message"]["content"] == "synthetic-mlx-reply"
+    assert requests == ["http://gpu-box.lan:9000/v1/chat/completions"]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_model_only_custom_2_save_keeps_the_legacy_endpoint_unsaved(
+    request, monkeypatch
+) -> None:
+    """TASK-41145 ruling (review r15ep-rev2 I-1): the Custom 2 card shows the
+    legacy ``[API] custom_openai2_api_ip`` that the merged view carries while
+    the slot's ``api_url`` is the template placeholder, and a model-only save
+    wrote it into ``api_url``, so the legacy key stopped being read. The save
+    now writes the placeholder back; the next send still goes to the legacy
+    address."""
+    import tomllib
+
+    from tldw_chatbook import config as config_module
+    from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+    from tldw_chatbook.config import (
+        load_cli_config_and_ensure_existence,
+        save_settings_to_cli_config,
+    )
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local as local
+    from tldw_chatbook.LLM_Calls import provider_sessions
+
+    requests = []
+
+    class _Session:
+        def post(self, url, **kwargs):
+            requests.append(url)
+            return httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": "synthetic-custom-2-reply"}}]},
+                request=httpx.Request("POST", url),
+            )
+
+    monkeypatch.setattr(local, "create_pooled_default_session", lambda **kw: _Session())
+    monkeypatch.setattr(provider_sessions, "get_session", lambda _key, factory: factory())
+    legacy = "http://legacy-box.lan:5000/v1/chat/completions"
+    placeholder = "http://localhost:5678/v1/chat/completions"
+    assert save_settings_to_cli_config(
+        {
+            "API": {"custom_openai2_api_ip": legacy},
+            "api_settings.custom_2": {"api_url": placeholder, "model": "old-model"},
+        }
+    )
+    host = DestinationHarness(_build_test_app(), "settings")
+
+    async with host.run_test(size=(211, 44)) as pilot:
+        screen = _active_destination_screen(host)
+        screen._select_category(SettingsCategoryId.PROVIDERS_MODELS.value)
+        await _wait_for_selector(screen, pilot, "#settings-model-value", timeout=30.0)
+        provider = screen.query_one("#settings-provider-value", Select)
+        provider.value = "custom_2"
+        screen.handle_provider_value_changed(Select.Changed(provider, "custom_2"))
+        await pilot.pause()
+        assert screen.query_one("#settings-provider-endpoint-value", Input).value == legacy
+
+        screen.query_one("#settings-model-value", Input).value = "new-model"
+        result = await _save_provider_card(screen, pilot)
+        assert result.startswith("Provider settings saved"), result
+        # Review r15ep-rev3 I-1: the in-memory view kept the placeholder the
+        # save wrote, so Settings showed (and Test and Discover staged)
+        # localhost:5678 while sends went to the legacy address.
+        assert screen._provider_endpoint_value("custom_2") == legacy
+        for chosen in ("vllm", "custom_2"):
+            provider.value = chosen
+            screen.handle_provider_value_changed(Select.Changed(provider, chosen))
+            await pilot.pause()
+        assert screen.query_one("#settings-provider-endpoint-value", Input).value == legacy
+
+    path = config_module._get_effective_config_path()
+    saved = tomllib.loads(path.read_text(encoding="utf-8"))["api_settings"]["custom_2"]
+    assert (saved["api_url"], saved["model"]) == (placeholder, "new-model")
+    load_cli_config_and_ensure_existence(force_reload=True)
+    chat_api_call(
+        "custom-openai-api-2",
+        [{"role": "user", "content": "synthetic prompt"}],
+        api_key="not-a-real-key-0000",
+        model="new-model",
+        streaming=False,
+    )
+    assert requests == [legacy]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("first_write", ["first_run", "edited_legacy"])
+@private_profile_test
+async def test_a_written_custom_2_endpoint_survives_a_later_model_only_save(
+    request, first_write
+) -> None:
+    """TASK-41145 review r15ep-rev4: once first-run or an edited Settings save
+    wrote a real ``api_url`` (even exactly the legacy address), a later
+    model-only save in the same session wrote the placeholder recorded at boot
+    over it, because the live view kept the boot-time bridge provenance. The
+    unedited save now reads the bridge from the file as it is."""
+    import tomllib
+    from types import SimpleNamespace
+
+    from tldw_chatbook import config as config_module
+    from tldw_chatbook.config import save_settings_to_cli_config
+
+    legacy = "http://legacy-box.lan:5000/v1/chat/completions"
+    assert save_settings_to_cli_config(
+        {
+            "API": {"custom_openai2_api_ip": legacy},
+            "api_settings.custom_2": {
+                "api_url": "http://localhost:5678/v1/chat/completions",
+                "model": "old-model",
+            },
+        }
+    )
+    path = config_module._get_effective_config_path()
+
+    def file_api_url() -> str:
+        saved = tomllib.loads(path.read_text(encoding="utf-8"))
+        return saved["api_settings"]["custom_2"]["api_url"]
+
+    host = DestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(211, 44)) as pilot:
+        screen = _active_destination_screen(host)
+        screen._select_category(SettingsCategoryId.PROVIDERS_MODELS.value)
+        await _wait_for_selector(screen, pilot, "#settings-model-value", timeout=30.0)
+
+        async def choose(key: str) -> None:
+            provider = screen.query_one("#settings-provider-value", Select)
+            provider.value = key
+            screen.handle_provider_value_changed(Select.Changed(provider, key))
+            await pilot.pause()
+
+        async def save(model_id: str, endpoint: str | None = None) -> None:
+            if endpoint is not None:
+                screen.query_one("#settings-provider-endpoint-value", Input).value = endpoint
+            screen.query_one("#settings-model-value", Input).value = model_id
+            result = await _save_provider_card(screen, pilot)
+            assert result.startswith("Provider settings saved"), result
+
+        if first_write == "first_run":
+            # The first-run wizard's commit: built from the atomic snapshot,
+            # persisted by the shared owner, mirrored into the live view.
+            from tldw_chatbook.Chat.provider_setup_persistence import (
+                persist_provider_setup,
+            )
+            from tldw_chatbook.config import get_atomic_config_snapshot
+            from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard
+            from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+                SetupWizardContainer,
+            )
+
+            mutation = wizard.build_first_run_provider_commit(
+                wizard.FirstRunProviderDraft(
+                    "custom_2", legacy, wizard.ProviderCredentialDraft("none", "", 0)
+                ),
+                "first-run-model",
+                get_atomic_config_snapshot().values,
+            )
+            assert persist_provider_setup(mutation).fully_applied
+            SetupWizardContainer._mirror_into_app_config(
+                SimpleNamespace(app_instance=screen.app_instance),
+                mutation.section_values,
+                mutation.delete_keys,
+            )
+            await choose("vllm")
+            await choose("custom_2")
+        else:
+            await choose("custom_2")
+            await save("edited-model", "http://edited.lan:7000/v1/chat/completions")
+            await save("edited-model", legacy)
+        assert file_api_url() == legacy
+
+        assert screen.query_one("#settings-provider-endpoint-value", Input).value == legacy
+        await save("new-model")
+
+    assert file_api_url() == legacy

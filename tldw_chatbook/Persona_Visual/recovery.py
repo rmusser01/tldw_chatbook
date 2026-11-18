@@ -134,7 +134,15 @@ class _Assets(_Definition):
             return super().discover(config)
         context = discovery_context(config)
         root = self._root(config)
-        references = self._references(database_path(config, "chachanotes_db_path"))
+        try:
+            references = self._references(database_path(config, "chachanotes_db_path"))
+        except (OSError, ValueError, RuntimeError, sqlite3.Error):
+            # TASK-41125: an unreadable core leaves the selection unknown. Keep
+            # the root the core depends on, blocking, as the other persona
+            # owners do; discover() adds the references_unavailable item.
+            references, status = (), "unavailable"
+        else:
+            status = "unused"
         selected = frozenset(locator for locator, _, _ in references)
         if not selected:
             return (
@@ -142,7 +150,7 @@ class _Assets(_Definition):
                     self.owner_id,
                     storage_logical_id(context, self.owner_id),
                     root,
-                    "unused",
+                    status,
                     (),
                 ),
             )

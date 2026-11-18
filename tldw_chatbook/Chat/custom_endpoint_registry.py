@@ -330,7 +330,8 @@ def missing_custom_endpoint_copy(app_config: Mapping[str, object], provider: str
     entry, reason = refused
     params = _custom_endpoints_section(app_config)[slug].get("params")
     where = (
-        "Fix it in config.toml, or delete the entry in Settings ▸ Custom endpoints."
+        "Fix it in config.toml (see 'Custom endpoints' in the User Guide's "
+        "Settings page), or delete the entry in Settings ▸ Custom endpoints."
         if entry.family not in ENDPOINT_FAMILIES
         or reason in validate_sampling_params(params if isinstance(params, Mapping) else {})
         else "Fix it in Settings ▸ Custom endpoints."

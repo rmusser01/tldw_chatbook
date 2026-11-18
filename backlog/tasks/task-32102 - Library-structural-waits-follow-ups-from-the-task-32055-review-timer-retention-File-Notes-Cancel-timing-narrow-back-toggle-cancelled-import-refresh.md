@@ -114,4 +114,6 @@ Files: `tldw_chatbook/UI/Screens/library_screen.py`,
 
 **Closed 2026-09-11 on evidence:** the five File Notes items (Cancel affordance timing, `-empty-root` cleared alongside `-warning`/`-offline`, exit-abandon notify via `cancel_structural_wait(leaving=True)`, and the two others) shipped with the peer's PR #2557 (task-32180, commit 203f4dc633, merged 2026-09-11 00:36Z); the two items owned here shipped with PR #2569 (task review + fix rounds). All seven are now on dev.
 
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/library/file-notes.md`: Pinned by tests, not by a live capture.
 <!-- SECTION:NOTES:END -->

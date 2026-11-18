@@ -257,7 +257,10 @@ _ADAPTER_OWN_ENDPOINTS: dict[str, tuple[tuple[str, ...], ...]] = {
         ("api_settings", "local-llm", "api_ip"),
     ),
     "custom-openai-api": (("api_settings", "custom", "api_url"),),
-    "custom-openai-api-2": (("custom_openai_api_2", "api_ip"),),
+    "custom-openai-api-2": (
+        ("api_settings", "custom_2", "api_url"),
+        ("custom_openai_api_2", "api_ip"),
+    ),
     "oobabooga": (("api_settings", "ooba_api", "api_ip"),),
     "aphrodite": (("api_settings", "aphrodite_api", "api_url"),),
     "tabbyapi": (("api_settings", "tabby_api", "api_url"),),
@@ -265,9 +268,135 @@ _ADAPTER_OWN_ENDPOINTS: dict[str, tuple[tuple[str, ...], ...]] = {
 }
 
 
+#: The code default of the legacy ``[API] custom_openai2_api_ip``
+#: (``config.load_settings``), which is not an explicit endpoint.
+LEGACY_CUSTOM_2_API_IP_DEFAULT = "http://127.0.0.1:5000/v1/chat/completions"
+
+
+def keep_legacy_custom_2_endpoint(
+    merged: dict, legacy: object, template: Mapping[str, object]
+) -> None:
+    """Keep an explicit legacy Custom OpenAI API 2 endpoint in the merged view.
+
+    The adapter reads ``[api_settings.custom_2] api_url`` before the legacy
+    ``[API] custom_openai2_api_ip`` (owner decision 2026-11-16). An explicit
+    legacy endpoint must not be silently redirected (ruling 2026-11-17), so
+    while the slot's ``api_url`` is absent, blank or still the shipped
+    template's placeholder, and the legacy value is anything but its default,
+    the view's ``api_url`` takes the legacy value. In memory only, like
+    ``config._normalize_legacy_provider_api_key``: every reader (the adapter,
+    ``adapter_own_endpoint``, Console, Settings) sees one value, and the
+    user's file is never written.
+
+    Args:
+        merged: The user's config merged over the template; changed in place.
+        legacy: The user's ``[API] custom_openai2_api_ip``.
+        template: The shipped template (``DEFAULT_CONFIG_FROM_TOML``).
+    """
+    if not isinstance(legacy, str) or legacy.strip() in {"", LEGACY_CUSTOM_2_API_IP_DEFAULT}:
+        return
+    api_settings = merged.get("api_settings")
+    slot = api_settings.get("custom_2") if isinstance(api_settings, dict) else None
+    shipped = ((template.get("api_settings") or {}).get("custom_2") or {}).get("api_url")
+    if isinstance(slot, dict) and str(slot.get("api_url") or "").strip() in {"", shipped}:
+        # What the slot read before, so a save that leaves the Endpoint alone
+        # writes that, not the legacy value (review r15ep-rev2 I-1).
+        merged[LEGACY_CUSTOM_2_BRIDGE] = {
+            "legacy": legacy.strip(),
+            "before": slot.get("api_url") or "",
+        }
+        slot["api_url"] = legacy.strip()
+
+
+#: Where ``keep_legacy_custom_2_endpoint`` records a bridge in the merged
+#: view (a provenance key, like ``legacy_api_key_providers``; never written).
+LEGACY_CUSTOM_2_BRIDGE = "legacy_custom_2_endpoint_bridge"
+
+
+def reapply_legacy_custom_2_bridge(view: dict) -> None:
+    """Re-run ``keep_legacy_custom_2_endpoint`` on an in-memory settings view.
+
+    Settings patches the saved values into the live view; an unedited Custom 2
+    save writes the slot's earlier value, so without this the view showed
+    (and Test and Discover staged) the placeholder while sends used the
+    legacy endpoint (review r15ep-rev3 I-1). One rule, the load-time one.
+
+    Args:
+        view: The live settings view (``load_settings`` shape); changed in place.
+    """
+    raw = view.get("COMPREHENSIVE_CONFIG_RAW")
+    bridge = view.get(LEGACY_CUSTOM_2_BRIDGE) or (
+        raw.get(LEGACY_CUSTOM_2_BRIDGE) if isinstance(raw, Mapping) else None
+    )
+    if isinstance(bridge, Mapping):
+        from tldw_chatbook.config import DEFAULT_CONFIG_FROM_TOML
+
+        keep_legacy_custom_2_endpoint(view, bridge.get("legacy"), DEFAULT_CONFIG_FROM_TOML)
+
+
+def endpoint_to_save_unedited(provider_key: str, shown: str) -> str:
+    """The endpoint a save writes when the Endpoint field was not edited.
+
+    The field shows Custom 2's bridged legacy endpoint (``keep_legacy_custom_2
+    _endpoint``); a save that did not touch it writes back what the slot held
+    before the bridge, so the legacy key keeps being read (TASK-41145 ruling,
+    review r15ep-rev2 I-1). Any other value is written as shown. The bridge is
+    read from the file as it is now, not from the live view: once first-run or
+    a save wrote a real ``api_url`` there is none (review r15ep-rev4).
+
+    Args:
+        provider_key: The provider the save is for.
+        shown: The Endpoint field's value.
+
+    Returns:
+        The endpoint to write.
+    """
+    if provider_key != "custom_2":
+        return shown
+    from tldw_chatbook.config import get_atomic_config_snapshot
+
+    try:
+        bridge = get_atomic_config_snapshot().values.get(LEGACY_CUSTOM_2_BRIDGE)
+    except ValueError:  # unreadable or undecryptable; the save's write refuses it too
+        return shown
+    if not isinstance(bridge, Mapping):
+        return shown
+    return str(bridge.get("before") or "") if shown == bridge.get("legacy") else shown
+
+
 #: Adapters that always build their endpoint themselves (MLX-LM's host and
 #: port) and ignore any URL in their ``api_settings`` table.
 ADAPTER_ONLY_ENDPOINT_KEYS = frozenset({"mlx_lm", "local_mlx_lm"})
+
+
+def mlx_endpoint(table: Mapping[str, object]) -> str:
+    """The URL ``chat_with_mlx_lm`` builds from its table's host and port.
+
+    Args:
+        table: MLX-LM's ``api_settings`` table.
+
+    Returns:
+        ``http://<host>:<port>/v1``, 127.0.0.1 and 8080 where unset.
+    """
+    return f"http://{table.get('host', '127.0.0.1')}:{table.get('port', 8080)}/v1"
+
+
+def configured_provider_endpoint(
+    provider: object, provider_settings: Mapping[str, object]
+) -> str | None:
+    """The endpoint a provider's table holds, as setup screens show it.
+
+    Args:
+        provider: The provider key.
+        provider_settings: The provider's ``api_settings`` table.
+
+    Returns:
+        MLX-LM's host and port as ``http://<host>:<port>/v1`` (TASK-41145),
+        else the table's first configured endpoint alias, or None.
+    """
+    if provider in ADAPTER_ONLY_ENDPOINT_KEYS:
+        return mlx_endpoint(provider_settings)
+    return first_configured_endpoint(provider_settings)
 
 
 def adapter_own_endpoint(
@@ -301,8 +430,7 @@ def adapter_own_endpoint(
     if dispatch in ADAPTER_ONLY_ENDPOINT_KEYS:
         api_settings = app_config.get("api_settings")
         table = api_settings.get(dispatch) if isinstance(api_settings, Mapping) else None
-        table = table if isinstance(table, Mapping) else {}
-        return f"http://{table.get('host', '127.0.0.1')}:{table.get('port', 8080)}/v1"
+        return mlx_endpoint(table if isinstance(table, Mapping) else {})
     record = RECORDS_BY_KEY.get(dispatch)
     return record.default_base_url if record and record.engine_driven else None
 

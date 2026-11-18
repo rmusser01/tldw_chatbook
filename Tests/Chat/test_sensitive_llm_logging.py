@@ -441,7 +441,9 @@ def test_sensitive_shared_local_transport_redacts_endpoint_body_and_exception(
     with _captured_logs() as logs, sensitive_llm_request():
         with pytest.raises(Exception) as exc_info:
             local_adapters._chat_with_openai_compatible_local_server(
-                api_base_url=("https://local.test/v1?token=ENDPOINT-QUERY-CANARY"),
+                # TASK-41131: a query is refused before any request now, so
+                # the endpoint canary rides the path and the 500 body is read.
+                api_base_url=("https://local.test/ENDPOINT-PATH-CANARY/v1"),
                 model_name="local-test",
                 input_data=_sensitive_messages(),
                 api_key="key",
@@ -933,7 +935,9 @@ def test_sensitive_native_kobold_prompt_response_and_errors_are_not_logged(
         lambda: _runtime_config(
             "koboldcpp",
             {
-                "api_url": ("https://kobold.test/generate?token=ENDPOINT-QUERY-CANARY"),
+                # TASK-41131: a query is refused before any request now, so
+                # the endpoint canary rides the path.
+                "api_url": ("https://kobold.test/ENDPOINT-PATH-CANARY/generate"),
                 "model": "kobold-test",
                 "api_retries": 0,
             },

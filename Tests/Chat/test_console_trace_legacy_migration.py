@@ -393,15 +393,24 @@ def test_new_legacy_row_after_logical_completion_reopens_checkpoint(
 
 #: TASK-40303: a bare key credentials-v1 never masked (fake, split at the prefix).
 _V1_UNMASKED_KEY = "sk" + "_live_" + "DONOTUSEEXAMPLEONLY" + "a1B2c3D4e5" * 2
+#: TASK-41133: a Groq key credentials-v2 never masked (fake, split likewise).
+_V2_UNMASKED_KEY = "gsk" + "_" + "DONOTUSEEXAMPLEONLY" + "a1B2" * 6
+#: Each older credential version, its fixed legacy policy id and a key it left.
+_OLDER_LEDGERS = {
+    "credentials-v1": ("00000000-0000-4000-8000-000000000097", _V1_UNMASKED_KEY),
+    "credentials-v2": ("00000000-0000-4000-8000-000000000098", _V2_UNMASKED_KEY),
+}
 
 
-def test_a_v1_legacy_ledger_keeps_migrating_new_exchanges_under_v2(
-    db: CharactersRAGDB, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("old_version", sorted(_OLDER_LEDGERS))
+def test_an_older_legacy_ledger_keeps_migrating_new_exchanges_under_the_current_version(
+    db: CharactersRAGDB, monkeypatch: pytest.MonkeyPatch, old_version: str
 ) -> None:
     """TASK-40303: the legacy policy id was one fixed row. A profile that
     normalized an exchange before credentials-v2 holds it tagged
     credentials-v1, so every later legacy batch raised
-    ``TraceIdentityConflict``, rolled back and was retried forever."""
+    ``TraceIdentityConflict``, rolled back and was retried forever.
+    TASK-41133: the same for a v2 ledger once new exchanges bind v3."""
     from tldw_chatbook.Chat import (
         console_exchange_capture,
         console_trace_legacy,
@@ -409,21 +418,23 @@ def test_a_v1_legacy_ledger_keeps_migrating_new_exchanges_under_v2(
     )
     from tldw_chatbook.Chat.console_trace_projection import project_capture_for_viewer
     from tldw_chatbook.Chat.console_trace_redaction import (
+        CREDENTIAL_FILTER_VERSION,
         READABLE_CREDENTIAL_FILTER_VERSIONS,
         CredentialSanitizer,
     )
     from tldw_chatbook.Chat.console_trace_repository import TraceIdentityConflict
     from tldw_chatbook.Chat.trace_export_profiles import TraceViewerProfile
 
-    conversation_id = db.add_conversation({"title": "legacy v1 ledger"})
+    old_policy_id, unmasked_key = _OLDER_LEDGERS[old_version]
+    conversation_id = db.add_conversation({"title": f"legacy {old_version} ledger"})
     assert conversation_id is not None
     old_message_id = _message(db, conversation_id, "answer-0")
-    # Capture and normalize it as the app did before 2026-11-06: under v1.
-    v1 = functools.partial(CredentialSanitizer, version="credentials-v1")
-    monkeypatch.setattr(console_trace_legacy, "CREDENTIAL_FILTER_VERSION", "credentials-v1")
-    monkeypatch.setattr(console_exchange_capture, "CredentialSanitizer", v1)
-    monkeypatch.setattr(console_trace_repository, "CredentialSanitizer", v1)
-    old = replace(_capture(0), response={"content": f"use {_V1_UNMASKED_KEY}"})
+    # Capture and normalize it as the app did before that version was current.
+    older = functools.partial(CredentialSanitizer, version=old_version)
+    monkeypatch.setattr(console_trace_legacy, "CREDENTIAL_FILTER_VERSION", old_version)
+    monkeypatch.setattr(console_exchange_capture, "CredentialSanitizer", older)
+    monkeypatch.setattr(console_trace_repository, "CredentialSanitizer", older)
+    old = replace(_capture(0), response={"content": f"use {unmasked_key}"})
     _insert_exchange(db, message_id=old_message_id, capture=old)
     maintenance = LegacyTraceMaintenance(db)
     assert maintenance.run_batch().logical_complete is True
@@ -446,24 +457,24 @@ def test_a_v1_legacy_ledger_keeps_migrating_new_exchanges_under_v2(
             (new_message_id,),
         ).fetchall()
         assert cursor.execute("SELECT COUNT(*) FROM message_exchanges").fetchone()[0] == 0
-    # AC#3: the v1 row is not rewritten; the new call binds a v2 row of its own.
+    # AC#3: the older row is not rewritten; the new call binds a row of its own.
     assert [tuple(row) for row in policies] == [
-        ("00000000-0000-4000-8000-000000000097", "credentials-v1"),
-        (policies[1][0], "credentials-v2"),
+        (old_policy_id, old_version),
+        (policies[1][0], CREDENTIAL_FILTER_VERSION),
     ]
     assert policies[1][0] != policies[0][0]
     # A new filter version needs its own legacy policy id, or this conflicts again.
     assert set(console_trace_legacy._LEGACY_POLICY_IDS) == (
         READABLE_CREDENTIAL_FILTER_VERSIONS
     )
-    # AC#2: the call bound to the v1 policy still reads, and re-masks on read.
+    # AC#2: the call bound to the older policy still reads, and re-masks on read.
     normalizer = LegacyTraceNormalizer(db)
     assert normalizer.read_calls(new_message_id)
     (old_call,) = normalizer.read_calls(old_message_id)
-    assert _V1_UNMASKED_KEY in json.dumps(old_call.capture.response)  # stored as v1 left it
+    assert unmasked_key in json.dumps(old_call.capture.response)  # stored as it was left
     for profile in TraceViewerProfile:
         shown = project_capture_for_viewer(old_call.capture, profile)
-        assert _V1_UNMASKED_KEY not in json.dumps(shown.response), profile
+        assert unmasked_key not in json.dumps(shown.response), profile
 
 
 def test_a_pass_with_known_work_skips_the_idle_check(

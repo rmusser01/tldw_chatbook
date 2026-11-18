@@ -2296,8 +2296,17 @@ class LibraryNotesController:
             return
         # Focus FIRST and synchronously: the callback runs from the canvas's
         # own ``recompose``, so focus is restored before any frame in which
-        # it could be seen sitting outside the canvas.
-        self._restore_library_notes_focus_identity(identity)
+        # it could be seen sitting outside the canvas. Not while the list
+        # entry channel is armed: it owns focus then, as it does for Media
+        # (``_restore_library_media_focus``). A resident Notes canvas
+        # repainted by a Media -> Notes switch otherwise replayed an identity
+        # captured with nothing focused, the filter, over the entry's first
+        # row (TASK-41129 review r15lf-rev1).
+        if not getattr(self._screen, "_library_pending_list_entry_focus", False):
+            self._restore_library_notes_focus_identity(identity)
+            # Review r15lf-rev3: name this landing; an entry armed by the
+            # sync's own ``then`` must not be revoked by its focus event.
+            self._screen._library_entry_restore_landing = self.focused
         # Scroll SECOND and deferred. The restore above already attempts it,
         # but at this point the freshly mounted children have not been laid
         # out yet -- the container's max scroll is still 0, so ``scroll_to``
@@ -3259,9 +3268,7 @@ class LibraryNotesController:
                 self._library_note_import_controller.cancel()
                 return
             self._library_notes_view = "list"
-            _sync_library_canvas(
-                self, "notes", then=self._focus_library_notes_filter_input
-            )
+            _sync_library_canvas(self, "notes", then=self._land_on_library_notes_page)
             return
         if self._library_notes_sort_choices_visible:
             self._library_notes_sort_choices_visible = False
@@ -5760,6 +5767,9 @@ class LibraryNotesController:
             onboarding_all_empty=self._library_onboarding_all_empty,
         )
         header.update(self._library_header_line(shell.header_line))
+        if leaving_create:
+            _sync_library_canvas(self, "notes", then=self._land_on_library_notes_page)
+            return True
         identity = LibraryNotesFocusIdentity(
             stage="notes",
             region="create" if entering_create else "navigator",
@@ -5846,6 +5856,16 @@ class LibraryNotesController:
         if self._library_notes_mutation_fenced():
             return
         await self._select_library_rail_row(LIBRARY_ROW_CREATE_NOTE)
+    def _land_on_library_notes_page(self) -> None:
+        """Land where the blank Notes page puts focus, never in the filter.
+
+        TASK-41128 (owner, 2026-11-15: "Library notes page/blank center"):
+        the exits from Create, Add from files, Import once and Manage sync
+        folders land on the first note row through the list entry channel.
+        Once the list has loaded with no note row ("No notes yet." or a
+        filter with no match) the page's New button takes it, not the filter.
+        """
+        self._arm_library_list_entry_focus(empty_target="#library-notes-new")
     def _focus_library_notes_filter_input(self) -> None:
         """Restore focus to the notes filter box after a filter recompose."""
         try:
@@ -6351,14 +6371,14 @@ class LibraryNotesController:
         self._supersede_library_notes_navigation()
         self._library_notes_lasting_origin = None
         self._library_notes_view = "list"
-        _sync_library_canvas(self, "notes", then=self._focus_library_notes_filter_input)
+        _sync_library_canvas(self, "notes", then=self._land_on_library_notes_page)
         return True
     @on(Button.Pressed, "#library-notes-import-back")
     def handle_library_notes_import_back(self, event: Button.Pressed) -> None:
         """Return to Notes while any running import continues off-canvas."""
         event.stop()
         self._library_notes_view = "list"
-        _sync_library_canvas(self, "notes", then=self._focus_library_notes_filter_input)
+        _sync_library_canvas(self, "notes", then=self._land_on_library_notes_page)
     @on(LibraryNoteImportCanvas.AddSourceRequested)
     def handle_library_note_import_add_source(
         self, event: LibraryNoteImportCanvas.AddSourceRequested

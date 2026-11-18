@@ -1,7 +1,10 @@
 ---
 id: TASK-41143
 title: "A Permission summaries provider set to Custom OpenAI API never activates: Settings saves custom or custom_2, which chat_dispatch_name cannot map"
-status: To Do
+status: Done
+assignee:
+- '@claude'
+updated_date: '2026-11-16 21:50'
 created_date: 2026-11-15 06:30
 labels:
 - follow-up
@@ -35,7 +38,23 @@ Filed in round 14 of the 2026-10-23 burn-down (closeout, 2026-11-15). Checked ag
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 chat_dispatch_name maps the custom and custom_2 readiness keys to their chat handlers (custom-openai-api, custom-openai-api-2) through the existing _READINESS_TO_EXECUTION_ALIASES table, with no second copy of it
-- [ ] #2 A Permission summaries provider saved as custom or custom_2 activates when that slot is ready; a test covers both, red before the change
-- [ ] #3 Library ingest analysis and Dreams resolve a custom or custom_2 provider to its chat handler, pinned by a test each
+- [x] #1 chat_dispatch_name maps the custom and custom_2 readiness keys to their chat handlers (custom-openai-api, custom-openai-api-2) through the existing _READINESS_TO_EXECUTION_ALIASES table, with no second copy of it
+- [x] #2 A Permission summaries provider saved as custom or custom_2 activates when that slot is ready; a test covers both, red before the change
+- [x] #3 Library ingest analysis and Dreams resolve a custom or custom_2 provider to its chat handler, pinned by a test each
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. `chat_dispatch_name` maps a readiness key through `console_provider_support._READINESS_TO_EXECUTION_ALIASES` before its handler lookup (import, no copy).
+2. Tests: Permission summaries active for custom and custom_2 when the slot is ready; Library ingest analysis and Dreams resolve custom/custom_2 to their handlers. Red first.
+
+## Implementation Notes
+
+`chat_dispatch_name` (`Library/ingest_analysis.py`) now maps a provider through `console_provider_support._READINESS_TO_EXECUTION_ALIASES` (imported lazily, no copy) before its handler lookup, keyed on `provider_config_key(provider)`: `custom` -> `custom-openai-api`, `custom_2` -> `custom-openai-api-2`; the table's other three keys already mapped the same way. Permission summaries, Library ingest analysis and Dreams all resolve through this mapper.
+
+One more change was needed for AC#2: with the mapping alone a `custom_2` summary stayed off, because `_summary_endpoint` looked the endpoint up in a table named after the handler (`custom-openai-api-2`), found none, and the adapter's own unpinned table (top-level `[custom_openai_api_2] api_ip`) is not where Settings saves the slot. It now reads the provider's own table, as readiness and Console do, through Console's inverse table (`_EXECUTION_TO_READINESS_ALIASES.get(dispatch, dispatch)`), so `[api_settings.custom_2] api_url` is found, checked and pinned. For every other dispatch name the table is the one it was (the inverse table only renames the custom slots, `local-llm` and `mlx_lm`; `local-llm` already normalized to the same table, and MLX reads its host/port either way). The round-14 summary tests still pass.
+
+- Red/green (all in `Tests/Chat/test_local_server_discovery.py`, lane-run, on `_merge_user_config_over_shipped_defaults(...)` configs): `test_permission_summaries_activate_on_a_ready_custom_slot[custom|custom_2]`, `test_ingest_analysis_resolves_a_custom_slot_to_its_handler[...]` and `test_dreams_resolves_a_custom_slot_to_its_handler[...]` were all red at base (`chat_dispatch_name('custom')` was None; "provider 'custom' is not supported for ingest analysis"; "Dreams provider/model unavailable"). After the mapping alone the `custom_2` summary case stayed red (`active=False`), and went green with the table lookup.
+- `Tests/Library/test_ingest_analysis.py::test_ready_but_undispatchable_provider_is_rejected_with_reason` used `custom` as its "ready but has no handler" example, i.e. it pinned this defect; it now uses `local_onnx`, which is still ready and undispatchable (checked over every `KNOWN_PROVIDER_KEYS` entry: only `local_onnx` and `local_transformers` remain).
+- The custom_2 handler, unpinned (ingest analysis, Dreams), read only the top-level `[custom_openai_api_2] api_ip`, not the slot Settings saves; review r15ep-rev1 I-1. Fixed under TASK-41145 by the owner's decision of 2026-11-16 (it now reads `[api_settings.custom_2] api_url` first).
+- Files: `tldw_chatbook/Library/ingest_analysis.py`, `tldw_chatbook/Chat/permission_summary_service.py`, `Tests/Chat/test_local_server_discovery.py`, `Tests/Library/test_ingest_analysis.py`.

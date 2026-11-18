@@ -10,10 +10,12 @@ from pathlib import Path
 
 import pytest
 from tldw_profile_core import (
+    PreferencePayload,
     ProfileManifest,
     ProfileScope,
     ProposalState,
     ScopeKind,
+    SemanticKey,
     SyncMode,
 )
 
@@ -1833,7 +1835,9 @@ def test_an_interrupted_reencryption_leaves_one_stored_key_that_opens_it(
         monkeypatch.setattr(KeyringProfileKeyProtector, "delete", old_account_stops)
 
     with pytest.raises(Interrupted):
-        repo.reencrypt_profile(keep_old_account=False, expected_damaged=int(damaged))
+        repo.reencrypt_profile(
+            keep_old_account=False, expected_damaged={"record": 1} if damaged else None
+        )
     monkeypatch.undo()
 
     named = _stored_account(db_path)
@@ -1854,23 +1858,47 @@ def test_an_interrupted_reencryption_leaves_one_stored_key_that_opens_it(
         assert set(backend.values) == accounts_before | {(_KEYRING_SERVICE, named)}
 
 
+def _copy(status="verified", owner="personal_context.repository"):
+    """A listed recovery copy that captured ``owner`` (TASK-41120)."""
+    from tldw_chatbook.Backup_Recovery.recovery_copies import RecoveryCopy
+
+    return RecoveryCopy(
+        "copy-1", Path("copy.age"), 1, (("profile:p:" + owner, "included"),), status, False
+    )
+
+
 def test_reencryption_keeps_the_old_account_while_a_recovery_copy_may_name_it(
     tmp_path, record_factory, monkeypatch
 ) -> None:
-    """AC#4: with a retained recovery copy, the old account is never deleted."""
-    from tldw_chatbook.Backup_Recovery import recovery_copies
+    """AC#4: with a retained recovery copy, the old account is not deleted;
+    TASK-41120 records it, with that copy, for the copy's deletion."""
+    import json
+
+    from tldw_chatbook.Backup_Recovery import recovery_copies, service_storage
     from tldw_chatbook.Personal_Context import recovery
 
     db_path, backend, protector, restored, _records = _restored_profile(
         tmp_path, record_factory
     )
-    monkeypatch.setattr(recovery_copies, "list_recovery_copies", lambda _root: ("copy",))
+    control = tmp_path / "control"
+    control.mkdir(mode=0o700)
+    monkeypatch.setattr(service_storage, "default_control_root", lambda: control)
+    monkeypatch.setattr(
+        recovery_copies, "list_recovery_copies", lambda _root: (_copy(),)
+    )
     old_value = backend.values[(_KEYRING_SERVICE, restored)]
 
     account = recovery.reencrypt_profile(_keyring_repo(db_path, backend))
 
     assert _stored_account(db_path) == account != restored
     assert backend.values[(_KEYRING_SERVICE, restored)] == old_value
+    (record,) = control.iterdir()
+    assert json.loads(record.read_text()) == {
+        "version": 1,
+        "account": restored,
+        "database": str(db_path.absolute()),
+        "copies": ["copy-1"],
+    }
 
 
 def test_the_review_trigger_reencrypts_through_the_service(
@@ -1978,14 +2006,14 @@ def test_reencryption_removes_the_damaged_versions_the_review_counted(
     _damage(db_path, target)
     data = db_path.read_bytes()
     repo = _keyring_repo(db_path, backend)
-    assert repo.damaged_record_versions() == 1
+    assert repo.damaged_versions() == {"record": 1}
 
     with pytest.raises(ProfileLockedError):
         repo.reencrypt_profile(keep_old_account=False)  # the review showed 1
     assert db_path.read_bytes() == data and _stored_account(db_path) == restored
 
     account = _keyring_repo(db_path, backend).reencrypt_profile(
-        keep_old_account=False, expected_damaged=1
+        keep_old_account=False, expected_damaged={"record": 1}
     )
 
     key = protector.load(account)
@@ -2010,10 +2038,575 @@ def test_reencryption_removes_the_damaged_versions_the_review_counted(
             "SELECT version_id, reason_code FROM quarantine WHERE object_id = 'record-1'"
         ).fetchall() == [(None, "fixture_unversioned")]
     fresh = _keyring_repo(db_path, backend)
-    assert fresh.damaged_record_versions() == 0
+    assert fresh.damaged_versions() == {}
     if damaged == "head":
         assert [r.record_id for r in fresh.list_records()] == ["record-2"]
     else:
         assert [r.record_id for r in fresh.list_records()] == ["record-1", "record-2"]
         assert fresh.get_record("record-1").version_id == "record-version-2"
 
+
+
+# TASK-41121, owner decision 2026-11-15 ("no"): damaged objects other than
+# records do not block the restored-profile review either. Each kind that can
+# go without leaving the profile inconsistent is counted and removed with what
+# names its version; a damaged current scope still refuses, by name.
+
+
+def _every_kind(tmp_path, record_factory, proposal_factory):
+    """A restored profile with a version of every object kind, made as the
+    service makes them: records, undo, record link, proposal, outbox bodies,
+    manifest and scope history, a workspace mapping and agent access."""
+    from tldw_chatbook.Personal_Context.service import RecordMutation
+
+    backend = SecureKeyring()
+    db_path = tmp_path / "a" / "personal-context.db"
+    db_path.parent.mkdir(mode=0o700)
+    service = PersonalContextService(_keyring_repo(db_path, backend))
+    manifest = service.create_profile()
+    (scope,) = service.list_scopes()
+    record = service.create_record(
+        record_factory(manifest.profile_id).model_copy(update={"scope_id": scope.scope_id})
+    )
+    service.update_record(  # a shared record made private: a record link
+        record.record_id,
+        RecordMutation(
+            controls=record.controls.model_copy(update={"sync_mode": SyncMode.DEVICE_ONLY})
+        ),
+        expected_version_id=record.version_id,
+    )
+    other = service.create_record(
+        record_factory(
+            manifest.profile_id, record_id="record-2", version_id="record-2-version-1"
+        ).model_copy(
+            update={
+                "scope_id": scope.scope_id,
+                "payload": PreferencePayload(
+                    subject="response.length", polarity="like", value="short"
+                ),
+                "semantic_key": SemanticKey(
+                    namespace="preference", subject="response.length"
+                ),
+            }
+        )
+    )
+    service.update_record(  # an edit: an undo entry
+        other.record_id,
+        RecordMutation(payload=other.payload.model_copy(update={"value": "brief"})),
+        expected_version_id=other.version_id,
+    )
+    repo = _keyring_repo(db_path, backend)
+    proposal = proposal_factory(manifest.profile_id)
+    repo.commit_proposal(
+        proposal.model_copy(
+            update={
+                "scope_id": scope.scope_id,
+                "proposed_record": proposal.proposed_record.model_copy(
+                    update={"scope_id": scope.scope_id}
+                ),
+            }
+        )
+    )
+    repo.commit_scope(  # scope history
+        scope.model_copy(update={"version_id": "scope-version-2"}),
+        expected_version_id=scope.version_id,
+    )
+    workspace = scope.model_copy(
+        update={
+            "scope_id": "workspace-scope",
+            "kind": ScopeKind.WORKSPACE,
+            "version_id": "workspace-version-1",
+        }
+    )
+    repo.commit_scope(workspace, expected_version_id=None)
+    first = repo.commit_scope_binding(  # with an older mapping version
+        workspace.scope_id, {"version": 1, "local_workspace_id": "w", "label": "V"}
+    )
+    repo.commit_scope_binding(
+        workspace.scope_id,
+        {"version": 1, "local_workspace_id": "w", "label": "W"},
+        expected_version_id=first,
+    )
+    first = repo.commit_runtime_policy(  # and an older agent access version
+        workspace.scope_id, {"version": 1, "authority": "direct_write"}
+    )
+    repo.commit_runtime_policy(
+        workspace.scope_id,
+        {"version": 1, "authority": "read_only"},
+        expected_version_id=first,
+    )
+    repo.commit_record_version(
+        record_factory(
+            manifest.profile_id, record_id="record-ws", version_id="record-ws-version-1"
+        ).model_copy(update={"scope_id": workspace.scope_id}),
+        expected_version_id=None,
+    )
+    from tldw_chatbook.Personal_Context.runtime_policy import GLOBAL_POLICY_ID
+
+    first = repo.commit_runtime_policy(  # the global switch, with an older version
+        GLOBAL_POLICY_ID, {"version": 1, "enabled": True}
+    )
+    repo.commit_runtime_policy(
+        GLOBAL_POLICY_ID, {"version": 1, "enabled": False}, expected_version_id=first
+    )
+    protector = KeyringProfileKeyProtector(backend)
+    restored = "personal-context:recovery_" + "e" * 32
+    protector.install(restored, protector.load(_stored_account(db_path)))
+    _set_stored_account(db_path, restored)
+    return db_path, backend
+
+
+def _objects(db_path) -> set[tuple[str, str, str]]:
+    with closing(sqlite3.connect(db_path)) as connection:
+        return set(
+            connection.execute(
+                "SELECT object_type, object_id, version_id FROM encrypted_objects"
+            )
+        )
+
+
+def _pointers(db_path) -> dict[str, set[tuple]]:
+    """Every row that names an object version, by table."""
+    queries = {
+        "object_heads": "SELECT object_type, object_id, version_id FROM object_heads",
+        "encrypted_outbox": "SELECT outbox_id, envelope_version, object_type, "
+        "object_id, version_id FROM encrypted_outbox",
+        "local_undo": "SELECT undo_id, encrypted_undo_version FROM local_undo",
+        "local_record_links": "SELECT * FROM local_record_links",
+        "local_scope_bindings": "SELECT * FROM local_scope_bindings",
+        "local_runtime_policy": "SELECT * FROM local_runtime_policy",
+    }
+    with closing(sqlite3.connect(db_path)) as connection:
+        return {table: set(connection.execute(sql)) for table, sql in queries.items()}
+
+
+def _damage_object(db_path, key) -> None:
+    with closing(sqlite3.connect(db_path)) as connection, connection:
+        connection.execute(
+            "UPDATE encrypted_objects SET integrity_tag = ? WHERE object_type = ? "
+            "AND object_id = ? AND version_id = ?",
+            ("hmac-sha256-v1:" + "0" * 64, *key),
+        )
+
+
+def _pick(db_path, kind) -> tuple[str, str, str]:
+    """One version of ``kind``; ``<kind>_history`` picks an older (not
+    current) one, and a bare local kind the current one."""
+    from tldw_chatbook.Personal_Context.runtime_policy import GLOBAL_POLICY_ID
+
+    object_type = kind.removesuffix("_history")
+    switch = object_type == "runtime_switch"  # the global on/off setting
+    if switch:
+        object_type = "runtime_policy"
+    current = {"scope_binding": True, "runtime_policy": True}.get(kind)
+    if kind.endswith("_history"):
+        current = False
+    with closing(sqlite3.connect(db_path)) as connection:
+        rows = [
+            row
+            for row in connection.execute(
+                "SELECT object_type, object_id, version_id, EXISTS (SELECT 1 FROM "
+                "object_heads h WHERE h.object_type = o.object_type AND h.object_id "
+                "= o.object_id AND h.version_id = o.version_id) FROM encrypted_objects "
+                "o WHERE object_type = ? ORDER BY rowid",
+                (object_type,),
+            )
+            if (current is None or bool(row[3]) is current)
+            and (object_type != "runtime_policy" or (row[1] == GLOBAL_POLICY_ID) is switch)
+        ]
+    assert rows, kind
+    return rows[0][:3]
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "proposal",
+        "manifest_history",
+        "scope_history",
+        "outbox",
+        "undo",
+        "record_link",
+        "scope_binding",
+        # Review r15pc-rev1: an older version counts as one, and the current
+        # one stays.
+        "scope_binding_history",
+        "runtime_policy_history",
+        # Review r15pc-rev3: the global on/off setting's older version reads as
+        # its own kind.
+        "runtime_switch_history",
+    ],
+)
+def test_reencryption_removes_a_damaged_object_of_each_removable_kind(
+    tmp_path, record_factory, proposal_factory, kind
+) -> None:
+    """The review counts the damaged version by kind; re-encryption with that
+    count removes it and every row naming it, keeps every other object, and
+    the profile opens and lists its records afterwards. A different count
+    refuses and changes nothing."""
+    db_path, backend = _every_kind(tmp_path, record_factory, proposal_factory)
+    target = _pick(db_path, kind)
+    _damage_object(db_path, target)
+    objects, pointers = _objects(db_path), _pointers(db_path)
+    records = sorted(r.record_id for r in _keyring_repo(db_path, backend).list_records())
+    repo = _keyring_repo(db_path, backend)
+    assert repo.damaged_versions() == {kind: 1}
+    data = db_path.read_bytes()
+
+    with pytest.raises(ProfileLockedError):
+        repo.reencrypt_profile(keep_old_account=False)  # the review showed one
+    assert db_path.read_bytes() == data
+
+    _keyring_repo(db_path, backend).reencrypt_profile(
+        keep_old_account=False, expected_damaged={kind: 1}
+    )
+
+    # Gone: the version, every row naming it, and the bodies of queued
+    # envelopes for it. Everything else stays.
+    named = {
+        table: {
+            row
+            for row in rows
+            if set(target[1:]) <= set(row)
+            and (table != "object_heads" or row[0] == target[0])
+        }
+        for table, rows in pointers.items()
+    }
+    bodies = {
+        ("outbox", row[0], row[1])
+        for row in pointers["encrypted_outbox"]
+        if row[2:] == target
+    }
+    named["object_heads"] |= bodies
+    assert _objects(db_path) == objects - {target} - bodies
+    assert _pointers(db_path) == {
+        table: rows - named[table] for table, rows in pointers.items()
+    }
+    assert any(named.values()) or kind.endswith("_history"), named
+    fresh = _keyring_repo(db_path, backend)
+    assert fresh.damaged_versions() == {}
+    assert sorted(r.record_id for r in fresh.list_records()) == records
+    assert fresh.get_manifest() is not None
+
+
+def _scope_record_heads(db_path, scope_id) -> list[str]:
+    with closing(sqlite3.connect(db_path)) as connection:
+        return sorted(
+            row[0]
+            for row in connection.execute(
+                "SELECT h.object_id FROM object_heads h JOIN encrypted_objects o "
+                "USING (object_type, object_id, version_id) "
+                "WHERE h.object_type = 'record' AND o.scope_id = ?",
+                (scope_id,),
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    "kind", ["global", "workspace", "workspace_off", "workspace_unlabelled"]
+)
+def test_a_damaged_current_scope_is_rebuilt_with_its_records(
+    tmp_path, record_factory, proposal_factory, kind
+) -> None:
+    """TASK-41121, owner decision 2026-11-16 ("Rebuild the scope"): the review
+    counts the damaged current scope and its records; re-encryption gives the
+    scope a fresh version under its own id and kind, its records stay attached,
+    listed and readable, and a workspace keeps its mapping, renamed "Recovered
+    scope" only when it has no readable label (fix round 3; a readable label
+    stays). Its readable agent access row is a separate, undamaged object and
+    stays exactly as it was, Off included (coordinator ruling, fix round 2).
+    With a rebuilt global scope, context building still works."""
+    from tldw_chatbook.Personal_Context.runtime_policy import AgentAuthority
+
+    db_path, backend = _every_kind(tmp_path, record_factory, proposal_factory)
+    service = PersonalContextService(_keyring_repo(db_path, backend))
+    scope = next(
+        s
+        for s in service.list_scopes()
+        if s.kind is (ScopeKind.GLOBAL if kind == "global" else ScopeKind.WORKSPACE)
+    )
+    if kind == "workspace_off":
+        service.set_scope_authority(scope.scope_id, AgentAuthority.OFF)
+    if kind == "workspace_unlabelled":
+        service._repo().commit_scope_binding(
+            scope.scope_id,
+            {"version": 1, "local_workspace_id": "w", "label": ""},
+            expected_version_id=service._repo().get_scope_binding_version(scope.scope_id),
+        )
+    authority = service.get_scope_authority(scope.scope_id)
+    policy = service._repo().get_runtime_policy_version(scope.scope_id)
+    listed = sorted(
+        r.record_id for r in service.list_records(scope_ids=(scope.scope_id,))
+    )
+    heads = _scope_record_heads(db_path, scope.scope_id)
+    assert listed
+    _damage_object(db_path, ("scope", scope.scope_id, scope.version_id))
+    counts = {"scope": 1, "rebuilt_scope_records": len(heads)}
+    assert _keyring_repo(db_path, backend).damaged_versions() == counts
+
+    _keyring_repo(db_path, backend).reencrypt_profile(
+        keep_old_account=False, expected_damaged=counts
+    )
+
+    service = PersonalContextService(_keyring_repo(db_path, backend))
+    rebuilt = service._repo().get_scope(scope.scope_id)
+    assert rebuilt.kind is scope.kind and rebuilt.version_id != scope.version_id
+    assert _scope_record_heads(db_path, scope.scope_id) == heads
+    assert (
+        sorted(r.record_id for r in service.list_records(scope_ids=(scope.scope_id,)))
+        == listed
+    )
+    assert service.get_scope_authority(scope.scope_id) is authority
+    assert service._repo().get_runtime_policy_version(scope.scope_id) == policy
+    if kind != "global":
+        assert service.list_workspace_bindings()[scope.scope_id] == {
+            "version": 1,
+            "local_workspace_id": "w",
+            "label": "Recovered scope" if kind == "workspace_unlabelled" else "W",
+        }
+        return
+    service.set_runtime_enabled(True)
+    view = service.authorized_context_view()
+    assert {r.record_id for r in view.records} & set(listed)
+
+
+@pytest.mark.parametrize("scope_kind", ["workspace", "global"])
+def test_a_dropped_agent_access_setting_is_off(
+    tmp_path, record_factory, proposal_factory, scope_kind
+) -> None:
+    """TASK-41121, owner decision 2026-11-16 ("Revert to Off"): a damaged
+    current agent access setting is replaced by Off, so agents get no access to
+    that scope until the user sets it again; it is not Propose."""
+    from tldw_chatbook.Personal_Context.runtime_policy import (
+        AgentAuthority,
+        PersonalContextAuthorityError,
+    )
+
+    db_path, backend = _every_kind(tmp_path, record_factory, proposal_factory)
+    service = PersonalContextService(_keyring_repo(db_path, backend))
+    scope = next(
+        s
+        for s in service.list_scopes()
+        if s.kind
+        is (ScopeKind.GLOBAL if scope_kind == "global" else ScopeKind.WORKSPACE)
+    )
+    if scope_kind == "global":
+        service.set_scope_authority(scope.scope_id, AgentAuthority.DIRECT_WRITE)
+    version = service._repo().get_runtime_policy_version(scope.scope_id)
+    _damage_object(db_path, ("runtime_policy", scope.scope_id, version))
+    assert _keyring_repo(db_path, backend).damaged_versions() == {"runtime_policy": 1}
+
+    _keyring_repo(db_path, backend).reencrypt_profile(
+        keep_old_account=False, expected_damaged={"runtime_policy": 1}
+    )
+
+    service = PersonalContextService(_keyring_repo(db_path, backend))
+    assert service.get_scope_authority(scope.scope_id) is AgentAuthority.OFF
+    with pytest.raises(PersonalContextAuthorityError):
+        service.require_agent_authority(scope.scope_id, AgentAuthority.READ_ONLY)
+    service.set_scope_authority(scope.scope_id, AgentAuthority.READ_ONLY)
+    assert service.get_scope_authority(scope.scope_id) is AgentAuthority.READ_ONLY
+
+
+@pytest.mark.parametrize(
+    "copy",
+    [
+        "deleted",
+        "no_personal_context",
+        "names_live_database",
+        # Review r15pc-rev1: a recorded database that is gone may have moved,
+        # and a copy whose evidence cannot be read lists under another id.
+        "database_moved",
+        "names_current_database",
+        "unreadable_copy",
+    ],
+)
+def test_a_kept_account_goes_only_when_no_copy_or_live_database_names_it(
+    tmp_path, record_factory, monkeypatch, copy
+) -> None:
+    """TASK-41120 AC#1: a deleted copy (journal left, ciphertext gone) or one
+    without Personal Context keeps nothing. A kept account outlives its last
+    copy while a live database names it (a later rollback brought that copy
+    back), and goes once none does; its record goes with it."""
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Backup_Recovery import credentials, recovery_copies, service_storage
+    from tldw_chatbook.Personal_Context import paths, recovery
+
+    db_path, backend, protector, restored, _records = _restored_profile(
+        tmp_path, record_factory
+    )
+    control = tmp_path / "control"
+    control.mkdir(mode=0o700)
+    monkeypatch.setattr(service_storage, "default_control_root", lambda: control)
+    # The profile's current database is elsewhere (it holds no profile).
+    monkeypatch.setattr(
+        paths, "get_personal_context_db_path", lambda: tmp_path / "current.db"
+    )
+    monkeypatch.setattr(
+        credentials, "_credential_store", lambda: SimpleNamespace(_keyring=backend)
+    )
+    listed = {
+        "deleted": _copy(status="missing"),
+        "no_personal_context": _copy(owner="config"),
+    }.get(copy, _copy())
+    monkeypatch.setattr(recovery_copies, "list_recovery_copies", lambda _root: (listed,))
+
+    account = recovery.reencrypt_profile(_keyring_repo(db_path, backend))
+
+    if copy in ("deleted", "no_personal_context"):
+        assert (_KEYRING_SERVICE, restored) not in backend.values
+        assert not list(control.iterdir())
+        return
+    assert (_KEYRING_SERVICE, restored) in backend.values
+    gone = (replace(listed, status="missing"),)
+    if copy == "unreadable_copy":
+        unreadable = replace(
+            listed, operation_id="operation-" + "a" * 64, status="recovery_required"
+        )
+        monkeypatch.setattr(
+            recovery_copies, "list_recovery_copies", lambda _root: (*gone, unreadable)
+        )
+    else:
+        monkeypatch.setattr(recovery_copies, "list_recovery_copies", lambda _root: gone)
+    if copy == "names_live_database":
+        _set_stored_account(db_path, restored)  # a live database names it
+    if copy == "database_moved":
+        moved = db_path.with_name("moved.db")
+        db_path.rename(moved)
+    if copy == "names_current_database":
+        current = tmp_path / "current.db"
+        current.write_bytes(db_path.read_bytes())
+        _set_stored_account(current, restored)
+    recovery.forget_kept_keys(control)
+    assert (_KEYRING_SERVICE, restored) in backend.values
+    if copy == "database_moved":
+        moved.rename(db_path)
+    if copy == "names_current_database":
+        current.unlink()
+    _set_stored_account(db_path, account)
+    monkeypatch.setattr(recovery_copies, "list_recovery_copies", lambda _root: gone)
+    recovery.forget_kept_keys(control)
+    assert (_KEYRING_SERVICE, restored) not in backend.values
+    assert (_KEYRING_SERVICE, account) in backend.values
+    assert not list(control.iterdir())
+
+
+def _two_scope_profile(tmp_path, record_factory, global_id, workspace_id):
+    """A profile whose global and unmapped workspace scopes each have one
+    version and one record, under the given ids (fix round 3)."""
+    import uuid
+
+    from tldw_profile_core import ProfileScope
+
+    backend = SecureKeyring()
+    db_path = tmp_path / "a" / "personal-context.db"
+    db_path.parent.mkdir(mode=0o700)
+    service = PersonalContextService(
+        _keyring_repo(db_path, backend),
+        id_factory=lambda label: (
+            global_id if label == "scope-global" else f"{label}-{uuid.uuid4()}"
+        ),
+    )
+    manifest = service.create_profile()
+    (global_scope,) = service.list_scopes()
+    repo = _keyring_repo(db_path, backend)
+    repo.commit_scope(
+        global_scope.model_copy(
+            update={
+                "scope_id": workspace_id,
+                "kind": ScopeKind.WORKSPACE,
+                "version_id": "workspace-version-1",
+            }
+        ),
+        expected_version_id=None,
+    )
+    for record_id, scope_id in (("record-g", global_id), ("record-w", workspace_id)):
+        repo.commit_record_version(
+            record_factory(
+                manifest.profile_id, record_id=record_id, version_id=record_id + "-v1"
+            ).model_copy(update={"scope_id": scope_id}),
+            expected_version_id=None,
+        )
+    return db_path, backend
+
+
+def _damage_scopes(db_path, *scope_ids) -> None:
+    with closing(sqlite3.connect(db_path)) as connection:
+        keys = [
+            row
+            for row in connection.execute(
+                "SELECT object_type, object_id, version_id FROM object_heads "
+                "WHERE object_type = 'scope'"
+            )
+            if row[1] in scope_ids
+        ]
+    assert len(keys) == len(scope_ids)
+    for key in keys:
+        _damage_object(db_path, key)
+
+
+@pytest.mark.parametrize(
+    ("global_id", "damaged"),
+    [
+        # The reviewer's probe: a damaged global and an "aaa-" workspace that
+        # sorts first, both single-version and unmapped.
+        ("scope-global-1", ("scope-global-1", "aaa-server-workspace")),
+        # The no-evidence branch real profiles hit: one damaged scope, no
+        # readable global, no global-looking id.
+        ("server-global-1", ("server-global-1",)),
+        # An unmapped workspace beside a readable global.
+        ("server-global-1", ("aaa-server-workspace",)),
+    ],
+)
+def test_damaged_single_version_scopes_rebuild_with_the_right_kinds(
+    tmp_path, record_factory, global_id, damaged
+) -> None:
+    """Fix round 3 (coordinator ruling): the global scope is never guessed by
+    order. Each rebuilt scope keeps its kind, and global context serves only
+    the global scope's records."""
+    db_path, backend = _two_scope_profile(
+        tmp_path, record_factory, global_id, "aaa-server-workspace"
+    )
+    _damage_scopes(db_path, *damaged)
+    counts = _keyring_repo(db_path, backend).damaged_versions()
+    assert counts == {"scope": len(damaged), "rebuilt_scope_records": len(damaged)}
+
+    _keyring_repo(db_path, backend).reencrypt_profile(
+        keep_old_account=False, expected_damaged=counts
+    )
+
+    service = PersonalContextService(_keyring_repo(db_path, backend))
+    assert {s.scope_id: s.kind for s in service.list_scopes()} == {
+        global_id: ScopeKind.GLOBAL,
+        "aaa-server-workspace": ScopeKind.WORKSPACE,
+    }
+    service.set_runtime_enabled(True)
+    view = service.authorized_context_view()
+    assert {r.record_id for r in view.records} == {"record-g"}
+
+
+def test_damaged_scopes_that_cannot_be_told_apart_refuse(tmp_path, record_factory) -> None:
+    """Fix round 3 (coordinator ruling): two damaged single-version unmapped
+    scopes, no readable global and no global-looking id: the review counts them
+    as ambiguous and re-encryption refuses by name, changing nothing."""
+    db_path, backend = _two_scope_profile(
+        tmp_path, record_factory, "zzz-server-global", "aaa-server-workspace"
+    )
+    _damage_scopes(db_path, "zzz-server-global", "aaa-server-workspace")
+    counts = _keyring_repo(db_path, backend).damaged_versions()
+    assert counts == {
+        "scope": 2,
+        "rebuilt_scope_records": 2,
+        repository_keys.AMBIGUOUS_SCOPES: 2,
+    }
+    data = db_path.read_bytes()
+
+    with pytest.raises(ProfileLockedError) as refused:
+        _keyring_repo(db_path, backend).reencrypt_profile(
+            keep_old_account=False, expected_damaged=counts
+        )
+
+    assert refused.value.reason_code == repository_keys.AMBIGUOUS_SCOPES
+    assert db_path.read_bytes() == data

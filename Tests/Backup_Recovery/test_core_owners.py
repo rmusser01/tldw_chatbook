@@ -884,10 +884,25 @@ def test_factory_discovery_and_schema_policy_are_runtime_independent(tmp_path):
     import subprocess
     import sys
 
+    from Tests.Backup_Recovery.test_inventory import PURE_CHILD_CHECK, pure_child_guard
+
     home = tmp_path / "fresh-home"
-    program = """import sys
+    # Importing recovery_operations replays installed DDL into in-memory SQLite
+    # through private_sqlite (175ea27008, the workflow admission catalog). That
+    # is allowed, with the core's own recovery modules; any SQLite file,
+    # config, service store or process is not (TASK-41116).
+    program = (
+        "import sys\nsys.path.insert(0, sys.argv[1])\n"
+        + pure_child_guard(
+            "tldw_chatbook.DB.recovery_core",
+            "tldw_chatbook.DB.recovery_core_schema",
+            "tldw_chatbook.DB.recovery_goal_schema",
+            "tldw_chatbook.DB.recovery_operations",
+            "tldw_chatbook.DB.recovery_review_boundary_schema",
+            "tldw_chatbook.DB.recovery_workflow_schema",
+        )
+        + """
 from pathlib import Path
-sys.path.insert(0, sys.argv[1])
 from tldw_chatbook.DB.recovery_core import core_adapters
 from tldw_chatbook.Backup_Recovery.models import DISCOVERY_CONTEXT_KEY, DiscoveryContext
 home = Path(sys.argv[2])
@@ -898,13 +913,11 @@ for adapter in core_adapters():
     # The absent HOME also makes private ancestor proof unavailable. Either
     # explicit absence or refusal is valid; no store may be included or created.
     assert item.status in {"missing_required", "unused", "unavailable"}, (adapter.owner_id, item.status)
-assert "tldw_chatbook.config" not in sys.modules
-assert "tldw_chatbook.DB.private_sqlite" not in sys.modules
-assert "tldw_chatbook.DB.ChaChaNotes_DB" not in sys.modules
-assert "tldw_chatbook.DB.base_db" not in sys.modules
 assert not home.exists()
-print("pure")
 """
+        + PURE_CHILD_CHECK
+        + 'print("pure")\n'
+    )
     environment = dict(
         os.environ,
         HOME=str(home),

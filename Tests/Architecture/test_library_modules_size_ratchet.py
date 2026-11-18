@@ -164,8 +164,18 @@ _BUDGETS: dict[str, int] = {
     # count and Details in place: 1698 -> 1702 (measured). Review r14ls-rev2:
     # the first layout sync retries the restore's focus id: 1702 -> 1714
     # (measured). Review r14ls-rev3: only while focus is still on the exact
-    # grip the restore parked it on: 1714 -> 1720 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_collections_controller.py": 1720,
+    # grip the restore parked it on: 1714 -> 1720 (measured). 2026-11-15,
+    # TASK-41126: every Collections action repaints the panes in place through
+    # one serialized sync (the whole-screen recompose kept as its fallback):
+    # 1720 -> 1733 (measured). 2026-11-15, TASK-41130: a first visit's layout is
+    # resolved from the screen's width (one resolver shared with the layout
+    # sync) and the r14ls-rev2/rev3 focus retry is gone: 1733 -> 1740 (measured).
+    # 2026-11-16, TASK-41126 review r15lc-rev1: the saved-search page repaint
+    # takes the same pane-sync lock: 1740 -> 1741 (measured). The pane sync
+    # reads an open Quick Capture form's mounted fields: 1741 -> 1747 (measured).
+    # Review r15lc-rev2: Clear and a landed link empty the free-text fields a
+    # repaint now keeps: 1747 -> 1756 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_collections_controller.py": 1756,
     # TASK-32659: bounded saved-search loading, including authority/request fencing.
     "tldw_chatbook/UI/Library_Modules/library_collections_saved_search_controller.py": 49,
     # TASK-33628.10: 976 -> 964. The ensure-selection decision moved to
@@ -649,7 +659,17 @@ _BUDGETS: dict[str, int] = {
     # owner reruns on its layout (``_retry_library_notes_scroll_on_layout``):
     # 7425 -> 7440 (measured).
     # 2026-11-13 restack: both changes stacked, measured.
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7442,
+    # 2026-11-15, TASK-41128 (owner decision): leaving Create and Add from
+    # files lands on the Notes page's entry focus: 7442 -> 7454 (measured).
+    # 2026-11-16, same task (coordinator rulings): one landing helper for
+    # every exit, New with no notes, Manage sync folders too: 7454 -> 7457.
+    # 2026-11-17, TASK-41129 review r15lf-rev1: the targeted-sync focus
+    # restore stands down while the list entry channel is armed: -> 7463.
+    # 2026-11-17, TASK-41129 follow-up: the landing helper only arms the
+    # entry with New as its empty target: 7463 -> 7459.
+    # 2026-11-17, TASK-41129 review r15lf-rev3: the targeted-sync restore
+    # names its landing for the entry's descendant rule: 7459 -> 7462.
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7462,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

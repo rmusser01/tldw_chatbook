@@ -101,7 +101,7 @@ letters **c / p / d / l**).
 | Ctrl+1 … Ctrl+9, Ctrl+0 | Switch to the screen with that hotkey digit (see the nav map above; Ctrl+9 opens Settings ▸ Tools & MCP) — works from every screen, [Roleplay](roleplay-chat-dictionaries.md) included |
 | F2 / F3 / F4 / F5 / F7 / F8 / F9 | Switch to Lab / Logs / Settings / Research / Meetings / Plugins / Kanban — the seven destinations past the digit row; they work while a text field has focus, like the Ctrl+digit chords (F6 is skipped: Next Pane) |
 | F6 | Cycle through the current screen's panes; on screens without a pane cycle it only shows a notice |
-| Shift+F6 | Cycle panes backward — bound only on [Console](console.md) and [Roleplay](roleplay-chat-dictionaries.md); elsewhere it does nothing |
+| Shift+F6 | Cycle panes backward — bound on [Console](console.md), [Roleplay](roleplay-chat-dictionaries.md), [Library](library.md) (the landing included) and [Settings](settings.md); elsewhere it does nothing |
 
 Everything else (Enter/Ctrl+K/Ctrl+T in Console, and the single-letter
 mnemonics like `s`/`r`/`t` on Settings) is screen-specific — see that
@@ -179,8 +179,3 @@ Full detail on runs, approvals, and tools:
 - 🚧 marks stub pages awaiting a full write-up.
 - Deep dives live in [Docs/Features](../Features/); pages link out rather
   than duplicate them.
-
-—
-*Verified against dev @ 6b6c35a4b — 2026-08-06 (TASK-2851: the legacy Media
-Library screen is retired — "Media & Content: Open Media Library" now
-deep-links into Library's Media row instead of a separate screen)*

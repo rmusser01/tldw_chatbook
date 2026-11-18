@@ -175,4 +175,7 @@ The seam under test is unchanged.
 `Tests/UI/test_picker_path_field.py`, `Docs/User_Guide/library/file-notes.md`.
 No CSS changed (Textual's `Footer` plus the existing app-tier
 `core/_base.tcss` rule); bundle sync, boot-CSS byte budget and preflight green.
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/library/file-notes.md`: Captures `wave5/caps/picker-kbd/01`–`11` (notably `04-typed-path-lands-in-field-235x52.txt`, `09-picker-100x30-footer-order.txt`, `10-typed-path-100x30.txt`) and, from review round 1, `14-r1-toggle-hidden-chip-235x52.txt`, `15-r1-picker-100x30.txt`, `17-r1-search-chip-click-100x30.txt`. Not re-walked: opening a file from the Files tree by Tab from the shell, pinned instead by `Tests/UI/test_library_notes_w5_picker_keyboard.py::test_folder_files_reaches_and_edits_a_file_with_no_mouse`.
 <!-- SECTION:NOTES:END -->

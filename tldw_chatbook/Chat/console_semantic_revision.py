@@ -452,7 +452,7 @@ def project_semantic_revision_trace_message(
             )
         )
     masked = apply_frozen_pii_masks(
-        projected, by_path, widen_over_v2_credentials=legacy_spans
+        projected, by_path, widen_over_newer_keys=legacy_spans
     )
     if not isinstance(masked, dict):
         raise ValueError("semantic_revision_materialization_unavailable")
@@ -532,7 +532,7 @@ def project_semantic_revision_trace_tool_fields(
             return unavailable
         legacy_spans = version != CREDENTIAL_FILTER_VERSION
         value = apply_frozen_pii_masks(
-            value, masks, widen_over_v2_credentials=legacy_spans
+            value, masks, widen_over_newer_keys=legacy_spans
         )
         if legacy_spans:
             remasked = CredentialSanitizer().sanitize(value)
@@ -1022,8 +1022,8 @@ class SemanticRevisionCoordinator:
         supported = tuple(
             policy
             for policy in pending
-            # TASK-39123: stored v1 policies still bind; what they materialize
-            # carries the current (v2) masks.
+            # TASK-39123: stored older policies still bind; what they
+            # materialize carries the current masks.
             if policy.credential_filter_version in READABLE_CREDENTIAL_FILTER_VERSIONS
             and (
                 (

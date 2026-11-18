@@ -213,3 +213,6 @@ def delete_recovery_copy(
                 raise ValueError("recovery_copy_changed")
             os.unlink(entry.path.name, dir_fd=parent)
             flush_directory(parent)
+    from tldw_chatbook.Personal_Context.recovery import forget_kept_keys
+
+    forget_kept_keys(control_root)  # TASK-41120: never raises

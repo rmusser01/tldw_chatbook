@@ -62,7 +62,7 @@ from ...config import is_valid_provider_api_key, provider_settings_for_key
 from ...LLM_Provider_Catalog.model_catalog_settings import (
     AUTO_REFRESH_PROVIDER_LIST_KEYS,
 )
-from ...Provider_Contract.provider_endpoint_contract import koboldcpp_route_refusal
+from ...Chat.provider_setup_persistence import typed_endpoint_refusal
 from ...Utils.input_validation import escape_markup
 from ...Widgets.model_search_picker import (
     _BLUR_RESTORE_DELAY_SECONDS,
@@ -881,8 +881,8 @@ def endpoint_row_copy(
         word = NOT_SET
     else:
         word = BUILT_IN
-    # TASK-38964: Save's refusal, said while the user types (as the wizard does).
-    if refusal := koboldcpp_route_refusal(provider_config_key(provider), endpoint):
+    # TASK-38964/TASK-41145: Save's refusal, said while the user types.
+    if refusal := typed_endpoint_refusal(provider_config_key(provider), endpoint):
         return word, refusal
     if required:
         # A held address is not an error: "required:" is for the empty field.

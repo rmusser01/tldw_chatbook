@@ -297,6 +297,8 @@ from ..Settings_Modules.category_panels import (
     CATEGORY_PANELS,
     NO_CHANGES_TO_REVERT_COPY,
     PROVIDERS_MODELS_PANEL,
+    provider_endpoint_row,
+    provider_endpoint_value,
 )
 from ..Settings_Modules.settings_config_adapter import (
     SettingsConfigAdapter,
@@ -16188,15 +16190,7 @@ class SettingsScreen(BaseAppScreen):
         return "api_url" if provider_key in API_URL_PROVIDER_KEYS else "api_base_url"
 
     def _provider_endpoint_value(self, provider: str) -> str:
-        provider_config = self._provider_config(provider)
-        endpoint_key = self._provider_endpoint_setting_key(provider)
-        value = provider_config.get(endpoint_key)
-        if value is None:
-            for key in PROVIDER_ENDPOINT_KEYS:
-                value = provider_config.get(key)
-                if value is not None:
-                    break
-        return str(value or "").strip()
+        return provider_endpoint_value(self, provider)
 
     def _provider_endpoint_placeholder(self, provider: str) -> str:
         provider_key = provider_config_key(provider)
@@ -16252,14 +16246,7 @@ class SettingsScreen(BaseAppScreen):
         return ""
 
     def _provider_endpoint_row(self, provider: str) -> str:
-        registry = self._provider_registry_endpoint(provider)
-        if registry is not None:
-            return f"Endpoint key: {registry[0]}"
-        provider_key = provider_config_key(provider)
-        if not provider_key:
-            return "Endpoint key: provider required"
-        endpoint_key = self._provider_endpoint_setting_key(provider)
-        return f"Endpoint key: api_settings.{provider_key}.{endpoint_key}"
+        return provider_endpoint_row(self, provider)
 
     @staticmethod
     def _validate_provider_endpoint(endpoint: object) -> str | None:
@@ -29805,7 +29792,8 @@ class SettingsScreen(BaseAppScreen):
         )
 
     async def _prepare_local_model_review(self, token) -> None:
-        from ...RAG_Search.model_recovery import preview_local_embedding
+        from ...RAG_Search.model_recovery import (
+            local_embedding_review_text, preview_local_embedding)
         from ...RAG_Search.simplified.active_config import resolve_active_rag_config
         from ...TTS._async_lifecycle import join_retained_task
 
@@ -29827,19 +29815,13 @@ class SettingsScreen(BaseAppScreen):
             return
         if not self._local_model_review_current(token) or self.app.screen is not self:
             return
-        message = (
-            f"Model directory: {review.model_path}\nFiles: {review.file_count}\n"
-            f"Generations: {', '.join(review.generations)}\n\n"
-            "Allow this local embedding model for the reviewed generation? "
-            "No model will load or download. RAG review and Reconcile / rebuild "
-            "are separate actions."
-        )
+        message = local_embedding_review_text(review)  # TASK-41301 copy
         self._local_model_review_prompt_open = True
         self.app.push_screen(
             ConfirmationDialog(
                 title="Review restored local embedding model",
                 message=message,
-                confirm_label="Approve local model",
+                confirm_label="Record review",
             ),
             lambda accepted: self._confirm_local_model_review(token, review, accepted),
         )
@@ -29866,7 +29848,8 @@ class SettingsScreen(BaseAppScreen):
         def approve():
             return approve_local_embedding(resolve_active_rag_config(), fingerprint)
 
-        message = "Local model review recorded. No model loaded and no index rebuilt."
+        message = ("Local model review recorded. No model loaded and no index rebuilt. "
+                   "Approve model files in Backup & Restore > Restored profiles too, if pending.")
         try:
             task = asyncio.create_task(asyncio.to_thread(approve))
             await join_retained_task(task)

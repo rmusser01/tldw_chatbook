@@ -36,6 +36,7 @@ from Tests.UI.test_library_shell import (
 from tldw_chatbook.Library.library_notes_state import LibraryNotesFocusIdentity
 from tldw_chatbook.Library.library_notes_tree_paging import NotesBranchKey
 from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
+from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library.library_note_folder_dialog import (
     LibraryNoteFolderTargetDialog,
@@ -517,6 +518,12 @@ async def test_a_genuine_conflict_offers_a_working_refresh(
     """AC#6: a folder changed behind the tree -> the notice names it, in full,
     with a Refresh control; Refresh reloads the tree and clears the notice,
     and the same move then succeeds against the reloaded folder."""
+    # The reload after Refresh is a real 30-note tree; give the entry the
+    # same budget as every other wait here, so CI load cannot close its
+    # window before the rows arrive.
+    monkeypatch.setattr(
+        library_screen_module, "LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS", WAIT
+    )
     host, seeded = _mounted(tmp_path)
     recipes = seeded.folder_ids["Recipes"]
     async with host.run_test(size=SIZE) as pilot:
@@ -620,27 +627,34 @@ async def test_a_genuine_conflict_offers_a_working_refresh(
         )
         assert screen._notes_state.notice_refresh_offered is False
 
-        # Where focus lands: Refresh starts a fresh visit, so the tree is
-        # empty while it reloads, and the list-entry focus Refresh arms hands
-        # an empty Notes list to the filter (task-31946's designed landing).
-        # Waited on, never read straight after a mount.
+        # Where focus lands: Refresh starts a fresh visit, and the list-entry
+        # focus it arms waits for the reloaded rows and lands on the first
+        # note row (TASK-41129; it used to race the reload and take the
+        # filter whenever no row had mounted yet). Waited on, never read
+        # straight after a mount.
+        def first_note_row():
+            rows = list(screen.query(".library-notes-row"))
+            return rows[0] if rows else None
+
         await _wait(
             pilot,
             lambda: (
-                screen.focused is not None
-                and screen.focused.id == "library-notes-filter"
+                first_note_row() is not None and screen.focused is first_note_row()
             ),
-            lambda: f"focus on the filter after Refresh: {screen.focused!r}",
+            lambda: (
+                f"focus on the first note row after Refresh: "
+                f"{getattr(screen.focused, 'id', screen.focused)!r}, rows="
+                f"{len(screen.query('.library-notes-row'))}, pending="
+                f"{screen._library_pending_list_entry_focus}"
+            ),
         )
+        landed = screen.focused
         # And a real key still works on the recomposed screen: Tab moves on.
         await pilot.press("tab")
         await _wait(
             pilot,
-            lambda: (
-                screen.focused is not None
-                and screen.focused.id != "library-notes-filter"
-            ),
-            lambda: f"Tab to move focus off the filter: {screen.focused!r}",
+            lambda: screen.focused is not None and screen.focused is not landed,
+            lambda: f"Tab to move focus off the first row: {screen.focused!r}",
         )
 
         # The reloaded tree carries the new version: the same move now works.

@@ -147,9 +147,16 @@ in the `tools` group, shaped like `recovered.media` (`inventory.sqlite_tree_memb
 names each mixed tree's single SQLite member for sidecar declaration and capture
 dispatch). `registry.sqlite3` is captured through the `recovery.plugins.registry`
 SQLite owner (backup route, WAL folded) against the frozen v5 catalog
-`REGISTRY_SCHEMAS`; everything else is raw bytes. Excluded: `runtime.lock`, a
-post-restore reset's set-aside folder `reset-<id>/` (whole, and kept whole by
-replace restores through `kept_whole`, TASK-40308) and, inside each
+`REGISTRY_SCHEMAS`; everything else is raw bytes. Excluded: `runtime.lock`,
+`authority-changes.json` (TASK-41105: the advisory change list the coordinator
+appends after each commit; replace restore preserves the excluded target file,
+so adopting a restored authority can name the changes it undoes; its write's
+temporary `authority-changes.json.tmp` too), every set-aside folder `reset-<id>/`
+(whole, and kept whole by replace restores through `kept_whole`): setup after a
+post-restore reset moves the restored registry, download records, downloads and
+package bytes there (TASK-40308, TASK-41107), and setup after a reset outside a
+restore moves the old authority's download records and downloads there
+(TASK-41108). Also excluded, inside each
 `staging/<name>/`, every member but `snapshot/` (an allow-list: only
 `snapshot/` and the custody record serve recovery). The owner passes
 `_staging_excluded` to the tree walk as `prune`, so each excluded member is one
@@ -159,7 +166,9 @@ when the archive excluded it too (`restore_plan`'s unknown-children rule skips
 it). A fetch folder the archive lacks that holds excluded members cannot be
 retired around them, so `plan_restore` calls `refuse_added_fetch_folders`, which
 raises `FetchRemovalRequired` (`plugin_fetch_removal_required`) naming every such
-member. The Backup screen lists them; on the user's confirmation
+member. The Backup screen, and the recovery CLI's `restore` (TASK-41106: its
+`--remove-newer-plugin-downloads` flag, then a typed `remove`), list them with
+the shared `fetch_removal_review` text; on the user's confirmation
 `remove_fetch_members` deletes exactly those, holding the runtime lock and never
 following a link, before the restore is planned again, so they never reach the
 safety copy or any archive. The snapshot-only folder and its custody record are

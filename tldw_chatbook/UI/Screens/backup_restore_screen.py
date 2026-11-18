@@ -905,6 +905,9 @@ class BackupRestoreScreen(Screen):
         self._delete_copy_id = None
         self.query_one("#backup-delete-copy", Button).disabled = True
         self.query_one("#backup-delete-preview", Static).update("")
+        # TASK-41302: the names every other review uses (TASK-41111).
+        from tldw_chatbook.Backup_Recovery.recovery_service import owner_label
+
         if current is not None:
             if current["status"] == "no_verified_generation":
                 setup = "No verified recovery generation for this current profile. Optional features may still require setup."
@@ -914,7 +917,7 @@ class BackupRestoreScreen(Screen):
                 setup = (
                     "Needs setup\nReview these features in their settings before enabling them:\n"
                     + "\n".join(
-                        "• " + owner.replace(".", " / ").replace("_", " ")
+                        "• " + owner_label(owner)
                         for owner in current["pending_owners"]
                     )
                 )
@@ -958,6 +961,56 @@ class BackupRestoreScreen(Screen):
                     Button(
                         "Approve settings",
                         id="backup-approve-config",
+                        name=current["generation"],
+                        classes="backup-restore-screen-button",
+                    )
+                )
+            if (
+                current["requirements_checked"]
+                and "models.artifacts" in current["pending_owners"]
+            ):
+                # TASK-41301 (owner, 2026-11-16): the one approver of model files.
+                widgets.append(
+                    Static(
+                        "Model files review\nUntil you approve the restored model "
+                        "files, local model downloads, installs and activation, "
+                        "speech start-up and a restored local embedding model stay "
+                        "off. Approving covers every profile this recovery restored "
+                        "and approves only the model files. A local embedding model "
+                        "also keeps its own review in Settings > Library/RAG.",
+                        id="backup-models-review",
+                        markup=False,
+                    )
+                )
+                widgets.append(
+                    Button(
+                        "Approve model files",
+                        id="backup-approve-models",
+                        name=current["generation"],
+                        classes="backup-restore-screen-button",
+                    )
+                )
+            if current["requirements_checked"] and {
+                "tts.profile_store",
+                "tts.voices",
+            } & set(current["pending_owners"]):
+                # TASK-41119: the speech owners alone, beside the settings review.
+                widgets.append(
+                    Static(
+                        "Speech review\nUntil you approve the restored voices and "
+                        "voice profiles, speech start-up stays off. Approving covers "
+                        "every profile this recovery restored. Speech also needs the "
+                        "restored settings and model files approved (Approve settings, "
+                        "Approve model files), and starts from the next start once all "
+                        "three are approved.",
+                        id="backup-speech-review",
+                        markup=False,
+                    )
+                )
+                widgets.append(
+                    Button(
+                        "Approve voices",
+                        id="backup-approve-speech",
                         name=current["generation"],
                         classes="backup-restore-screen-button",
                     )
@@ -1050,7 +1103,7 @@ class BackupRestoreScreen(Screen):
                     setup = (
                         "Needs setup\nReview these features in their settings before enabling them:\n"
                         + "\n".join(
-                            "• " + owner.replace(".", " / ").replace("_", " ")
+                            "• " + owner_label(owner)
                             for owner in entry["pending_owners"]
                         )
                     )
@@ -1114,6 +1167,53 @@ class BackupRestoreScreen(Screen):
             else:
                 code = self.service.issue_code(error)
                 message = f"Settings review unavailable: {self.service.issue_message(code)} ({code})"
+        self._deliver(app, self._config_approval_done, revision, message)
+
+    @on(Button.Pressed, "#backup-approve-speech")
+    def _approve_speech(self, event):
+        event.button.disabled = True
+        self._run_speech_approval(self.app, self._revision, event.button.name)
+
+    @work(exclusive=True, thread=True, group="backup-speech-review")
+    def _run_speech_approval(self, app, revision, generation):
+        self._owner_approval(
+            app,
+            revision,
+            lambda: self.service.approve_speech(generation),
+            "Speech review",
+            "speech_review_changed",
+            "Voices approved. Speech starts from the next start once the "
+            "settings and model files are approved too.",
+        )
+
+    @on(Button.Pressed, "#backup-approve-models")
+    def _approve_models(self, event):
+        event.button.disabled = True
+        self._run_models_approval(self.app, self._revision, event.button.name)
+
+    @work(exclusive=True, thread=True, group="backup-models-review")
+    def _run_models_approval(self, app, revision, generation):
+        self._owner_approval(
+            app,
+            revision,
+            lambda: self.service.approve_models(generation),
+            "Model files review",
+            "models_review_changed",
+            "Model files approved. Speech starts from the next start once its "
+            "other reviews are approved too.",
+        )
+
+    def _owner_approval(self, app, revision, approve, label, changed, done):
+        """Run one Restored profiles owner review on its worker thread."""
+        try:
+            approve()
+            message = done
+        except (OSError, ValueError, RuntimeError) as error:
+            if str(error) == changed:
+                message = f"{label} unavailable: the current profile changed. Review it again."
+            else:
+                code = self.service.issue_code(error)
+                message = f"{label} unavailable: {self.service.issue_message(code)} ({code})"
         self._deliver(app, self._config_approval_done, revision, message)
 
     @on(Button.Pressed, "#backup-approve-sync-identity")
@@ -1949,7 +2049,12 @@ class BackupRestoreScreen(Screen):
                 self._restore_review_codes_seen = codes
                 self.run_worker(
                     self._show_restore_credential_review(
-                        current["operation_id"], codes
+                        current["operation_id"],
+                        codes,
+                        installs_keys=current.get("result", {}).get(
+                            "personal_context_keys_installed"
+                        )
+                        is True,
                     ),
                     exclusive=True,
                     group="restore-credential-review",
@@ -2013,7 +2118,9 @@ class BackupRestoreScreen(Screen):
                 )
             )
 
-    async def _show_restore_credential_review(self, operation, codes):
+    async def _show_restore_credential_review(
+        self, operation, codes, *, installs_keys=False
+    ):
         if (
             operation != self._requested_restore_operation
             or codes != self._restore_review_codes_seen
@@ -2029,6 +2136,8 @@ class BackupRestoreScreen(Screen):
             return
         area.display = True
         retention = codes == (_RETAINED_CREDENTIAL_REVIEW,)
+        # TASK-41124: the only retained credential is a key this restore installs.
+        installs_keys = retention and installs_keys
         locked = all(code.startswith(_PERSONAL_CONTEXT_LOCKED) for code in codes)
         await area.mount(
             Static(
@@ -2036,6 +2145,11 @@ class BackupRestoreScreen(Screen):
                 "Personal Context will be restored but stay locked. Nothing has been "
                 "written yet. Acknowledge each case, then review restore again."
                 if locked
+                else "This restore installs Personal Context's key itself; a copy also "
+                "stays in the encrypted archive. No replacement was published. "
+                "Accept encrypted retention, enter a new rollback password, "
+                "and review restore again."
+                if installs_keys
                 else "Some incoming credentials need manual recovery and will remain in the encrypted archive. "
                 "No replacement was published. Accept encrypted retention, enter a new rollback password, "
                 "and review restore again."
@@ -2053,6 +2167,8 @@ class BackupRestoreScreen(Screen):
                             code.removeprefix("credential_").split(":profile:", 1)[0]
                         )
                         if locked
+                        else "Accept encrypted retention"
+                        if installs_keys
                         else "Accept encrypted manual retention"
                         if retention
                         else "Acknowledge safety-copy omission: " + code
@@ -2498,34 +2614,15 @@ class BackupRestoreScreen(Screen):
 
     def _fetch_removal_ready(self, revision, members):
         """List newer plugin download folders and what removing them deletes."""
+        from tldw_chatbook.Plugins.backup import fetch_removal_review
+
         if not self.is_mounted or revision != self._revision:
             return
         self._restore_plan = None
         self._fetch_removal = tuple(members)
-        folders = dict.fromkeys(member.parent for member in members)
-        rows = [
-            "Newer plugin downloads. These folders were downloaded from a "
-            "repository after this backup was made (a source refresh, an update "
-            "check, an install or an update). Restoring Tools and skills removes "
-            "them. Installed plugins keep working.",
-            "Remove newer plugin downloads deletes the files below now, with no "
-            "safety copy; a rollback cannot bring them back. They are each "
-            "download's git copy (repository.git, content) and the copies of your "
-            "git and SSH settings it made (host-git-config, host-ssh-*). Your own "
-            "git configuration and ~/.ssh are not touched.",
-            "Each folder's snapshot and its download record stay until you start "
-            "the restore, which moves them into the before-replacement safety "
-            "copy with the rest of your current data.",
-            "Review restore runs again after the removal.",
-        ]
-        for folder in folders:
-            rows.append(f"Folder: {folder}")
-            rows.extend(
-                f"  Delete: {member.name}"
-                for member in members
-                if member.parent == folder
-            )
-        self.query_one("#backup-restore-preview", Static).update("\n".join(rows))
+        self.query_one("#backup-restore-preview", Static).update(
+            fetch_removal_review(self._fetch_removal, "Remove newer plugin downloads")
+        )
         self.query_one("#backup-start-restore", Button).disabled = True
         button = self.query_one("#backup-remove-plugin-downloads", Button)
         button.display = True

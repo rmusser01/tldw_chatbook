@@ -725,6 +725,10 @@ async def monitor_app(app):
             deadline = time.monotonic() + 30
             await runtime.settle_producers(deadline)
             runtime.retire_local_caches()
+            # Revisit: retire_local_caches keeps this thread's cache of a store
+            # another thread is still operating on. The handoff tests drain the
+            # same way (Tests/Backup_Recovery/test_runtime_startup_handoff.py,
+            # _SCRIPT); keep the two loops alike (TASK-41117).
             while not runtime.pause.drain(time.monotonic()):
                 if time.monotonic() >= deadline:
                     raise RecoveryRequired("runtime_native_resources_not_settled")

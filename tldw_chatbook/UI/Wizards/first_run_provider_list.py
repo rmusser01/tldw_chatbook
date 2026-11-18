@@ -716,18 +716,20 @@ class ProviderListStep(ProviderKeyEntryStep):
         if server is None:
             return None
         from tldw_chatbook.Chat.console_provider_endpoints import (
-            first_configured_endpoint,
+            configured_provider_endpoint,
         )
         from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
             canonical_connection_identity,
         )
         from tldw_chatbook.config import DEFAULT_CONFIG_FROM_TOML
 
-        configured = first_configured_endpoint(self._provider_settings(provider_key))  # type: ignore[attr-defined]
+        configured = configured_provider_endpoint(
+            provider_key, self._provider_settings(provider_key)  # type: ignore[attr-defined]
+        )
         if not configured:
             return server
         template_settings = (DEFAULT_CONFIG_FROM_TOML.get("api_settings") or {}).get(provider_key)
-        template = first_configured_endpoint(template_settings or {})
+        template = configured_provider_endpoint(provider_key, template_settings or {})
 
         def identity(value: object) -> object:
             return canonical_connection_identity(provider_key, value)

@@ -113,4 +113,7 @@ next list row" cannot happen: the focus intent rides the branch guarded by
 `view == "list" and delete_receipt is not None`, so a successful delete always
 has a receipt. Recorded rather than implemented — code for a state production
 cannot produce is untestable by construction.
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/library/notes.md`: Captures `wave4-caps/editor/editor-10-32539-focus-on-undo-chip-235x52`, `editor-10-32539-focus-on-undo-100x30`.
 <!-- SECTION:NOTES:END -->

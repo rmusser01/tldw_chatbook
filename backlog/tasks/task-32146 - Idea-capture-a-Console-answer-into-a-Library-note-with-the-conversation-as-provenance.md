@@ -117,4 +117,7 @@ Fix round 1 (review findings 1–7):
 - Riders filed: task-32512 (TASK-31759's `summarize-note` /
   `save-transcript-note` bypass the ephemeral registry) and task-32469 (the
   24-cell More menu truncates labels past ~15 characters with no ellipsis).
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/console/chat-basics.md`: Fix round 1 was a copy-only correction checked against the notes schema and list query, with no live walk. It withdrew the claim that notes saved under an unset owner id were missing: notes have no owner column, and Library ▸ Notes lists every note.
 <!-- SECTION:NOTES:END -->

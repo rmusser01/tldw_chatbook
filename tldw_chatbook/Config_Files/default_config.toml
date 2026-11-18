@@ -1427,7 +1427,10 @@ write_to_config = [] # exact [providers] keys whose new models append to this fi
     system_prompt = "You are a helpful AI assistant"
 
     [api_settings.local_mlx_lm] # Matches key in [providers]
-    api_url = "http://localhost:5678/v1/chat/completions"
+    # MLX-LM is reached at http://<host>:<port>/v1; Settings edits these two
+    # (an api_url here is ignored).
+    host = "127.0.0.1"
+    port = 8080
     model = "custom-model-gamma"
     temperature = 0.7
     top_p = 1.0

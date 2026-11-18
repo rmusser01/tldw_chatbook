@@ -301,7 +301,12 @@ def _run(
         )
         cwd = root
     log = root / "restart-output.log"
-    deadline = time.monotonic() + timeout
+    # TASK-41117: ``timeout`` bounds a hang, not the run. The child fails once
+    # its process tree uses no CPU for ``timeout`` seconds, with four times it
+    # as a wall backstop: at load 80-90 the app-startup children took 86-91 s
+    # of the old fixed 45 s.
+    backstop = 4 * timeout
+    deadline = time.monotonic() + backstop
     # A fresh Windows process inherits the old process's output handles. Files
     # let the original process exit without waiting for EOF from its descendant.
     if expect_restart:
@@ -310,18 +315,19 @@ def _run(
         receipt = root / "home" / "restart-process.json"
     try:
         with log.open("w", encoding="utf-8") as output:
-            result = subprocess.run(
+            from Tests.Backup_Recovery.restart_observation import _wait_while_busy
+
+            process = subprocess.Popen(
                 [sys.executable, "-X", "utf8", "-c", script, route, outcome],
                 cwd=cwd,
                 env=environment,
                 stdout=output,
                 stderr=subprocess.STDOUT,
                 text=True,
-                timeout=timeout,
-                check=False,
             )
+            returncode = _wait_while_busy(process, idle=timeout, timeout=backstop)
             if expect_restart:
-                assert result.returncode == 0, log.read_text()[-7000:]
+                assert returncode == 0, log.read_text()[-7000:]
                 fresh_code = wait_for_restart(receipt, deadline)
                 assert fresh_code in (None, 0), log.read_text()[-7000:]
     except BaseException as primary:
@@ -338,5 +344,5 @@ def _run(
         raise
     stdout = log.read_text(encoding="utf-8", errors="replace")
     stderr = ""
-    assert result.returncode == 0, stderr[-6000:] + stdout[-1000:]
+    assert returncode == 0, stderr[-6000:] + stdout[-1000:]
     assert "retired and reopened" in stdout

@@ -216,7 +216,7 @@ async def main():
    # its timer can correctly invalidate review while omissions are acknowledged.
    await app._perform_change_review_retention()
   original_config=selector.read_bytes()
-  await pilot.press('f9')
+  await pilot.press(SHELL_DESTINATION_SHORTCUTS['settings'])
   await ready(lambda:isinstance(app.screen,SettingsScreen))
   await press('#settings-backup-restore')
   await ready(lambda:isinstance(app.screen,BackupRestoreScreen))

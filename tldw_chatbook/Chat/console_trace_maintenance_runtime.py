@@ -14,11 +14,14 @@ async def run_legacy_trace_maintenance(
     _source: Any,
 ) -> None:
 
+    # A renamed worker fails the loop here, at start (TASK-41134 review).
     from tldw_chatbook.Chat.console_trace_maintenance import (
         maintenance_error_must_propagate,
         call_owned_maintenance,
         runtime_provider_active,
         LegacyTraceMaintenance,
+        PhysicalTraceCompactor,
+        TraceGarbageCollector,
     )
 
     call_maintenance = partial(call_owned_maintenance, _source, database)
@@ -86,10 +89,6 @@ async def run_legacy_trace_maintenance(
                 continue
             last_physical_attempt = now
             try:
-                from tldw_chatbook.Chat.console_trace_maintenance import (
-                    PhysicalTraceCompactor,
-                    TraceGarbageCollector,
-                )
                 from tldw_chatbook.Chat.console_trace_models import (
                     new_opaque_id,
                 )
@@ -171,11 +170,6 @@ async def run_legacy_trace_maintenance(
                     not in _source.TRACE_PHYSICAL_MAINTENANCE_RETRYABLE_REASONS
                 ):
                     pending_gc_result = None
-            except ImportError:
-                if maintenance_error_must_propagate(self, _source):
-                    raise
-                # Narrow test doubles may provide only the legacy worker.
-                pass
             except Exception as exc:  # noqa: BLE001 - durable retry state
                 if maintenance_error_must_propagate(self, _source, exc):
                     raise

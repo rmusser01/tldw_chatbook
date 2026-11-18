@@ -349,11 +349,3 @@ On macOS, use the switch.
   a time, or copy them and use **Alt+V**, which attaches up to the limit.
 - **"No audio was captured from the microphone."** after stopping —
   check the OS microphone permission for your terminal and try again.
-
-—
-*Verified against dev @ ff435772c — 2026-07-31. Verified against
-db6834c0c — 2026-08-21 (task-19576): PDF/Word/ebook attachments now
-extract real content via `parse_local_file_for_ingest` instead of a
-placeholder pointing at a retired "Media Ingestion tab" — no wording
-change needed here, since "the full content is what actually gets sent"
-was already the documented (if previously unmet) behavior.*

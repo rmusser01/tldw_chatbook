@@ -365,6 +365,11 @@ def _resolve_first_run_provider_endpoints(
         effective_provider_discovery_endpoint,
         first_configured_endpoint,
     )
+    from tldw_chatbook.Chat.provider_setup_persistence import (
+        MLX_HOST_PORT_PROVIDER_KEYS,
+        mlx_host_port,
+        mlx_saved_endpoint,
+    )
     from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
         koboldcpp_route_refusal,
         resolve_provider_endpoint,
@@ -373,9 +378,15 @@ def _resolve_first_run_provider_endpoints(
     endpoint = editable_endpoint.strip()
     owner_key = _first_run_provider_owner_key(provider)
     provider_settings = _first_run_provider_settings(app_config, provider)
-    if not endpoint:
+    if owner_key in MLX_HOST_PORT_PROVIDER_KEYS:
+        # TASK-41145: MLX-LM's endpoint is its host and port, shown and saved
+        # as http://<host>:<port>/v1; its api_url is never read.
+        endpoint = mlx_saved_endpoint(
+            mlx_host_port(endpoint) if endpoint else provider_settings
+        )
+    elif not endpoint:
         endpoint = first_configured_endpoint(provider_settings) or ""
-    if endpoint:
+    if endpoint and owner_key not in MLX_HOST_PORT_PROVIDER_KEYS:
         resolution = resolve_provider_endpoint(owner_key, endpoint)
         if resolution.errors or resolution.persisted_endpoint is None:
             raise ValueError("Provider endpoint is invalid.")

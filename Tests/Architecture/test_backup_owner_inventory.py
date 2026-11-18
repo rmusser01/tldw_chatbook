@@ -1145,13 +1145,16 @@ def test_actor_pack_persona_images_preview_and_validate_with_persona_artwork(
     ] == ["references_unavailable"]
 
 
-def _actor_pack_activation_on_profile(tmp_path, monkeypatch, actor_kind="persona"):
+def _actor_pack_activation_on_profile(
+    tmp_path, monkeypatch, actor_kind="persona", *, bound=False
+):
     """TASK-40304: an Actor Pack review on a configured file-backed profile.
 
     Activating a persona pack publishes into both captured trees:
     ``visual_identities/actor_packs/<digest>/`` (shared visual) and
     ``actor_packs/<digest>/persona-runtime/`` (persona runtime). A character
-    pack publishes only the shared visual.
+    pack publishes only the shared visual. ``bound`` builds the persona
+    service the way the app does (``build_persona_service``).
     """
     from Tests.Actor_Packs.test_actor_pack_activation import (
         _persona_runtime_section,
@@ -1184,9 +1187,16 @@ def _actor_pack_activation_on_profile(tmp_path, monkeypatch, actor_kind="persona
     profile = config.get_user_data_dir()
     db = CharactersRAGDB(tmp_path / "chat.sqlite", "actor-pack-storage")
     repository = ActorPackRepository(db)
-    local_service = LocalCharacterPersonaService(
-        db, persona_store_path=profile / "personas.json"
-    )
+    if bound:
+        from tldw_chatbook.Backup_Recovery.chat_source_participants import (
+            build_persona_service,
+        )
+
+        local_service = build_persona_service(db)
+    else:
+        local_service = LocalCharacterPersonaService(
+            db, persona_store_path=profile / "personas.json"
+        )
     importer = ActorPackImportService(
         repository,
         staging_root=profile / "actor_pack_imports",
@@ -1469,6 +1479,532 @@ def test_actor_pack_store_error_before_commit_removes_published_files(
         db.close_connection()
 
 
+def test_actor_pack_pause_between_persona_apply_and_commit_leaves_no_half_persona(
+    tmp_path, monkeypatch
+):
+    """TASK-41114 AC2: a capture's pause that begins after the persona plan
+    is applied but before its SQLite commit must not leave a persona without
+    its committed identity or artwork, neither in what the capture copies nor
+    in the running app after the pause ends. The commit needs the shared
+    visual tree's own admission, which the pause refuses, so the activation
+    is refused and every store goes back to its state before it."""
+    import json
+    import threading
+    import time
+
+    from tldw_chatbook.Actor_Packs.activation import ActorPackActivationError
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+    from tldw_chatbook.Backup_Recovery.participants import (
+        retire_current_thread_caches,
+    )
+
+    db, activation, review, trees = _actor_pack_activation_on_profile(
+        tmp_path, monkeypatch, bound=True
+    )
+    local = activation.local_service
+    repository = activation.repository
+    applied, release = threading.Event(), threading.Event()
+    apply = type(local)._actor_pack_apply_persona_plan
+
+    def apply_then_wait(plan):
+        apply(local, plan)
+        applied.set()
+        assert release.wait(30)
+
+    monkeypatch.setattr(local, "_actor_pack_apply_persona_plan", apply_then_wait)
+
+    def stored_personas():
+        store = local.persona_store_path
+        if not store.exists():
+            return []
+        return [row["id"] for row in json.loads(store.read_bytes())["profiles"]]
+
+    worker, outcome = _activate_on_worker(activation, review)
+    try:
+        assert applied.wait(30)
+        assert len(stored_personas()) == 1
+        pause = storage._begin_local_pause()
+        try:
+            release.set()
+            worker.join(60)
+            assert not worker.is_alive()
+            # Runtime maintenance's drain loop: retire this thread's caches
+            # until every other holder has finished.
+            deadline = time.monotonic() + 10
+            while not pause.drain(time.monotonic()):
+                assert time.monotonic() < deadline, "the pause never drained"
+                retire_current_thread_caches(pause)
+                time.sleep(0.01)
+            # What a capture starting now would copy.
+            copied = (stored_personas(), _published_files(trees))
+        finally:
+            pause.resume()
+        identity = repository.get_identity_by_portable_uuid(review.portable_uuid)
+        intents = [row.state for row in repository.list_persona_intents()]
+        live = [row["id"] for row in local.list_persona_profiles()]
+    finally:
+        release.set()
+        worker.join(30)
+        db.close_idle_connections()
+        db.close_connection()
+    assert type(outcome[0]) is ActorPackActivationError, outcome
+    assert outcome[0].category == "actor_pack_import_storage_unavailable"
+    assert outcome[0].cleanup_pending is False
+    assert copied == ([], []), "a capture copied a half-created persona"
+    assert (identity, intents, live) == (None, [], []), "a half-created persona"
+
+
+def _stuck_persona_import(activation, intent_ids=("d" * 32,)):
+    """TASK-41114: prepared persona intents whose store the user then changed.
+
+    Startup recovery quarantines them (``authority_mismatch``), which blocks
+    every later persona Actor Pack creation.
+    """
+    local, repository = activation.local_service, activation.repository
+    for index, intent_id in enumerate(intent_ids):
+        stuck = {"id": f"local-persona-stuck-{index}", "name": "Stuck", "version": 1}
+        plan = local._actor_pack_plan_persona_profile(stuck, operation="create")
+        repository.prepare_persona_intent(
+            persona_id=stuck["id"],
+            operation="create",
+            old_profile=None,
+            new_profile=stuck,
+            old_store_sha256=plan.old_store_sha256,
+            new_store_sha256=plan.new_store_sha256,
+            old_registry_uuid=None,
+            new_registry_uuid=f"{index + 2}23e4567-e89b-42d3-a456-426614174000",
+            intent_id=intent_id,
+        )
+    local.create_persona_profile({"name": "Existing persona"})
+    activation.persona_coordinator.ensure_recovered()
+    assert activation.persona_coordinator.blocked_intent_ids == tuple(intent_ids)
+
+
+def test_interrupted_persona_import_blocks_until_cleared_and_keeps_personas(
+    tmp_path, monkeypatch
+):
+    """TASK-41114 AC1, owner decision 2026-11-16 ("Clear the interrupted
+    import"): a stuck intent refuses a new persona import with copy that names
+    it and the way out; clearing deletes only the intent rows, every persona
+    stays as it was, and the same import then succeeds."""
+    from tldw_chatbook.Actor_Packs.activation import ActorPackActivationError
+    from tldw_chatbook.UI.Screens.personas_screen import (
+        _actor_pack_import_error_copy,
+    )
+
+    db, activation, review, trees = _actor_pack_activation_on_profile(
+        tmp_path, monkeypatch, bound=True
+    )
+    local, repository = activation.local_service, activation.repository
+    try:
+        _stuck_persona_import(activation)
+        store = local.persona_store_path.read_bytes()
+        personas = sorted(row["id"] for row in local.list_persona_profiles())
+        with pytest.raises(ActorPackActivationError) as raised:
+            activation.activate(review, "create_new")
+        assert raised.value.category == "actor_pack_import_creation_blocked"
+        copy = _actor_pack_import_error_copy(raised.value.category)
+        assert "interrupted" in copy and "clear the interrupted import" in copy
+        assert _published_files(trees) == []
+
+        assert activation.persona_coordinator.clear_blocked_intents() == 1
+        assert repository.list_persona_intents() == ()
+        assert activation.persona_coordinator.blocked_intent_ids == ()
+        assert local.persona_store_path.read_bytes() == store
+        assert sorted(row["id"] for row in local.list_persona_profiles()) == personas
+
+        result = activation.activate(review, "create_new")
+        assert result.actor_kind == "persona"
+        assert sorted(row["id"] for row in local.list_persona_profiles()) == sorted(
+            [*personas, result.local_actor_id]
+        )
+    finally:
+        db.close_idle_connections()
+        db.close_connection()
+
+
+def test_clearing_the_interrupted_import_refuses_during_a_storage_pause(
+    tmp_path, monkeypatch
+):
+    """TASK-41114 AC1: the clear action takes ChaChaNotes admission, so a
+    capture's or restore's pause refuses it cleanly and changes nothing."""
+    from tldw_chatbook.Actor_Packs.persona_coordinator import (
+        PersonaActorPackCoordinatorError,
+    )
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+    db, activation, review, trees = _actor_pack_activation_on_profile(
+        tmp_path, monkeypatch, bound=True
+    )
+    coordinator, repository = activation.persona_coordinator, activation.repository
+    try:
+        _stuck_persona_import(activation)
+        pause = storage._begin_local_pause()
+        try:
+            with pytest.raises(PersonaActorPackCoordinatorError) as raised:
+                coordinator.clear_blocked_intents()
+        finally:
+            pause.resume()
+        assert raised.value.category == "actor_pack_storage_unavailable"
+        assert coordinator.blocked_intent_ids == ("d" * 32,)
+        assert [row.state for row in repository.list_persona_intents()] == [
+            "quarantined"
+        ]
+        assert coordinator.clear_blocked_intents() == 1
+    finally:
+        db.close_idle_connections()
+        db.close_connection()
+
+
+def test_a_pause_between_two_clears_keeps_the_remaining_intent_blocked(
+    tmp_path, monkeypatch
+):
+    """TASK-41114, review r15ac-rev3: a pause that begins after the first of
+    two deletes refuses the second. The live ids and the cached recovery
+    summary the app reads next both name only the remaining intent, and the
+    Personas notice still shows for it."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from textual.app import App
+    from textual.containers import Vertical
+    from textual.widgets import Static
+
+    from tldw_chatbook.Actor_Packs.persona_coordinator import (
+        PersonaActorPackCoordinatorError,
+    )
+    from tldw_chatbook.app_service_wiring import ServiceWiringMixin
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+    from tldw_chatbook.Widgets.Persona_Widgets.actor_pack_recovery_notice import (
+        NOTICE_ID,
+        show_actor_pack_recovery_notice,
+    )
+
+    db, activation, review, trees = _actor_pack_activation_on_profile(
+        tmp_path, monkeypatch, bound=True
+    )
+    coordinator, repository = activation.persona_coordinator, activation.repository
+    first, remaining = "d" * 32, "e" * 32
+    pauses = []
+    cleanup = repository.cleanup_persona_intent
+
+    def cleanup_then_pause(intent_id, *, expected_state):
+        cleanup(intent_id, expected_state=expected_state)  # The pause refuses the 2nd.
+        pauses.append(storage._begin_local_pause())
+
+    try:
+        _stuck_persona_import(activation, (first, remaining))
+        monkeypatch.setattr(repository, "cleanup_persona_intent", cleanup_then_pause)
+        try:
+            with pytest.raises(PersonaActorPackCoordinatorError) as raised:
+                coordinator.clear_blocked_intents()
+        finally:
+            for pause in pauses:
+                pause.resume()
+        assert raised.value.category == "actor_pack_storage_unavailable"
+        assert len(pauses) == 1
+        assert coordinator.blocked_intent_ids == (remaining,)
+        assert coordinator.ensure_recovered().blocked_intent_ids == (remaining,)
+        assert [
+            (row.intent_id, row.state) for row in repository.list_persona_intents()
+        ] == [(remaining, "quarantined")]
+        app = SimpleNamespace(
+            persona_actor_pack_coordinator=coordinator,
+            chachanotes_db=db,
+            actor_pack_recovery_error=None,
+            local_character_persona_service=activation.local_service,
+            loguru_logger=SimpleNamespace(error=lambda *a: None, warning=lambda *a: None),
+        )
+        ServiceWiringMixin.ensure_actor_pack_recovery(app)
+        assert app.actor_pack_recovery_error == "actor_pack_recovery_blocked"
+
+        class Personas(App):
+            def compose(self):
+                with Vertical(id="personas-shell"):
+                    yield Static("Characters", id="personas-purpose")
+
+        async def notice_shows():
+            shell = Personas()
+            shell.persona_actor_pack_coordinator = coordinator
+            async with shell.run_test(size=(140, 20)) as pilot:
+                await show_actor_pack_recovery_notice(shell.screen)
+                await pilot.pause()
+                return bool(shell.screen.query(f"#{NOTICE_ID}"))
+
+        assert asyncio.run(notice_shows())
+    finally:
+        db.close_idle_connections()
+        db.close_connection()
+
+
+def test_cleared_interrupted_import_stays_cleared_on_the_next_recovery_read(
+    tmp_path, monkeypatch
+):
+    """TASK-41114, review r15ac-rev2: the next Personas visit reruns the app's
+    recovery read, which returned the cached summary that still named the
+    cleared intent. That put actor_pack_recovery_error back and skipped the
+    Buddy setup until restart."""
+    from types import SimpleNamespace
+
+    import tldw_chatbook.app_service_wiring as wiring
+    import tldw_chatbook.Persona_Buddy.library as buddy_library
+    from tldw_chatbook.app_service_wiring import ServiceWiringMixin
+
+    db, activation, review, trees = _actor_pack_activation_on_profile(
+        tmp_path, monkeypatch, bound=True
+    )
+    buddy = []
+
+    class Library:  # Records that the Buddy block ran, then stops it.
+        def __init__(self, *args, **kwargs):
+            buddy.append(True)
+            raise RuntimeError("buddy block reached")
+
+    monkeypatch.setattr(buddy_library, "BuddyLibrary", Library)
+    # The wiring module bound its own config import; point it at this profile.
+    monkeypatch.setattr(wiring, "get_user_data_dir", lambda: tmp_path / "data")
+    app = SimpleNamespace(
+        persona_actor_pack_coordinator=activation.persona_coordinator,
+        chachanotes_db=db,
+        actor_pack_recovery_error=None,
+        local_character_persona_service=activation.local_service,
+        loguru_logger=SimpleNamespace(error=lambda *a: None, warning=lambda *a: None),
+    )
+    try:
+        _stuck_persona_import(activation)
+        ServiceWiringMixin.ensure_actor_pack_recovery(app)
+        assert app.actor_pack_recovery_error == "actor_pack_recovery_blocked"
+        assert buddy == []
+        assert activation.persona_coordinator.clear_blocked_intents() == 1
+        app.actor_pack_recovery_error = None  # What the notice does on success.
+        ServiceWiringMixin.ensure_actor_pack_recovery(app)
+        assert app.actor_pack_recovery_error is None
+        assert buddy == [True]
+    finally:
+        db.close_idle_connections()
+        db.close_connection()
+
+
+def test_persona_actor_pack_creation_blocked_names_the_stuck_import():
+    """TASK-41114, review r15ac-rev2: creating a persona Actor Pack while an
+    interrupted import is stuck names it and the way out, and asks for the
+    notice (a block can also appear mid-session)."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Actor_Packs.creation import ActorPackCreationError
+    from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
+    from tldw_chatbook.Widgets.Persona_Widgets.actor_pack_recovery_notice import (
+        show_actor_pack_recovery_notice,
+    )
+
+    notices, scheduled = [], []
+    screen = SimpleNamespace(
+        _actor_pack_session_is_current=lambda session: True,
+        _notify=lambda message, severity: notices.append((message, severity)),
+        call_later=lambda callback, *args: scheduled.append((callback, args)),
+    )
+    PersonasScreen._show_actor_pack_creation_error(
+        screen, ActorPackCreationError("actor_pack_creation_blocked"), object()
+    )
+    [(message, severity)] = notices
+    assert severity == "error"
+    assert "interrupted" in message
+    assert "Keep my current personas and clear the interrupted import" in message
+    assert scheduled == [(show_actor_pack_recovery_notice, (screen,))]
+    # Any other failure keeps the generic copy and no notice.
+    notices.clear(), scheduled.clear()
+    PersonasScreen._show_actor_pack_creation_error(
+        screen, ActorPackCreationError("actor_pack_creation_failed"), object()
+    )
+    assert notices == [("Actor Pack creation failed.", "error")] and scheduled == []
+
+
+@pytest.mark.parametrize("refusal", [None, "actor_pack_storage_unavailable"])
+def test_interrupted_import_notice_clears_from_the_keyboard_off_the_ui_thread(
+    refusal,
+):
+    """TASK-41114 AC1: the Personas notice and its action are reachable by
+    Tab and Enter, the clear runs off the UI thread, and a refused clear keeps
+    the notice with a usable button."""
+    import asyncio
+    import threading
+
+    from textual.app import App
+    from textual.containers import Vertical
+    from textual.widgets import Button, Static
+
+    from tldw_chatbook.Actor_Packs.persona_coordinator import (
+        PersonaActorPackCoordinatorError,
+    )
+    from tldw_chatbook.Widgets.Persona_Widgets.actor_pack_recovery_notice import (
+        CLEAR_BUTTON_ID,
+        NOTICE_ID,
+        NOTICE_TEXT,
+        show_actor_pack_recovery_notice,
+    )
+
+    class Coordinator:
+        def __init__(self) -> None:
+            self.blocked_intent_ids = ("d" * 32,)
+            self.threads: list = []
+
+        def clear_blocked_intents(self):
+            self.threads.append(threading.current_thread())
+            if refusal is not None:
+                raise PersonaActorPackCoordinatorError(refusal)
+            self.blocked_intent_ids = ()
+            return 1
+
+    class Personas(App):
+        def __init__(self) -> None:
+            super().__init__()
+            self.persona_actor_pack_coordinator = Coordinator()
+            self.actor_pack_recovery_error = "actor_pack_recovery_blocked"
+            self.notices: list = []
+
+        def compose(self):
+            with Vertical(id="personas-shell"):
+                yield Static("Characters", id="personas-purpose")
+                yield Button("Library", id="personas-first")
+
+        def notify(self, message, **kwargs):
+            self.notices.append((message, kwargs.get("markup")))
+
+    async def run():
+        app = Personas()
+        async with app.run_test(size=(140, 30)) as pilot:
+            await show_actor_pack_recovery_notice(app.screen)
+            await show_actor_pack_recovery_notice(app.screen)  # Once only.
+            await pilot.pause()
+            shell = app.screen.query_one("#personas-shell")
+            assert [child.id for child in shell.children] == [
+                "personas-purpose",
+                NOTICE_ID,
+                "personas-first",
+            ]
+            text = app.screen.query_one(f"#{NOTICE_ID}").query_one(Static)
+            assert str(text.render()) == NOTICE_TEXT
+            for _ in range(4):
+                if getattr(app.focused, "id", None) == CLEAR_BUTTON_ID:
+                    break
+                await pilot.press("tab")
+            assert app.focused.id == CLEAR_BUTTON_ID
+            await pilot.press("enter")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            coordinator = app.persona_actor_pack_coordinator
+            assert coordinator.threads
+            assert threading.main_thread() not in coordinator.threads
+            assert all(markup is False for _, markup in app.notices), app.notices
+            if refusal is None:
+                assert not app.screen.query(f"#{NOTICE_ID}")
+                assert app.actor_pack_recovery_error is None
+                assert "cleared" in app.notices[-1][0]
+            else:
+                assert "Backup or restore" in app.notices[-1][0]
+                assert not app.screen.query_one(f"#{CLEAR_BUTTON_ID}").disabled
+                assert app.actor_pack_recovery_error == "actor_pack_recovery_blocked"
+
+    asyncio.run(run())
+
+
+@pytest.mark.bootstrap_profile  # A real-app mount (TASK-32873 per-node opt-in).
+def test_personas_shows_the_interrupted_import_notice_after_recovery():
+    """TASK-41114 AC1: opening Personas with a stuck persona Actor Pack
+    import shows the notice under the purpose line, after recovery ran."""
+    import asyncio
+
+    from Tests.UI.app_factory import _build_test_app
+    from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
+    from tldw_chatbook.Widgets.Persona_Widgets.actor_pack_recovery_notice import (
+        NOTICE_ID,
+    )
+
+    class Coordinator:
+        blocked_intent_ids = ("d" * 32,)
+        recovery_attempted = True
+        recovery_error = None
+
+        def ensure_recovered(self):
+            return None
+
+    async def run():
+        app = _build_test_app()
+        app.persona_actor_pack_coordinator = Coordinator()
+        app.actor_pack_recovery_error = "actor_pack_recovery_blocked"
+        async with app.run_test(size=(235, 52)) as pilot:
+            await pilot.pause()
+            screen = PersonasScreen(app)
+            await app.push_screen(screen)
+            for _ in range(40):
+                await pilot.pause()
+                if screen.query(f"#{NOTICE_ID}"):
+                    break
+            shell = screen.query_one("#personas-shell")
+            ids = [child.id for child in shell.children]
+            assert NOTICE_ID in ids, ids
+            assert ids[ids.index(NOTICE_ID) - 1] == "personas-purpose"
+
+    asyncio.run(run())
+
+
+def test_actor_pack_import_leaves_no_worker_connection_for_a_later_drain(
+    tmp_path, monkeypatch
+):
+    """TASK-41110: the import controller inspects and activates on
+    ``asyncio.to_thread``. A capture that begins after the import has
+    finished must drain, so the executor thread must not keep the
+    ChaChaNotes connection the import opened there."""
+    import asyncio
+    import time
+
+    from tldw_chatbook.Actor_Packs.import_controller import (
+        ActorPackImportController,
+    )
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+    from tldw_chatbook.Backup_Recovery.participants import (
+        retire_current_thread_caches,
+    )
+
+    db, activation, review, trees = _actor_pack_activation_on_profile(
+        tmp_path, monkeypatch
+    )
+    activation.importer.cleanup_review(review)  # The controller inspects anew.
+    controller = ActorPackImportController(activation.importer, activation)
+
+    async def import_pack():
+        request = controller.create_request(tmp_path / "persona.tldw-actor-pack")
+        inspected = await controller.wait(controller.start_inspection(request))
+        assert inspected.review is not None, inspected
+        activated = await controller.wait(
+            controller.start_activation(inspected.review, "create_new")
+        )
+        await controller.shutdown()
+        return activated
+
+    try:
+        outcome = asyncio.run(import_pack())
+        assert outcome.error_category is None, outcome
+        assert outcome.result.actor_kind == "persona"
+        assert len(_published_files(trees)) == 3
+        # A capture starting now: fence, retire this thread's own caches, drain.
+        pause = storage._begin_local_pause()
+        try:
+            retire_current_thread_caches(pause)
+            drained = pause.drain(time.monotonic() + 5)
+            holders = sorted(
+                getattr(getattr(lease, "resource_thread", None), "name", "?")
+                for lease in storage._live_leases
+                if getattr(lease, "resource_path", None) == db.db_path
+            )
+        finally:
+            pause.resume()
+        assert drained, f"ChaChaNotes leases still held by threads {holders}"
+    finally:
+        db.close_idle_connections()  # Every thread's handle, also when red.
+        db.close_connection()
+
+
 def test_actor_pack_and_reaction_trees_have_their_own_review_labels():
     """TASK-40305 AC1: restore, recovery-copy and rollback review name owners
     through ``owner_label``; these two trees read as "Other saved data"."""
@@ -1483,6 +2019,108 @@ def test_actor_pack_and_reaction_trees_have_their_own_review_labels():
     labels = [owner_label(owner) for owner in persona]
     assert "Other saved data" not in labels, labels
     assert len(set(labels)) == len(persona), labels
+
+
+def test_every_installed_backup_owner_has_its_own_review_label():
+    """TASK-41111: every installed owner can reach a review (archive Contents,
+    dependency groups, portable relocation), so each has its own name there;
+    ``recovery.credentials`` is the credential material include-mode capture
+    adds. A newly installed owner fails here until it is named."""
+    from tldw_chatbook.Backup_Recovery.owner_registry import install_adapters
+    from tldw_chatbook.Backup_Recovery.recovery_service import _OWNER_LABELS
+
+    owners = [adapter.owner_id for adapter in install_adapters()]
+    owners.append("recovery.credentials")
+    assert [owner for owner in owners if owner not in _OWNER_LABELS] == []
+    labels = [_OWNER_LABELS[owner] for owner in owners]
+    assert len(set(labels)) == len(labels), sorted(labels)
+
+
+@pytest.mark.parametrize(
+    ("retained", "issues", "expected"),
+    [
+        (("personal_context",), ("personal_context_restore_readable:pc",), True),
+        # A server credential the restore remaps is installed, not retained.
+        (("personal_context", "server:create"), (), True),
+        (("personal_context", "generation"), (), False),
+        (("server", "personal_context"), (), False),
+        (
+            ("personal_context",),
+            ("personal_context_restore_locked:personal_context_key_install_unavailable:pc",),
+            False,
+        ),
+        ((), (), False),
+    ],
+)
+def test_retention_review_names_only_keys_the_restore_installs(
+    retained, issues, expected
+):
+    """TASK-41124: the retention review drops "manual recovery" only when every
+    retained scope is a Personal Context key and no Personal Context line in the
+    plan is locked (a locked key is not installed)."""
+    import json
+
+    from tldw_chatbook.Backup_Recovery.recovery_service import (
+        retains_only_installed_keys,
+    )
+
+    records, scopes = [], {}
+    for index, entry in enumerate(retained):
+        kind, _, action = entry.partition(":")
+        records.append({"id": f"r{index}", "kind": kind})
+        scopes[f"r{index}"] = json.dumps({"action": action or "retain"})
+    assert retains_only_installed_keys(scopes, records, issues) is expected
+
+
+def test_retention_classification_reads_without_hashing_staged_files(
+    tmp_path, monkeypatch
+):
+    """TASK-41124 review r15br-rev1: choosing the review's copy reads only the
+    candidate's ``candidate.json`` and credential material. It never re-hashes
+    staged payloads (``publication._descriptor`` hashes every one, twice), and a
+    candidate made for another plan reads as manual."""
+    import json
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Backup_Recovery import archive_reader, journal, publication
+    from tldw_chatbook.Backup_Recovery.recovery_service import (
+        _retention_installs_keys,
+    )
+
+    calls = []
+    for module, name in (
+        (publication, "observe_artifact"),
+        (journal, "observe_artifact"),
+        (archive_reader, "_hash"),
+    ):
+        monkeypatch.setattr(module, name, lambda *a, _n=name, **k: calls.append(_n))
+    candidate = tmp_path / "candidate"
+    candidate.mkdir(mode=0o700)
+    issues = ["personal_context_restore_readable:pc"]
+    for name, document in (
+        (
+            "candidate.json",
+            {
+                "version": 1,
+                "archive_digest": "digest",
+                "issues": issues,
+                "credential_scopes": {"r0": json.dumps({"action": "retain"})},
+                "artifacts": [{"candidate": str(candidate / "payload")}],
+            },
+        ),
+        (
+            "credential-recovery.json",
+            {"version": 1, "records": [{"id": "r0", "kind": "personal_context"}]},
+        ),
+    ):
+        (candidate / name).write_text(json.dumps(document))
+        (candidate / name).chmod(0o600)
+    (candidate / "payload").write_bytes(b"x" * 1024)
+    plan = SimpleNamespace(archive_digest="digest", issues=tuple(issues))
+    assert _retention_installs_keys(candidate, plan) is True
+    assert calls == []
+    other = SimpleNamespace(archive_digest="other", issues=tuple(issues))
+    assert _retention_installs_keys(candidate, other) is False
 
 
 # TASK-40134: the Personal Context repository is a captured backup owner. These
@@ -1741,17 +2379,33 @@ def test_no_reviewer_approves_the_shared_sync_owners():
             ("tldw_chatbook/Personal_Context/recovery.py", "OWNER"): 1,
             ("tldw_chatbook/Plugins/backup.py", "OWNER"): 1,
             ("tldw_chatbook/RAG_Search/activation.py", "owner"): 1,
-            ("tldw_chatbook/RAG_Search/model_recovery.py", "'models.artifacts'"): 1,
             ("tldw_chatbook/Skills_Interop/recovery_activation.py", "'skills'"): 1,
             # TASK-40711: Backup & Restore's settings review, `config` only.
             ("tldw_chatbook/Backup_Recovery/recovery_service.py", "'config'"): 1,
             # TASK-40139: the sync-identity review, the only approver of
             # `runtime.sync_state`; it clears the restored identity first.
             ("tldw_chatbook/Sync_Interop/recovery.py", "owner"): 1,
+            # TASK-41119: Backup & Restore's speech review, the only approver
+            # of the two speech owners speech start-up admits through.
+            ("tldw_chatbook/Backup_Recovery/recovery_service.py", "'tts.profile_store'"): 1,
+            ("tldw_chatbook/Backup_Recovery/recovery_service.py", "'tts.voices'"): 1,
+            # TASK-41301 (owner, 2026-11-16): Backup & Restore's model-files
+            # review is the one approver of `models.artifacts`; RAG's local
+            # model review now records only its exact-files receipt.
+            ("tldw_chatbook/Backup_Recovery/recovery_service.py", "'models.artifacts'"): 1,
         }
     )
     assert {"config", "runtime.sync_state"}.isdisjoint(
         {*mcp_owners, personal_context_owner, plugins_owner, *rag_owners}
+    )
+    assert {"tts.profile_store", "tts.voices", "models.artifacts"}.isdisjoint(
+        {
+            *mcp_owners,
+            personal_context_owner,
+            plugins_owner,
+            *rag_owners,
+            *sync_identity_owners,
+        }
     )
     assert sync_identity_owners == ("config", "runtime.sync_state")
 
@@ -1951,3 +2605,235 @@ def test_only_the_settings_review_calls_approve_config():
             if isinstance(node, ast.Attribute) and node.attr == "approve_config":
                 uses[path.relative_to(ROOT).as_posix()] += 1
     assert uses == Counter({"tldw_chatbook/UI/Screens/backup_restore_screen.py": 1})
+
+
+_SPEECH_REVIEW = r"""
+import asyncio, os, sys
+from pathlib import Path
+from types import SimpleNamespace
+from Tests.network_guard import install, blocked_attempts
+install()
+import keyring
+from keyring.backends.null import Keyring
+keyring.set_keyring(Keyring())
+from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storage
+from tldw_chatbook.Backup_Recovery.activation import ActivationStore, bind_activation
+from tldw_chatbook.Backup_Recovery.control_records import admission_authority, register_pending
+from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+# Imported before binding, as the app is: config computes its client id on import.
+from tldw_chatbook import app_speech
+state = sys.argv[1]
+selector = Path(os.environ['TLDW_CONFIG_PATH'])
+data = selector.parent.parent / 'data'
+selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir="' + str(data) + '"\n')
+selector.chmod(0o600)
+root = bootstrap.default_bootstrap_root()
+startup = storage._startups.pop((os.getpid(), str(root)), None)
+if startup: startup.close()
+authority = admission_authority(root)
+authority.register('profile', (selector.parent, data))
+control = selector.parent.parent / 'operation'
+control.mkdir(mode=0o700)
+register_pending(root, 'restore', ('profile',), control, (selector,))
+# Exactly the owners speech start-up admits through (app_speech.py).
+OWNERS = ('config', 'models.artifacts', 'tts.profile_store', 'tts.voices')
+with authority.maintenance(('profile',), 2) as session:
+    bind_activation(root, 'restore', selector, 'generation', OWNERS, session=session)
+(root / ('pending-' + bootstrap._key('restore') + '.json')).unlink()
+store = ActivationStore(control / 'activation')
+SPEECH = ('tts.profile_store', 'tts.voices')
+REVIEWS = {'speech': (SPEECH, 'approve_speech', 'speech_review_changed'),
+           'models': (('models.artifacts',), 'approve_models', 'models_review_changed')}
+done = {'pending': (), 'speech': ('speech',), 'models': ('models',),
+        'both': ('speech', 'models')}[state]
+service = RecoveryService(selector.parent.parent / 'jobs')
+try:
+    service.approve_config('generation')  # the settings review (TASK-40711)
+    before = service.current_requirements()
+    assert before['pending_owners'] == ('models.artifacts', *SPEECH), dict(before)
+    for review in done:
+        _, approve, changed = REVIEWS[review]
+        try:
+            getattr(service, approve)('another-generation')
+        except ValueError as error:
+            assert str(error) == changed, error
+        else:
+            raise AssertionError('a stale review approved ' + review)
+        getattr(service, approve)('generation')
+    after = service.current_requirements()
+finally:
+    service.close()
+approved = {owner for review in done for owner in REVIEWS[review][0]}
+assert after['pending_owners'] == tuple(
+    owner for owner in ('models.artifacts', *SPEECH) if owner not in approved
+), dict(after)
+for owner in ('models.artifacts', *SPEECH):
+    assert store.allowed('generation', owner) == (owner in approved), owner
+approved = state == 'both'
+
+# Speech start-up: the admitted initializer runs only once speech is approved.
+effects = []
+async def initialize():
+    effects.append('speech started')
+    return 'handler'
+app = SimpleNamespace(_speech_initialization_allowed=lambda kind: True)
+for kind in ('tts', 'stts'):
+    result = asyncio.run(app_speech._run_speech_initialization(app, kind, initialize))
+    assert result == ('handler' if approved else None), (kind, result)
+assert effects == (['speech started'] * 2 if approved else []), effects
+assert not blocked_attempts(), blocked_attempts()
+print('retired and reopened')
+"""
+
+
+@pytest.mark.parametrize("state", ["pending", "speech", "models", "both"])
+def test_the_speech_review_turns_speech_start_up_back_on(tmp_path, state):
+    """TASK-41119 / TASK-41301: speech start-up admits through `config`,
+    `models.artifacts`, `tts.profile_store` and `tts.voices`. With the settings
+    review done, speech stays off until both Backup & Restore's speech review
+    (`approve_speech`, the two speech owners) and its model-files review
+    (`approve_models`, `models.artifacts`, no local embedding model needed)
+    approve the reviewed generation, then starts; each refuses a stale
+    generation and approves only its own owners."""
+    from Tests.Backup_Recovery.test_home_citation_retirement import _run
+
+    _run(tmp_path, state, "speech_review", script=_SPEECH_REVIEW, timeout=90)
+
+
+@pytest.mark.parametrize("approval", ["approve_speech", "approve_models"])
+def test_only_backup_and_restore_calls_its_owner_reviews(approval):
+    """TASK-41119 / TASK-41301: like `approve_config`, `approve_speech` and
+    `approve_models` approve their owners for every profile their generation
+    restored, so only Backup & Restore's reviewed **Approve voices** and
+    **Approve model files** may call them."""
+    uses = Counter()
+    for path in sorted((ROOT / "tldw_chatbook").rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        if approval not in text:
+            continue
+        for node in ast.walk(ast.parse(text)):
+            if isinstance(node, ast.Attribute) and node.attr == approval:
+                uses[path.relative_to(ROOT).as_posix()] += 1
+    assert uses == Counter({"tldw_chatbook/UI/Screens/backup_restore_screen.py": 1})
+
+
+_ELSEWHERE_MODEL = r"""
+import os, sys
+from pathlib import Path
+from Tests.network_guard import install, blocked_attempts
+install()
+import keyring
+from keyring.backends.null import Keyring
+keyring.set_keyring(Keyring())
+from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storage
+from tldw_chatbook.Backup_Recovery.activation import ActivationStore, bind_activation
+from tldw_chatbook.Backup_Recovery.control_records import admission_authority, register_pending
+from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+# Imported before binding, as the app is: config computes its client id on import.
+from tldw_chatbook.Embeddings.Embeddings_Lib import HFModelCfg
+from tldw_chatbook.RAG_Search import model_recovery as recovery
+from tldw_chatbook.RAG_Search.activation import require_local_model_construction
+from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
+state = sys.argv[1]
+base = Path(os.environ['TLDW_CONFIG_PATH']).parent.parent
+profiles = {}
+for name in ('current', 'other'):
+    folder = base / name
+    (folder / 'config').mkdir(parents=True, mode=0o700)
+    (folder / 'data').mkdir(mode=0o700)
+    selector = folder / 'config' / 'config.toml'
+    selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir="'
+                        + str(folder / 'data') + '"\n')
+    selector.chmod(0o600)
+    profiles[name] = selector
+selector = Path(os.environ['TLDW_CONFIG_PATH'])
+selector.write_text(profiles['current'].read_text())
+selector.chmod(0o600)
+profiles['current'] = selector
+# A local model directory in the current profile's data that the OTHER
+# restored profile's roots also cover (its recovery restored that folder).
+shared = base / 'current' / 'data' / 'models'
+shared.mkdir(mode=0o700)
+model = shared / 'local-model'
+model.mkdir(mode=0o700)
+(model / 'config.json').write_text('{}')
+(model / 'model.safetensors').write_bytes(b'weights')
+root = bootstrap.default_bootstrap_root()
+startup = storage._startups.pop((os.getpid(), str(root)), None)
+if startup: startup.close()
+authority = admission_authority(root)
+authority.register('current', (selector.parent, base / 'current' / 'data'))
+authority.register('other', (profiles['other'].parent, shared))
+stores = {}
+for name, generation in (('current', 'generation'), ('other', 'other-generation')):
+    control = base / ('operation-' + name)
+    control.mkdir(mode=0o700)
+    register_pending(root, name, (name,), control, (profiles[name],))
+    with authority.maintenance((name,), 2) as session:
+        bind_activation(root, name, profiles[name], generation,
+                        ('config', 'models.artifacts'), session=session)
+    (root / ('pending-' + bootstrap._key(name) + '.json')).unlink()
+    stores[generation] = ActivationStore(control / 'activation')
+config = RAGConfig.from_dict({
+    'embedding': {'model': str(model), 'device': 'cpu'},
+    'vector_store': {'persist_directory': str(base / 'current' / 'data' / 'vectors')}})
+service = RecoveryService(base / 'jobs')
+try:
+    service.approve_models('generation')  # the current profile's Approve model files
+finally:
+    service.close()
+if state == 'approved':  # the other profile's own Approve model files
+    stores['other-generation'].approve('other-generation', 'models.artifacts')
+review = recovery.preview_local_embedding(config)
+assert set(review.generations) == {'generation', 'other-generation'}, review
+assert review.elsewhere_pending == (
+    () if state == 'approved' else ('other-generation',)), review
+recovery.approve_local_embedding(config, review.fingerprint)
+try:
+    require_local_model_construction(config)
+except (OSError, ValueError, RuntimeError):
+    allowed = False
+else:
+    allowed = True
+assert allowed == (state == 'approved'), (state, allowed)
+assert not blocked_attempts(), blocked_attempts()
+print('retired and reopened')
+"""
+
+
+@pytest.mark.parametrize("state", ["pending", "approved"])
+def test_local_model_review_names_another_restored_generation(tmp_path, state):
+    """TASK-41301 review r15br-rev2: a RAG model directory inside another
+    restored profile carries that profile's generation, and RAG needs
+    `models.artifacts` approved for every generation it touches. The current
+    profile's Approve model files covers only its own, so the review names the
+    other generation still pending (``elsewhere_pending``) instead of leaving
+    RAG off silently; once that profile's model files are approved, nothing is
+    named and the model is admitted."""
+    from Tests.Backup_Recovery.test_home_citation_retirement import _run
+
+    _run(tmp_path, state, "elsewhere_model", script=_ELSEWHERE_MODEL, timeout=120)
+
+
+@pytest.mark.parametrize("elsewhere", [(), ("other-generation",)])
+def test_local_model_review_copy_records_files_and_names_the_model_files_review(
+    elsewhere,
+):
+    """TASK-41301 review r15br-rev2: Settings' local model dialog no longer says
+    it allows the model. Confirming records the review of these exact files,
+    the copy names Backup & Restore's Approve model files, and any other
+    restored generation still pending is named."""
+    from tldw_chatbook.RAG_Search.model_recovery import (
+        LocalEmbeddingReview,
+        local_embedding_review_text,
+    )
+
+    text = local_embedding_review_text(
+        LocalEmbeddingReview("f", "/models/m", 3, ("generation",), elsewhere)
+    )
+    assert "Record the review of these exact files?" in text
+    assert "Approve model files in Backup & Restore > Restored profiles" in text
+    assert "Allow" not in text
+    assert ("another restored profile (generation other-generation)" in text) is bool(
+        elsewhere
+    )

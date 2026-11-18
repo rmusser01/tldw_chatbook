@@ -186,8 +186,11 @@ def test_ui_fast_lane_runs_the_census_in_serial_round_robin_shards():
     # Round-14 closeout (owner decision relayed 2026-11-15, "38 shards, 19 at
     # once"): with round 14's tail entries the census floor at 36 was 13.7
     # pytest min a shard; 38 re-deals to 12.94-12.99, still two waves.
-    assert strategy["matrix"]["shard"] == list(range(1, 39))
-    assert strategy["max-parallel"] == 19
+    # Round-15 closeout (owner decision 2026-11-16, "42 shards, 21 at once
+    # (Recommended)"): with round 15's 97 new entries the census floor at 38
+    # was 13.67 pytest min a shard; 42 re-deals to 11.66-12.80, still two waves.
+    assert strategy["matrix"]["shard"] == list(range(1, 43))
+    assert strategy["max-parallel"] == 21
     assert job["timeout-minutes"] == 20
 
     install = next(

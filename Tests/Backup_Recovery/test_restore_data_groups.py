@@ -512,10 +512,15 @@ def succeeded(operation):
     assert result['state'] == 'succeeded', dict(result)
     return result
 
+RETENTION = []
+
 def reviewed(start, acknowledged=(), state='succeeded'):
     """Run one operation; an unacknowledged credential review aborts and retries."""
     result = service.wait(start(acknowledged))
     new = set(result['review_issues']) - set(acknowledged)
+    if result['kind'] == 'restore' and 'credential_isolated_retention_required' in new:
+        # TASK-41124: whether the review may say this restore installs the key.
+        RETENTION.append(result['result'].get('personal_context_keys_installed', False))
     if result['state'] != 'succeeded' and new:
         pending = result['result'].get('journal_operation_id')
         if pending:
@@ -614,6 +619,7 @@ try:
         assert current['device'].values == before
         assert tables(live) == archived
         assert status(live) == ['True', reason]
+        assert RETENTION == [False], RETENTION  # a locked key is not installed
         credentials._credential_store = store
         assert 'personal_context_restore_readable:' + next(
             key for key, path in plan_for().restore if path == live) in plan_for().issues
@@ -621,6 +627,7 @@ try:
             inspection, plan_for(ack), rollback_password=ROLLBACK))
         assert account(live).startswith('personal-context:recovery_')
         assert records(live) == ['record-device-only']
+        assert RETENTION == [False, True], RETENTION
         print('retired and reopened')
         raise SystemExit(0)
     if SCENARIO == 'other_device':
@@ -703,6 +710,8 @@ try:
     restored = reviewed(lambda ack: service.start_restore(
         inspection, plan_for(ack), rollback_password=ROLLBACK))
     assert 'personal_context_key_unverified' not in restored['issues']
+    # TASK-41124: the only retained credential is the key this restore installs.
+    assert RETENTION == ([True] if MODE == 'include' else []), RETENTION
     # AC#1/#2/#4/#11: readable, from a new account; every earlier entry unchanged.
     restored_account = account(target)
     assert restored_account.startswith('personal-context:recovery_')
@@ -712,6 +721,24 @@ try:
     if SCENARIO == 'other_device':
         assert {k for k in current['device'].values if k[0] == SERVICE} == {
             (SERVICE, restored_account)}
+        print('retired and reopened')
+        raise SystemExit(0)
+    if SCENARIO == 'reviewed':
+        # TASK-41120: the review re-encrypts while this restore's recovery copy
+        # may name the restored account, so that account is kept; deleting the
+        # copy, the last one, deletes it. Nothing else changes.
+        from tldw_chatbook.Backup_Recovery import service_storage
+        service_storage.default_control_root = lambda: service.control_root
+        new_account = PersonalContextService(repository(target)).reencrypt_after_restore()
+        assert account(target) == new_account != restored_account
+        assert (SERVICE, restored_account) in current['device'].values
+        kept = dict(current['device'].values)
+        succeeded(service.start_delete_copy(
+            restored['result']['journal_operation_id'], user_selected=True))
+        assert set(kept) - set(current['device'].values) == {(SERVICE, restored_account)}
+        assert {k: v for k, v in kept.items() if k[1] != restored_account} == dict(
+            current['device'].values)
+        assert records(target) == ['record-device-only']
         print('retired and reopened')
         raise SystemExit(0)
     # AC#7/#8: the restored profile links (its own account is replaced) or is
@@ -725,6 +752,9 @@ try:
         assert (SERVICE, restored_account) not in current['device'].values
     assert current['device'].values[(SERVICE, original_account)] == before[
         (SERVICE, original_account)]
+    if SCENARIO == 'lost_keyring':
+        # TASK-41122: the keyring loses the original account before a later rollback.
+        del current['device'].values[(SERVICE, original_account)]
     operation = restored['result']['journal_operation_id']
 
     def rollback(acknowledged):
@@ -735,8 +765,19 @@ try:
         return service.start_rollback(operation, plan, old_password=ROLLBACK,
                                       new_password=b'second-safety-password')
 
+    kept = dict(current['device'].values)
     reviewed(rollback)
-    assert account(live) == original_account
+    if SCENARIO == 'lost_keyring':
+        # AC#1: the rollback copy's escrowed key goes into a fresh account,
+        # which the rolled-back database names; nothing else changes.
+        named = account(live)
+        assert named.startswith('personal-context:recovery_'), named
+        assert set(current['device'].values) - set(kept) == {(SERVICE, named)}
+        assert {k: v for k, v in current['device'].values.items() if k in kept} == kept
+    else:
+        # AC#2: the original account is still there, so the keyring is unchanged.
+        assert current['device'].values == kept
+        assert account(live) == original_account
     assert records(live) == ['record-after-backup', 'record-device-only']
     assert not network_guard.blocked_attempts()
 finally:
@@ -745,6 +786,10 @@ print('retired and reopened')
 '''
 
 
+# TASK-41118 review r15bt-rev1: at -n 4 and load 67-110 the slowest cases ran
+# 343-417 s to completion (link, remove, no_keyring), past the job's 300 s
+# per-test limit; this is about 2x the 417 s.
+@pytest.mark.timeout(840)
 @pytest.mark.parametrize(
     ("scenario", "mode"),
     [
@@ -758,6 +803,8 @@ print('retired and reopened')
         ("isolated", "include"),
         ("isolated_elsewhere", "exclude"),
         ("finalize_fails", "include"),
+        ("lost_keyring", "include"),
+        ("reviewed", "include"),
     ],
 )
 def test_replace_restore_makes_personal_context_readable_and_rolls_back(
@@ -771,7 +818,12 @@ def test_replace_restore_makes_personal_context_readable_and_rolls_back(
     with credentials, then Replace. ``finish``/``rollback``: interrupted after
     the key step, either recovery leaves a reference to an account that exists
     and opens it. TASK-40136: ``no_keyring`` (AC#1, #2, #6) and the two isolated
-    cases (AC#1, #2) end locked with their reason, keyring and rows untouched."""
+    cases (AC#1, #2) end locked with their reason, keyring and rows untouched.
+    TASK-41122: ``lost_keyring`` loses the original account before a later
+    rollback, which reinstalls the rollback copy's escrowed key into a fresh
+    account; the other later rollbacks leave the keyring unchanged.
+    TASK-41120: ``reviewed`` re-encrypts while the restore's recovery copy is
+    kept, then deletes the copy, which deletes the kept account."""
     from Tests.Backup_Recovery.test_home_citation_retirement import _run
 
     script = _PERSONAL_CONTEXT_RESTORE.replace("SCENARIO_VALUE", repr(scenario)).replace(

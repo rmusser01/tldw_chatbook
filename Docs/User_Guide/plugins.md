@@ -28,7 +28,9 @@ From top to bottom:
 - **Header**: "Plugins | Inspect sources, installation and activation".
 - **Scope line**: "Activation in: *workspace* | Installation: this device".
   Enabling and disabling apply to the workspace named here (your active
-  workspace, shown by its ID, or "Global default" when none is active).
+  workspace by name, "Local Default" for the built-in one, or "Global
+  default" when none is active). Renaming the workspace updates the name and
+  keeps your selection.
   Installation is for this device. Switching workspace elsewhere in the app
   reloads Plugins for the new one.
 - **Views**: **1 Installed**, **2 Browse** and **3 Marketplaces**.
@@ -161,7 +163,7 @@ configuration, disabling, uninstalling and saved data are in
 | **Authority…** | Opens "Set up plugin authority" the first time (choose a passphrase of at least 8 characters and type it twice), or "Unlock plugin authority" when it is locked. Plugin authority has its own passphrase, separate from config encryption and from skill trust. When it is already unlocked, pressing it runs authority recovery and reports "Authority recovered; saved-data recovery remains separately reviewed." |
 | **History…** | Opens "Plugin operations", the list of install, change and removal operations with their outcome. **Manage saved data** opens the selected operation's plugin, including one you already uninstalled, so you can delete or recover its saved data. Old entries may have expired from the list. |
 | **Candidates…** | Opens "Persisted candidates", the copies Plugins kept from earlier previews and downloads. **Review discard**, then **Confirm discard**, releases one of them; "Reference release does not delete bytes." A download whose folder was replaced by a restore reads "folder replaced since last bound; Review rebind": **Review rebind**, then **Confirm rebind**, records it again. |
-| **Reset authority…** | Opens "Reset plugin authority". **Review reset** shows what it affects; **Confirm plugin reset** archives plugin trust authority. Installed plugins and their saved data stay. Setting authority up again with **Authority…** is refused while any plugin is installed or plugin saved data remains, except after a restore, when setup sets the restored plugins aside and keeps their saved data (see [After restoring a backup](#after-restoring-a-backup)). A wrong passphrase is not a reason to reset: retry instead. |
+| **Reset authority…** | Opens "Reset plugin authority". **Review reset** shows what it affects; **Confirm plugin reset** archives plugin trust authority. Installed plugins and their saved data stay. Setting authority up again with **Authority…** is refused while any plugin is installed or plugin saved data remains, except after a restore, when setup sets the restored plugins aside and keeps their saved data (see [After restoring a backup](#after-restoring-a-backup)). With nothing installed, setup moves downloads made under the old authority into a `reset-…` folder in the plugin folder, since the new authority cannot verify them; nothing is deleted. A wrong passphrase is not a reason to reset: retry instead. |
 
 ## After restoring a backup
 
@@ -183,9 +185,11 @@ paths or the OS keyring was reset:
 1. Press **Authority…** and unlock with the plugin passphrase **the backup was
    made with**.
 2. "Recover plugins from this backup" opens. It names the restored authority's
-   generation, says how many plugin changes made after the backup it undoes
-   when Chatbook can tell, lists the backup's plugins and revisions, and gives
-   the number of saved-data folders.
+   generation, lists the backup's plugins and revisions, gives the number of
+   saved-data folders, and says what confirming does. Then it names the plugin
+   changes made after the backup that it undoes (generation, kind and plugin):
+   the first 20, then how many more and their generations. If Chatbook has no
+   complete list of them, it says how many there are when it can tell.
 3. Press **Confirm recovery**. Saved data stays attached.
 
 If the plugin folder or a saved-data folder was deleted before the restore, the
@@ -206,8 +210,9 @@ restored folders count as replaced, and each one is reviewed on its own:
 1. Press **Reset authority…**, **Review reset**, then **Confirm plugin reset**.
 2. Press **Authority…** and set up a new passphrase. This moves the restored
    plugins aside (into a `reset-…` folder in the plugin folder) and keeps all
-   their saved data. Nothing is deleted. Their package files stay in the plugin
-   folder and keep their disk space until you remove them by hand.
+   their saved data. Nothing is deleted. Their package files move there too and
+   stop counting against plugin storage; the `reset-…` folder keeps its disk
+   space until you delete it.
 3. Reinstall each plugin from its source. A plugin whose source is gone cannot
    come back this way.
 4. In **Manage plugin**, choose **Attach kept saved-data folder** and pick a
@@ -296,5 +301,3 @@ SSH settings, with no safety copy; installed plugins keep working. See
   again."** The **Manage plugin** dialog failed while loading. It stays open
   with **Review action** disabled, and Chatbook keeps running; close it and
   open it again.
-- **The scope line shows the workspace's ID**, for example
-  "workspace-default", not its display name.

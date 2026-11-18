@@ -84,7 +84,7 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Chat/console_agent_reply.py": 1164,
     "tldw_chatbook/Chat/console_settings_persistence.py": 788,
     "tldw_chatbook/Chat/console_memory_banner.py": 207,
-    "tldw_chatbook/Chat/console_trace_maintenance_runtime.py": 193,
+    "tldw_chatbook/Chat/console_trace_maintenance_runtime.py": 185,
     "tldw_chatbook/DB/prompt_export.py": 241,
     # PR3346 pre-merge review: exact existing save and screen-derivation owners.
     "tldw_chatbook/UI/Library_Modules/prompt_save_ack.py": 548,
@@ -149,7 +149,9 @@ _BUDGETS: dict[str, int] = {
     # the TUI opens ChaChaNotes and Media through the shared openers (+8).
     # the TUI opens ChaChaNotes and Media through the shared openers (+8);
     # review fix: a failed notes service reuses the startup-opened DB (+9).
-    "tldw_chatbook/app.py": 5705,
+    # 2026-11-15, TASK-41141 (owner rule: raise by the change's own lines): +2,
+    # TldwCli.__init__ installs the stock Select exit gate.
+    "tldw_chatbook/app.py": 5707,
     # TASK-34406.5: unchanged startup/footer wiring, born governed.
     "tldw_chatbook/app_startup.py": 176,
     # TASK-34406.7: app-owned served control and relay bodies, born governed.
@@ -281,7 +283,8 @@ _BUDGETS: dict[str, int] = {
     # console_compaction_gate.py and console_fleet_wake.py.
     # 2026-11-12: re-measured after rebasing onto dev 4b90eb860b (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 28743 -> 28755.
     # 2026-11-15: re-measured after rebasing onto dev 2ff0e9a5e5 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 28746 -> 28753.
-    "tldw_chatbook/Chat/console_chat_controller.py": 28753,
+    # 2026-11-16: re-measured after rebasing onto dev 5e3c8b2bd4 (owner rule: dev's row + this branch's growth): 28753 -> 28757 (+4, TASK-41102 Partial tray status).
+    "tldw_chatbook/Chat/console_chat_controller.py": 28757,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6298,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.
@@ -385,7 +388,13 @@ _BUDGETS: dict[str, int] = {
     # gate (+1, 16,878 -> 16,879).
     # 2026-11-13, TASK-40304 (same rule): the storage-busy import copy
     # (+3, 16,879 -> 16,882).
-    "tldw_chatbook/UI/Screens/personas_screen.py": 16882,
+    # 2026-11-16, TASK-41114 (same rule; owner decision "Clear the interrupted
+    # import"): the stuck-import copy and the notice's import and two calls; the
+    # notice itself lives in Persona_Widgets (+7, 16,882 -> 16,889).
+    # 2026-11-16, TASK-41114 review r15ac-rev2 (same rule): a persona Actor Pack
+    # creation refused by the stuck import names it and shows the notice (+3,
+    # 16,889 -> 16,892).
+    "tldw_chatbook/UI/Screens/personas_screen.py": 16892,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
     # Roleplay frame B1 (TASK-33910.2), owner decision 2026-10-04 ("expand the
     # limits"), applied 2026-10-09: the final-review fix that puts a name and a

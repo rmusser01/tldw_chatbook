@@ -64,8 +64,9 @@ _AUDITED_LITERAL_ALLOWLIST: dict[str, tuple[int, int]] = {
         1,
     ),
     # The legacy named handlers and their ADR-311 wire keys (untouched by
-    # the swap; the kill switch keeps them the live path when off).
-    "tldw_chatbook/LLM_Calls/LLM_API_Calls_Local.py": (3, 2),
+    # the swap; the kill switch keeps them the live path when off), and the
+    # same two handlers' own keys on an endpoint refusal (TASK-41131 M-2).
+    "tldw_chatbook/LLM_Calls/LLM_API_Calls_Local.py": (4, 3),
     # Audit-leave: user-configured summarization endpoint dispatch;
     # "custom-hosted" is not a selectable summarization endpoint.
     "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py": (1, 1),

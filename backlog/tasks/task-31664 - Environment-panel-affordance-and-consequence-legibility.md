@@ -236,4 +236,7 @@ untouched file, same as round 1) and test_live_work_widget_swaps_cover_
 real_twenty_twenty_one_geometry[...] (the task brief's own documented
 "known flaky... baseline before blaming" -- confirmed by re-running it
 alone: 2 passed). preflight.sh green.
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/console/context-and-rag.md`: Code-level pass; not re-driven live.
 <!-- SECTION:NOTES:END -->

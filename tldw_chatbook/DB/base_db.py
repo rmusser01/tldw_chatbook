@@ -42,9 +42,7 @@ _OPERATION_OWNERS = threading.local()
 
 
 @contextmanager
-def operation_owned_connection(
-    database: object, *, operation_deadline: float | None = None
-) -> Iterator[None]:
+def operation_owned_connection(database: object) -> Iterator[None]:
     """Close only the thread-local handle opened by this synchronous operation.
 
     Inspect without acquiring a handle. A pre-existing registered connection,
@@ -52,7 +50,6 @@ def operation_owned_connection(
     during the operation; a newly acquired replacement is operation-owned.
     A nested operation on the same thread and database defers to the
     outermost owner, which retires the handle when the whole operation ends.
-    A monotonic deadline also bounds the departing handle's checkpoint wait.
     """
     owners = getattr(_OPERATION_OWNERS, "ids", None)
     if owners is None:
@@ -62,18 +59,14 @@ def operation_owned_connection(
         return
     owners.add(id(database))
     try:
-        with _operation_owned_connection(
-            database, operation_deadline=operation_deadline
-        ):
+        with _operation_owned_connection(database):
             yield
     finally:
         owners.discard(id(database))
 
 
 @contextmanager
-def _operation_owned_connection(
-    database: object, *, operation_deadline: float | None = None
-) -> Iterator[None]:
+def _operation_owned_connection(database: object) -> Iterator[None]:
     local = getattr(database, "_local", None)
     registry = getattr(database, "_connection_quiescence", None)
     close = getattr(database, "close_connection", None)
@@ -119,22 +112,7 @@ def _operation_owned_connection(
     finally:
         current = getattr(local, "conn", None)
         if current is not None and (not borrowed or current is not previous):
-            try:
-                if operation_deadline is not None:
-                    try:
-                        sqlite3.Connection.in_transaction.__get__(current)
-                    except sqlite3.ProgrammingError:
-                        pass  # Native retirement already completed.
-                    else:
-                        timeout = current.execute("PRAGMA busy_timeout").fetchone()[0]
-                        remaining_ms = max(
-                            0, int((operation_deadline - time.monotonic()) * 1000)
-                        )
-                        current.execute(
-                            f"PRAGMA busy_timeout = {min(timeout, remaining_ms)}"
-                        )
-            finally:
-                close()
+            close()  # A ChaChaNotes close never waits on readers (TASK-41115).
 
 
 async def run_owned_db_call[**_CallParameters, _CallResult](

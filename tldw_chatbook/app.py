@@ -1101,7 +1101,9 @@ class TldwCli(
         log_counter(
             "app_startup_initiated", 1, documentation="Application startup initiated"
         )
+        from tldw_chatbook.Widgets.prune_safe_select import install_select_exit_gate
 
+        install_select_exit_gate()  # Every stock Select past App._exit (TASK-41141).
         super().__init__()
 
         # A textual-serve child receives a one-use, per-AppService control

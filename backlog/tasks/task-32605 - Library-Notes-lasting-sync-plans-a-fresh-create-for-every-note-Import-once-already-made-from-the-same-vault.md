@@ -184,4 +184,6 @@ file is safe: it is not, if your own branch edits that file. The refinement
 is appended under that entry, with this incident. (b) The rider list above
 now enumerates all three riders the fix-round prose names; it read two.
 
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/library/notes.md`: The "no bulk delete" clause was read from source, not driven.
 <!-- SECTION:NOTES:END -->

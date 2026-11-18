@@ -482,6 +482,8 @@ fresh request with a fresh ID. A committed registry without a certificate remain
 recovery-required. Across restart, `lookup_operation(identity)` looks up either the issued operation
 ID or retained request-handle nonce. It never starts a mutation. An unavailable or
 expired identity requires an explicit new action, not inferred replay permission.
+`lookup_operations(identities)` (and the service's `operation_statuses`) answers many
+identities over one recovery pass, so a status refresh does not re-run recovery per job.
 
 Uninstall commits the tombstone and removes only installation-owned trust,
 selection, mappings and registrations before package-file cleanup. Saved data and

@@ -220,6 +220,7 @@ from ...Widgets.destination_workbench import DestinationModeStrip
 from ...Widgets.Persona_Widgets.persona_profile_card_widget import (
     PersonaProfileCardWidget,
 )
+from ...Widgets.Persona_Widgets.actor_pack_recovery_notice import show_actor_pack_recovery_notice
 from ...Widgets.Persona_Widgets.actor_pack_import_review import (
     ActorPackImportReviewDialog,
 )
@@ -700,6 +701,10 @@ def _actor_pack_import_error_copy(category: str | None) -> str:
         ),
         "actor_pack_import_storage_unavailable": (
             "Backup or restore is using this profile. Import again when it finishes."
+        ),
+        "actor_pack_import_creation_blocked": (  # TASK-41114
+            "An earlier persona Actor Pack import was interrupted. Choose \"Keep my "
+            "current personas and clear the interrupted import\" above, then try again."
         ),
     }.get(category, "Actor Pack import failed.")
 
@@ -1715,6 +1720,7 @@ class PersonasScreen(BaseAppScreen):
             )
             if callable(ensure_recovery):
                 await asyncio.to_thread(ensure_recovery)
+                await show_actor_pack_recovery_notice(self)  # TASK-41114
             loading_manager = getattr(self, "loading_manager", None)
             setup_loading = getattr(loading_manager, "setup", None)
             if callable(setup_loading):
@@ -5124,6 +5130,7 @@ class PersonasScreen(BaseAppScreen):
                     self._notify(
                         _actor_pack_import_error_copy(activated.error_category), "error"
                     )
+                    await show_actor_pack_recovery_notice(self)  # TASK-41114
                     return
                 result = activated.result
                 self._actor_pack_import_review = None
@@ -8224,6 +8231,9 @@ class PersonasScreen(BaseAppScreen):
             and error.user_message == "Save a local copy first"
         ):
             copy = error.user_message
+        elif getattr(error, "category", None) == "actor_pack_creation_blocked":
+            copy = _actor_pack_import_error_copy("actor_pack_import_creation_blocked")
+            self.call_later(show_actor_pack_recovery_notice, self)  # TASK-41114
         self._notify(copy, "error")
 
     def _note_actor_pack_portrait_change(self) -> None:

@@ -444,53 +444,73 @@ class PluginService:
 
     async def operation_status(self, identity: str):
         """Read current custody separately from durable commitment."""
-        with self._lock:
-            for operation in self.fences.operations.values():
-                if identity in {operation.operation_id, operation.durable_id}:
-                    return {
-                        "receipt": operation.status(),
-                        "blockers": tuple(
-                            {"owner_token": token, "reason": "unresolved_owner"}
-                            for token in operation.unresolved_tokens
-                        )
-                        + tuple(
-                            {"run_id": record.run_id, "reason": "stopping"}
-                            for record in operation.records
-                            if not record.completed.is_set()
-                        ),
-                        "cancel_operation": False,
-                    }
-            for ticket in self.fences.drains.values():
-                if ticket.operation_id == identity:
-                    return {
-                        "receipt": OperationReceipt(
-                            identity, ticket.phase, ticket.phase == "complete"
-                        ),
-                        "blockers": self.revision_drain.blockers(ticket.token),
-                        "cancel_operation": ticket.phase in {"reserved", "waiting"},
-                    }
+        return (await self.operation_statuses((identity,)))[identity]
 
-        def root_operation():
+    async def operation_statuses(self, identities) -> dict:
+        """Read many operations' custody in one storage call (TASK-41109)."""
+        states = {}
+        with self._lock:
+            for identity in identities:
+                for operation in self.fences.operations.values():
+                    if identity in {operation.operation_id, operation.durable_id}:
+                        states[identity] = {
+                            "receipt": operation.status(),
+                            "blockers": tuple(
+                                {"owner_token": token, "reason": "unresolved_owner"}
+                                for token in operation.unresolved_tokens
+                            )
+                            + tuple(
+                                {"run_id": record.run_id, "reason": "stopping"}
+                                for record in operation.records
+                                if not record.completed.is_set()
+                            ),
+                            "cancel_operation": False,
+                        }
+                        break
+                else:
+                    for ticket in self.fences.drains.values():
+                        if ticket.operation_id == identity:
+                            states[identity] = {
+                                "receipt": OperationReceipt(
+                                    identity, ticket.phase, ticket.phase == "complete"
+                                ),
+                                "blockers": self.revision_drain.blockers(ticket.token),
+                                "cancel_operation": ticket.phase
+                                in {"reserved", "waiting"},
+                            }
+                            break
+        stored = tuple(identity for identity in identities if identity not in states)
+
+        async def stored_operations():
             from .data_cleanup import root_ref
 
             usage = self._coordinator.root_usage
-            operation = usage.operations.get(identity)
-            if operation is None:
-                return None
-            return {
-                "receipt": operation.receipt,
-                "blockers": usage.blockers(
-                    tuple(root_ref(row) for row in operation.review.targets)
-                ),
-                "cancel_operation": operation.receipt.phase == "waiting",
-                "cancel_work": operation.receipt.phase == "waiting",
-            }
+            found = {}
+            for identity in stored:
+                operation = usage.operations.get(identity)
+                if operation is not None:
+                    found[identity] = {
+                        "receipt": operation.receipt,
+                        "blockers": usage.blockers(
+                            tuple(root_ref(row) for row in operation.review.targets)
+                        ),
+                        "cancel_operation": operation.receipt.phase == "waiting",
+                        "cancel_work": operation.receipt.phase == "waiting",
+                    }
+            retained = tuple(identity for identity in stored if identity not in found)
+            if retained:
+                receipts = await self._coordinator.lookup_operations(retained)
+                for identity in retained:
+                    found[identity] = {
+                        "receipt": receipts[identity],
+                        "blockers": (),
+                        "cancel_operation": False,
+                    }
+            return found
 
-        root_state = await self._call(root_operation)
-        if root_state is not None:
-            return root_state
-        receipt = await self.lookup_operation(identity)
-        return {"receipt": receipt, "blockers": (), "cancel_operation": False}
+        if stored:
+            states.update(await self._call(stored_operations))
+        return {identity: states[identity] for identity in identities}
 
     async def data_status(
         self, roots=None, *, installation_id: str | None = None, limit=50, offset=0
@@ -674,6 +694,15 @@ class PluginService:
                 undone = current.generation - marker.generation
             else:
                 undone = None
+            from .backup import changes_since
+
+            changes = (
+                changes_since(
+                    coordinator.owner.root, authority.namespace_id(), marker, current
+                )
+                if undone
+                else None
+            )
             review = RestoredAuthorityReview(
                 secrets.token_hex(16),
                 marker,
@@ -685,6 +714,7 @@ class PluginService:
                 ),
                 len(snapshot["data_roots"]),
                 time.monotonic() + 900,
+                changes,
             )
             self._adoption_review = review
             return review

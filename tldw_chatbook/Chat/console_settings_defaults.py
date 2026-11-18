@@ -31,6 +31,9 @@ from tldw_chatbook.Chat.console_settings_apply import (
 from tldw_chatbook.Chat.custom_endpoint_registry import provider_identity_key
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.provider_setup_persistence import (
+    MLX_HOST_PORT_PROVIDER_KEYS,
+    host_port_refusal,
+    mlx_host_port,
     persisted_endpoint_for_key,
     provider_endpoint_key,
 )
@@ -981,12 +984,35 @@ def _configured_endpoint_key(
     return provider_endpoint_key(canonical_provider)
 
 
+def _endpoint_values(
+    canonical_provider: str,
+    provider_settings: Mapping[str, object],
+    endpoint: str,
+) -> dict[str, object]:
+    """What a default writes for ``endpoint``: one key, as **s** writes it.
+
+    TASK-41145 (owner decision 2026-11-16): MLX-LM's endpoint is its
+    ``host`` and ``port``, which its adapter reads; ``api_url`` is left alone.
+    """
+    if canonical_provider in MLX_HOST_PORT_PROVIDER_KEYS:
+        return mlx_host_port(endpoint)
+    endpoint_key = _configured_endpoint_key(canonical_provider, provider_settings)
+    return {
+        endpoint_key: persisted_endpoint_for_key(
+            canonical_provider
+            if normalize_provider_key_for_contract(canonical_provider)
+            else "custom",
+            endpoint_key,
+            endpoint,
+        )
+    }
+
+
 def _config_with_endpoint(
     values: Mapping[str, object],
     *,
     section_name: str,
-    endpoint_key: str,
-    endpoint_value: str,
+    endpoint_values: Mapping[str, object],
 ) -> dict[str, object]:
     """Return a detached config view with one prospective endpoint edit."""
 
@@ -999,7 +1025,7 @@ def _config_with_endpoint(
     provider_settings = (
         dict(source_provider) if isinstance(source_provider, Mapping) else {}
     )
-    provider_settings[endpoint_key] = endpoint_value
+    provider_settings.update(endpoint_values)
     api_settings[section_name] = provider_settings
     result["api_settings"] = api_settings
     return result
@@ -1036,12 +1062,15 @@ def build_console_default_readiness_preview(
         raise ValueError("Endpoint preview is not authorized")
     section_name = _raw_provider_section_name(app_config, canonical_provider)
     provider_settings = _raw_provider_settings(app_config, section_name)
-    endpoint_key = _configured_endpoint_key(canonical_provider, provider_settings)
+    typed = endpoint.value.strip()
     preview_config = _config_with_endpoint(
         app_config,
         section_name=section_name,
-        endpoint_key=endpoint_key,
-        endpoint_value=endpoint.value.strip(),
+        endpoint_values=(
+            mlx_host_port(typed)
+            if canonical_provider in MLX_HOST_PORT_PROVIDER_KEYS
+            else {_configured_endpoint_key(canonical_provider, provider_settings): typed}
+        ),
     )
     defaults = build_target_default_console_session_settings(
         preview_config,
@@ -1139,7 +1168,7 @@ def console_default_endpoint_refusal(provider: str, endpoint: str) -> str:
     errors = resolve_provider_endpoint(key, endpoint).errors
     if errors:
         return errors[0]
-    return koboldcpp_route_refusal(key, endpoint)
+    return koboldcpp_route_refusal(key, endpoint) or host_port_refusal(key, endpoint)
 
 
 def _build_locked_default_mutation(
@@ -1182,8 +1211,8 @@ def _build_locked_default_mutation(
     )
     raw_provider = _raw_provider_settings(snapshot.raw_values, raw_section_name)
     patch = intent.endpoint_patch
-    endpoint_key: str | None = None
-    endpoint_value: str | None = None
+    endpoint_values: dict[str, object] | None = None
+    endpoint_value: object = None
     readiness_config = snapshot.effective_values
     if patch is not None and registry_slug is not None:
         # TASK-39042: the contract's reading, so a loopback address typed
@@ -1204,15 +1233,9 @@ def _build_locked_default_mutation(
             entries[registry_slug] = entry_view
             readiness_config["custom_endpoints"] = entries
     elif patch is not None:
-        endpoint_key = _configured_endpoint_key(canonical_provider, raw_provider)
         # TASK-39042: what **s** writes, not the typed value.
-        endpoint_value = persisted_endpoint_for_key(
-            canonical_provider
-            if normalize_provider_key_for_contract(canonical_provider)
-            else "custom",
-            endpoint_key,
-            patch.value,
-        )
+        endpoint_values = _endpoint_values(canonical_provider, raw_provider, patch.value)
+        endpoint_value = next(iter(endpoint_values.values()))
         effective_section_name = _raw_provider_section_name(
             snapshot.effective_values,
             canonical_provider,
@@ -1220,8 +1243,7 @@ def _build_locked_default_mutation(
         readiness_config = _config_with_endpoint(
             snapshot.effective_values,
             section_name=effective_section_name,
-            endpoint_key=endpoint_key,
-            endpoint_value=endpoint_value,
+            endpoint_values=endpoint_values,
         )
     if patch is not None and not endpoint_value:
         raise ValueError("Endpoint is invalid.")
@@ -1299,10 +1321,8 @@ def _build_locked_default_mutation(
             "base_url": endpoint_value
         }
     elif patch is not None:
-        assert endpoint_key is not None
-        section_values[("api_settings", raw_section_name)] = {
-            endpoint_key: endpoint_value
-        }
+        assert endpoint_values is not None
+        section_values[("api_settings", raw_section_name)] = endpoint_values
 
     return config_module.LiteralSettingsMutation(
         section_values=section_values,

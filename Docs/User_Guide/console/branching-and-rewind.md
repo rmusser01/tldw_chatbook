@@ -239,7 +239,3 @@ action row are covered in [chat basics](chat-basics.md), globals in the
   turns and keep the recent ones verbatim, but not the reverse. (task-575)
 - `/rewind` is only reachable by typing the command; it isn't in the command
   palette or the message actions yet. (task-576)
-—
-*Variants, Edit & resend, and rewind verified against dev @ ff435772c —
-2026-07-31. Fork chat was verified against TASK-23088's production-shaped
-provider-free journey at 120×35 and 80×24 on 2026-08-27.*

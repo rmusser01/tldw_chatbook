@@ -76,10 +76,19 @@ def chat_dispatch_name(provider: Optional[str]) -> Optional[str]:
         when the provider has no chat handler at all.
     """
     from tldw_chatbook.Chat.Chat_Functions import API_CALL_HANDLERS
+    from tldw_chatbook.Chat.console_provider_support import (
+        _READINESS_TO_EXECUTION_ALIASES,
+    )
 
     candidate = (provider or "").strip().lower()
     if not candidate:
         return None
+    # TASK-41143: Settings saves a provider's readiness key, and the custom
+    # slots' (``custom``, ``custom_2``) are not handler keys; Console's table
+    # maps them, so every caller of this mapper maps them the same way.
+    candidate = _READINESS_TO_EXECUTION_ALIASES.get(
+        provider_config_key(provider), candidate
+    )
     if candidate in API_CALL_HANDLERS:
         return candidate
     # Normalize both sides the way the readiness layer does (spaces and

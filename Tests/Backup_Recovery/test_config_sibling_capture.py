@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from Tests.Backup_Recovery.restart_observation import _wait_while_busy
+
 _SEED = r"""
 import os,sys
 from pathlib import Path
@@ -114,45 +116,10 @@ print('CAPTURE_SIBLING_CONTINUITY_COMPLETE',owner,flush=True)
 """
 
 
-def _wait_while_busy(process, *, idle, timeout):
-    """Wait until ``process`` exits; kill it once its process tree has used no
-    CPU for ``idle`` seconds (a hang), or at ``timeout`` (TASK-40306).
-
-    A fixed budget fails a loaded run that is only slow; a hung child stops
-    using CPU, however loaded the host is.
-    """
-    import time
-
-    import psutil
-
-    watched = psutil.Process(process.pid)
-    started = still = time.monotonic()
-    used = None
-    try:
-        while True:
-            try:
-                return process.wait(timeout=1)
-            except subprocess.TimeoutExpired:
-                pass
-            try:
-                tree = [watched, *watched.children(recursive=True)]
-                now_used = sum(sum(p.cpu_times()[:2]) for p in tree)
-            except psutil.Error:
-                now_used = used  # A child of the tree exited mid-read.
-            now = time.monotonic()
-            if now_used != used:
-                used, still = now_used, now
-            if now - still > idle or now - started > timeout:
-                raise subprocess.TimeoutExpired(process.args, round(now - started))
-    finally:
-        if process.poll() is None:
-            process.kill()
-            process.wait()
-
-
 def _child(home, script, *arguments, timeout=70, selector=None, idle=None):
-    """Run ``script`` in a child; with ``idle``, ``timeout`` is only a cap and
-    the child fails once it stops using CPU for ``idle`` seconds."""
+    """Run ``script`` in a child; with ``idle``, the child also fails once it
+    stops using CPU for ``idle`` seconds, and ``timeout`` stays the only stop
+    for a hang that keeps polling."""
     repository = Path(__file__).resolve().parents[2]
     environment = dict(
         os.environ,
@@ -569,3 +536,64 @@ def test_child_wait_fails_only_an_idle_child(child):
         with pytest.raises(subprocess.TimeoutExpired):
             _wait_while_busy(process, idle=2, timeout=60)
         assert process.poll() is not None and time.monotonic() - started < 30
+
+
+def test_child_wait_kills_a_hung_childs_descendants():
+    """TASK-41104 review: killing a hung child also kills what it started, so a
+    hung restore leaves no process running past its test."""
+    import psutil
+
+    body = (
+        "import subprocess,sys\n"
+        "g=subprocess.Popen([sys.executable,'-c','import time;time.sleep(600)'])\n"
+        "print(g.pid,flush=True)\n"
+        "g.wait()\n"
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-c", body], stdout=subprocess.PIPE, text=True
+    )
+    grandchild = psutil.Process(int(process.stdout.readline()))
+    try:
+        with pytest.raises(subprocess.TimeoutExpired):
+            _wait_while_busy(process, idle=2, timeout=60)
+        _gone, alive = psutil.wait_procs([grandchild], timeout=10)
+        assert not alive, "the hung child's own child is still running"
+    finally:
+        if grandchild.is_running():
+            grandchild.kill()
+
+
+def test_child_wait_counts_a_busy_child_beside_a_zombie_descendant(monkeypatch):
+    """TASK-41104 review: a descendant whose CPU cannot be read (an unreaped
+    zombie) must not hide the busy child's CPU and get it killed as idle.
+    Linux reads a zombie's CPU, so the unreadable read is forced here."""
+    import psutil
+
+    body = (
+        "import subprocess,sys,time\n"
+        "g=subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)'])\n"
+        "print(g.pid,flush=True)\n"
+        "end=time.monotonic()+8\n"
+        "while time.monotonic()<end:pass\n"
+        "g.kill();g.wait()\n"
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-c", body], stdout=subprocess.PIPE, text=True
+    )
+    grandchild = int(process.stdout.readline())
+    process.stdout.close()
+    read = psutil.Process.cpu_times
+
+    def unreadable(self):
+        if self.pid == grandchild:
+            raise psutil.ZombieProcess(self.pid)
+        return read(self)
+
+    monkeypatch.setattr(psutil.Process, "cpu_times", unreadable)
+    try:
+        assert _wait_while_busy(process, idle=2, timeout=60) == 0
+    finally:
+        try:  # The old helper left it running when it killed the child.
+            psutil.Process(grandchild).kill()
+        except psutil.Error:
+            pass

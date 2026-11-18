@@ -27,6 +27,7 @@ from Tests.UI.test_library_shell import (
     _active_library_screen,
     _wait_for_condition,
     _wait_for_library_shell,
+    _wait_for_selector,
     _wait_for_worker_group_to_drain,
 )
 from tldw_chatbook.Chat.console_prompt_mixins import (
@@ -1147,6 +1148,16 @@ async def test_library_mixin_save_ack_preserves_newer_literal_draft(tmp_path):
         db.close()
 
 
+async def _history_restore(screen, pilot) -> Button:
+    """The mounted history Restore button.
+
+    TASK-41127: the history region re-mounts it on each selection, sync and
+    dirty flip, so a bare ``query_one`` right after one raced the mount under
+    load (NoMatches).
+    """
+    return await _wait_for_selector(screen, pilot, "#library-prompt-history-restore")
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("retained_type", "current_type"),
@@ -1239,7 +1250,7 @@ async def test_literal_history_restore_keeps_kind_definition_and_guards(
             await _wait_for_library_shell(screen, pilot)
             await _open_prompt_editor(screen, pilot, prompt_id)
             await select_original(screen, pilot)
-            restore = screen.query_one("#library-prompt-history-restore", Button)
+            restore = await _history_restore(screen, pilot)
             assert not restore.disabled
             assert screen.query_one("#library-prompt-history-user", TextArea).read_only
             state = screen._library_prompt_history_state
@@ -1253,7 +1264,7 @@ async def test_literal_history_restore_keeps_kind_definition_and_guards(
             )
             controller._sync_library_prompt_history_region()
             await pilot.pause()
-            assert screen.query_one("#library-prompt-history-restore", Button).disabled
+            assert (await _history_restore(screen, pilot)).disabled
             controller.handle_library_prompt_history_restore(stale)
             assert host.screen is screen
             controller._library_prompt_capabilities = capabilities
@@ -1268,7 +1279,7 @@ async def test_literal_history_restore_keeps_kind_definition_and_guards(
                 lambda: screen._prompts_state.dirty,
                 message="History edit did not become dirty",
             )
-            assert screen.query_one("#library-prompt-history-restore", Button).disabled
+            assert (await _history_restore(screen, pilot)).disabled
             controller.handle_library_prompt_history_restore(stale)
             assert host.screen is screen
             screen.query_one("#library-prompt-discard", Button).press()
@@ -1303,7 +1314,7 @@ async def test_literal_history_restore_keeps_kind_definition_and_guards(
             await select_original(screen, pilot)
             controller.handle_library_prompt_history_restore(stale)
             assert host.screen is screen
-            screen.query_one("#library-prompt-history-restore", Button).press()
+            (await _history_restore(screen, pilot)).press()
             await _wait_for_condition(
                 pilot,
                 lambda: isinstance(host.screen, ConfirmationDialog),
@@ -1322,7 +1333,9 @@ async def test_literal_history_restore_keeps_kind_definition_and_guards(
             controller._library_prompt_capabilities = replace(
                 capabilities, conditional_update=False
             )
-            dialog.query_one("#confirm-button", Button).press()
+            # TASK-41127: the pushed dialog is the active screen before its
+            # buttons mount; press the mounted Confirm, not a NoMatches race.
+            (await _wait_for_selector(dialog, pilot, "#confirm-button")).press()
             await _wait_for_condition(
                 pilot,
                 lambda: host.screen is screen,
@@ -1333,14 +1346,14 @@ async def test_literal_history_restore_keeps_kind_definition_and_guards(
             controller._library_prompt_capabilities = capabilities
             controller._sync_library_prompt_history_region()
             await pilot.pause()
-            screen.query_one("#library-prompt-history-restore", Button).press()
+            (await _history_restore(screen, pilot)).press()
             await _wait_for_condition(
                 pilot,
                 lambda: isinstance(host.screen, ConfirmationDialog),
                 message="Restore could not retry after its source became writable",
             )
             dialog = host.screen
-            dialog.query_one("#confirm-button", Button).press()
+            (await _wait_for_selector(dialog, pilot, "#confirm-button")).press()
             await _wait_for_condition(
                 pilot,
                 lambda: host.screen is screen and screen._prompts_state.version == 3,
@@ -1402,14 +1415,15 @@ async def test_literal_history_restore_keeps_kind_definition_and_guards(
                     ),
                     message="Retained mix-in v2 was not selected",
                 )
-                screen.query_one("#library-prompt-history-restore", Button).press()
+                (await _history_restore(screen, pilot)).press()
                 await _wait_for_condition(
                     pilot,
                     lambda: isinstance(host.screen, ConfirmationDialog),
                     message="Block-to-mix-in restore confirmation did not open",
                 )
                 assert f"{retained_type.title()} to Mix-in" in host.screen.message
-                host.screen.query_one("#confirm-button", Button).press()
+                dialog = host.screen
+                (await _wait_for_selector(dialog, pilot, "#confirm-button")).press()
                 await _wait_for_condition(
                     pilot,
                     lambda: (

@@ -509,7 +509,7 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-36512 lists four heavy whole-file entries by function (the MCP
 # permissions handoff by parametrize case), so no shard takes one whole:
 # every test still runs once, and the floor follows the entry count.
-# Current UI lane: 38 shards (TASK-39144).
+# Current UI lane: 42 shards (TASK-39144).
 # TASK-36454..36458 append all 58 exact mounted regressions after dev's
 # measured split-file tail (TASK-36512), preserving its slots and coverage.
 # 2026-10-24, TASK-36479 appends two static node ids at the tail -- the
@@ -1086,6 +1086,55 @@ MINIMUM_FILES = 2145
 MINIMUM_FILES = 2146
 # TASK-41248 adds the two-case Session Git row shutdown regression module.
 MINIMUM_FILES = 2147
+# TASK-41125 (2026-11-15): append the known-profiles backup review file at the
+# tail. The floor is the measured entry count.
+MINIMUM_FILES = 2148
+# TASK-41139 (2026-11-15): append the popup-closed Send node and the visit
+# dispatch file at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2150
+MINIMUM_FILES = 2147
+# TASK-41102 (2026-11-15): append the partial-excerpt node at the tail. The
+# floor is the measured entry count.
+MINIMUM_FILES = 2151
+MINIMUM_FILES = 2148
+# TASK-41102 review r15co-rev1 (2026-11-16): append the media, note and two
+# tray-width nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2155
+# TASK-41126 (2026-11-15): append the Collections actions in-place repaint
+# node at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2156
+MINIMUM_FILES = 2146
+# TASK-41304 (2026-11-16): append the two 80x24 annotation-draft journey nodes
+# at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2158
+MINIMUM_FILES = 2148
+# TASK-41126 review r15lc-rev2 (2026-11-16): append the unsubmitted-text
+# repaint node at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2159
+# TASK-41127 (2026-11-16): append 36 re-pinned or de-raced off-lane Library
+# nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2195
+MINIMUM_FILES = 2181
+# TASK-41127 review r15lt-rev1 / TASK-41303 (2026-11-17): append 12
+# screen-navigation nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2207
+# TASK-41136 (2026-11-16): append the custom endpoint Settings file's four
+# green nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2211
+MINIMUM_FILES = 2149
+# TASK-41138 (2026-11-16): append the Buddy conversation modal file's 21 green
+# test functions at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2232
+MINIMUM_FILES = 2170
+# TASK-41136 review r15ti-rev1 (2026-11-17): append the custom endpoint
+# Settings file's nine repaired nodes at the tail. The floor is the measured
+# entry count.
+MINIMUM_FILES = 2241
+MINIMUM_FILES = 2179
+# TASK-41138 review r15ti-rev1 (2026-11-17): split the real Console Buddy send
+# by parameter and append the repaired cold-home node. The floor is the
+# measured entry count.
+MINIMUM_FILES = 2243
 
 
 def read_census(path: Path) -> list[str]:

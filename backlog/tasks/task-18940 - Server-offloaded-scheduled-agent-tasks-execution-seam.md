@@ -109,3 +109,5 @@ Completion-accounting correction: inspect current client authoring and audit pat
 
 **Remaining:** AC#2 client `agent_task` preview/create/submit and execution evidence; AC#3 real server result generation and durable client delivery (reported follow-up: tldw_server TASK-14050); AC#4 the specified audit-model reuse and durable end-to-end history; AC#6 reconnect reconciliation covering missed-fire, replay/deduplication, timeout and run-now; and AC#8 real server execution with result pass-back, plus the previously unverified local run producing an inbox row with an indexed-content profile. ADR-184's separate queued approval-escalation scope remains deferred. No new live or server certification is claimed here.
 
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/schedules.md`: The two rendering/copy gaps live round 2 found (a swallowed owner prefix; the archived-refusal wording) were fixed and pinned by rendered-cell tests, but those two fixes were not re-driven against a live server.

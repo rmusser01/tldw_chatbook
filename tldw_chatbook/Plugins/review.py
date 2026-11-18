@@ -93,6 +93,9 @@ class RestoredAuthorityReview:
     installations: tuple[tuple[str, str | None, str | None], ...]
     data_roots: int
     expires_at: float
+    # TASK-41105: each undone change as (generation, kind, installation, alias,
+    # detail), when the change list kept outside backups covers them all.
+    changes: tuple[tuple[int, str, str, str | None, str | None], ...] | None = None
 
 
 def inspection_identity(inspection: PackageInspection) -> str:

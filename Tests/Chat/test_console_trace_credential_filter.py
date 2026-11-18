@@ -163,8 +163,8 @@ def test_sanitizer_never_exposes_secret_through_failure_or_diagnostic_text() -> 
 
     assert result.available is False
     assert _serialized(result) == (
-        # TASK-39123: new results report the credentials-v2 projection.
-        '{"available": false, "detector_version": "credentials-v2", '
+        # TASK-41133: new results report the credentials-v3 projection.
+        '{"available": false, "detector_version": "credentials-v3", '
         '"omission_reason_code": "credential_sanitizer_unavailable", '
         '"redacted": false, "value": null}'
     )

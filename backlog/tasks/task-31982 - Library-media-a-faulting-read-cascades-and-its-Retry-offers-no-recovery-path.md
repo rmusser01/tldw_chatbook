@@ -48,6 +48,8 @@ Tests (TDD, red→green): `Tests/UI/test_library_media_side_by_side.py::test_bul
 
 Modified files: `tldw_chatbook/UI/Screens/library_screen.py`, `tldw_chatbook/UI/Library_Modules/library_media_browse_controller.py`, `Tests/UI/test_library_media_side_by_side.py`, `Tests/UI/test_library_media_render_fixes.py`, `Docs/User_Guide/library/media-and-conversations.md`.
 
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/library/media-and-conversations.md`: Confirmed against the product code and its tests only (a code-level check).
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

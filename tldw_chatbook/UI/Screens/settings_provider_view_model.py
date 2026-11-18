@@ -6,12 +6,15 @@ from dataclasses import dataclass, replace
 from typing import Any, Literal, Protocol
 
 from ...Chat.console_provider_endpoints import (
+    configured_provider_endpoint,
     first_configured_endpoint,
     safe_endpoint_display,
 )
+from ...Chat.provider_setup_persistence import MLX_HOST_PORT_PROVIDER_KEYS
 from ...Chat.console_session_settings import normalize_llamacpp_base_url
 from ...Chat.custom_endpoint_registry import (
     CUSTOM_ENDPOINT_ID_PREFIX,
+    ENDPOINT_FAMILIES,
     ENV_VAR_NAME_RULE_COPY,
     CustomEndpointEntry,
     build_entry_mutation,
@@ -383,6 +386,14 @@ def configured_provider_keys(
             shipped = provider_settings_for_key(shipped_settings, provider_key)
         except ProviderSettingsError:
             continue
+        if provider_key in MLX_HOST_PORT_PROVIDER_KEYS:
+            # TASK-41145 review r15ep-rev2 I-2: MLX-LM's endpoint is its host
+            # and port; the old template's api_url placeholder is ignored.
+            if configured_provider_endpoint(provider_key, own) != (
+                configured_provider_endpoint(provider_key, shipped)
+            ):
+                configured.add(provider_key)
+            continue
         if any(
             str(own.get(key) or "").strip() and own.get(key) != shipped.get(key)
             for key in endpoint_keys
@@ -511,11 +522,20 @@ def _detach_refusal(entry: CustomEndpointEntry, urls: list[str | None]) -> str:
         endpoint_refusal,
     )
 
+    name = entry.display_name
+    if urls and entry.family not in ENDPOINT_FAMILIES:
+        # TASK-41144: no adapter serves a family Chatbook does not know (one
+        # hand-written in config.toml), so its conversations have nowhere to
+        # go. The family string is never shown: it is untrusted config text.
+        return (
+            f"Detach blocked: '{name}' has an endpoint family Chatbook does not "
+            "know, so its conversations have no provider to move to. Switch "
+            "those conversations to another provider, then delete it."
+        )
     provider = family_execution_key(entry.family)
     refused = [url for url in urls if endpoint_refusal(provider, url or "")]
     if not refused:
         return ""
-    name = entry.display_name
     if entry.family != "openai_compatible" or any(
         endpoint_refusal(provider, url or "", custom_endpoint=True) for url in refused
     ):
@@ -566,7 +586,8 @@ def detach_and_delete_entry(
 
     Raises:
         DetachRefused: Referencing sessions would move onto a URL Console
-            refuses; nothing changes (TASK-40300 review r14ep-rev2 M-e).
+            refuses (TASK-40300 review r14ep-rev2 M-e), or to a family no
+            adapter serves (TASK-41144); nothing changes.
         KeyError: Unknown session id reported by the store.
         RuntimeError: The config delete failed (referencing sessions that
             were detached keep their conversation-only endpoints; retrying

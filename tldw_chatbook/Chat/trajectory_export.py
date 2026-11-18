@@ -61,7 +61,11 @@ from tldw_chatbook.Chat.trajectory import (
     TrajectorySnapshot,
     redact_local_paths,
 )
-from tldw_chatbook.Utils.log_sanitizer import CREDENTIAL_VALUE_PATTERNS
+from tldw_chatbook.Utils.log_sanitizer import (
+    CREDENTIAL_VALUE_PATTERNS,
+    mask_credential_labels,
+    mask_url_query_keys,
+)
 
 __all__ = [
     "TRAJECTORY_EXPORT_FORMAT",
@@ -313,8 +317,11 @@ _CREDENTIAL_VALUE_RES = (
     # floor. The body takes no "_", so sk_live_mode_enabled stays readable.
     re.compile(r"\b[rs]k_(?:live|test)_[A-Za-z0-9]{8,}", re.IGNORECASE),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
+    # Review r15tr-rev2: the lookbehind keeps a match from starting inside a
+    # scheme-like run; without it a dash-separated run was quadratic (198 s
+    # on 200 KB), so a shared bundle could hang its import.
     re.compile(
-        r"\b[a-z][a-z0-9+.-]*://[^/\s:@]+:[^/\s@]+@",
+        r"\b(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*://[^/\s:@]+:[^/\s@]+@",
         re.IGNORECASE,
     ),
     re.compile(
@@ -347,6 +354,10 @@ def _credential_text(value: str) -> tuple[str, bool]:
     redacted = value
     for pattern in _CREDENTIAL_VALUE_RES:
         redacted = pattern.sub("[credential redacted]", redacted)
+    # TASK-41133: then compound labels (client_secret=...), named as logs name
+    # them, and a URL's ``?key=`` value, as logs mask it.
+    redacted = mask_credential_labels(redacted, "[credential redacted]")
+    redacted = mask_url_query_keys(redacted, "[credential redacted]")
     return redacted, redacted != value
 
 
@@ -364,13 +375,25 @@ def _has_credential(value: Any, key: str = "") -> bool:
     return isinstance(value, str) and _credential_text(value)[1]
 
 
-def _has_credential_material(value: Any, *, structural_keys: bool = False) -> bool:
-    """Detect unsanitized credential material in an already-governed document."""
+def _mask_credential_material(value: Any, *, structural_keys: bool = False) -> tuple[Any, bool]:
+    """Mask credential material in an already-governed document the way the
+    export does: a credential-looking key is renamed, a credential-named
+    key's value becomes the redaction marker, and text goes through
+    ``_credential_text``. Returns the masked copy and whether anything
+    changed. Export checks its final bundle with it, and import re-masks an
+    older bundle with it, so the two cannot disagree (TASK-41133, owner
+    decision 2026-11-17, "Re-mask on import")."""
     if isinstance(value, Mapping):
+        output: dict[str, Any] = {}
+        changed = False
         for name, item in value.items():
             key = str(name)
-            if _credential_text(key)[1]:
-                return True
+            masked_key, key_changed = _credential_text(key)
+            if key_changed:
+                masked_key = "[credential key redacted]"
+                while masked_key in output or masked_key in value:
+                    masked_key += "_"
+                changed = True
             if (
                 not structural_keys
                 and key.lower() not in _CREDENTIAL_SAFE_KEYS
@@ -380,19 +403,29 @@ def _has_credential_material(value: Any, *, structural_keys: bool = False) -> bo
                     or item not in _CREDENTIAL_REDACTION_VALUES
                 )
             ):
-                return True
-            if _has_credential_material(
+                output[masked_key] = "[credential redacted]"
+                changed = True
+                continue
+            output[masked_key], item_changed = _mask_credential_material(
                 item,
                 structural_keys=structural_keys or key in _STRUCTURAL_METADATA_KEYS,
-            ):
-                return True
-        return False
+            )
+            changed |= item_changed
+        return output, changed
     if isinstance(value, (list, tuple)):
-        return any(
-            _has_credential_material(item, structural_keys=structural_keys)
+        items = [
+            _mask_credential_material(item, structural_keys=structural_keys)
             for item in value
-        )
-    return isinstance(value, str) and _credential_text(value)[1]
+        ]
+        return [item for item, _changed in items], any(changed for _item, changed in items)
+    if isinstance(value, str):
+        return _credential_text(value)
+    return value, False
+
+
+def _has_credential_material(value: Any, *, structural_keys: bool = False) -> bool:
+    """Detect unsanitized credential material in an already-governed document."""
+    return _mask_credential_material(value, structural_keys=structural_keys)[1]
 
 
 def _preview(value: str) -> tuple[str, bool]:

@@ -82,6 +82,62 @@ def test_replace_keeps_an_excluded_directory_whole_without_listing_it(
     assert (kept / "object").read_text() == "never listed"
 
 
+def test_replace_keeps_the_plugin_change_list_no_archive_holds(tmp_path):
+    """TASK-41105: ``authority-changes.json`` names the plugin authority changes
+    made since a backup. The plugins owner excludes it, so no archive holds it,
+    and a replace restore preserves the target's copy instead of retiring it:
+    after the restore, adopting the restored authority can still name them."""
+    from tldw_chatbook.Backup_Recovery.models import FileMetadata
+    from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore
+    from tldw_chatbook.Plugins.backup import CHANGES
+
+    def mutate(doc):
+        _rows(False)(doc)
+        for row in doc["producer_inventory"] + doc["files"] + doc["owners"]:
+            row["owner_id"] = "plugins"
+        doc["owners"][0]["schema_version"] = 5
+
+    archive = sealed(tmp_path, mutate=mutate)
+    destination = tmp_path / "live"
+    destination.mkdir()
+    changes = destination / CHANGES
+    changes.write_text('{"changes": []}')
+
+    def metadata(relative, kind):
+        parent = None if not relative else "root"
+        return FileMetadata(1, "root", relative, parent, kind, 0o700, 0, "private")
+
+    target = Inventory(
+        (
+            StorageItem(
+                "plugins",
+                "root",
+                destination,
+                "included_directory",
+                (),
+                metadata=metadata("", "directory"),
+            ),
+            StorageItem(
+                "plugins",
+                "changes",
+                changes,
+                "intentionally_excluded",
+                ("root",),
+                metadata=metadata(CHANGES, "file"),
+            ),
+        ),
+        True,
+        "local",
+        (),
+    )
+    plan = plan_restore(
+        archive, mode="replace", destinations={"root": destination}, target=target
+    )
+    assert ("changes", changes) in plan.preserve
+    assert not [row for row in plan.retire if row[1] == changes]
+    assert changes.read_text() == '{"changes": []}'
+
+
 @pytest.mark.parametrize("archived", [True, False], ids=["archived", "added"])
 def test_replace_keeps_a_plugin_reset_aside_whole_even_when_the_archive_predates_it(
     tmp_path, archived

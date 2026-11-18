@@ -109,9 +109,11 @@ class PluginCoordinator:
 
         The one exception is the reviewed post-restore reset (TASK-40308): while
         a restored generation awaits plugin review and authority was reset,
-        setup sets the restored registry, download records and downloads aside
-        and keeps every saved-data folder for reviewed reattachment. Returns
-        the set-aside folder, if any. An unreadable restore witness refuses.
+        setup sets the restored registry, download records, downloads and
+        package bytes aside and keeps every saved-data folder for reviewed
+        reattachment. Returns that set-aside folder, if any. An unreadable
+        restore witness refuses. With nothing retained, setup sets downloads
+        and records signed by an earlier authority aside (TASK-41108).
         """
         self._require_worker()
         prior = self.registry.authority_projection(operation_result=None)
@@ -133,6 +135,11 @@ class PluginCoordinator:
                 )
             else:
                 raise ValueError("retained data anchor requires reviewed recovery")
+        elif self.authority.posture() == "needs_setup":
+            # TASK-41108: records signed by a reset authority would fail every
+            # download listing under the new one; set them aside with their
+            # downloads. Not a restore, so nothing is approved (None).
+            self._set_aside(("staging", "acquisition-custody"))
         self.authority.bootstrap(passphrase)
         self._published = self.authority.verify_current()
         self.root_usage.initialize(self._published, fresh=True)
@@ -144,22 +151,34 @@ class PluginCoordinator:
         Backups exclude ``reset-<id>/`` whole, never walked (so the downloads'
         host configuration copies stay out of archives), and replace restores
         keep it (``Plugins/backup.kept_whole``). Saved-data folders under
-        ``data/`` stay where they are. Package bytes under ``packages/`` and
-        ``packages-revisions/`` stay too, unregistered, until removed by hand.
+        ``data/`` stay where they are. The restored package bytes
+        (``packages/``, ``packages-revisions/``) move too, so plugin storage
+        capacity stops counting them (TASK-41107); no registry names them.
         """
         if self.authority.posture() != "needs_setup":
             raise ValueError("plugin authority reset required before setup")
-        root = self.owner.root
-        aside = root / f"reset-{secrets.token_hex(8)}"
-        aside.mkdir(mode=0o700)
-        for name in ("staging", "acquisition-custody"):
-            if os.path.lexists(root / name):
-                os.rename(root / name, aside / name)
-        self.registry.set_aside(aside)
+        aside = self._set_aside(
+            ("staging", "acquisition-custody", "packages", "packages-revisions"),
+            registry=True,
+        )
         self._published = None
         self._reviews.clear()
         # The set-aside registry's roots are no longer registered here.
         self.root_usage.recovery.clear()
+        return aside
+
+    def _set_aside(self, names, *, registry=False) -> Path | None:
+        """Move ``names`` (and the registry) into a new ``reset-<id>/``, if any."""
+        root = self.owner.root
+        present = [name for name in names if os.path.lexists(root / name)]
+        if not (present or registry):
+            return None
+        aside = root / f"reset-{secrets.token_hex(8)}"
+        aside.mkdir(mode=0o700)
+        for name in present:
+            os.rename(root / name, aside / name)
+        if registry:
+            self.registry.set_aside(aside)
         return aside
 
     def reset(self, *, operation_id: str) -> Path | None:
@@ -1467,6 +1486,10 @@ class PluginCoordinator:
             # Proof may open its own registry read transaction.
             if proof(refs) is not True:
                 raise PermissionError("root_quiescence_unproven")
+        named = self.registry._connection.execute(
+            "SELECT alias FROM installations WHERE installation_id=?",
+            (review.installation_id,),
+        ).fetchone()
         with self.registry.transaction() as cursor:
             self._apply_review(cursor, review, retained)
             snapshot = self.registry.authority_projection(operation_result=result)
@@ -1493,6 +1516,25 @@ class PluginCoordinator:
         self._milestone("marker_advanced")
         with self.registry.transaction() as cursor:
             self.registry.write_operation(cursor, result, phase="complete")
+        try:
+            from .backup import record_change
+
+            record_change(
+                self.owner.root,
+                {
+                    "namespace_id": self.authority.namespace_id(),
+                    "generation": new.generation,
+                    "operation_id": operation_id,
+                    "parent": review.authority_marker.operation_id,
+                    "kind": review.kind,
+                    "installation_id": review.installation_id,
+                    "alias": getattr(review, "alias", None) or (named and named[0]),
+                    "detail": getattr(review, "intent", None)
+                    or getattr(review, "action", None),
+                },
+            )
+        except (OSError, ValueError):
+            pass  # Advisory (TASK-41105): the restore review falls back to a count.
         self._published = snapshot
         if review.kind == "activate" and target is None:
             self.fences.reconcile_enable(review.installation_id, review.workspace_id)
@@ -1650,18 +1692,38 @@ class PluginCoordinator:
         return await self.finish_revocation(self.begin_uninstall(installation_id))
 
     async def lookup_operation(self, identity: str) -> OperationReceipt:
+        return (await self.lookup_operations((identity,)))[identity]
+
+    async def lookup_operations(self, identities) -> dict[str, OperationReceipt]:
+        """Look up many identities over one recovery pass (TASK-41109).
+
+        Each lookup used to run the whole recovery and verify every retained
+        transition, so reading N statuses cost N passes.
+        """
         self._require_worker()
         import re
+        from dataclasses import replace
 
-        nonce = None
-        if re.fullmatch(r"lr1\.[0-9a-f]{32}\.[0-9a-f]{32}", identity):
-            nonce = "".join(identity.split(".")[1:])
+        nonces = {
+            identity: (
+                "".join(identity.split(".")[1:])
+                if re.fullmatch(r"lr1\.[0-9a-f]{32}\.[0-9a-f]{32}", identity)
+                else None
+            )
+            for identity in identities
+        }
         receipts = await self.recover()
         if any(item.phase == "recovery_required" for item in receipts):
-            return OperationReceipt(
-                None, "recovery_required", False, request_id=identity if nonce else None
-            )
-        matches = []
+            return {
+                identity: OperationReceipt(
+                    None,
+                    "recovery_required",
+                    False,
+                    request_id=identity if nonce else None,
+                )
+                for identity, nonce in nonces.items()
+            }
+        retained = []
         marker = self.authority.load_marker()
         for receipt in receipts:
             result = (
@@ -1672,8 +1734,6 @@ class PluginCoordinator:
                 ]
             )
             if result["kind"] == "root_data":
-                from dataclasses import replace
-
                 group = result["root_result"]["group_id"]
                 pending_roots = [
                     row
@@ -1690,8 +1750,6 @@ class PluginCoordinator:
                     cleanup_pending=bool(pending_roots),
                 )
             if result["kind"] == "retain":
-                from dataclasses import replace
-
                 from .retention import cleanup_retained_operation
 
                 receipt = replace(
@@ -1704,27 +1762,41 @@ class PluginCoordinator:
                         )
                     ),
                 )
-            if receipt.operation_id == identity or (
-                nonce
-                and result["operation_id"].startswith("pi1.")
-                and self.authority.verify_operation_id(
+            retained.append((receipt, result))
+        issued_nonces = {}
+
+        def issued_nonce(index, result):
+            if index not in issued_nonces:
+                issued_nonces[index] = self.authority.verify_operation_id(
                     result["operation_id"], result
                 ).nonce
-                == nonce
-            ):
-                matches.append(receipt)
-        if len(matches) > 1:
-            raise ValueError("ambiguous retained request identity")
-        if matches:
-            from dataclasses import replace
+            return issued_nonces[index]
 
-            return replace(matches[0], request_id=identity if nonce else None)
-        return OperationReceipt(
-            None,
-            "unavailable_or_expired",
-            False,
-            request_id=identity if nonce else None,
-        )
+        found = {}
+        for identity, nonce in nonces.items():
+            matches = [
+                receipt
+                for index, (receipt, result) in enumerate(retained)
+                if receipt.operation_id == identity
+                or (
+                    nonce
+                    and result["operation_id"].startswith("pi1.")
+                    and issued_nonce(index, result) == nonce
+                )
+            ]
+            if len(matches) > 1:
+                raise ValueError("ambiguous retained request identity")
+            found[identity] = (
+                replace(matches[0], request_id=identity if nonce else None)
+                if matches
+                else OperationReceipt(
+                    None,
+                    "unavailable_or_expired",
+                    False,
+                    request_id=identity if nonce else None,
+                )
+            )
+        return found
 
     async def _revoke(self, target, operation_id, kind, *, review=None):
         from dataclasses import replace

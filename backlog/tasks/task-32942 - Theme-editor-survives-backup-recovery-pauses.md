@@ -38,4 +38,7 @@ Reproduced: the new test failed with `RecoveryRequired` raised straight out of `
 Deliberate contract change: `Tests/Backup_Recovery/test_settings_file_participant_lifetimes.py::test_theme_constructor_has_no_directory_effect_during_pause` pinned the constructor *raising*; it now pins the real invariant (no directory created during the pause) without the raise.
 
 Files: `tldw_chatbook/Widgets/settings_theme_editor.py`, `Tests/UI/test_settings_theme_editor.py`, `Tests/Backup_Recovery/test_settings_file_participant_lifetimes.py`.
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/settings.md`: Shipped-theme variables, the leave guard and the backup-pause state are covered by automated tests, not re-driven live.
 <!-- SECTION:NOTES:END -->

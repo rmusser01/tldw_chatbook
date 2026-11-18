@@ -58,4 +58,7 @@ The pin is through the real screen and a real resize, including the state sync t
 Live after the fix: the identical resize sequence paints 'New  Sort: Newest  Select' / 'Add from files…  Export' / 'New folder', and the status line drops its authority prefix as documented (layout-19-resize-60-after, re-verified at layout-28-resize-60-after-v2).
 
 Files: Widgets/Library/library_notes_canvas.py, UI/Screens/library_screen.py, Tests/UI/test_library_notes_w4_layout.py.
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/library/notes.md`: Post-merge re-walk captures `wave4-caps/layout/layout-32-postmerge-note-open-235`, `layout-33` … `layout-36-postmerge-*`, `layout-37-postmerge-sort-reason-235`.
 <!-- SECTION:NOTES:END -->

@@ -54,3 +54,6 @@ voiceprint does; offers lapse when the screen is left. Recorded deviations: no S
 The remaining scope of this task's description (other people's voiceprints; a synced name map for
 cross-device portability) is filed as TASK-31963; the diagnostic as TASK-31964; the rail's
 small-terminal layout as TASK-31965.
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/meetings.md`: Verified by code plus `Tests/UI/test_meetings_screen.py` and `Tests/Audio/test_voiceprint_store.py`, not by a live session: that host never granted the app a real microphone enrollment.

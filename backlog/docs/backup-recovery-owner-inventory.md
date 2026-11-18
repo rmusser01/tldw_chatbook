@@ -2915,10 +2915,11 @@ the plugin authority under `skills/trust/plugins/`.
 | `registry.sqlite3-wal`, `-shm` | `sqlite.transient`, intentionally excluded | folded into the registry copy |
 | `registry.sqlite3-journal` | unsupported | refused: a stray rollback journal could undo a restored copy |
 | `runtime.lock` | intentionally excluded | refused: the live runtime owner's lock, no data |
+| `authority-changes.json`, `authority-changes.json.tmp` (TASK-41105) | intentionally excluded | refused (`plugin_staging_member_excluded`). The coordinator appends each committed authority change (namespace, generation, operation id, parent operation id, kind, plugin id and alias, intent or action) after the marker advances, last 1000 kept, through a private atomic replace without fsync (the `.tmp` file). Never archived, so a replace restore preserves the target's copy (an excluded target item) and adopting a restored authority can name the changes it undoes; the review uses it only along the parent chain walked back from the keyring marker's operation, one generation a step, to the backup's marker, with well-typed entries (reviews r15pa-rev1, r15pa-rev2). Advisory only: no authority is granted from it. No secrets: configuration values are never recorded. |
 | `packages/`, `packages-revisions/`, `data/<root_id>/` | included | raw bytes |
 | `staging/<name>/snapshot/`, `acquisition-custody/*.json` | included | raw bytes. Plugin recovery (`acquisition.verify_reference`) re-verifies git-installed packages from exactly the custody record and the snapshot. |
 | every other member of `staging/<name>/` | intentionally excluded, one row each, never listed | refused (`plugin_staging_member_excluded`). An allow-list (D1's "Capture snapshot/ and the custody records", review ruling I1): known members are the host git/SSH configuration copies a fetch used (`host-git-config`, `host-ssh-*`, which can hold credential helpers and SSH config), the git object store `repository.git/` (for a local source, the user's whole objects and refs: tens of thousands of files, up to 500 MB) and the working copy `content/`; unknown ones (a lockfile residue such as `host-git-config.lock`, a future member) are excluded the same way. The tree walk's `prune` hook keeps each as one row, so none counts toward the tree's entry limit, and replace restore preserves it whole. |
-| `reset-<id>/` (TASK-40308) | intentionally excluded, one row, never listed | refused (`plugin_staging_member_excluded`). Setup after a post-restore authority reset moves the restored registry, `acquisition-custody/` and `staging/` here; it holds the downloads' host git/SSH configuration copies, so it never enters an archive. Replace restore keeps it whole even from an archive made before it (`Plugins/backup.kept_whole`, added to `restore_plan`'s kept directories), and `refuse_added_fetch_folders` never lists it. |
+| `reset-<id>/` (TASK-40308) | intentionally excluded, one row, never listed | refused (`plugin_staging_member_excluded`). Setup after a post-restore authority reset moves the restored registry, `acquisition-custody/`, `staging/`, `packages/` and `packages-revisions/` here (TASK-41107: out of plugin storage capacity), and setup after a reset outside a restore moves `acquisition-custody/` and `staging/` here (TASK-41108: the new authority cannot verify their records); it holds the downloads' host git/SSH configuration copies, so it never enters an archive. Replace restore keeps it whole even from an archive made before it (`Plugins/backup.kept_whole`, added to `restore_plan`'s kept directories), and `refuse_added_fetch_folders` never lists it. |
 | anything else (`cache/`, unknown names outside `staging/<name>/`) | included | raw bytes |
 
 **Live writers.** Capture refuses rather than waits. When any registry `processes`
@@ -2991,6 +2992,11 @@ which admission re-verifies on each run. The app has no rebind for either yet
 | tldw_chatbook/Plugins/backup.py | _runtime_lock | open | 1 | qualified | plugins; runtime.lock probe: preview never creates it, capture creates and holds it |
 | tldw_chatbook/Plugins/backup.py | remove_fetch_members | open | 3 | qualified | plugins; newer-download removal opens staging and the folder with O_NOFOLLOW under the runtime lock (TASK-40309) |
 | tldw_chatbook/Plugins/backup.py | remove_fetch_members | os.unlink | 1 | qualified | plugins; removes only the listed members, never snapshot/ (TASK-40309) |
+| tldw_chatbook/Plugins/backup.py | record_change | open | 2 | qualified | plugins; authority-changes.json.tmp created 0600 with O_EXCL and O_NOFOLLOW, no fsync: advisory, a lost list falls back to the count (TASK-41105, review r15pa-rev1) |
+| tldw_chatbook/Plugins/backup.py | record_change | open_private_binary | 1 | qualified | plugins; authority-changes.json, the advisory change list excluded from capture and preserved by replace restore (TASK-41105) |
+| tldw_chatbook/Plugins/backup.py | record_change | os.replace | 1 | qualified | plugins; atomic replace of authority-changes.json in the plugin root (TASK-41105) |
+| tldw_chatbook/Plugins/backup.py | record_change | os.unlink | 2 | qualified | plugins; removes only a leftover authority-changes.json.tmp (TASK-41105) |
+| tldw_chatbook/Plugins/backup.py | record_change | write | 1 | qualified | plugins; writes the change list to its temporary file (TASK-41105) |
 
 ## Census vocabulary extension (TASK-39111, TASK-39112, TASK-39115)
 
@@ -3724,8 +3730,8 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Plugins/coordinator.py | PluginCoordinator._materialize | mkdir | 1 | qualified | plugins |
 | tldw_chatbook/Plugins/coordinator.py | PluginCoordinator._materialize | open | 5 | qualified | plugins |
 | tldw_chatbook/Plugins/coordinator.py | PluginCoordinator._remove_uninstalled_package | open | 2 | qualified | plugins |
-| tldw_chatbook/Plugins/coordinator.py | PluginCoordinator._set_restored_plugins_aside | mkdir | 1 | qualified | plugins; creates reset-<id>/, excluded whole from capture (TASK-40308) |
-| tldw_chatbook/Plugins/coordinator.py | PluginCoordinator._set_restored_plugins_aside | os.rename | 1 | qualified | plugins; moves restored records and downloads into reset-<id>/, deletes nothing (TASK-40308) |
+| tldw_chatbook/Plugins/coordinator.py | PluginCoordinator._set_aside | mkdir | 1 | qualified | plugins; creates reset-<id>/, excluded whole from capture (TASK-40308, TASK-41108) |
+| tldw_chatbook/Plugins/coordinator.py | PluginCoordinator._set_aside | os.rename | 1 | qualified | plugins; moves restored records, downloads and package bytes into reset-<id>/ at post-restore setup, and old-authority downloads and records at setup outside a restore; deletes nothing (TASK-40308, TASK-41108) |
 | tldw_chatbook/Plugins/data_cleanup.py | create_data | mkdir | 2 | qualified | plugins |
 | tldw_chatbook/Plugins/data_cleanup.py | create_data | open | 2 | qualified | plugins |
 | tldw_chatbook/Plugins/data_cleanup.py | open_root | open | 3 | qualified | plugins |
@@ -4113,6 +4119,19 @@ owner decision 2026-11-13). Confirming **Review restored profile** in Settings >
 Personal Context first re-encrypts the profile under a fresh key
 (`PersonalContextService.reencrypt_after_restore`, TASK-40140; owner decision
 2026-11-13), then approves; a failed re-encryption approves nothing.
+Re-encryption keeps the old account while a recovery copy may name it (TASK-41120):
+it writes a durable `personal-context-kept-<hex>.json` record (account, database
+path, the copies listed then) into the recovery control root, and
+`delete_recovery_copy` calls `recovery.forget_kept_keys`, which deletes the
+account once none of those copies remains, no copy's evidence is unreadable, and
+neither the recorded database (a missing one may have moved, so it counts) nor
+the current default database names it. The copy list is frozen at re-encryption:
+a later copy usually names the new account; if a later rollback revived the kept
+account, the TASK-41122 reinstall covers it, since a later rollback to a copy
+whose account is gone reinstalls the key that copy escrowed
+(`restore_key(rollback=True)` plans
+`personal_context_restore_readable` only then, and the restore path installs it
+into a fresh `recovery_` account), so later copies need no record.
 Detached import refuses the repository by name
 (`detached_owner_unavailable:personal_context.repository`): it carries no key.
 Manual (inert) extraction never offers or writes credential material.
@@ -4129,4 +4148,6 @@ Manual (inert) extraction never offers or writes credential material.
 | tldw_chatbook/Personal_Context/recovery.py | _archived_key | connect_private_sqlite | 1 | qualified | personal_context.repository; in-memory image only, no file (TASK-40135) |
 | tldw_chatbook/Personal_Context/recovery.py | verify_restored_key | connect_private_sqlite | 1 | qualified | personal_context.repository; read-only check of the published copy (TASK-40135) |
 | tldw_chatbook/Personal_Context/recovery.py | stored_restore_marker | connect_private_sqlite | 1 | qualified | personal_context.repository; read-only peek at a restore marker when no secure keyring exists (TASK-40136) |
+| tldw_chatbook/Personal_Context/recovery.py | _names_account | connect_private_sqlite | 1 | qualified | personal_context.repository; read-only check whether a live database still names a kept account (TASK-41120) |
+| tldw_chatbook/Personal_Context/recovery.py | forget_kept_keys | os.unlink | 1 | generic_boundary | backup_control |
 

@@ -134,3 +134,6 @@ Static in `_compose_phase`'s review branch.
 `Tests/UI/test_library_notes_w5_import_preview.py`,
 `Docs/User_Guide/library/file-notes.md`,
 `Docs/User_Guide/library/notes.md`.
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/library/file-notes.md`: Measured on the pure status resolver and the pane's own compose (code level), not live.

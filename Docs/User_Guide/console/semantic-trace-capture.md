@@ -173,6 +173,10 @@ stores an unavailable marker, not raw fallback data. No detector can guarantee
 that an arbitrary secret typed into ordinary prose will be recognized, so treat
 Full output and exports as sensitive.
 
+Opening a shared Trace bundle made by an older version applies today's rules:
+any value they treat as a password or key is masked as the bundle loads. The
+file itself is not changed.
+
 **Mask detected PII in traces** is optional and off by default. It applies to
 future calls at the selected scope and is irreversible for provider-only trace
 artifacts. For saved conversation messages, the trace stores masks over the

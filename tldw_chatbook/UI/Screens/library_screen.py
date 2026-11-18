@@ -405,6 +405,7 @@ from ...Widgets.workbench_focus import (
     widget_has_visible_region,
 )
 from ...Widgets.Library import (
+    LIBRARY_ADAPTIVE_READER_GRIP_CLASS,
     AdaptiveReaderShellResized,
     CollectionsCaptureReaderPresentation,
     LIBRARY_SKILLS_FILTER_ID,
@@ -3708,10 +3709,6 @@ class LibraryScreen(BaseAppScreen):
         #: instead of dropping its number silently, and only the deadline
         #: kind claims a wait (fix round 1).
         self._library_collections_count_failure: str = ""
-        #: r14ls-rev2/rev3: the last recompose restore's focus id and the
-        #: widget it parked focus on instead, retried by the Collections
-        #: shell's first layout sync once it opens the rail.
-        self._library_collections_focus_retry: tuple[str, Widget | None] | None = None
         self._collections_state.reader_layout = resolve_adaptive_reader_layout(
             0,
             self._collections_state.reader_preferences,
@@ -4174,6 +4171,12 @@ class LibraryScreen(BaseAppScreen):
             _LibraryMediaReturnReceipt | None
         ) = None
         self._library_pending_list_entry_focus_anchor: Widget | None = None
+        #: TASK-41128: where an armed entry lands when the list is truly empty.
+        self._library_pending_list_entry_empty_target = "#library-notes-filter"
+        #: TASK-41129 review r15lf-rev3: the widget a Notes canvas sync's own
+        #: focus restore just landed on, so its queued focus event does not
+        #: revoke an entry armed right after it.
+        self._library_entry_restore_landing: Widget | None = None
         # task-2856 review (PR #1410, Qodo): the settle-window timer
         # ``_arm_library_list_entry_focus`` schedules used to be fire-and-
         # forget -- the ``Timer`` ``set_timer`` returns was never kept, so
@@ -8570,6 +8573,14 @@ class LibraryScreen(BaseAppScreen):
         programmatic, and a compact transition's settled restore took it back.
         """
         self._mark_library_notes_user_interaction()
+        if (
+            self._library_pending_list_entry_focus
+            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+        ):
+            # Review r15lf-rev3: the click is the user's choice. Disarm before
+            # Textual focuses its target, so a waiting Notes entry's rules for
+            # the app's own landings never see it.
+            self._disarm_library_list_entry_focus()
         return super().get_focusable_widget_at(x, y)
 
     def on_mouse_down(self, event: events.MouseDown) -> None:
@@ -8938,15 +8949,11 @@ class LibraryScreen(BaseAppScreen):
         unconditional control to fall back to, so it is closed in the
         predicate instead -- it stands down when nothing is there.)
         """
-        self._library_collections_focus_retry = None
         if self._library_focus_channel_owns_this_window():
             return
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA:
             self._restore_library_media_focus(previous)
-        before = self.focused
         super().restore_focus_after_recompose(previous)
-        if previous and self.focused is not before:
-            self._library_collections_focus_retry = (previous, self.focused)
 
     def _library_focus_channel_owns_this_window(self) -> bool:
         """Whether an armed one-shot channel will land focus itself.
@@ -11003,6 +11010,7 @@ class LibraryScreen(BaseAppScreen):
         self,
         *,
         media_return: _LibraryMediaReturnReceipt | None = None,
+        empty_target: str = "#library-notes-filter",
     ) -> None:
         """Request the primary list's first row be focused (task-2856 AC1).
 
@@ -11037,6 +11045,17 @@ class LibraryScreen(BaseAppScreen):
         live.
         """
         self._media_state.successful_focus_ownership = None
+        focused = self.focused
+        if (
+            self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+            and focused is not None
+            and focused.has_class(LIBRARY_ADAPTIVE_READER_GRIP_CLASS)
+        ):
+            # TASK-41129 review: a Notes repaint that removed the focused
+            # control (Create, Add from files, Refresh) left Textual's reset
+            # on a pane grip. Clear it, so that reset's queued focus event is
+            # stale rather than a user move that revokes this arm.
+            self.set_focus(None)
         # Same reason PR #1410's review stopped the settle timer below: a
         # retry tick left over from the PREVIOUS arm carries that arm's
         # generation, so it no-ops when it fires -- while its stored handle
@@ -11056,6 +11075,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_list_entry_focus_generation += 1
         self._library_pending_list_entry_focus = True
         self._library_pending_list_entry_media_return = media_return
+        self._library_pending_list_entry_empty_target = empty_target
         self._library_pending_list_entry_focus_anchor = self.focused
         settlement_media_return = self._library_media_return_candidate(media_return)
         if settlement_media_return:
@@ -11082,7 +11102,7 @@ class LibraryScreen(BaseAppScreen):
         if self._library_list_entry_focus_timer is None:
             self._library_list_entry_focus_timer = self.set_timer(
                 LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS,
-                self._disarm_library_list_entry_focus,
+                self._expire_library_list_entry_focus,
             )
 
     def _retry_library_list_entry_focus_while_armed(self) -> None:
@@ -11138,6 +11158,36 @@ class LibraryScreen(BaseAppScreen):
             LIBRARY_LIST_ENTRY_FOCUS_RETRY_SECONDS, _tick
         )
 
+    def _expire_library_list_entry_focus(self) -> None:
+        """Close the settle window; a Notes entry still waiting lands first.
+
+        TASK-41129: a Notes list that is still loading keeps the entry
+        waiting for its first row. If the window closes before the rows
+        arrive and nothing holds focus -- or only a pane grip, where
+        Textual's reset parks it when a recompose removes the focused
+        control -- the empty-list target takes it, so focus is never left
+        unset.
+        """
+        focused = self.focused
+        if (
+            self._library_pending_list_entry_focus
+            and (
+                focused is None
+                or focused.has_class(LIBRARY_ADAPTIVE_READER_GRIP_CLASS)
+            )
+            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+        ):
+            chain = self.focus_chain
+            for selector in (
+                self._library_pending_list_entry_empty_target,
+                "#library-notes-filter",
+            ):
+                found = self.query(selector)
+                if found and found.first() in chain:
+                    self.set_focus(found.first())
+                    break
+        self._disarm_library_list_entry_focus()
+
     def _disarm_library_list_entry_focus(self) -> None:
         """End an entry-focus request's settle window (task-2856 AC1).
 
@@ -11160,6 +11210,8 @@ class LibraryScreen(BaseAppScreen):
             self._library_list_entry_focus_retry_timer = None
         self._library_pending_list_entry_focus = False
         self._library_pending_list_entry_media_return = None
+        self._library_pending_list_entry_empty_target = "#library-notes-filter"
+        self._library_entry_restore_landing = None
         self._library_pending_list_entry_focus_anchor = None
         self._media_state.return_settlement = None
         self._media_state.last_exact_settlement = None
@@ -11342,6 +11394,20 @@ class LibraryScreen(BaseAppScreen):
             and self._library_pending_list_entry_media_return is not None
         ):
             return
+        if row_class == "library-notes-row" and widget is not None:
+            # TASK-41129 reviews: two landings are the app's own, not the user
+            # leaving the list (a key or a click disarms first, in ``on_key``
+            # and ``get_focusable_widget_at``). A Notes canvas sync's default
+            # restore -- a stale identity resolving to the filter -- keeps the
+            # entry waiting for its rows; so does a grip, Textual's reset off
+            # a control the repaint removed, which is not left holding focus.
+            # Any other landing, a deliberate marked one included, disarms.
+            if widget is self._library_entry_restore_landing:
+                self._library_entry_restore_landing = None
+                return
+            if widget.has_class(LIBRARY_ADAPTIVE_READER_GRIP_CLASS):
+                self.set_focus(None)
+                return
         self._disarm_library_list_entry_focus()
 
     def _focus_library_list_entry_if_current(self, generation: int) -> None:
@@ -11427,10 +11493,18 @@ class LibraryScreen(BaseAppScreen):
                 return control
         return None
 
+    def _library_notes_entry_list_settled(self) -> bool:
+        """Whether the Notes list has loaded with no note row (TASK-41129)."""
+        projection = self._build_library_notes_tree_projection()
+        return projection is not None and not any(
+            row.loading or row.kind == "note" for row in projection.rows
+        )
+
     def _focus_library_list_entry(self) -> None:
         """Focus the first available row, retrying while a list is loading.
 
-        Empty settled lists use their filter. Media select mode prefers a
+        Empty settled lists use their filter (Notes: the arm's empty target,
+        and only once its rows have finished loading). Media select mode prefers a
         still-checked row; a retained Media return prefers its exact item.
         The shared arm owns retry timing and revokes it on user navigation.
         """
@@ -11473,6 +11547,14 @@ class LibraryScreen(BaseAppScreen):
                 self._retry_library_list_entry_focus_while_armed()
                 return
             if (
+                row_class == "library-notes-row"
+                and not self._library_notes_entry_list_settled()
+            ):
+                # TASK-41129: rows still loading -- wait for them, not the
+                # filter; the window's expiry bounds the wait.
+                self._retry_library_list_entry_focus_while_armed()
+                return
+            if (
                 row_class == "library-skill-row"
                 and self._library_skills_browse_controller.visible_result.items
             ):
@@ -11487,7 +11569,7 @@ class LibraryScreen(BaseAppScreen):
                 # down, precisely because this channel owns the window --
                 # ended with nothing focused at all. Same filter-input
                 # answer the two rows above already give.
-                "library-notes-row": "#library-notes-filter",
+                "library-notes-row": self._library_pending_list_entry_empty_target,
                 # task-32228: same answer for an empty conversation list.
                 "library-conversation-row": "#library-conversations-filter",
             }.get(row_class)
@@ -11497,9 +11579,13 @@ class LibraryScreen(BaseAppScreen):
                 except (NoMatches, QueryError):
                     pass
                 else:
-                    if getattr(control, "_pruning", False):
+                    if getattr(control, "_pruning", False) or (
+                        control not in self.focus_chain
+                    ):
                         # TASK-34000.26: the filter the recompose is
-                        # replacing; wait for its replacement instead.
+                        # replacing; wait for its replacement instead. Also
+                        # one a hidden ancestor keeps out of reach, which
+                        # ``set_focus`` would accept (TASK-41129 review).
                         self._retry_library_list_entry_focus_while_armed()
                         return
                     self.set_focus(control)
@@ -15824,7 +15910,7 @@ class LibraryScreen(BaseAppScreen):
                     library=rail,
                     items=items_host,
                     work=work,
-                    layout=self._collections_state.reader_layout,
+                    layout=self._collections_controller._seed_library_collections_reader_layout(),
                     id_prefix="library-collections",
                     library_label="Library",
                     items_label="Items",
@@ -27005,8 +27091,6 @@ class LibraryScreen(BaseAppScreen):
                 self._library_media_item_traversal_active()
                 and self._review_set_active()
             )
-        if action == "focus_previous_workbench_pane":
-            return bool(self._library_selected_row_id)
         return True
 
     def action_show_workbench_help(self) -> None:

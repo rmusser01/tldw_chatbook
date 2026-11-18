@@ -20,6 +20,7 @@ on:
       - "tldw_chatbook/Backup_Recovery/staging.py"
       - "Tests/Backup_Recovery/test_capture_service.py"
       - "Tests/Backup_Recovery/test_config_sibling_capture.py"
+      - "Tests/Backup_Recovery/restart_observation.py"
       - "Tests/Backup_Recovery/test_core_owners.py"
       - "Tests/Backup_Recovery/test_operational_owners.py"
       - "tldw_chatbook/Agents/hooks_v2/**"
@@ -129,6 +130,7 @@ jobs:
                   'Tests/Plugins/test_plugin_end_to_end.py',
                   'Tests/Plugins/test_owned_hook_acceptance.py',
                   'Tests/Plugins/test_recovery.py',
+                  'Tests/Plugins/test_acquisition_diagnostics.py',
                   'Tests/Plugins/test_data_cleanup.py',
                   'Tests/Agents/test_hooks_v2_mcp_execution.py',
                   'Tests/Performance/test_app_startup_performance.py',
