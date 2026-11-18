@@ -458,9 +458,29 @@ async def main() -> None:
 
     install_flag_time_snapshot(tldw_chatbook.app.TldwCli, FLAG_TIME_MODULES)
     app = tldw_chatbook.app.TldwCli()
+    deferred = app._schedule_deferred_startup_work
+    startup_warmup_modules = None
+    startup_warmup_prerequisites = (
+        "tldw_chatbook.app_served",
+        "tldw_chatbook.Guardian.settings",
+    )
+
+    def capture_startup_before_warmup():
+        nonlocal startup_warmup_modules
+        startup_warmup_modules = {
+            name for name in startup_warmup_prerequisites if name in sys.modules
+        }
+        return deferred()
+
+    app._schedule_deferred_startup_work = capture_startup_before_warmup
     async with app.run_test(size=(120, 40)):
         while not getattr(app, "_ui_ready", False):
             await asyncio.sleep(0.005)
+        assert startup_warmup_modules is not None, (
+            "deferred startup scheduling was not observed"
+        )
+        missing = set(startup_warmup_prerequisites) - startup_warmup_modules
+        assert not missing, f"startup warm-up prerequisites missing: {missing}"
         # The copy taken by the setter is also the honest census: every
         # module in it existed at the same instant, and iterating the live
         # dict raised "dictionary changed size during iteration" (PR #2255,

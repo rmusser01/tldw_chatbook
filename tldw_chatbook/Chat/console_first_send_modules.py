@@ -129,9 +129,8 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
     "tldw_chatbook.Chat.response_rules.resolution",
     "tldw_chatbook.Chat.response_rules.chat_state",
     "tldw_chatbook.UI.Console_Modules.response_rules",
-    "tldw_chatbook.app_served",
+    # App mount and Guardian wiring load their modules before this pass is scheduled.
     "textual_serve",
-    "tldw_chatbook.Guardian.settings",
     "tldw_chatbook.Agents.local_tool_provider",
     "tldw_chatbook.Chat.console_run_start_tools",
     "tldw_chatbook.MCP.console_tool_preparation",
