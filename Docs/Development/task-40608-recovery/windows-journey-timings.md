@@ -99,6 +99,23 @@ The original test also does work proportional to **mounted widgets × polling ro
 
 The one sequential comparison recorded **5.53% and 6.09% longer** turns. All four turns passed their original checks, including the two/three Once approvals and shutdown. The eight-header fixture establishes fewer redundant layout requests. This timed comparison supplies no journey speedup and cannot attribute the difference to layout alone. The earlier three-pair comparison still supplies the acceptance figures. [Both original-receipt hashes, phase splits and parent admission counts](original-journey/g72-windows10-activity-headers.json)
 
+On the same candidate, a separate instrumented run counted the cycles and callbacks in the unchanged Textual test barrier. Both original journeys and both process guards passed. Every observed barrier returned successfully.
+
+| Send to original reply | README | Approved edit |
+|---|---:|---:|
+| Adjusted journey duration | 25.0793 s | 28.9114 s |
+| Original Pilot screen waits | 211 | 203 |
+| Successfully queued callbacks | 109,533 | 124,249 |
+| Wall time overlapping those waits | 11.5934 s | 16.2164 s |
+| Header sync calls | 21 | 39 |
+| Total time inside those header calls | 0.0094 s | 0.0119 s |
+
+Sampled README screen trees contained 502–575 mounted objects, of which 360–401 were hidden. Edit samples contained 572–641 mounted objects, with 393–425 hidden. The right rail accounted for 90 hidden objects. Pilot waits for callbacks while the app continues running. Only the original human waits were deducted from journey duration. Header rendering occupied milliseconds, and the barrier's overlap does not measure the speedup obtainable from reducing the mounted tree. The complete numeric readout SHA-256 is `c1efe2d689c26764e58c599f369d244f1f27a28f63c13a6f293c939ee2bb5e5f`.
+
+### Current three-pair run on Windows 10
+
+Batch `qd` started on November 18 at 18:38 UTC. It compares the original local baseline `b6b53f084a` with the clean process candidate `5fd0c8cd5e` in B1/C1, C2/B2, B3/C3 order. Configuration SHA-256 is `0628029152ad522fa7328e44d76b520e0d051ed1e71661084e6034dbcfdd0479`. The candidate manifest SHA-256 is `a6808c9521e068d2d4587ac4d3eb9067651d8de0e50cae684b09132547204f62`. The driver records each original run and can retain completed pairs after interruption. [Driver and verification contract](original-journey/README.md)
+
 ## Where the time goes
 
 On the separate Windows 10 diagnostic `g57s` (`5a8b730cfa`), README
