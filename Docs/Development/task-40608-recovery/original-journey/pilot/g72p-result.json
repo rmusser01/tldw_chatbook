@@ -1,0 +1,622 @@
+{
+  "schema": 1,
+  "run_label": "g72p",
+  "qualifying_pair": false,
+  "independent_diagnostic_arm": true,
+  "candidate_commit": "5fd0c8cd5ef01789aa5ba935a242e27a204da618",
+  "source_pins_match": true,
+  "original_exit": 0,
+  "original_status": "passed",
+  "source_verified": true,
+  "original_guards_complete": true,
+  "guard_modes_match": true,
+  "guards": {
+    "ui": {
+      "guard_started": true,
+      "guard_finished": true,
+      "exit_code": 0
+    },
+    "ui_blocked_count": 0,
+    "observed_backend_count": 1,
+    "backend_receipt_count": 1,
+    "backend_blocked_count": 0,
+    "backends": [
+      {
+        "guard_started": true,
+        "guard_finished": true,
+        "exit_code": 0
+      }
+    ]
+  },
+  "diagnostic_complete": true,
+  "targets_installed": true,
+  "probe_failed": false,
+  "census_failed": false,
+  "truncated": false,
+  "unfinished_barriers": 0,
+  "unfinished_headers": 0,
+  "total_barriers": 505,
+  "total_headers": 60,
+  "all_barriers_returned_true": true,
+  "observer_counter_cpu_seconds": 0.71875,
+  "observed_thread_cpu_quantum_seconds": 0.015625,
+  "receipts": {
+    "run_metadata": {
+      "bytes": 621,
+      "sha256": "2e84a0541417c133f1f3142d27dfa2c184729d9b9293793264c9a43bc6506583"
+    },
+    "timings": {
+      "bytes": 3456,
+      "sha256": "a7600253766e76caffcaee2941a9e9a9fd33292631782e29f607edefa0196daf"
+    },
+    "ui_guard": {
+      "bytes": 12097,
+      "sha256": "400d390f826dad2883f700eabc37686df8dc09ddcff43f0bbd854a172ea177de"
+    },
+    "backend_guards": [
+      {
+        "bytes": 455,
+        "sha256": "8d3c8362d4f66791ca0adc142509c4bb8d016655becb0765f2a2de494866711b"
+      }
+    ],
+    "census": {
+      "bytes": 135174,
+      "sha256": "a8cb46de575033a997d8d51df2d0ec66b649fd5ec715745947c701992d44efb1"
+    }
+  },
+  "original_numeric_readout_receipt": {
+    "bytes": 95093,
+    "sha256": "c1efe2d689c26764e58c599f369d244f1f27a28f63c13a6f293c939ee2bb5e5f"
+  },
+  "canonical_numeric_readout_sha256": "7d0947f8f330c6e9bdf593575cf4a043a731fe85965a9be9177d4f4a8bc9ace0",
+  "readout_sources": {
+    "readout.py": {
+      "bytes": 6159,
+      "sha256": "4b846faf0686ec480fa95066551f7c0410d10bff11a0d7f4225187fb962a9012"
+    },
+    "audit.py": {
+      "bytes": 6591,
+      "sha256": "5da85b21227814a964c2e88af5eb8f433c149c0cdc4e53fdd81af3d17e156811"
+    },
+    "source-pins.json": {
+      "bytes": 1226,
+      "sha256": "c8d25da786ad6e204f5ef61c9efa9c9781bd15397f9091c3e86bb4f69e69b007"
+    }
+  },
+  "turns": {
+    "readme": {
+      "original_adjusted_seconds": 25.0793,
+      "original_completed_seconds": 27.8422,
+      "provider_request_count": 5,
+      "completion_endpoint": "reply_seen",
+      "chat_barriers": 205,
+      "other_screen_barriers": 6,
+      "chat_children": [
+        502,
+        575
+      ],
+      "chat_sample_count": 20,
+      "sampled_hidden_children": [
+        360,
+        401
+      ],
+      "sampled_hidden_fraction": [
+        0.6643478260869565,
+        0.7191235059760956
+      ],
+      "rejected_schedules": 4,
+      "barriers_with_rejected_schedules": 1,
+      "subtree_samples": {
+        "console-left-rail": {
+          "samples": 20,
+          "nodes": [
+            142,
+            142
+          ],
+          "hidden": [
+            85,
+            85
+          ]
+        },
+        "console-right-rail": {
+          "samples": 20,
+          "nodes": [
+            90,
+            90
+          ],
+          "hidden": [
+            90,
+            90
+          ]
+        },
+        "console-rail-section-body-workspace": {
+          "samples": 20,
+          "nodes": [
+            12,
+            12
+          ],
+          "hidden": [
+            0,
+            0
+          ]
+        },
+        "console-rail-section-body-conversations": {
+          "samples": 20,
+          "nodes": [
+            18,
+            18
+          ],
+          "hidden": [
+            0,
+            0
+          ]
+        },
+        "console-rail-section-body-character": {
+          "samples": 20,
+          "nodes": [
+            16,
+            16
+          ],
+          "hidden": [
+            16,
+            16
+          ]
+        },
+        "console-rail-section-body-model": {
+          "samples": 20,
+          "nodes": [
+            28,
+            28
+          ],
+          "hidden": [
+            28,
+            28
+          ]
+        },
+        "console-rail-section-body-agent": {
+          "samples": 20,
+          "nodes": [
+            11,
+            11
+          ],
+          "hidden": [
+            11,
+            11
+          ]
+        },
+        "console-rail-section-body-details": {
+          "samples": 20,
+          "nodes": [
+            14,
+            14
+          ],
+          "hidden": [
+            14,
+            14
+          ]
+        },
+        "console-run-inspector-state": {
+          "samples": 20,
+          "nodes": [
+            1,
+            1
+          ],
+          "hidden": [
+            1,
+            1
+          ]
+        },
+        "console-settings-summary": {
+          "samples": 20,
+          "nodes": [
+            18,
+            18
+          ],
+          "hidden": [
+            18,
+            18
+          ]
+        },
+        "console-setup-modal": {
+          "samples": 20,
+          "nodes": [
+            12,
+            12
+          ],
+          "hidden": [
+            12,
+            12
+          ]
+        },
+        "console-library-search-region": {
+          "samples": 20,
+          "nodes": [
+            4,
+            4
+          ],
+          "hidden": [
+            4,
+            4
+          ]
+        },
+        "console-live-work-section": {
+          "samples": 20,
+          "nodes": [
+            15,
+            15
+          ],
+          "hidden": [
+            15,
+            15
+          ]
+        },
+        "console-workbench-mode-strip": {
+          "samples": 20,
+          "nodes": [
+            8,
+            8
+          ],
+          "hidden": [
+            8,
+            8
+          ]
+        },
+        "console-workbench-command-strip": {
+          "samples": 20,
+          "nodes": [
+            9,
+            9
+          ],
+          "hidden": [
+            9,
+            9
+          ]
+        }
+      }
+    },
+    "edit": {
+      "original_adjusted_seconds": 28.9114,
+      "original_completed_seconds": 33.0376,
+      "provider_request_count": 6,
+      "completion_endpoint": "reply_seen",
+      "chat_barriers": 203,
+      "other_screen_barriers": 0,
+      "chat_children": [
+        572,
+        641
+      ],
+      "chat_sample_count": 24,
+      "sampled_hidden_children": [
+        393,
+        425
+      ],
+      "sampled_hidden_fraction": [
+        0.6333853354134166,
+        0.7027972027972028
+      ],
+      "rejected_schedules": 12,
+      "barriers_with_rejected_schedules": 3,
+      "subtree_samples": {
+        "console-left-rail": {
+          "samples": 24,
+          "nodes": [
+            134,
+            142
+          ],
+          "hidden": [
+            85,
+            85
+          ]
+        },
+        "console-right-rail": {
+          "samples": 24,
+          "nodes": [
+            90,
+            90
+          ],
+          "hidden": [
+            90,
+            90
+          ]
+        },
+        "console-rail-section-body-workspace": {
+          "samples": 24,
+          "nodes": [
+            12,
+            12
+          ],
+          "hidden": [
+            0,
+            0
+          ]
+        },
+        "console-rail-section-body-conversations": {
+          "samples": 24,
+          "nodes": [
+            10,
+            18
+          ],
+          "hidden": [
+            0,
+            0
+          ]
+        },
+        "console-rail-section-body-character": {
+          "samples": 24,
+          "nodes": [
+            16,
+            16
+          ],
+          "hidden": [
+            16,
+            16
+          ]
+        },
+        "console-rail-section-body-model": {
+          "samples": 24,
+          "nodes": [
+            28,
+            28
+          ],
+          "hidden": [
+            28,
+            28
+          ]
+        },
+        "console-rail-section-body-agent": {
+          "samples": 24,
+          "nodes": [
+            11,
+            11
+          ],
+          "hidden": [
+            11,
+            11
+          ]
+        },
+        "console-rail-section-body-details": {
+          "samples": 24,
+          "nodes": [
+            14,
+            14
+          ],
+          "hidden": [
+            14,
+            14
+          ]
+        },
+        "console-run-inspector-state": {
+          "samples": 24,
+          "nodes": [
+            1,
+            1
+          ],
+          "hidden": [
+            1,
+            1
+          ]
+        },
+        "console-settings-summary": {
+          "samples": 24,
+          "nodes": [
+            18,
+            18
+          ],
+          "hidden": [
+            18,
+            18
+          ]
+        },
+        "console-setup-modal": {
+          "samples": 24,
+          "nodes": [
+            12,
+            12
+          ],
+          "hidden": [
+            12,
+            12
+          ]
+        },
+        "console-library-search-region": {
+          "samples": 24,
+          "nodes": [
+            4,
+            4
+          ],
+          "hidden": [
+            4,
+            4
+          ]
+        },
+        "console-live-work-section": {
+          "samples": 24,
+          "nodes": [
+            15,
+            15
+          ],
+          "hidden": [
+            15,
+            15
+          ]
+        },
+        "console-workbench-mode-strip": {
+          "samples": 24,
+          "nodes": [
+            8,
+            8
+          ],
+          "hidden": [
+            8,
+            8
+          ]
+        },
+        "console-workbench-command-strip": {
+          "samples": 24,
+          "nodes": [
+            9,
+            9
+          ],
+          "hidden": [
+            9,
+            9
+          ]
+        }
+      }
+    }
+  },
+  "phases": [
+    {
+      "wall_seconds": 27.8421783,
+      "pilot_calls_started": 211,
+      "pilot_calls_fully_inside": 211,
+      "pilot_queued_callbacks": 109533,
+      "pilot_calls_without_schedule_count": 0,
+      "pilot_child_min": 13,
+      "pilot_child_max": 575,
+      "pilot_wait_overlap_union_seconds": 11.5933694,
+      "header_calls_started": 21,
+      "header_calls_fully_inside": 21,
+      "header_complete_wall_union_seconds": 0.0094001,
+      "header_complete_thread_cpu_seconds": 0.0,
+      "turn": "readme",
+      "phase": "send_to_reply",
+      "window_complete": true,
+      "observer_covers_window": true,
+      "terminal": "reply_seen"
+    },
+    {
+      "wall_seconds": 9.823948,
+      "pilot_calls_started": 95,
+      "pilot_calls_fully_inside": 95,
+      "pilot_queued_callbacks": 45297,
+      "pilot_calls_without_schedule_count": 0,
+      "pilot_child_min": 13,
+      "pilot_child_max": 514,
+      "pilot_wait_overlap_union_seconds": 3.5339462,
+      "header_calls_started": 0,
+      "header_calls_fully_inside": 0,
+      "header_complete_wall_union_seconds": 0.0,
+      "header_complete_thread_cpu_seconds": 0.0,
+      "turn": "readme",
+      "phase": "before_first_http",
+      "window_complete": true,
+      "observer_covers_window": true,
+      "terminal": "reply_seen"
+    },
+    {
+      "wall_seconds": 15.1377219,
+      "pilot_calls_started": 94,
+      "pilot_calls_fully_inside": 94,
+      "pilot_queued_callbacks": 51586,
+      "pilot_calls_without_schedule_count": 0,
+      "pilot_child_min": 514,
+      "pilot_child_max": 575,
+      "pilot_wait_overlap_union_seconds": 6.7383855,
+      "header_calls_started": 17,
+      "header_calls_fully_inside": 17,
+      "header_complete_wall_union_seconds": 0.007656,
+      "header_complete_thread_cpu_seconds": 0.0,
+      "turn": "readme",
+      "phase": "first_to_last_http",
+      "window_complete": true,
+      "observer_covers_window": true,
+      "terminal": "reply_seen"
+    },
+    {
+      "wall_seconds": 2.8805084,
+      "pilot_calls_started": 22,
+      "pilot_calls_fully_inside": 22,
+      "pilot_queued_callbacks": 12650,
+      "pilot_calls_without_schedule_count": 0,
+      "pilot_child_min": 575,
+      "pilot_child_max": 575,
+      "pilot_wait_overlap_union_seconds": 1.3210377,
+      "header_calls_started": 4,
+      "header_calls_fully_inside": 4,
+      "header_complete_wall_union_seconds": 0.0017441,
+      "header_complete_thread_cpu_seconds": 0.0,
+      "turn": "readme",
+      "phase": "after_last_http",
+      "window_complete": true,
+      "observer_covers_window": true,
+      "terminal": "reply_seen"
+    },
+    {
+      "wall_seconds": 33.0375923,
+      "pilot_calls_started": 203,
+      "pilot_calls_fully_inside": 203,
+      "pilot_queued_callbacks": 124249,
+      "pilot_calls_without_schedule_count": 0,
+      "pilot_child_min": 572,
+      "pilot_child_max": 641,
+      "pilot_wait_overlap_union_seconds": 16.2164318,
+      "header_calls_started": 39,
+      "header_calls_fully_inside": 39,
+      "header_complete_wall_union_seconds": 0.0119194,
+      "header_complete_thread_cpu_seconds": 0.046875,
+      "turn": "edit",
+      "phase": "send_to_reply",
+      "window_complete": true,
+      "observer_covers_window": true,
+      "terminal": "reply_seen"
+    },
+    {
+      "wall_seconds": 9.2659478,
+      "pilot_calls_started": 58,
+      "pilot_calls_fully_inside": 58,
+      "pilot_queued_callbacks": 33859,
+      "pilot_calls_without_schedule_count": 0,
+      "pilot_child_min": 572,
+      "pilot_child_max": 591,
+      "pilot_wait_overlap_union_seconds": 4.6766671,
+      "header_calls_started": 0,
+      "header_calls_fully_inside": 0,
+      "header_complete_wall_union_seconds": 0.0,
+      "header_complete_thread_cpu_seconds": 0.0,
+      "turn": "edit",
+      "phase": "before_first_http",
+      "window_complete": true,
+      "observer_covers_window": true,
+      "terminal": "reply_seen"
+    },
+    {
+      "wall_seconds": 20.7365354,
+      "pilot_calls_started": 123,
+      "pilot_calls_fully_inside": 123,
+      "pilot_queued_callbacks": 76288,
+      "pilot_calls_without_schedule_count": 0,
+      "pilot_child_min": 591,
+      "pilot_child_max": 641,
+      "pilot_wait_overlap_union_seconds": 10.0989079,
+      "header_calls_started": 34,
+      "header_calls_fully_inside": 34,
+      "header_complete_wall_union_seconds": 0.0105755,
+      "header_complete_thread_cpu_seconds": 0.046875,
+      "turn": "edit",
+      "phase": "first_to_last_http",
+      "window_complete": true,
+      "observer_covers_window": true,
+      "terminal": "reply_seen"
+    },
+    {
+      "wall_seconds": 3.0351091,
+      "pilot_calls_started": 22,
+      "pilot_calls_fully_inside": 22,
+      "pilot_queued_callbacks": 14102,
+      "pilot_calls_without_schedule_count": 0,
+      "pilot_child_min": 641,
+      "pilot_child_max": 641,
+      "pilot_wait_overlap_union_seconds": 1.4408568,
+      "header_calls_started": 5,
+      "header_calls_fully_inside": 5,
+      "header_complete_wall_union_seconds": 0.0013439,
+      "header_complete_thread_cpu_seconds": 0.0,
+      "turn": "edit",
+      "phase": "after_last_http",
+      "window_complete": true,
+      "observer_covers_window": true,
+      "terminal": "reply_seen"
+    }
+  ]
+}

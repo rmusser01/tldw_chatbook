@@ -110,7 +110,7 @@ On the same candidate, a separate instrumented run counted the cycles and callba
 | Header sync calls | 21 | 39 |
 | Total time inside those header calls | 0.0094 s | 0.0119 s |
 
-Sampled README screen trees contained 502–575 mounted objects, of which 360–401 were hidden. Edit samples contained 572–641 mounted objects, with 393–425 hidden. The right rail accounted for 90 hidden objects. Pilot waits for callbacks while the app continues running. Only the original human waits were deducted from journey duration. Header rendering occupied milliseconds, and the barrier's overlap does not measure the speedup obtainable from reducing the mounted tree. The complete numeric readout SHA-256 is `c1efe2d689c26764e58c599f369d244f1f27a28f63c13a6f293c939ee2bb5e5f`.
+Sampled README screen trees contained 502–575 mounted objects, of which 360–401 were hidden. Edit samples contained 572–641 mounted objects, with 393–425 hidden. The right rail accounted for 90 hidden objects. Pilot waits for callbacks while the app continues running. Only the original human waits were deducted from journey duration. Header rendering occupied milliseconds, and the barrier's overlap does not measure the speedup obtainable from reducing the mounted tree. [Phase counts, guard results, original hashes and verification instructions](original-journey/pilot/README.md)
 
 ### Current three-pair run on Windows 10
 

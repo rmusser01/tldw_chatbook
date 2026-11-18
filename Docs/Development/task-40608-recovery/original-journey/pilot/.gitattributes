@@ -1,0 +1,5 @@
+# The saved result includes byte hashes for the reader, auditor and pin list.
+readout.py text eol=lf
+audit.py text eol=lf
+source-pins.json text eol=lf
+g72p-result.json text eol=lf

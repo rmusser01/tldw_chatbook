@@ -1,0 +1,21 @@
+{
+  "candidate_commit": "5fd0c8cd5ef01789aa5ba935a242e27a204da618",
+  "replay_manifest_sha256": "a05668abae2010c2e15b28fc25640a70e1b8f3d62a13bd625c4967e127d7f460",
+  "original_guard_sha256": "ac8722fd2121b213073dbf9a75d2679d196eae35593dfb613556b946ba7a5369",
+  "sources": {
+    "textual/pilot.py": "a899c3d8f52d34f18e726506774dcaad6fe3417f87261e38aa62fb0361b484b5",
+    "Tests/QA/test_task40608.py": "448015c99604ce96754436c7dc4f784daed6241bed99062cb8d6ab6e66cbe850",
+    "Tests/QA/task40608_trace.py": "afe87984e26d77b86c80f5f034881717e82b3ecc8681b56fe6ea2148f0073a6c",
+    "tldw_chatbook/Widgets/Console/console_assistant_turn.py": "f3f5940fc5528b5b5824e7d0ba1d5f442e98b6d5888f2f235a30c4fe4b471ce5"
+  },
+  "diagnostic_sources": {
+    "census.py": "024afc88be573dcd84d461545db04979b010381b11efa50b0111eae4533c2fad",
+    "observer.py": "ffd860ca4ca4c7c66f64952b39dc5b9d99c3671c37d1b3f58f4dfa923aaa5e5e",
+    "readout.py": "4b846faf0686ec480fa95066551f7c0410d10bff11a0d7f4225187fb962a9012",
+    "verify.py": "104f50fafc89ae17d52729384ba4c12888082d9fb472f7bd9dbfa907b6552c3a"
+  },
+  "original_numeric_readout_receipt": {
+    "bytes": 95093,
+    "sha256": "c1efe2d689c26764e58c599f369d244f1f27a28f63c13a6f293c939ee2bb5e5f"
+  }
+}
