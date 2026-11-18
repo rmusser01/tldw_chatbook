@@ -514,17 +514,6 @@ _DYNAMIC_TARGET_EVIDENCE: dict[
         symbol="_PROFILE_CONTENT_TABLES",
         mode="sequence-values",
     ),
-    # TASK-41121 (1534a6f3d4, d32a546f54): a damaged version's local pointer
-    # row, and a rebuilt scope's local body, name their table in _LOCAL_POINTERS.
-    **{
-        "tldw_chatbook/Personal_Context/repository_keys.py::"
-        f"RepositoryKeyCustody.{method}": _ContainerTargetEvidence(
-            symbol="_LOCAL_POINTERS",
-            mode="mapping-value-tuples",
-            tuple_index=0,
-        )
-        for method in ("_remove_local_pointer", "_put_local_body")
-    },
     "tldw_chatbook/Sync_Interop/conflict_review.py::"
     "SyncV2ConflictReviewService._merge_notes_organization_identity": (
         _ContainerTargetEvidence(
@@ -684,14 +673,6 @@ _DYNAMIC_TARGET_EVIDENCE_FINGERPRINTS = {
     "tldw_chatbook/Personal_Context/repository_keys.py::"
     "RepositoryKeyCustody._remove_damaged": (
         "ee9c5a48e5e20e2a962b3a712ea668046753fbba31bee75655373777fe85c9b3"
-    ),
-    "tldw_chatbook/Personal_Context/repository_keys.py::"
-    "RepositoryKeyCustody._remove_local_pointer": (
-        "d535125e7048ac193cbea9ef3aac4e62a4276e2056cea8401ed0b3f4ff30f972"
-    ),
-    "tldw_chatbook/Personal_Context/repository_keys.py::"
-    "RepositoryKeyCustody._put_local_body": (
-        "d535125e7048ac193cbea9ef3aac4e62a4276e2056cea8401ed0b3f4ff30f972"
     ),
     "tldw_chatbook/Sync_Interop/sync_state_repository.py::"
     "SyncStateRepository.clear_restored_identity": (
@@ -1059,41 +1040,6 @@ _PROVEN_NON_SEMANTIC_DYNAMIC_SQL = dict(
             domain="Personal Context damaged record references",
             exact_targets=frozenset(
                 {"object_heads", "encrypted_outbox", "quarantine"}
-            ),
-        ),
-        _reviewed_dynamic_sql_site(
-            "tldw_chatbook/Personal_Context/repository_keys.py::"
-            "RepositoryKeyCustody._remove_local_pointer",
-            "DELETE FROM {expression} WHERE {expression} = ? AND {expression} = ?",
-            "f'DELETE FROM {table} WHERE {id_column} = ? AND {version_column} = ?'",
-            domain="Personal Context local version pointer rows",
-            exact_targets=frozenset(
-                {
-                    "encrypted_outbox",
-                    "local_record_links",
-                    "local_runtime_policy",
-                    "local_scope_bindings",
-                    "local_undo",
-                }
-            ),
-        ),
-        _reviewed_dynamic_sql_site(
-            "tldw_chatbook/Personal_Context/repository_keys.py::"
-            "RepositoryKeyCustody._put_local_body",
-            "INSERT INTO {expression}(scope_id, {expression}) VALUES (?, ?) ON "
-            "CONFLICT(scope_id) DO UPDATE SET {expression} = "
-            "excluded.{expression}",
-            "f'INSERT INTO {table}(scope_id, {column}) VALUES (?, ?) ON "
-            "CONFLICT(scope_id) DO UPDATE SET {column} = excluded.{column}'",
-            domain="Personal Context local version pointer rows",
-            exact_targets=frozenset(
-                {
-                    "encrypted_outbox",
-                    "local_record_links",
-                    "local_runtime_policy",
-                    "local_scope_bindings",
-                    "local_undo",
-                }
             ),
         ),
         _reviewed_dynamic_sql_site(
