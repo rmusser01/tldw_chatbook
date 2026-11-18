@@ -604,14 +604,38 @@ RECOVERED_SUITES_TARGETS = (
     "Tests/Chat/test_trace_v2_collaboration.py::test_bare_underscore_keys_are_masked_wherever_sk_dash_keys_are",
     "Tests/Chat/test_trace_v2_collaboration.py::test_the_credential_classes_masked_before_are_still_masked",
     # TASK-40301: a shared bundle masks with the log sanitizer's own patterns,
-    # and an older bundle holding a newly masked shape is refused on import.
+    # and an older bundle holding a newly masked shape imports masked
+    # (TASK-41133, owner decision 2026-11-17).
     # TASK-40303: a credentials-v1 legacy ledger keeps migrating. Pure or an
     # in-memory DB, so among the sandboxed targets too.
     "Tests/Chat/test_trace_v2_collaboration.py::test_every_shape_the_log_sanitizer_masks_is_masked_in_a_shared_bundle",
     "Tests/Chat/test_trace_v2_collaboration.py::test_the_bundle_masks_with_the_log_sanitizers_own_patterns",
     "Tests/Chat/test_trace_v2_collaboration.py::test_code_and_docs_that_only_look_like_credentials_survive_a_shared_bundle",
-    "Tests/Chat/test_trace_v2_collaboration.py::test_an_older_bundle_holding_a_newly_masked_shape_is_refused_on_import",
-    "Tests/Chat/test_console_trace_legacy_migration.py::test_a_v1_legacy_ledger_keeps_migrating_new_exchanges_under_v2",
+    "Tests/Chat/test_trace_v2_collaboration.py::test_an_older_bundle_holding_a_newly_masked_shape_imports_masked",
+    # TASK-41133: compound credential labels come from the log sanitizer's
+    # list, the must-mask and must-keep tables hold, a value keeps its closing
+    # bracket, a masked run stops before the next field, code is masked with
+    # the literals next to it, no value lingers in a cache, a must-mask bundle
+    # imports holding only masked text, adversarial text and
+    # long chains scan in bounded time, and the legacy ledger node covers a v1
+    # and a v2 ledger under v3.
+    "Tests/Chat/test_trace_v2_collaboration.py::test_the_bundle_masks_compound_labels_with_the_log_sanitizers_own_labels",
+    "Tests/Chat/test_trace_v2_collaboration.py::test_every_secret_in_the_must_mask_table_is_masked",
+    "Tests/Chat/test_trace_v2_collaboration.py::test_every_look_alike_in_the_must_keep_table_is_kept_and_imports",
+    "Tests/Chat/test_trace_v2_collaboration.py::test_a_masked_label_value_keeps_its_closing_bracket_and_full_stop",
+    "Tests/Chat/test_trace_v2_collaboration.py::test_a_masked_run_stops_before_the_next_field",
+    "Tests/Chat/test_trace_v2_collaboration.py::test_code_next_to_a_secret_is_masked_whole",
+    "Tests/Chat/test_trace_v2_collaboration.py::test_masking_never_caches_value_text",
+    "Tests/Chat/test_trace_v2_collaboration.py::test_an_import_of_a_must_mask_bundle_stores_only_masked_text",
+    "Tests/Chat/test_trace_v2_collaboration.py::test_adversarial_bundle_text_is_masked_in_bounded_time",
+    "Tests/Chat/test_trace_v2_collaboration.py::test_escape_quoted_values_scan_in_linear_time",
+    "Tests/Chat/test_trace_v2_collaboration.py::test_runs_after_a_value_scan_in_linear_time",
+    "Tests/Chat/test_console_trace_legacy_migration.py::test_an_older_legacy_ledger_keeps_migrating_new_exchanges_under_the_current_version",
+    # TASK-41134: the legacy trace maintenance loop's parking and projection
+    # files, red on dev in no PR lane (their stand-in module lacked the loop's
+    # helpers). Sandboxed, no config read.
+    "Tests/Chat/test_console_trace_maintenance_parking.py",
+    "Tests/Chat/test_console_trace_projection.py",
     # TASK-39172: config participant lifetimes, sandboxed and reading config
     # in-process, so before the bootstrap_profile suites.
     "Tests/Backup_Recovery/test_config_participant_lifetimes.py",

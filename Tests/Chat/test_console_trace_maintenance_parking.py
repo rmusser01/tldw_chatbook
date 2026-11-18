@@ -24,6 +24,7 @@ from tldw_chatbook.Chat import chat_persistence_service
 from tldw_chatbook.Chat import console_runtime as runtime_module
 from tldw_chatbook.Chat.console_exchange_capture import capture_to_blob
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+from tldw_chatbook.Chat import console_trace_maintenance as maintenance_module
 from tldw_chatbook.Chat.console_trace_legacy import LegacyTraceNormalizer
 from tldw_chatbook.Chat.console_trace_maintenance import (
     LegacyTraceMaintenance,
@@ -33,8 +34,56 @@ from tldw_chatbook.Chat.console_trace_maintenance import (
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
+_WORKERS = ("LegacyTraceMaintenance", "TraceGarbageCollector", "PhysicalTraceCompactor")
+
+
+class _InertCollector:
+    """A GC worker with nothing to collect (default double)."""
+
+    def __init__(self, _database: object) -> None:
+        pass
+
+    def current_graph_epoch(self) -> int:
+        return 0
+
+    def collect(self, *, request_id: str) -> SimpleNamespace:
+        del request_id
+        return SimpleNamespace(marked_epoch=0)
+
+
+class _InertCompactor:
+    """A compactor with nothing to compact (default double)."""
+
+    def __init__(self, _database: object, **_kwargs: object) -> None:
+        pass
+
+    def run_after_gc(self, _result: object) -> SimpleNamespace:
+        return SimpleNamespace(completed=True, reason_code="complete")
+
+
+def fake_maintenance_module(**doubles: object) -> ModuleType:
+    """A copy of the real maintenance module with its workers swapped for doubles.
+
+    The loop's helpers stay real: 6125fbc5b8 moved
+    ``maintenance_error_must_propagate``, ``call_owned_maintenance`` and
+    ``runtime_provider_active`` here, and a bare stub without them failed
+    every loop test with an ImportError (TASK-41134). A GC worker not passed
+    is an inert double, so the physical pass runs and does nothing. A double
+    must name a worker the real module still has, so a rename fails here.
+    """
+    assert set(doubles) <= set(_WORKERS) and all(
+        hasattr(maintenance_module, name) for name in _WORKERS
+    ), f"unknown worker double: {sorted(set(doubles) - set(_WORKERS))}"
+    module = ModuleType(maintenance_module.__name__)
+    module.__dict__.update(vars(maintenance_module))
+    module.TraceGarbageCollector = _InertCollector  # type: ignore[attr-defined]
+    module.PhysicalTraceCompactor = _InertCompactor  # type: ignore[attr-defined]
+    module.__dict__.update(doubles)
+    return module
+
+
 def _install_fake_maintenance(monkeypatch: pytest.MonkeyPatch, calls: list[str]) -> None:
-    """A normalization worker that is always complete; no GC classes (test double)."""
+    """A normalization worker that is always complete (test double)."""
 
     class _Maintenance:
         def __init__(self, _database: object, **_kwargs: object) -> None:
@@ -44,8 +93,7 @@ def _install_fake_maintenance(monkeypatch: pytest.MonkeyPatch, calls: list[str])
             calls.append("batch")
             return SimpleNamespace(logical_complete=True, admitted=True)
 
-    module = ModuleType("tldw_chatbook.Chat.console_trace_maintenance")
-    module.LegacyTraceMaintenance = _Maintenance  # type: ignore[attr-defined]
+    module = fake_maintenance_module(LegacyTraceMaintenance=_Maintenance)
     monkeypatch.setitem(sys.modules, module.__name__, module)
 
 
@@ -131,8 +179,7 @@ async def test_a_signal_wake_tells_the_pass_it_has_work(
             self.expect_work = False
             return SimpleNamespace(logical_complete=True, admitted=True)
 
-    module = ModuleType("tldw_chatbook.Chat.console_trace_maintenance")
-    module.LegacyTraceMaintenance = _Maintenance  # type: ignore[attr-defined]
+    module = fake_maintenance_module(LegacyTraceMaintenance=_Maintenance)
     monkeypatch.setitem(sys.modules, module.__name__, module)
     runtime = _fast_runtime(monkeypatch)
 
@@ -171,8 +218,7 @@ async def test_work_written_during_an_unparked_pass_is_flagged_for_the_next(
                 chat_persistence_service.signal_trace_maintenance_work()
             return SimpleNamespace(logical_complete=True, admitted=True)
 
-    module = ModuleType("tldw_chatbook.Chat.console_trace_maintenance")
-    module.LegacyTraceMaintenance = _Maintenance  # type: ignore[attr-defined]
+    module = fake_maintenance_module(LegacyTraceMaintenance=_Maintenance)
     monkeypatch.setitem(sys.modules, module.__name__, module)
     runtime = _fast_runtime(monkeypatch)
 
@@ -204,8 +250,7 @@ async def test_one_signal_wakes_every_parked_runtime(
             calls.append(self._database)
             return SimpleNamespace(logical_complete=True, admitted=True)
 
-    module = ModuleType("tldw_chatbook.Chat.console_trace_maintenance")
-    module.LegacyTraceMaintenance = _Maintenance  # type: ignore[attr-defined]
+    module = fake_maintenance_module(LegacyTraceMaintenance=_Maintenance)
     monkeypatch.setitem(sys.modules, module.__name__, module)
     runtimes = [_fast_runtime(monkeypatch), _fast_runtime(monkeypatch)]
     databases = ["db-a", "db-b"]
@@ -493,6 +538,43 @@ async def test_parked_maintenance_still_collects_once_per_interval(
 
 
 @pytest.mark.asyncio
+async def test_a_missing_physical_worker_fails_the_loop_before_any_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-41134 review r15tr-rev1: a renamed GC worker used to be skipped
+    silently (``except ImportError``) for the life of the process. The loop
+    now fails at start, and disposal re-raises it."""
+    calls: list[str] = []
+
+    class _Maintenance:
+        def __init__(self, _database: object, **_kwargs: object) -> None:
+            pass
+
+        def run_batch(self) -> SimpleNamespace:
+            calls.append("batch")
+            return SimpleNamespace(logical_complete=True, admitted=True)
+
+    module = fake_maintenance_module(LegacyTraceMaintenance=_Maintenance)
+    del module.TraceGarbageCollector
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    runtime = _fast_runtime(monkeypatch)
+    runtime._schedule_legacy_trace_maintenance(object(), object)
+    task = runtime._legacy_trace_maintenance_task
+    try:
+        await asyncio.wait({task}, timeout=5)
+        assert task.done(), "the loop kept running without its GC worker"
+        assert isinstance(task.exception(), ImportError)
+        assert "TraceGarbageCollector" in str(task.exception())
+        assert calls == []
+        with pytest.raises(ImportError):
+            await runtime.dispose()
+    finally:
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("fail", [False, True])
 async def test_disposal_retains_original_maintenance_return_through_cancellation(
     monkeypatch: pytest.MonkeyPatch,
@@ -518,8 +600,7 @@ async def test_disposal_retains_original_maintenance_return_through_cancellation
             finally:
                 returned.set()
 
-    module = ModuleType("tldw_chatbook.Chat.console_trace_maintenance")
-    module.LegacyTraceMaintenance = Maintenance
+    module = fake_maintenance_module(LegacyTraceMaintenance=Maintenance)
     monkeypatch.setitem(sys.modules, module.__name__, module)
     runtime = _fast_runtime(monkeypatch)
     runtime._schedule_legacy_trace_maintenance(object(), object)

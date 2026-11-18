@@ -12,20 +12,26 @@ from tldw_chatbook.Utils.log_sanitizer import (
     REDACTION_MARKER,
     sanitize_trace_credentials_v1,
     sanitize_trace_credentials_v2,
-    trace_credentials_v2_spans,
+    sanitize_trace_credentials_v3,
+    trace_credential_key_spans,
 )
 
-#: TASK-39123: new traces are stored under v2. Stored v1 policies keep their
-#: tag and still read; every read, export and share re-applies the v2 masks.
-CREDENTIAL_FILTER_VERSION = "credentials-v2"
+#: TASK-41133: new traces are stored under v3 (TASK-39123 made it v2). Stored
+#: v1 and v2 policies keep their tag and still read; every read, export and
+#: share re-applies the current masks.
+CREDENTIAL_FILTER_VERSION = "credentials-v3"
 #: Rule for adding a version: each newer projection must mask everything the
-#: older ones do, and be idempotent (v2 = v1 + bare underscore keys). Only then
-#: does ``ConsoleTraceService._durable_reference_matches``, which retries a
+#: older ones do, and be idempotent (v2 = v1 + bare underscore keys, v3 = v2 +
+#: ``whsec_``/``gsk_``). Only then does
+#: ``ConsoleTraceService._durable_reference_matches``, which retries a
 #: surface-prefix match under every readable version, accept nothing new; and
-#: ``trace_policies_agree`` / the v2 re-mask on read rely on the same rule.
+#: ``trace_policies_agree`` / the re-mask on read rely on the same rule. A new
+#: version also needs its keys in ``trace_credential_key_spans`` and its own
+#: legacy policy id (``console_trace_legacy._LEGACY_POLICY_IDS``).
 _CREDENTIAL_PROJECTIONS = {
     "credentials-v1": sanitize_trace_credentials_v1,
-    CREDENTIAL_FILTER_VERSION: sanitize_trace_credentials_v2,
+    "credentials-v2": sanitize_trace_credentials_v2,
+    CREDENTIAL_FILTER_VERSION: sanitize_trace_credentials_v3,
 }
 #: Every credential filter version a stored trace policy can be read under.
 READABLE_CREDENTIAL_FILTER_VERSIONS = frozenset(_CREDENTIAL_PROJECTIONS)
@@ -36,7 +42,8 @@ def trace_policies_agree(left: object, right: object) -> bool:
 
     PII settings must match exactly. Credential versions agree when equal,
     or when both are readable: every read re-applies the current masks, so
-    a turn stored under v1 continues under v2 (owner decision 2026-11-06).
+    a turn stored under an older version continues under the current one
+    (owner decision 2026-11-06).
 
     Args:
         left: A ``FrozenTracePolicy``.
@@ -491,11 +498,11 @@ def redact_pii_value(
     )
 
 
-def _widen_over_v2_credentials(
+def _widen_over_newer_keys(
     text: str, spans: Sequence[PIIRedactionSpan]
 ) -> tuple[PIIRedactionSpan, ...]:
-    """Widen each span that cuts a v2-only key to cover the whole key."""
-    keys = trace_credentials_v2_spans(text)
+    """Widen each span that cuts a key only a newer projection masks."""
+    keys = trace_credential_key_spans(text)
     widened = []
     for span in spans:
         start, end = span.start_codepoint, span.end_codepoint
@@ -510,16 +517,17 @@ def apply_frozen_pii_masks(
     value: object,
     field_masks: Mapping[str, Sequence[PIIRedactionSpan]],
     *,
-    widen_over_v2_credentials: bool = False,
+    widen_over_newer_keys: bool = False,
 ) -> object:
     """Apply persisted masks to a fresh projection without rerunning detection.
 
     Args:
         value: Fresh JSON-like projection of the original frozen source.
         field_masks: Content-free structured paths and immutable codepoint ranges.
-        widen_over_v2_credentials: For a stored v1 policy (TASK-39123): a span
-            that cuts a key the v2 projection masks is widened over the key,
-            so the masks the caller applies next leave no fragment.
+        widen_over_newer_keys: For a stored older policy (TASK-39123,
+            TASK-41133): a span that cuts a key the current projection masks
+            is widened over the key, so the masks the caller applies next
+            leave no fragment.
 
     Returns:
         A new projection with every persisted mask applied.
@@ -541,8 +549,8 @@ def apply_frozen_pii_masks(
             if spans is None:
                 return item
             used.add(path)
-            if widen_over_v2_credentials:
-                spans = _widen_over_v2_credentials(item, spans)
+            if widen_over_newer_keys:
+                spans = _widen_over_newer_keys(item, spans)
             return apply_pii_mask(item, spans)
         if isinstance(item, Mapping):
             if any(type(key) is not str for key in item):
@@ -554,8 +562,8 @@ def apply_frozen_pii_masks(
                 key_spans = masks.get(key_path)
                 if key_spans is not None:
                     used.add(key_path)
-                    if widen_over_v2_credentials:
-                        key_spans = _widen_over_v2_credentials(key, key_spans)
+                    if widen_over_newer_keys:
+                        key_spans = _widen_over_newer_keys(key, key_spans)
                     masked_key = apply_pii_mask(key, key_spans)
                 else:
                     masked_key = key
@@ -602,9 +610,10 @@ class CredentialSanitizer:
             max_nodes: Maximum aggregate container, key, and scalar nodes inspected.
             max_depth: Maximum recursive JSON-like value depth inspected.
             max_text_codepoints: Maximum code points inspected in any one string.
-            version: Credential projection to apply. Only the reader of a stored
-                v1 policy's frozen PII spans asks for ``credentials-v1``, and
-                it re-applies the current masks afterwards (TASK-39123).
+            version: Credential projection to apply. Only readers that compare
+                with or index into a stored older policy's projection ask for
+                an older version, and they re-apply the current masks
+                afterwards (TASK-39123).
 
         Raises:
             ValueError: If a work limit or version is invalid, or known values

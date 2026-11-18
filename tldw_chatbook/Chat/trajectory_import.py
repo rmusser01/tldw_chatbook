@@ -43,7 +43,7 @@ from tldw_chatbook.Chat.trajectory_export import (
     TRACE_EXPORT_VERSION,
     TraceExportProfile,
     TrajectoryExportError,
-    _has_credential_material,
+    _mask_credential_material,
     _trace_digest,
     validate_trajectory_export,
 )
@@ -936,12 +936,14 @@ def _validate_v2(document: Mapping) -> tuple[dict[str, Any], list[Mapping[str, A
             "Trace v2 integrity digest mismatch: the file is corrupted or was tampered with; "
             "SHA-256 does not establish authenticity"
         )
-    if _has_credential_material(document):
-        raise TrajectoryImportError(
-            "Trace v2 import blocked: credentials are forbidden in collaboration "
-            "bundles; request a privacy-safe export"
-        )
-    return dict(manifest), events
+    # An older bundle can hold a value the current rules mask: it is imported
+    # with those values masked by the export's own rules, never refused for
+    # it (TASK-41133, owner decision 2026-11-17, "Re-mask on import"). The
+    # digest above was checked on the bundle as written.
+    masked, _changed = _mask_credential_material(
+        {"manifest": manifest, "events": events}
+    )
+    return dict(masked["manifest"]), masked["events"]
 
 
 _USAGE_FIELDS = (
