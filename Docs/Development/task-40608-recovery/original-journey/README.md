@@ -15,8 +15,11 @@ source recovery, see [DIAGNOSTICS.md](DIAGNOSTICS.md),
 [SHA256](windows-foreground-approval-v2.sha256). The known v2 ancestry-probe defect
 is retained and documented; no qualified paint latency is claimed.
 The separately corrected [v3 archive](windows-foreground-approval-v3.zip) and
-[SHA256](windows-foreground-approval-v3.sha256) are prepared for later native
-diagnostics; neither baseline nor candidate has run with v3.
+[SHA256](windows-foreground-approval-v3.sha256) describe the original v3 pins.
+The `fgv3b1` baseline and the later source-pinned `g47d` candidate recorded
+the actual approval button regions for all five interactive approvals. The
+tracker reports their coverage, overhead and clean comparisons.
+[Windows journey timing tracker](../windows-journey-timings.md)
 
 ADR required: no new ADR. This is test-only reproduction of the existing
 [ADR-126](../../../../backlog/decisions/126-complete-local-backup-and-recovery.md)

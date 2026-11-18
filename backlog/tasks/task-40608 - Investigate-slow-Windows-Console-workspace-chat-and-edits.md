@@ -169,6 +169,10 @@ Windows verification covered checked metadata, physical retirement, absent proje
 
 The first clean q9 pair passed all original README, approved edit and shutdown checks. Baseline/candidate adjusted times were 294.9706/23.2802 seconds for README and 416.4471/30.0985 seconds for edit. The baseline and candidate receipt SHA-256 values are `77aea94c8cfdcc730a49abe2e629c7a01c423a44baeea68ab6188679412f8da3` and `32dcff17b9d9b4064dcfccbe11a6f778770a1ed7d5895b6a6ab9ea1e448940c0`. AC5 remains open.
 
+The first attempt at q9 pair 2 stopped after the README answer persisted and painted. The original completed-run check asked for history through a full display projection. Its readiness expired 16 ms before parent adoption. No edit timing or second complete pair was available. See the [qualification record](../../Docs/Development/task-40608-recovery/windows-journey-timings.md#qualifying-pairs).
+
+Both callers can now await a single full display read while it is still queued for the same view, source, session and attachment. Each caller performs its own presentation work. The original read retains physical custody through retirement. In Windows run g53q9nav all 35 targeted checks passed, including the real mounted rail configuration writer. The q9 pair driver uses its earlier frozen candidate and measures no speedup attributable to this change.
+
 <!-- SECTION:NOTES:END -->
 
 Measured follow-up under the same [ADR-126 bounded configuration-read amendment](../decisions/126-complete-local-backup-and-recovery.md#task-40608--bounded-sensitive-database-path-configuration-reads): qualify the original sensitive container-reader cohort, then group its admissions without changing readers, overrides or refusal checks. The measured 0.218-second component is separate from the unresolved planning delay; final three-pair acceptance remains open.

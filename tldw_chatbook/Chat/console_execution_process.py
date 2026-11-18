@@ -273,6 +273,7 @@ class ConsoleExecutionClient:
         self._projection_sequence = 0
         self._projection_lock = asyncio.Lock()
         self._projection_reads: set[asyncio.Task] = set()
+        self._queued_projection = None
         self._initial_session_task: asyncio.Task | None = None
         self._initial_conversation_id: str | None = None
         self._resume_view_request = None
@@ -379,6 +380,7 @@ class ConsoleExecutionClient:
             await asyncio.sleep(0)
         visit = self.attach_view(view)
         request = object()
+        self._queued_projection = None
         self._view_preparation = request
         try:
             profile = getattr(self._app, "_console_execution_profile", None)
@@ -503,6 +505,7 @@ class ConsoleExecutionClient:
                     value["session_id"], value["incarnation_id"],
                 )
 
+        self._queued_projection = None
         task = asyncio.create_task(open_chat(), name="console_execution_new_chat")
         self._opening_sessions.add(task)
         task.add_done_callback(self._open_session_finished)
@@ -751,13 +754,30 @@ class ConsoleExecutionClient:
         self, session_id: str, incarnation_id: str, *, _preparation=None,
         _checkpoint: str | None = None, _run_history=None, _inspector_refresh: str | None = None,
     ):
-        """Serialize actual reads through their positive physical retirement."""
+        """Share only compatible unissued reads; retain original FULL retirement."""
         view, visit, source = self._view, self._visit, self._source_revision
         active = None if self.projection_view is None else self.projection_view.active_session_id
+        plain = (
+            _preparation is None and _checkpoint is None and _run_history is None
+            and _inspector_refresh is None and self._view_preparation is None
+            and not self._opening_sessions
+        )
+        # Any intervening command or special read ends this one sharing window.
+        # No already-issued FULL can satisfy a later terminal reconciliation.
+        key = (visit, source, active, session_id, incarnation_id, self._attachment_id, self._sent_sequence)
+        pending = self._queued_projection
+        if (plain and pending is not None and pending[0] is view and pending[1] is self._app
+            and pending[2] == key and pending[3] in self._projection_reads
+            and not pending[3].done() and not pending[3].cancelling()):
+            return await asyncio.shield(pending[3])
+        self._queued_projection = None
 
         async def read():
             await asyncio.sleep(0)
             async with self._projection_lock:
+                queued = self._queued_projection
+                if queued is not None and queued[3] is asyncio.current_task():
+                    self._queued_projection = None
                 if (
                     self._view is not view or self._visit != visit
                     or self._source_revision != source
@@ -782,6 +802,8 @@ class ConsoleExecutionClient:
 
         task = asyncio.create_task(read(), name="console_execution_projection")
         self._projection_reads.add(task)
+        if plain:
+            self._queued_projection = (view, self._app, key, task)
         task.add_done_callback(self._projection_read_finished)
         return await asyncio.shield(task)
 
@@ -871,6 +893,9 @@ class ConsoleExecutionClient:
                 await asyncio.sleep(0.25)
 
     def _projection_read_finished(self, task: asyncio.Task) -> None:
+        queued = self._queued_projection
+        if queued is not None and queued[3] is task:
+            self._queued_projection = None
         self._projection_reads.discard(task)
         if not task.cancelled():
             task.exception()
