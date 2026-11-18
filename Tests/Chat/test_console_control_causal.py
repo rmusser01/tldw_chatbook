@@ -239,10 +239,12 @@ async def test_saved_open_cancel_keeps_fence_waiting_for_original_read_thread(
         fence = controls.dispatch(FenceSource(_identity(case, 2), "configuration"))
         await asyncio.sleep(0)
         assert not receipt.work.done() and not fence.applied.done()
+        assert not receipt.retired.done()
         assert "saved_open" in controls.admitted_effects
         release.set()
         with pytest.raises(asyncio.CancelledError):
             await receipt.applied
+        assert await receipt.retired is True
         await fence.applied
         assert not controls.admitted_effects
         assert len(case.store.sessions()) == 1

@@ -1476,7 +1476,10 @@ class ConsoleLocalControls:
                 from .console_control_sessions import open_saved_session
 
                 self._domain.conversation_scope_service()
-                self._retain_control_work(receipt, open_saved_session(self, command))
+                receipt.retired = self._loop.create_future()
+                self._retain_control_work(
+                    receipt, open_saved_session(self, command), before_entry=lambda: None
+                )
                 return receipt
             session = self._store.create_session(
                 title=command.title,

@@ -472,6 +472,7 @@ async def test_saved_open_uses_original_scope_database_and_whole_tree(domain_cas
         )
     )
     session_id, incarnation = await receipt.applied
+    assert await receipt.retired is True
     session = case.store._sessions[session_id]
     assert session.incarnation_id == incarnation
     assert session.persisted_conversation_id == target
@@ -484,6 +485,30 @@ async def test_saved_open_uses_original_scope_database_and_whole_tree(domain_cas
         is case.sources.conversation_scope_service
     )
     assert case.domain.conversation_scope_service().local_service is local
+    assert not controls.admitted_effects
+
+
+@pytest.mark.parametrize("domain_case", ["control_saved"], indirect=True)
+async def test_saved_open_cancelled_before_entry_retires_without_loading(domain_case):
+    from tldw_chatbook.Chat.console_control_dispatch import ControlIdentity, OpenSession
+
+    case = domain_case
+    controls = case.runtime._execution_service.open_local_controls(
+        profile_epoch="profile", service_epoch="service"
+    )
+    original_sessions = tuple(case.store._sessions)
+    receipt = controls.dispatch(
+        OpenSession(
+            ControlIdentity("profile", "service", 1, "unentered-open"),
+            conversation_id="unentered-saved-conversation",
+        )
+    )
+    receipt.work.cancel()  # No event-loop handoff occurred after dispatch.
+    with pytest.raises(asyncio.CancelledError):
+        await receipt.applied
+    assert await receipt.retired is True
+    assert receipt.work.cancelled()
+    assert tuple(case.store._sessions) == original_sessions
     assert not controls.admitted_effects
 
 
@@ -530,6 +555,7 @@ async def test_saved_open_rejects_replaced_original_reader_after_wait(domain_cas
         release.set()
         with pytest.raises(RuntimeError):
             await receipt.applied
+        assert await receipt.retired is True
         assert observed == [original]
         assert tuple(case.store._sessions) == before
         assert not controls.admitted_effects
