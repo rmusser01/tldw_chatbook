@@ -218,6 +218,18 @@ MAX_SINGLE_ROUTE_ADDED_LOC = 135_111
 #: 2026-10-31). Its ``Notes.agent_lessons`` import moved into the one function
 #: that uses it, so it adds one module, not two. The review service a first
 #: send also imported stays out: an ordinary turn no longer loads it.
+#: 2026-11-18 (TASK-41533), still 94, not a raise. Two changes went over it.
+#: ``RAG_Search.scope_evidence`` (TASK-36947.3) stays listed because a first
+#: Automatic send's evidence capture imports it on the UI loop.
+#: TASK-41319 took ``Chat.console_ordinary_tree`` and the
+#: ``Agents.ordinary_tree`` and ``Agents.execution_capacity`` modules it
+#: imports off the boot path, so the listed ``console_agent_reply`` now pulls
+#: in all three. Four modules were shed to pay for them. app_served (resident
+#: at UI-ready) and served_relay_publisher (served mode only) are unlisted,
+#: plus its ``Web_Server`` package. ``native_authority`` imports
+#: ``Canvas.compilation`` for annotations only, and ``console_ordinary_tree``
+#: imports ``Workspaces.worktree_activity`` where it uses it. The app already
+#: holds both of those from boot.
 MAX_FIRST_SEND_WARMUP_ADDED_MODULES = 94
 
 _CENSUS_SCRIPT = """
