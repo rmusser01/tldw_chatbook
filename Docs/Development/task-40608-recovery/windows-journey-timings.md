@@ -193,7 +193,8 @@ Batch `q5` started its first clean baseline on Windows 10 at 07:59 UTC on Novemb
 
 | Batch | Pair | README baseline / candidate | Approved edit baseline / candidate | State |
 |---|---|---|---|---|
-| `q7` | 1 | 259.5920 s / — | 386.9812 s / — | Baseline `q71b1` passed all original checks. The first candidate started at 09:35 UTC on November 18 on `e761c372a4`, with the original Windows file lock restored. Configuration SHA-256 `ecf4fbe02dff4a8615d550a34d57650e2161c552bd664036bc5379682f5e4d96`. The preceding q6 configuration was prepared before the edit-worker fix and never launched. |
+| `q7` | 1 | 259.5920 s / 24.0326 s | 386.9812 s / — | Baseline `q71b1` passed both original journeys. On `e761c372a4`, candidate `q71c1` passed the README assertions, then returned from Settings with source revision 2 while the visible projection still held revision 1. The controller getter refused it. The edit never reached Send. |
+| `q7` | 2–3 | — / — | — / — | The driver stopped at the first failed candidate. No complete pair or median. Configuration SHA-256 `ecf4fbe02dff4a8615d550a34d57650e2161c552bd664036bc5379682f5e4d96`. The preceding q6 configuration was prepared before the edit-worker fix and never launched. |
 | `q5` | 1 | 284.7760 s / — | 374.3431 s / — | Baseline `q51b1` passed both journeys. Candidate `q51c1` timed out after 300 s waiting for the workspace name field. Shutdown also failed to confirm retirement. Neither Send ran. Batch stopped with no completed pair. |
 | `q2` | 1 | 470.518 s / — | 575.079 s / — | Baseline passed. Candidate timed out at disclosure. Batch stopped. |
 | `q3` | 1 | 312.621 s / — | 392.728 s / — | Baseline `q31b1` passed. On `997b3339ff`, candidate `q31c1` reached the persisted README reply at 30.027 s adjusted and found its mounted row. The original painted-code check timed out at 300 s, and a ReadProjection command failed at application. The edit did not start. |
