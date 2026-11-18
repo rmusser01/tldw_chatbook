@@ -526,6 +526,9 @@ class _BackendService:
         self._received_requests: set[str] = set()
         self._projection_messages = None
         self._projection_key = None
+        self._decision_revision = 0
+        self._decision_hint_pending = None
+        self._decision_hint_handle = None
         backend._worker_service = self
 
     def _identity(self, original):
@@ -537,6 +540,80 @@ class _BackendService:
         message = ConsoleWireMessage(self._identity(original), kind, operation, payload)
         self.channel.send(message)
         self.sequence = message.identity.sequence
+
+    def queue_decision_changed(self, presentation) -> None:
+        """Marshal an inert wake from the original decision producer's thread."""
+        from .console_backend_presentation import ConsoleBackendPresentation
+
+        if (
+            type(presentation) is not ConsoleBackendPresentation
+            or presentation is not self.backend.presentation
+            or presentation.backend is not self.backend
+            or self.backend._worker_service is not self
+        ):
+            raise RuntimeError("Console decision hint owner changed")
+        attachment = presentation.parent_attachment
+        store = self.backend.store
+        session = store._sessions.get(store.active_session_id)
+        if attachment is None or session is None:
+            return
+        # These references grant no authority. The owning loop rechecks all of
+        # them before issuing a hint; a late old-thread callback cannot retarget.
+        scope = (self.backend.controls.source_revision, attachment, session, session.incarnation_id)
+        self.backend._loop.call_soon_threadsafe(self._stage_decision_hint, scope)
+
+    def _decision_scope_current(self, scope) -> bool:
+        self.backend._require_owner_loop()
+        revision, attachment, session, incarnation = scope
+        backend = self.backend
+        presentation = backend.presentation
+        checkpoint = presentation.view_lifecycle._current
+        if (
+            backend.closed or not backend.controls._intake_open
+            or backend._worker_service is not self
+            or revision != backend.controls.source_revision
+            or attachment != presentation.parent_attachment
+            or backend.store.active_session_id != session.id
+            or backend.store._sessions.get(session.id) is not session
+            or session.incarnation_id != incarnation
+            or checkpoint is None or checkpoint.action == "hidden"
+        ):
+            return False
+        backend.require_sources()
+        presentation.require_association(presentation.association)
+        presentation.view_lifecycle._require_checkpoint(checkpoint)
+        return True
+
+    def _stage_decision_hint(self, scope) -> None:
+        try:
+            if not self._decision_scope_current(scope):
+                return
+            self._decision_hint_pending = scope
+            if self._decision_hint_handle is None:
+                self._decision_hint_handle = self.backend._loop.call_soon(self._flush_decision_hint)
+        except Exception as error:
+            self.channel._failed(error)
+
+    def _flush_decision_hint(self) -> None:
+        from .console_execution_protocol import WireIdentity
+
+        scope, self._decision_hint_pending = self._decision_hint_pending, None
+        self._decision_hint_handle = None
+        try:
+            if scope is None or not self._decision_scope_current(scope):
+                return
+            source, attachment, session, incarnation = scope
+            self._decision_revision += 1
+            identity = WireIdentity(
+                self.backend.profile_epoch, self.backend.service_epoch, 1,
+                f"decision-change:{self._decision_revision}", session.id, incarnation, source,
+            )
+            self.emit(identity, "decision_changed", "ReadProjection", {
+                "attachment_id": attachment[0], "visit": attachment[1],
+                "decision_revision": self._decision_revision,
+            })
+        except Exception as error:
+            self.channel._failed(error)
 
     def applied(self, original, command, result) -> None:
         from .console_control_dispatch import PermissionAction, ReadProjection

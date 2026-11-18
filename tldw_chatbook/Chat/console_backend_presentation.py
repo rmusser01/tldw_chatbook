@@ -799,18 +799,33 @@ class ConsoleBackendPresentation:
         self.require_association(self.association)
         # The original host retains the payload. ReadProjection publishes its
         # exact mixed head; only the real card's checkpoint claims answerability.
+        self.notify_decision_change()
 
     def clear_decision(self, kind) -> None:
         self.present_decision(kind, None)
 
     def project_pending(self) -> None:
         self.require_association(self.association)
+        self.notify_decision_change()
+
+    def notify_decision_change(self) -> None:
+        """Wake the remote view without publishing decision values or authority."""
+        from .console_execution_worker import _BackendService
+
+        self.require_association(self.association)
+        service = self.backend._worker_service
+        if service is None:
+            return  # Original in-process graph has no remote observer.
+        if type(service) is not _BackendService or service.backend is not self.backend:
+            raise RuntimeError("Backend decision hint channel changed")
+        service.queue_decision_changed(self)
 
     def announce_hidden(self, message: str) -> bool:
         return self.notice(message)
 
     def project_attention(self, host, *, ring: bool) -> None:
         self.require_association(self.association)
+        self.notify_decision_change()
 
 
 from .console_domain_services import _definition

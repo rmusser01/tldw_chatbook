@@ -310,12 +310,27 @@ async def refresh_selected_view(screen: ChatScreen, *, checkpoint: str | None = 
     if selected_client(screen) is not client:
         raise RuntimeError("Console process refresh requires its selected owner")
     source = client._source_revision
+    decision_hint = getattr(client, "_decision_hint", None)
+    screen._console_selected_refresh_count = getattr(screen, "_console_selected_refresh_count", 0) + 1
+    refreshed = False
     try:
-        return await _refresh_current_selected_view(screen, client, visit, checkpoint)
-    except ConsoleChannelLost:
-        if client._source_revision == source and _defer_selected_refresh(screen, client, visit):
-            return False
-        raise
+        try:
+            refreshed = await _refresh_current_selected_view(screen, client, visit, checkpoint)
+        except ConsoleChannelLost:
+            if client._source_revision == source and _defer_selected_refresh(screen, client, visit):
+                return False
+            raise
+        if refreshed:
+            _decision_refresh_rendered(client, decision_hint)
+        return refreshed
+    finally:
+        screen._console_selected_refresh_count -= 1
+        if (refreshed and not screen._console_selected_refresh_count
+            and _decision_refresh_due(client)):
+            _require_methods(screen, _DECISION_WAKE_METHODS)
+            # Return from the current direct read/reconcile worker before the
+            # original coalescer considers a hint received during that read.
+            screen.call_later(refresh_selected_when_due, screen)
 
 
 async def _refresh_current_selected_view(screen, client, visit, checkpoint) -> bool:
@@ -557,6 +572,70 @@ async def reconcile_selected_view(screen: ChatScreen) -> None:
             screen.call_after_refresh(screen._start_console_attach_reconciliation)
 
 
+def _decision_hint_scope(client) -> tuple | None:
+    """Return only an actual mounted selected visit's published scope."""
+    screen, app, view = client._view, client._app, client.projection_view
+    if (
+        type(screen) is not ChatScreen or view is None
+        or view.source_revision != client._source_revision
+        or view.active_session_id is None
+        or screen.app_instance is not app
+        or getattr(app, "console_execution_client", None) is not client
+        or getattr(app, "console_runtime", None) is not None
+        or not screen.is_attached or not screen.is_mounted
+        or getattr(screen, "_console_process_visit", None) != client._visit
+        or getattr(screen, "_console_chat_tearing_down", False)
+        or getattr(screen, "_closing", False)
+        or client._disposed or client._shutdown_task is not None
+        or client._channel_error is not None
+        or getattr(client, "_view_preparation", None) is not None
+    ):
+        return None
+    row = view.session(view.active_session_id)
+    return (
+        client._source_revision, row.id, row.incarnation_id,
+        client._attachment_id, client._visit,
+    )
+
+
+def _decision_refresh_due(client) -> bool:
+    hint = getattr(client, "_decision_hint", None)
+    return bool(
+        hint is not None and hint[:-1] == _decision_hint_scope(client)
+        and hint != getattr(client, "_decision_rendered_hint", None)
+    )
+
+
+def _decision_refresh_rendered(client, hint) -> None:
+    """Consume only the hint whose checked projection was actually rendered."""
+    if hint is None or hint[:-1] != _decision_hint_scope(client):
+        return
+    previous = getattr(client, "_decision_rendered_hint", None)
+    if previous is None or previous[:-1] != hint[:-1] or previous[-1] < hint[-1]:
+        client._decision_rendered_hint = hint
+
+
+_DECISION_WAKE_METHODS = (("call_later", _definition(ChatScreen.call_later)),)
+
+
+def request_selected_decision_refresh(client, hint: tuple) -> bool:
+    """Wake the existing checked display; the stream hint grants no authority."""
+    _require_sources()
+    if type(client) is not ConsoleExecutionClient:
+        raise TypeError("Original Console decision display client is required")
+    if hint[:-1] != _decision_hint_scope(client):
+        return False
+    previous = getattr(client, "_decision_hint", None)
+    if previous is not None and previous[:-1] == hint[:-1] and previous[-1] >= hint[-1]:
+        return False
+    client._decision_hint = hint
+    _require_methods(client._view, _DECISION_WAKE_METHODS)
+    # Enter the real screen pump; queued callbacks coalesce at its existing
+    # reconcile worker and recheck a visit which may have ended meanwhile.
+    client._view.call_later(refresh_selected_when_due, client._view)
+    return True
+
+
 def refresh_selected_when_due(screen: ChatScreen) -> None:
     """Request the original readiness refresh after its published expiry."""
     if defer_selected_passive_render(screen):
@@ -569,13 +648,16 @@ def refresh_selected_when_due(screen: ChatScreen) -> None:
         not screen.is_attached or (not screen.is_current and not modal_visible)
         or getattr(screen, "_console_sync_maintenance_paused", False)
         or screen._console_attach_reconcile_running
+        or getattr(screen, "_console_selected_refresh_count", 0)
         or (getattr(screen, "_console_attach_reconcile_worker", None) is not None
             and not screen._console_attach_reconcile_worker.is_finished)
         or getattr(screen, "_console_process_draft_switch", None) is not None
     ):
         return
     client = selected_client(screen)
-    if client is None or time.monotonic() < client._readiness_deadline:
+    if client is None or (
+        time.monotonic() < client._readiness_deadline and not _decision_refresh_due(client)
+    ):
         return
     screen._console_attach_reconcile_worker = screen.run_worker(
         partial(reconcile_selected_view, screen),

@@ -257,6 +257,8 @@ class ConsoleExecutionClient:
         self.send_selection = None
         self.project_head = None
         self._project_modal = None
+        self._decision_hint = None
+        self._decision_rendered_hint = None
         self._projection_sequence = 0
         self._projection_lock = asyncio.Lock()
         self._projection_reads: set[asyncio.Task] = set()
@@ -1243,6 +1245,15 @@ class ConsoleExecutionClient:
                     raise ConsoleProtocolError("unexpected_ready")
                 self._source_revision = message.payload["source_revision"]
                 self._ready.set_result(None)
+                return
+            if message.kind == "decision_changed":
+                from tldw_chatbook.UI.Console_Modules.execution_state import request_selected_decision_refresh
+
+                request_selected_decision_refresh(self, (
+                    identity.source_revision, identity.session_id,
+                    identity.incarnation_id, message.payload["attachment_id"],
+                    message.payload["visit"], message.payload["decision_revision"],
+                ))
                 return
             receipt = self._requests.get(identity.request_id)
             if receipt is None or receipt.operation != message.operation:

@@ -2965,6 +2965,13 @@ class ConsoleRuntime:
 
     def _project_pending_project_instruction_decisions(self) -> None:
         """Project one ordered decision for the active Console session."""
+        if not self._disposed and self.domain_services is not None:
+            from .console_backend_presentation import ConsoleBackendPresentation
+
+            presentation = self.domain_services.presentation
+            if type(presentation) is ConsoleBackendPresentation:
+                self.domain_services.require_current()
+                presentation.notify_decision_change()
         view = self.view
         generation = self._attached_generation
         if not self.has_answerable_view() or generation is None:

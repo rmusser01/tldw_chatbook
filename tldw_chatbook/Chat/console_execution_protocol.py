@@ -1107,6 +1107,15 @@ def _validate_message(identity, kind, operation, payload):
         return
     if operation not in _COMMANDS:
         _reject("message", "unknown operation")
+    if kind == "decision_changed":
+        if operation != "ReadProjection" or not identity.session_id:
+            _reject("message", "decision hint requires a scoped projection")
+        _record(
+            attachment_id=_REFERENCE, visit=_SEQUENCE, decision_revision=_SEQUENCE,
+        )(payload, "payload")
+        if identity.request_id != f"decision-change:{payload['decision_revision']}":
+            _reject("identity.request_id", "decision hint revision changed")
+        return
     if kind == "command":
         _COMMANDS[operation](payload, "payload")
         if (
