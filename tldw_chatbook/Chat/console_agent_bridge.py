@@ -9496,11 +9496,8 @@ class ConsoleAgentBridge:
 
     def _previous_primary_run_id(self, conversation_id: str) -> str | None:
         database = self._db
-        records = database.list_runs(
-            conversation_id,
-            include_superseded=False,
-            agent_kind=AGENT_KIND_PRIMARY,
-            **({"limit": 1} if type(database) is AgentRunsDB else {}),
+        records = _list_historical_runs(
+            database, conversation_id, AGENT_KIND_PRIMARY, limit=1,
         )
         return records[0]["id"] if records else None
 
@@ -9509,19 +9506,14 @@ class ConsoleAgentBridge:
     ) -> AgentLiveSnapshot:
         # Keep the exact database captured before the worker was issued.
         database = self._db if database is None else database
-        primary_records = database.list_runs(
-            conversation_id,
-            include_superseded=False,
-            agent_kind=AGENT_KIND_PRIMARY,
-            **({"limit": 1} if type(database) is AgentRunsDB else {}),
+        primary_records = _list_historical_runs(
+            database, conversation_id, AGENT_KIND_PRIMARY, limit=1,
         )
         if not primary_records:
             return AgentLiveSnapshot()
         primary = primary_records[0]
-        subagent_records = database.list_runs(
-            conversation_id,
-            include_superseded=False,
-            agent_kind=AGENT_KIND_SUBAGENT,
+        subagent_records = _list_historical_runs(
+            database, conversation_id, AGENT_KIND_SUBAGENT, parent_run_id=primary.get("id"),
         )
         steps = tuple(
             AgentLiveStep(
@@ -9974,20 +9966,33 @@ _SUBAGENT_BADGE_COUNT_CALLBACK = (
 del _badge_count_getattr_static
 
 
+def _stock_run_list(database, reader):
+    original, code, defaults = _CHANGE_REVIEW_LIST_RUNS_SOURCE
+    return (
+        type(database) is AgentRunsDB
+        and getattr(reader, "__self__", None) is database
+        and getattr(reader, "__func__", None) is original
+        and original.__code__ is code
+        and original.__defaults__ is defaults
+    )
+
+
+def _list_historical_runs(database, conversation_id, agent_kind, **bounds):
+    """Apply SQL bounds only to the original reader on the selected database."""
+    reader = database.list_runs
+    if not _stock_run_list(database, reader):
+        bounds = {}
+    return reader(conversation_id, include_superseded=False, agent_kind=agent_kind, **bounds)
+
+
 def _read_change_review_markers(
     database, conversation_id, render, *, require_current=None
 ):
     """Read one captured database, preserving public ordering and error handling."""
     if require_current is not None:
         require_current()
-    original, code, defaults = _CHANGE_REVIEW_LIST_RUNS_SOURCE
     reader = database.list_runs
-    if (
-        type(database) is AgentRunsDB
-        and getattr(reader, "__func__", None) is original
-        and original.__code__ is code
-        and original.__defaults__ is defaults
-    ):
+    if _stock_run_list(database, reader):
         records = database.list_change_review_run_anchors(conversation_id)
     else:
         # Preserve the existing callback contract for custom DB adapters.

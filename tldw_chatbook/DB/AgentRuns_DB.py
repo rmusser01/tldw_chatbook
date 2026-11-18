@@ -2981,6 +2981,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         include_superseded: bool = True,
         limit: int | None = None,
         agent_kind: str | None = None,
+        parent_run_id: str | None = None,
     ) -> list[dict]:
         """List a conversation's run records, newest first.
 
@@ -3003,6 +3004,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                 subagent-heavy conversation could still starve. ``None``
                 (the default) applies no kind filter, preserving prior
                 behavior.
+            parent_run_id: When supplied, load only the children of this run.
 
         Returns:
             The matching runs as dicts, newest first.
@@ -3014,6 +3016,9 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         if agent_kind is not None:
             query += " AND agent_kind = ?"
             params.append(agent_kind)
+        if parent_run_id is not None:
+            query += " AND parent_run_id = ?"
+            params.append(parent_run_id)
         query += " ORDER BY created_at DESC, id DESC"
         if limit is not None:
             query += " LIMIT ?"
