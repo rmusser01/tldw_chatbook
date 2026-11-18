@@ -277,3 +277,48 @@ async def test_inspector_keeps_the_unbound_reason_when_the_kill_switch_is_on(tmp
         text = _mcp_row_text(console)
 
     assert text == "MCP: off · this profile's MCP settings file can't be used here"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("profile", ["bound", "no-pinned-io", "non-default-data-dir"])
+async def test_live_work_mcp_row_names_the_unbound_store_reason(
+    monkeypatch, tmp_path, profile
+):
+    """TASK-41631: the live-work card's MCP row agrees with the Inspector row.
+
+    Both writers are read: the card the builder makes, and the row the sync
+    tick rewrites. A bound store keeps "Not wired".
+    """
+    from tldw_chatbook.MCP.console_snapshot import UNBOUND_MCP_STORE_REASON
+
+    kwargs = {}
+    if profile == "no-pinned-io":
+        _bind_without_pinned_io(monkeypatch)
+    elif profile == "non-default-data-dir":
+        kwargs["user_data_dir"] = tmp_path
+    app = _build_console_send_test_app(**kwargs)
+    host = ConsoleHarness(app)
+    expected = (
+        "MCP: Not wired - MCP servers."
+        if profile == "bound"
+        else f"MCP: Off - {UNBOUND_MCP_STORE_REASON}"
+    )
+
+    async with host.run_test(size=(196, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await _wait_for_selector(console, pilot, "#console-live-work-source-mcp")
+        card = console._build_console_live_work_source_readiness_card()
+        built = next(
+            str(child.renderable)
+            for child in card._pending_children
+            if child.id == "console-live-work-source-mcp"
+        )
+        row = console.query_one("#console-live-work-source-mcp", Static)
+        row.update("stale")
+        console._sync_console_live_work_readiness_rows()
+        await pilot.pause()
+        ticked = str(row.renderable)
+
+    assert built == expected
+    assert ticked == expected

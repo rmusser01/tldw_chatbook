@@ -731,6 +731,37 @@ def test_console_live_work_readiness_never_claims_connected_without_evidence():
     assert len(absent_by_id["console-live-work-source-rag"].text) <= 39
 
 
+@pytest.mark.parametrize("mcp_tool_count", [None, 0, 4])
+def test_console_live_work_mcp_row_names_the_unbound_store_reason(mcp_tool_count):
+    """TASK-41631: an unbound MCP store says off, and why, as the Inspector does.
+
+    The reason wins over the counts, as in `_mcp_inspector_row`; without one,
+    the row keeps "Not wired" / "Connected".
+    """
+    from tldw_chatbook.MCP.console_snapshot import UNBOUND_MCP_STORE_REASON
+
+    ConsoleLiveWorkSourceReadinessState = (
+        _load_console_live_work_source_readiness_state()
+    )
+
+    def mcp_row(**kwargs):
+        state = ConsoleLiveWorkSourceReadinessState.from_acp_runtime_status(
+            "not_configured", mcp_tool_count=mcp_tool_count, **kwargs
+        )
+        return next(
+            row for row in state.rows if row.widget_id == "console-live-work-source-mcp"
+        )
+
+    off = mcp_row(mcp_unavailable_reason=UNBOUND_MCP_STORE_REASON)
+    assert off.text == f"MCP: Off - {UNBOUND_MCP_STORE_REASON}"
+    assert "console-live-work-source-unavailable" in off.classes
+    assert mcp_row(mcp_unavailable_reason="").text == mcp_row().text == (
+        "MCP: Connected - 4 tools ready."
+        if mcp_tool_count
+        else "MCP: Not wired - MCP servers."
+    )
+
+
 def test_console_live_work_source_readiness_reflects_acp_runtime_state():
     ConsoleLiveWorkSourceReadinessState = (
         _load_console_live_work_source_readiness_state()
@@ -2643,7 +2674,12 @@ def test_console_native_state_restore_tolerates_legacy_payload_without_launch_or
 @pytest.mark.asyncio
 @private_profile_test
 async def test_console_renders_source_readiness_summary_without_pending_launch(request):
-    app = _build_test_app()
+    from tldw_chatbook.config import get_user_data_dir
+
+    # At the profile's own data folder the MCP store binds, as by default in
+    # the app; the factory's folder leaves it unbound, and the MCP row then
+    # names that reason instead of "Not wired" (TASK-41631).
+    app = _build_test_app(user_data_dir=get_user_data_dir())
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(180, 40)) as pilot:
