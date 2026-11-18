@@ -134,10 +134,15 @@ async def _run_agent_reply(
     project_authority_guard = None
     project_activation_callback = None
     if session is not None and project_state.project_instructions_enabled:
-        try:
-            registry = getattr(self.app, "workspace_registry_service", None)
-        except Exception:
-            registry = None
+        from .console_project_dispatch import project_dispatch_registry
+
+        if getattr(self, "domain_services", None) is not None:
+            registry = project_dispatch_registry(self)
+        else:
+            try:
+                registry = getattr(self.app, "workspace_registry_service", None)
+            except Exception:
+                registry = None
         try:
             if project_snapshot is not None:
                 if project_snapshot.selected is None:
@@ -570,12 +575,13 @@ async def _run_agent_reply(
         # Best-effort: an unavailable registry yields no roots and an
         # untracked (but otherwise normal) run.
         from tldw_chatbook.Tools.workspace_file_roots import frozen_workspace_roots
+        from .console_project_dispatch import project_dispatch_registry
 
         live_frozen_roots = set(
             frozen_workspace_roots(
                 frozen_workspace_id,
                 frozen_workspace_binding_authority,
-                registry=getattr(self.app, "workspace_registry_service", None),
+                registry=project_dispatch_registry(self),
             )
         )
         change_roots: list = [

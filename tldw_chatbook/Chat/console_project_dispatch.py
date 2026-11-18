@@ -16,6 +16,22 @@ from tldw_chatbook.Chat.console_project_instructions import (
 )
 
 
+def project_dispatch_registry(controller: Any) -> Any:
+    """Read the original registry from this controller's actual owner."""
+    domain = getattr(controller, "domain_services", None)
+    if domain is not None:
+        sources = domain.sources
+        domain.require_current(sources)
+        domain.presentation.require_association(domain.presentation.association)
+        if (
+            domain.runtime._chat_controller is not controller
+            or domain.runtime._chat_store is not controller.store
+        ):
+            raise RuntimeError("Console project registry source changed")
+        return sources.workspace_registry
+    return getattr(controller.app, "workspace_registry_service", None)
+
+
 def build_project_dispatch_callbacks(
     controller: Any,
     *,
@@ -35,22 +51,64 @@ def build_project_dispatch_callbacks(
 
     project_owner_loop = asyncio.get_running_loop()
     expected_project_state = state
+    domain = getattr(controller, "domain_services", None)
+    sources = domain.sources if domain is not None else None
+    association = domain.presentation.association if domain is not None else None
+
+    def require_project_source():
+        if domain is not None:
+            domain.require_current(sources)
+            domain.presentation.require_association(association)
+            if (
+                controller.domain_services is not domain
+                or domain.runtime._chat_controller is not controller
+                or domain.runtime._chat_store is not controller.store
+                or sources.workspace_registry is not registry
+                or (
+                    controller.app is None
+                    and domain.presentation.backend._loop is not project_owner_loop
+                )
+            ):
+                raise RuntimeError("Console project registry source changed")
+
+    require_project_source()
 
     def on_owning_loop(callback):
+        def checked():
+            require_project_source()
+            result = callback()
+            require_project_source()
+            return result
+
         # Retained review authority may run on its captured app loop.
         try:
-            if asyncio.get_running_loop() is project_owner_loop:
-                return callback()
+            on_loop = asyncio.get_running_loop() is project_owner_loop
         except RuntimeError:
-            pass
+            on_loop = False
+        if on_loop:
+            return checked()
         app = controller.app
         call_from_thread = getattr(app, "call_from_thread", None)
         # Textual only permits call_from_thread from another thread.
         if callable(call_from_thread) and threading.get_ident() != getattr(
             app, "_thread_id", None
         ):
-            return call_from_thread(callback)
-        return callback()
+            return call_from_thread(checked)
+        if domain is not None and app is None:
+            # The actual backend has no App; synchronously join only this
+            # original callback on the captured owner loop, as Textual does.
+            if (
+                getattr(domain.presentation, "backend", None) is None
+                or domain.presentation.backend._loop is not project_owner_loop
+                or not project_owner_loop.is_running()
+            ):
+                raise RuntimeError("Console project owner loop changed")
+
+            async def invoke():
+                return checked()
+
+            return asyncio.run_coroutine_threadsafe(invoke(), project_owner_loop).result()
+        return checked()
 
     def project_activation_callback(event):
         return on_owning_loop(
