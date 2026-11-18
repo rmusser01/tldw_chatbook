@@ -2450,6 +2450,16 @@ shows their state: "N tools ready", or "N servers enabled, not connected" when
 servers are configured but unreachable. MCP tool calls go through the same
 "Approval required" card as everything else.
 
+When Console cannot use the profile's MCP settings file
+(`local_mcp_store.json`), a Send carries no MCP tools, neither your servers'
+nor chatbook's own, and the **MCP** row reads "off · this profile's MCP
+settings file can't be used here" from the moment Console opens. The model
+is not told why; it only sees that no MCP tools were offered. Your servers
+stay configured in Settings ▸ Tools & MCP. Console uses only the file the
+loaded config.toml selects, `<[paths] data_dir>/<[general] users_name>/local_mcp_store.json`
+(the default data folder when `data_dir` is unset). If the row appears, check
+those two settings in the config.toml chatbook loads, then restart chatbook.
+
 Some servers describe a tool's arguments with a rule at the top of the schema,
 such as "give either `id` or `name`" (`anyOf`, `oneOf`, `allOf`, `enum`,
 `const` or `not`). OpenAI and Anthropic reject any request containing such a

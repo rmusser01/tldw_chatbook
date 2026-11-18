@@ -284,8 +284,10 @@ def standard_console_sources(
 def unbound_console_sources(service: Any) -> bool:
     """A stock MCP service whose store never bound to backup custody.
 
-    ``bind`` skips without POSIX pinned I/O (every Windows install) and for a
-    store outside the selected profile. No reader can prove such a source, so
+    ``bind`` skips for a store outside the selected profile's data folder, and
+    without pinned I/O, which every supported platform has (Windows through
+    ``Utils/windows_files.WindowsOS``; TASK-41308 corrected TASK-40714's
+    "every Windows install"). No reader can prove such a source, so
     a Console turn runs without MCP tools rather than being refused
     (TASK-40714). Replaced readers or receivers are still not stock.
     """
@@ -293,6 +295,19 @@ def unbound_console_sources(service: Any) -> bool:
         standard_console_sources(service, _bound=False)
         and service.local_service.store not in sources._BINDINGS
     )
+
+
+def console_mcp_unavailable_reason(service: Any) -> str:
+    """Why Console turns run without MCP tools, or "" when they do not.
+
+    TASK-41308: the Inspector's MCP row shows this, so an unbound store is
+    never silent. A pure check; nothing reads the store.
+    """
+    if service is None or not unbound_console_sources(service):
+        return ""
+    # One reason true for every skip in ``mcp_source_participants.bind``
+    # (no pinned I/O, no config cache, another config source or path).
+    return "this profile's MCP settings file can't be used here"
 
 
 def standard_console_catalog_sources(service: Any, *, _include_log: bool = True) -> bool:

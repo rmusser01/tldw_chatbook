@@ -563,8 +563,9 @@ async def test_unbound_mcp_store_is_no_mcp_source_on_the_runtime_route(
 ):
     """TASK-40714: the runtime route captures an unbound store as no MCP.
 
-    The store is built the way Windows builds it, without pinned I/O at its
-    bind. A stock-typed service with a replaced reader is still refused.
+    The store is built unbound, with pinned I/O off at its bind and outside
+    the profile's data folder (Windows binds: it has pinned I/O, TASK-41308).
+    A stock-typed service with a replaced reader is still refused.
     """
     from tldw_chatbook.Backup_Recovery import mcp_source_participants, raw_participants
     from tldw_chatbook.Chat.console_configuration_preparation import (

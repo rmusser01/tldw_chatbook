@@ -12956,6 +12956,9 @@ class ChatScreen(BaseAppScreen):
         self,
         pending_launch: Optional[ConsoleLiveWorkLaunch],
     ) -> ConsoleInspectorState:
+        from tldw_chatbook.app_services import read_mcp_service
+        from tldw_chatbook.MCP.console_snapshot import console_mcp_unavailable_reason
+
         _provider_display, model, _settings = (
             self._active_console_provider_model_display()
         )
@@ -13027,6 +13030,10 @@ class ChatScreen(BaseAppScreen):
             approval_count=self._console_pending_approval_count(),
             mcp_tool_count=self._console_mcp_tool_count(),
             mcp_not_connected_count=self._console_mcp_not_connected_count(),
+            # TASK-41308: an unbound MCP store says off, and why, in the row.
+            mcp_unavailable_reason=console_mcp_unavailable_reason(
+                read_mcp_service(self.app_instance)
+            ),
             can_save_chatbook=can_save_chatbook,
             scope_item_count=self._retrieval._console_retrieval_scope_run_recipe_count(),
             change_review_available=(

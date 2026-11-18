@@ -220,7 +220,7 @@ def _tools_ready_text(effective_tool_count: int) -> str:
 
 
 def _mcp_inspector_row(
-    tool_count: Any, not_connected_count: Any
+    tool_count: Any, not_connected_count: Any, unavailable_reason: str = ""
 ) -> "ConsoleDisplayRow | None":
     """Build the "MCP" inspector row, or ``None`` when there is nothing to show.
 
@@ -237,7 +237,12 @@ def _mcp_inspector_row(
     when every enabled server is connected does a non-zero tool count
     render the ready row ("N tools ready"). Both zero omits the row just
     like the ``None`` case -- nothing worth telling the user about.
+
+    TASK-41308: ``unavailable_reason`` (an unbound MCP store) wins over
+    every count: no Send carries MCP tools, so the row says off and why.
     """
+    if unavailable_reason:
+        return ConsoleDisplayRow("MCP", f"off · {unavailable_reason}", status="blocked")
     if tool_count is None:
         return None
     normalized_tool_count = coerce_non_negative_int(tool_count)
@@ -1831,6 +1836,7 @@ class ConsoleInspectorState:
         approval_count: int = 0,
         mcp_tool_count: int | None = None,
         mcp_not_connected_count: int = 0,
+        mcp_unavailable_reason: str = "",
         can_save_chatbook: bool = False,
         scope_item_count: int | None = None,
         run_active: bool = False,
@@ -1881,6 +1887,8 @@ class ConsoleInspectorState:
                 the recipe's ``tools`` term (TASK-24603).
             mcp_not_connected_count: Configured MCP servers that are not
                 connected, for the MCP row.
+            mcp_unavailable_reason: Why Sends carry no MCP tools (the store
+                is unbound), or "". Overrides both counts in the MCP row.
             can_save_chatbook: Whether a chatbook artifact exists to save.
                 Still gated by the ephemeral-conversation block registry.
             scope_item_count: Conversation retrieval scope size. ``None`` or
@@ -1989,7 +1997,9 @@ class ConsoleInspectorState:
                 status="blocked" if normalized_approval_count > 0 else "ready",
             ),
         ]
-        mcp_row = _mcp_inspector_row(mcp_tool_count, mcp_not_connected_count)
+        mcp_row = _mcp_inspector_row(
+            mcp_tool_count, mcp_not_connected_count, mcp_unavailable_reason
+        )
         if mcp_row is not None:
             rows.append(mcp_row)
         if _clean(evidence_summary, ""):
