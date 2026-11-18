@@ -3482,13 +3482,18 @@ Tests/UI/test_review_set_walker.py::test_decoration_fails_open_on_a_storage_erro
 Tests/UI/test_library_speaker_rename_no_blob_read.py
 # TASK-36952.3 review r1 (2026-11-18): the series' retargets in 11 more
 # Tests/UI files, found by recomputing every slice merge's changed test defs
-# (the slices' lane notes had named only the files above). These 5 passed 3
-# of 3 the same way at load 35-97 and 7 of 7 in the combined runs. The other
-# 27 there stay out: 23 are red on dev at setup with RecoveryRequired
+# (the slices' lane notes had named only the files above, and four files
+# whose retargets are all red: ingest-analyze-skipped, match-nav,
+# no-change-sync and scroller-resolution). These 5 passed 3 of 3 the same
+# way at load 35-97 and 7 of 7 in the combined runs. The other 27 there stay
+# out: 23 are red on dev at setup with RecoveryRequired
 # (raw_source_selection_changed), one bypassed screen lacks
 # _artifacts_navigation, and three missed a query under load (the media-row
 # latency probe 1 in 3; a sub-state Escape and a late-detail Trash test once
-# each in a combined run at load 33-71); all are filed as follow-ups.
+# each in a combined run at load 33-71). Follow-ups for every retarget left
+# out: TASK-41772 (the 63 RecoveryRequired guards), TASK-41773 (fakes missing
+# an attribute), TASK-41713 (the screen-reuse test), TASK-41505 (the
+# analyze-receipt query) and TASK-41766 (the three query misses).
 Tests/UI/test_library_crit9_media_reader.py::test_the_escape_chip_and_the_guide_quote_the_same_words
 Tests/UI/test_library_per_click_recompose_t21116.py::test_media_viewer_back_is_canvas_scoped_and_restores_list_focus
 Tests/UI/test_library_review_round_t21116.py::test_routine_snapshot_midswap_still_runs_the_projection_follow_up
