@@ -91,7 +91,7 @@ async def test_selected_process_home_to_chat_composes_original_surface(request):
                             await _wait_for_selector(app, pilot, "#console-native-composer", timeout=10)
                             while not getattr(app.screen, "_console_process_surface_reconciled", False):
                                 await pilot.pause()
-                    except BaseException:
+                    except BaseException as error:
                         import inspect
 
                         selected_screen = app.screen
@@ -106,21 +106,31 @@ async def test_selected_process_home_to_chat_composes_original_surface(request):
                             else:
                                 break
                             if frame is not None:
-                                frames.append((frame.f_globals.get("__name__"), frame.f_code.co_name))
+                                frames.append((frame.f_globals.get("__name__"), frame.f_code.co_name, frame.f_lineno))
                             current = following
                         diagnostic = {
                             "app_exception": type(getattr(app, "_exception", None)).__name__,
                             "screen": type(selected_screen).__name__,
-                            "composition_failures": composition_failures,
+                            "composition_failure_count": len(composition_failures),
+                            "composition_failures": [
+                                (kind, locations[-8:])
+                                for kind, _name, locations in composition_failures[-4:]
+                            ],
                             "compose_exception": type(getattr(selected_screen, "_console_process_compose_error", None)).__name__,
                             "channel_exception": type(client._channel_error).__name__,
                             "screen_task_done": task.done() if type(task) is asyncio.Task else None,
+                            "projection_available": client.projection_view is not None,
+                            "projection_reads_pending": sum(not read.done() for read in client._projection_reads),
                             "frames": frames,
+                            "request_count": len(client._requests),
                             "requests": [
                                 (item.operation, item.received.done(), item.applied.done(), item.retired.done())
-                                for item in client._requests.values()
+                                for item in tuple(client._requests.values())[:16]
                             ],
                         }
+                        # Child failure XML preserves notes even when later
+                        # backend teardown output displaces this stderr line.
+                        error.add_note("Selected mount failure state: " + repr(diagnostic))
                         request.node.user_properties.append(("selected_mount_failure_state", repr(diagnostic)))
                         print("Selected mount failure state:", diagnostic, file=sys.stderr)
                         raise

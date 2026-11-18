@@ -57,5 +57,6 @@ jobs:
             'Tests/UI/test_console_scope_row.py::test_conversation_inspector_projects_raw_title_and_workspace_to_one_line'
             'Tests/Chat/test_console_execution_project_values.py'
             'Tests/Chat/test_console_backend_project_decisions.py'
+            'Tests/Chat/test_console_project_dispatch_sources.py'
           )
           python -m Tests.windows_private_fixture_runner -p pytest_asyncio.plugin -p pytest_timeout -q @checks
