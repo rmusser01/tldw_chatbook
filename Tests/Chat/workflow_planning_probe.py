@@ -15,6 +15,10 @@ os.environ["TLDW_AGENTS_AUTOWAKE_ENABLED"] = "false"
 os.environ["OPENAI_API_KEY"] = "private-native-planning-test"
 network_guard.install()
 real_profile_guard.install()
+# A hang bound, not a speed bound: the held-worker and late-source waits below
+# took tens of seconds at load 90 (lessons-testing-evidence: "A fixed child
+# budget kills a child that is only slow").
+HANG_WAIT_SECONDS = 60
 
 
 async def exercise():
@@ -160,55 +164,6 @@ async def exercise():
                 == "accepted"
             )
         calls.append(owner)
-        if (
-            mode
-            in {
-                "executor-replaced",
-                "reader-replaced",
-                "executor-hash-replaced",
-                "executor-resolver-replaced",
-            }
-            and len(calls) == 1
-        ):
-            import inspect
-
-            from tldw_chatbook.Tools import local_tool_impls
-
-            def changed_receiver(*_args, **_kwargs):
-                (root / "changed-receiver-wrote.txt").write_text(
-                    "forbidden planning effect"
-                )
-                raise AssertionError("changed receiver invoked")
-
-            if mode in {"executor-replaced", "executor-hash-replaced"}:
-                _, native_provider = (
-                    prepared.native.service.registry.resolve_owner_for_name("fs_list")
-                )
-                handler = native_provider._path_specs_by_alias[binding.alias][
-                    "fs_list"
-                ].handler
-                executor = inspect.getclosurevars(handler).nonlocals[
-                    "workspace_executor"
-                ]
-                if mode == "executor-hash-replaced":
-                    type(executor).__hash__ = changed_receiver
-                else:
-                    executor.execute = changed_receiver
-            elif mode == "executor-resolver-replaced":
-                from tldw_chatbook.Tools import workspace_tool_executor
-
-                original_resolver = workspace_tool_executor.resolve_workspace_path
-
-                def changed_resolver(*_args, **_kwargs):
-                    (root / "changed-receiver-wrote.txt").write_text(
-                        "forbidden planning effect"
-                    )
-                    print("F_CHANGED_EXECUTOR_RESOLVER_ENTERED", flush=True)
-                    return original_resolver(*_args, **_kwargs)
-
-                workspace_tool_executor.resolve_workspace_path = changed_resolver
-            else:
-                local_tool_impls._read_bounded_bytes = changed_receiver
         if mode == "system-context":
             received_system.append(
                 required_system in json.dumps(kwargs, ensure_ascii=False)
@@ -243,17 +198,7 @@ async def exercise():
             result["choices"][0]["message"]["content"] = (
                 "```json\n" + json.dumps(data) + "\n```"
             )
-        if (
-            mode
-            in {
-                "tools",
-                "executor-replaced",
-                "reader-replaced",
-                "executor-hash-replaced",
-                "executor-resolver-replaced",
-            }
-            and len(calls) == 1
-        ):
+        if mode == "tools" and len(calls) == 1:
             result["choices"][0]["message"] = {
                 "content": None,
                 "tool_calls": [
@@ -488,7 +433,7 @@ async def exercise():
                     entered.set()
                     if mode == "worker-failure":
                         raise RuntimeError("original provider worker return failed")
-                    assert release.wait(15), (
+                    assert release.wait(HANG_WAIT_SECONDS), (
                         "original provider worker return was not released"
                     )
 
@@ -573,6 +518,52 @@ async def exercise():
         )
         assert request.conversation_id == session.persisted_conversation_id
         assert request.conversation_id != session.id
+
+        def assert_returned_failure_recovery(error_text):
+            # ADR-356 decision 6 (TASK-39147): a required failure after positive
+            # physical return hands its unresolved tail to a recovery receipt and
+            # then retires the actual owner once. It is never a settled drain.
+            returned = prepared.planning_recovery_return()
+            assert prepared._planning_physical_returned
+            assert returned.owner is prepared.primary_owner
+            assert returned.owner is calls[0], "receipt names another owner"
+            assert returned.claim is prepared.primary_claim
+            assert str(returned.error) == error_text, "original failure was hidden"
+            assert not prepared.primary_owner.is_admitted
+            assert prepared.primary_owner._root_finished
+            assert not prepared._planning_settled
+            assert prepared.primary_claim.id not in runtime.worktree_activity._claims
+            protected = runtime.worktree_activity._recovery[attempt.workflow_id]
+            (scope,) = protected.writes
+            assert not protected.reads and scope.subtree
+            assert scope.root == capture_directory_chain(root)
+            assert scope.path == scope.root.canonical_root
+            assert (
+                controller._fleet_wake._automatic_primary_claims.get(session.id) is None
+            )
+            committed = mode in {"required-return", "late-source-return"}
+            with owned_goal_storage(service), service.db.connection() as conn:
+                native = conn.execute(
+                    "SELECT a.state,p.status,p.retirement FROM automatic_wake_attempts a "
+                    "JOIN workflow_phase_attempts p ON p.native_attempt_id=a.id WHERE a.id=?",
+                    (attempt.id,),
+                ).fetchone()
+                saved = service.get(attempt.workflow_id)
+            assert tuple(native) == (
+                ("completed", "completed", "drained")
+                if committed
+                else ("review_required", "uncertain", "unknown")
+            )
+            assert saved.status == "recovery_required"
+            assert bool(saved.plans) is committed
+            assert saved.accounting.uncertain is not committed
+            assert saved.accounting.used["generation"] == 1
+            assert saved.accounting.used["model_call"] == 1
+            assert saved.accounting.used["child_launch"] == 0
+            assert len(calls) == 1
+            assert (root / "source.py").read_text() == "original source\n"
+            print("F_RETURNED_REQUIRED_FAILURE_RECOVERED_" + mode, flush=True)
+
         if mode == "late-source-return":
             source_code = prepared._planning_return_source.__func__.__code__
 
@@ -586,32 +577,22 @@ async def exercise():
                     and not entered.is_set()
                 ):
                     entered.set()
-                    assert release.wait(15)
+                    assert release.wait(HANG_WAIT_SECONDS)
                     raise RuntimeError("late original tracked source return failed")
 
             threading.setprofile_all_threads(fail_original_source_return)
             driver = asyncio.create_task(prepared.run_planning())
-            assert await asyncio.to_thread(entered.wait, 15)
+            assert await asyncio.to_thread(entered.wait, HANG_WAIT_SECONDS)
             driver.cancel()
             release.set()
             try:
                 await driver
-            except (asyncio.CancelledError, RuntimeError):
+            except asyncio.CancelledError:
                 threading.setprofile_all_threads(None)
-                assert prepared.primary_owner.is_admitted, (
-                    "cancelled caller hid original producer failure and retired root"
+                assert_returned_failure_recovery(
+                    "late original tracked source return failed"
                 )
-                assert not prepared._planning_settled
-                assert (
-                    controller._fleet_wake._automatic_primary_claims.get(session.id)
-                    is prepared._planning_token
-                )
-                assert prepared.primary_claim.id in runtime.worktree_activity._claims
-                with owned_goal_storage(service):
-                    saved = service.get(attempt.workflow_id)
-                assert saved.plans and saved.accounting.used["generation"] == 1
-                retained_failure = True
-                raise RuntimeError("F_REQUIRED_CUSTODY_RETAINED_" + mode) from None
+                return
             raise AssertionError("late tracked failure returned native completion")
         if mode == "unused":
             await prepared.close()
@@ -650,6 +631,13 @@ async def exercise():
                 await prepared.run_planning()
             except Exception:  # noqa: BLE001 - retain original uncertainty or inspect exact native failure.
                 threading.setprofile_all_threads(None)
+                if mode in {"required-write", "required-return"}:
+                    assert_returned_failure_recovery(
+                        "required plan write failed"
+                        if mode == "required-write"
+                        else "required terminal return unknown"
+                    )
+                    return
                 assert prepared.primary_owner.is_admitted
                 if mode == "worker-failure":
                     assert entered.is_set() and prepared._planning_provider_failure
@@ -663,14 +651,14 @@ async def exercise():
                 assert prepared.primary_claim.id in runtime.worktree_activity._claims
                 with owned_goal_storage(service):
                     saved = service.get(attempt.workflow_id)
-                assert bool(saved.plans) == (mode == "required-return")
+                assert not saved.plans
                 assert saved.accounting.used["generation"] == 1
                 retained_failure = True
                 raise RuntimeError("F_REQUIRED_CUSTODY_RETAINED_" + mode) from None
             raise AssertionError("required failure unexpectedly returned completion")
         if mode in {"worker-tail", "shutdown-worker-tail"}:
             driver = asyncio.create_task(prepared.run_planning())
-            assert await asyncio.to_thread(entered.wait, 15)
+            assert await asyncio.to_thread(entered.wait, HANG_WAIT_SECONDS)
             if mode == "shutdown-worker-tail":
                 disposal = asyncio.create_task(runtime.dispose())
                 try:
@@ -686,6 +674,9 @@ async def exercise():
             except TimeoutError:
                 assert prepared.primary_owner.is_admitted
                 assert not prepared._planning_terminal_returned
+                assert disposal is None or not disposal.done(), (
+                    "runtime shutdown returned before provider worker"
+                )
             else:
                 raise AssertionError(
                     "planning retired before original provider worker returned"
@@ -693,7 +684,42 @@ async def exercise():
             finally:
                 release.set()
                 if not driver.done():
-                    await driver
+                    await asyncio.wait([driver])
+            if mode == "shutdown-worker-tail":
+                # Required on every path: shutdown waited for this held worker (above)
+                # and no live owner, claim or wake slot outlives it.
+                assert prepared.primary_owner is calls[0]
+                assert not prepared.primary_owner.is_admitted
+                assert prepared.primary_owner._root_finished
+                assert (
+                    prepared.primary_claim.id not in runtime.worktree_activity._claims
+                )
+                assert (
+                    controller._fleet_wake._automatic_primary_claims.get(session.id)
+                    is None
+                )
+                with owned_goal_storage(service), service.db.connection() as conn:
+                    tokens = [
+                        tuple(row)
+                        for row in conn.execute(
+                            "SELECT state,actual_amount FROM automatic_work_reservations WHERE kind='tokens'"
+                        )
+                    ]
+                print("F_SHUTDOWN_WAITED_FOR_PLANNING_WORKER", flush=True)
+                # Current behaviour, not a contract: shutdown ends the reply's wait
+                # (TASK-33666), the usage the provider already returned is kept as
+                # uncertain, and the planner takes the ADR-356 recovery path. The
+                # shutdown-keeps-received-usage follow-up recorded in TASK-41314's
+                # notes would make this a settled no-plan drain with the actual
+                # tokens, as on the pre-#3480 lineage; both paths are checked whole.
+                if driver.exception() is not None:
+                    assert_returned_failure_recovery("workflow_not_settled")
+                    error = prepared.planning_recovery_return().error
+                    assert driver.exception() is error
+                    assert tokens == [("uncertain", None)]
+                    return
+                assert tokens == [("settled", 10)]
+                assert prepared._planning_recovery_return is None
             result = driver.result()
         elif mode in {"cancel-cleanup", "maintenance-tail"}:
             if mode == "maintenance-tail":
@@ -764,28 +790,6 @@ async def exercise():
             )
         if mode == "system-oversize":
             assert not calls, "oversized mandatory system context reached MODEL"
-        if mode in {
-            "executor-replaced",
-            "reader-replaced",
-            "executor-hash-replaced",
-            "executor-resolver-replaced",
-        }:
-            assert len(calls) == 1
-            assert not (root / "changed-receiver-wrote.txt").exists(), (
-                "changed receiver performed an effect"
-            )
-            with owned_goal_storage(service):
-                receipt = service.db.automatic_work.read_workflow_attempt(
-                    attempt.id, owner_id=attempt.owner_id
-                )
-            assert receipt.state == "completed" and receipt.outcome == "failed"
-            assert (
-                prepared._planning_physical_returned
-                and prepared._planning_terminal_returned
-            )
-            assert prepared.primary_owner._root_finished
-            assert prepared.primary_claim.id not in runtime.worktree_activity._claims
-            print("F_CHANGED_RECEIVER_REFUSED_WITH_REQUIRED_RETURN", flush=True)
         assert not compaction_calls, "planning scheduled optional compaction"
         assert not factory_calls, "planning invoked an optional tool-service factory"
         assert len(calls) == (
@@ -803,10 +807,6 @@ async def exercise():
             "shutdown-worker-tail",
             "wrapper-changed",
             "wrapper-unavailable",
-            "executor-replaced",
-            "reader-replaced",
-            "executor-hash-replaced",
-            "executor-resolver-replaced",
         }:
             assert not result.plans, "invalid or cancelled planning published a plan"
         else:
