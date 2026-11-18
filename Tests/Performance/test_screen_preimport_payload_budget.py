@@ -219,7 +219,7 @@ MAX_SINGLE_ROUTE_ADDED_LOC = 135_111
 #: that uses it, so it adds one module, not two. The review service a first
 #: send also imported stays out: an ordinary turn no longer loads it.
 #: 2026-11-18 (TASK-41533): this census reads 94 again, with no raise, but
-#: the live warm-up is larger than at the last pin. Two changes went over it.
+#: the live warm-up's makeup changed since the last pin. Two changes went over it.
 #: ``RAG_Search.scope_evidence`` (TASK-36947.3) stays listed, because a first
 #: Automatic send's evidence capture imports it on the UI loop. TASK-41319
 #: took ``Chat.console_ordinary_tree`` and the ``Agents.ordinary_tree`` and
@@ -236,11 +236,15 @@ MAX_SINGLE_ROUTE_ADDED_LOC = 135_111
 #:   and ``Workspaces.worktree_activity`` (imported where
 #:   console_ordinary_tree uses it). A live app holds all three at UI-ready
 #:   anyway, so moving them changes nothing at run time.
-#: Live, the native warm-up loads two modules more than at the last pin
-#: (91 against 89, review r16cs-rev1), and about 3,600 more lines: the four
-#: kept modules add about 4,000 and the two real sheds remove about 380.
-#: Boot plus warm-up together is one module lower, because the
-#: ordinary-tree trio left the pre-ready path.
+#: Live, measured from a warm boot after a 3 s settle and the screen-route
+#: walk (where the real warm-up starts), the native warm-up loads 78 modules,
+#: as it did at the last pin (1fabd2a7ff, also 78). The trio adds 3. Two come
+#: off with the served-mode sheds, and one more with ``MCP.console_snapshot``,
+#: which TASK-41308 made resident at UI-ready. It loads about 860 more lines:
+#: the trio adds 2,610, the sheds remove 382 and console_snapshot 1,372.
+#: Counted right at ``_ui_ready`` with no settle, the same tree read 80 and 93
+#: in two runs, so that count is not comparable from one run to the next.
+#: Review r16cs-rev1's 91 against 89 may have been counted this way.
 MAX_FIRST_SEND_WARMUP_ADDED_MODULES = 94
 
 _CENSUS_SCRIPT = """
