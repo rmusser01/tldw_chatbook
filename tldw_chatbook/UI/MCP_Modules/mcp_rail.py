@@ -232,6 +232,9 @@ class MCPRail(RecomposeCaptureGuard, Vertical):
         color: $text-muted;
         padding: 0 1;
     }
+    #mcp-rail-console-warning {
+        padding: 0 1;
+    }
     """
 
     class SourceChanged(Message, namespace="mcp_rail"):
@@ -260,10 +263,12 @@ class MCPRail(RecomposeCaptureGuard, Vertical):
         scope_value: str,
         scope_ref_options: list[tuple[str, str]],
         scope_ref_value: str | None,
+        console_mcp_off_reason: str = "",
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.source = source
+        self.console_mcp_off_reason = console_mcp_off_reason
         self.snapshots = snapshots
         self.selected_server_key = selected_server_key
         self.scope_options = scope_options
@@ -412,6 +417,15 @@ class MCPRail(RecomposeCaptureGuard, Vertical):
         source_select._mcp_mount_echo_value = source_value
         yield source_select
         yield Static("Servers", classes="destination-section mcp-rail-heading")
+        # TASK-41630: servers added here never reach Console while its MCP
+        # store is unbound; say so with the Inspector row's reason.
+        if self.console_mcp_off_reason:
+            yield Static(
+                f"Console: MCP off · {self.console_mcp_off_reason}",
+                id="mcp-rail-console-warning",
+                classes="mcp-status-warning",
+                markup=False,
+            )
         # task-2243: decode the rows' state glyphs inline, right under the
         # heading, instead of leaving the decode to the dim bottom-of-
         # canvas Servers-mode legend -- present states only, so the line

@@ -2460,8 +2460,10 @@ servers are configured but unreachable. MCP tool calls go through the same
 When Console cannot use the profile's MCP settings file
 (`local_mcp_store.json`), a Send carries no MCP tools, neither your servers'
 nor chatbook's own, and the **MCP** row reads "off · this profile's MCP
-settings file can't be used here" from the moment Console opens. The model
-is not told why; it only sees that no MCP tools were offered. Your servers
+settings file can't be used here" from the moment Console opens. The
+**Live work sources** card's MCP row reads "Off - this profile's MCP settings
+file can't be used here", and the MCP hub's rail (Settings ▸ Tools & MCP) shows
+the same reason under **Servers**. The model is not told why; it only sees that no MCP tools were offered. Your servers
 stay configured in Settings ▸ Tools & MCP. Console uses only the file the
 loaded config.toml selects, `<[paths] data_dir>/<[general] users_name>/local_mcp_store.json`
 (the default data folder when `data_dir` is unset). If the row appears, check

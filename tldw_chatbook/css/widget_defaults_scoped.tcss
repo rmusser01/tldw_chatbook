@@ -519,6 +519,9 @@ MCPRail #mcp-rail-state-legend {
     color: $text-muted;
     padding: 0 1;
 }
+MCPRail #mcp-rail-console-warning {
+    padding: 0 1;
+}
 
 /* ===== WIDGET: MCPServersMode (UI/MCP_Modules/mcp_servers_mode.py) ===== */
 
