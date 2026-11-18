@@ -63,7 +63,6 @@ _notes_sync_runtime_lazy_start_task
 _notes_sync_runtime_owner
 _parakeet_source_service
 _personal_context_service
-_plugin_service
 _project_index_closed
 _project_index_service
 _project_skills_offer_active

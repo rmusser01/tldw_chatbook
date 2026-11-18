@@ -275,6 +275,10 @@ def test_stock_builtin_loader_is_exact_partial_and_reads_current_config(
         store_dir=tmp_path / "stock-loader", builtin_disabled_loader=loader
     )
     monkeypatch.setattr(case.app, "local_skills_service", local, raising=False)
+    # The app registered this loader when it built its skills stack.
+    monkeypatch.setattr(
+        case.app, "_local_skills_callbacks", (None, None, loader), raising=False
+    )
     assert standard_console_configuration_sources(
         case.app,
         case.store,
@@ -323,6 +327,11 @@ def test_custom_builtin_loader_does_not_borrow_stock_provenance(
         store_dir=tmp_path / kind, builtin_disabled_loader=loader
     )
     monkeypatch.setattr(case.app, "local_skills_service", local, raising=False)
+    # The app registered a stock loader; the injected one is not it.
+    registered = partial(wiring._read_app_disabled_builtin_skills, case.app)
+    monkeypatch.setattr(
+        case.app, "_local_skills_callbacks", (None, None, registered), raising=False
+    )
     assert not standard_console_configuration_sources(
         case.app,
         case.store,
@@ -351,7 +360,11 @@ def test_exact_stock_cold_plugin_factory_is_not_called_for_published_read(
 
     case = runtime_case
     monkeypatch.setattr(case.app, "_plugin_service", None, raising=False)
-    factory = MethodType(wiring._STOCK_PLUGIN_SERVICE_FACTORY[0], case.app)
+    factory = MethodType(wiring.ServiceWiringMixin._build_plugin_service, case.app)
+    # The app registered this factory when it built its skills stack.
+    monkeypatch.setattr(
+        case.app, "_local_skills_callbacks", (None, factory, None), raising=False
+    )
     local = LocalSkillsService(
         store_dir=tmp_path / "cold-plugin", plugin_service_factory=factory
     )
@@ -389,12 +402,14 @@ def test_published_plugin_read_preserves_exact_app_or_local_facade(
         else None
     )
     monkeypatch.setattr(case.app, "_plugin_service", published, raising=False)
+    factory = MethodType(wiring.ServiceWiringMixin._build_plugin_service, case.app)
+    monkeypatch.setattr(
+        case.app, "_local_skills_callbacks", (None, factory, None), raising=False
+    )
     local = LocalSkillsService(
         store_dir=tmp_path / "published",
         plugin_service=existing,
-        plugin_service_factory=MethodType(
-            wiring._STOCK_PLUGIN_SERVICE_FACTORY[0], case.app
-        ),
+        plugin_service_factory=factory,
     )
     assert _ready_published_plugin(local, case.app) is (
         existing if local_ready else published
@@ -446,9 +461,12 @@ def test_sync_custom_plugin_source_keeps_original_getter_and_loop_affinity(
             LocalSkillsService, "plugin_service", property(original_dynamic_source)
         )
     monkeypatch.setattr(case.app, "local_skills_service", local, raising=False)
-    assert not standard_console_configuration_sources(
+    # An unregistered factory is refused before it runs. A replaced class
+    # getter is not inspected (ADR-356 rule 4): the ready slot decides.
+    assert standard_console_configuration_sources(
         case.app, case.store, case.controller, session_id=case.session.id
-    )
+    ) is (replacement == "getter")
+    assert calls == []
     captured = capture_skill_context_maximum(case.app)
     assert [row["name"] for row in captured["available_skills"]] == ["custom-retained"]
     assert calls == [threading.get_ident()]

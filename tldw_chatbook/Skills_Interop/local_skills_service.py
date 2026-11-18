@@ -2996,14 +2996,6 @@ class LocalSkillsService:
         return result
 
 
-# Defining getter identity, used only for resident Console source classification.
-_STOCK_PLUGIN_SERVICE_PROPERTY = (
-    LocalSkillsService.plugin_service,
-    LocalSkillsService.plugin_service.fget,
-    LocalSkillsService.plugin_service.fget.__code__,
-)
-
-
 # Defining callbacks for checked stock Console preparation; no IO.
 from types import FunctionType as _SkillFunctionType
 

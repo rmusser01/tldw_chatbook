@@ -199,7 +199,7 @@ async def exercise():
         monitor._pin(ThreadPoolExecutor.submit)
         monitor._pin(factory)
         assert factory.__globals__ is vars(skill_wiring)
-        assert factory.__code__ is wiring._CONSOLE_SKILL_TRUST_FACTORY_CODE
+        assert factory is vars(app)["_local_skills_callbacks"][0]
         assert (
             factory.__code__.co_freevars == ("self",)
             and factory.__closure__[0].cell_contents is app

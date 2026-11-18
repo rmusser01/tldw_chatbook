@@ -60,7 +60,7 @@ async def exercise():
     assert wiring._skill_wiring is skill_wiring and skill_wiring._source_wiring is wiring
     assert '_skill_foreign_calls' not in vars(skill_wiring)
     skill_method_names = ('_build_local_skill_trust_service', '_build_local_skills_stack', 'ensure_local_skill_trust_service')
-    skill_helper_names = ('_console_skill_metadata_current', '_console_skill_source_current', '_capture_console_skill_trust_source', '_capture_console_skill_trust_preparation', '_prepare_console_skill_trust_service')
+    skill_helper_names = ('_console_skill_source_current', '_capture_console_skill_trust_source', '_capture_console_skill_trust_preparation', '_prepare_console_skill_trust_service')
     for name in skill_method_names:
         function = vars(skill_wiring.SkillServiceWiringMixin)[name]
         assert type(function) is FunctionType
@@ -490,14 +490,19 @@ async def exercise():
             assert late == {} and future.running() and not future.done()
             assert captured_reads[0] in runtime._preparation_reads
             facts['original_close_refuses_late_context_and_retains_exact_read'] = True
-        if case == 'helper_binding':
-            mutation = (wiring, '_console_skill_metadata_current', wiring._console_skill_metadata_current)
-            wiring._console_skill_metadata_current = foreign_helper
-        elif case in {'helper_body', 'metadata_body'}:
-            target = wiring._console_skill_source_current if case == 'helper_body' else metadata._plain_fields
-            mutation = (target, '__code__', target.__code__)
-            assert target.__closure__ is None and foreign_helper.__closure__ is None
-            target.__code__ = foreign_helper.__code__
+        # TASK-41319 (ADR-356 rule 4): these three cases kept their node ids
+        # (the CI lane selects them by id) but now change current state, not a
+        # helper's identity: the app's local-skills slot, its scope slot, and
+        # the local service's trust factory (a foreign factory that must never
+        # run). A wrapped helper is accepted now; the wrapped-collaborator
+        # Send test pins that.
+        if case in {'helper_binding', 'helper_body'}:
+            name = '_local_skills_service' if case == 'helper_binding' else '_skills_scope_service'
+            mutation = (app, name, vars(app)[name])
+            vars(app)[name] = object()
+        elif case == 'metadata_body':
+            mutation = (local, '_trust_service_factory', vars(local)['_trust_service_factory'])
+            vars(local)['_trust_service_factory'] = foreign_helper
         if case == 'shutdown':
             control_task = asyncio.create_task(app._shutdown_console_runtime())
             await asyncio.sleep(0)
@@ -592,7 +597,7 @@ async def exercise():
             monitor.slots.extend(((skill_wiring, name, function), (wiring, name, function)))
         factory = vars(local)['_trust_service_factory']
         assert type(factory) is FunctionType and factory.__globals__ is vars(skill_wiring)
-        assert factory.__code__ is wiring._CONSOLE_SKILL_TRUST_FACTORY_CODE
+        assert factory is vars(app)['_local_skills_callbacks'][0]
         assert factory.__defaults__ is factory.__kwdefaults__ is None
         assert factory.__code__.co_freevars == ('self',) and len(factory.__closure__) == 1
         assert factory.__closure__[0].cell_contents is app

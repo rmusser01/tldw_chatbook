@@ -247,20 +247,6 @@ class ConsoleLibraryPolicyRepository:
         )
 
 
-from . import console_library_policy as _ordinary_policy_source
-from .console_ordinary_tree import _function_record as _ordinary_function_record
-
-_NATIVE_FIRST_LIBRARY_REPOSITORY = (
-    ConsoleLibraryPolicyRepository,
-    _ordinary_function_record(ConsoleLibraryPolicyRepository.read),
-    _ordinary_function_record(ConsoleLibraryPolicyRepository._result_from_row),
-    _ordinary_function_record(normalize_policy_read),
-    _ordinary_function_record(_ordinary_policy_source._is_valid_durable_policy),
-    _POLICY_SELECT,
-    CharactersRAGDB,
-    ConsoleConversationLibraryPolicy,
-    ConsoleLibraryPolicyReadResult,
-    _ordinary_policy_source.ConsoleLibraryPolicySnapshot,
-    ConsoleAutoRetrieve,
-    ConsoleAssistantLibraryAccess,
-)
+# The first durable policy's repository and database types (Console Send
+# preparation and workflow planning check the live repository against them).
+_NATIVE_FIRST_LIBRARY_REPOSITORY = (ConsoleLibraryPolicyRepository, CharactersRAGDB)
