@@ -4,7 +4,7 @@ title: "Custom OpenAI API 2 reports ready without a key, but its handler require
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-18 03:21'
+updated_date: '2026-11-18 04:09'
 created_date: 2026-11-17 05:27
 labels:
 - follow-up
@@ -43,7 +43,7 @@ Found in endpoint fix r1 (round 15). Readiness says Custom OpenAI API 2 is ready
 
 Checked at base 45b1949ca3, after TASK-41143 and TASK-41145: readiness reads `custom_2` as a keyless provider (`custom_2` is in `KEYLESS_PROVIDER_KEYS`, so a slot with no key is Ready with no key). `chat_with_custom_openai_2` read its key only from the legacy `[API] custom_openai2_api_key` (`load_settings`' `custom_openai_api_2.api_key`) and raised "custom_openai_api_2 API Key required." when that was unset and the caller had not resolved the key. Console passes `api_key_resolved=True` and was unaffected; Dreams (`readiness.api_key`, None) and ingest analysis (`resolution.api_key`, None) were not. Custom OpenAI API (1) already resolves its key from its slot with readiness's own `resolve_provider_credential` and sends keyless, so it agrees with readiness and needed no change.
 
-**Fix** (`chat_with_custom_openai_2`): a key the caller passes or resolved wins, as before. Otherwise the key comes from `[api_settings.custom_2]` through `resolve_provider_credential("custom_2", ...)`, the resolver readiness and Custom 1 use (a recorded `credential_source`, else the stored key, else the variable `api_key_env_var` names). The legacy `[API] custom_openai2_api_key` stays the fallback, but only while the slot records no credential decision, so an explicit "none" or "stored" never brings it back. With no key from any of these, the send is keyless. The missing-key refusal is gone. No setting was added.
+**Fix** (`chat_with_custom_openai_2`): a key the caller passes or resolved wins, as before. Otherwise the key comes from `[api_settings.custom_2]` through `resolve_provider_credential("custom_2", ...)`, the resolver readiness and Custom 1 use (a recorded `credential_source`, else the stored key, else the variable `api_key_env_var` names). The legacy `[API] custom_openai2_api_key` stays the fallback, but only while the slot records no credential decision, so an explicit "none" or "stored" never brings it back. Only non-Console sends (Dreams, ingest analysis) can reach it: Console always passes readiness's key with `api_key_resolved=True`, and readiness never reads the legacy key, so Settings shows no key and Console sends keyless for a config that sets only the legacy key. With no key from any of these, the send is keyless. The missing-key refusal is gone. No setting was added.
 
 Decision: the legacy key is kept as a fallback (not dropped as Custom 1 drops its own) by analogy with the owner's TASK-41145 ruling that kept the legacy `api_ip`; a config that set only that key keeps sending it from Dreams and ingest. For the keyless config the task is about, both slots now behave the same.
 
@@ -54,7 +54,7 @@ Decision: the legacy key is kept as a fallback (not dropped as Custom 1 drops it
 
 Not changed, proposed as follow-ups: (a) with the slot's stored key still `enc:` ciphertext, readiness blocks ("still encrypted") while both Custom handlers send keyless, and Dreams sends without checking `readiness.ready` (ingest analysis checks it); fixing it is the same code in both handlers, but it is a locked-key question, not the needs-a-key one this task is about. (b) Readiness never reads the legacy `[API] custom_openai2_api_key`, so with only that key set readiness reports no key while Dreams and ingest spend it (pre-existing; the old handler read only that key).
 
-Docs: `Docs/Architecture/llm-providers.md` (Credential precedence: a Custom OpenAI API 1 and 2 row), `Docs/User_Guide/settings.md` (Custom 2's key).
+Docs: `Docs/Architecture/llm-providers.md` (Credential precedence: a Custom OpenAI API 1 and 2 row), `Docs/User_Guide/settings.md` (Custom 2's key). Review r16ky-rev1 (Minor 1): the User Guide paragraph said the older key "is still read" without saying by what; it and the precedence row now say only non-Console sends (Dreams, import analysis) read it, and that Settings and Console do not see it.
 
 Files: `tldw_chatbook/LLM_Calls/LLM_API_Calls_Local.py`, `Tests/Chat/test_local_server_discovery.py`, `Tests/Chat/test_encrypted_api_key_never_sent.py`, the two docs.
 

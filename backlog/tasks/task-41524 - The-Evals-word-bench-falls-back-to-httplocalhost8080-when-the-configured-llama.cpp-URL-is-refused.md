@@ -4,7 +4,7 @@ title: "The Evals word bench falls back to http://localhost:8080 when the config
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-18 03:21'
+updated_date: '2026-11-18 04:09'
 created_date: 2026-11-17 05:27
 labels:
 - follow-up
@@ -49,4 +49,6 @@ Checked at base 45b1949ca3: `sample_bench._default_client_factory` used `configu
 - Every test file that uses `sample_bench` (`Tests/Evals/test_evals_screen_worker_diagnostics.py`, `Tests/Evals/word_bench/test_run_existing_bench.py`, `test_runner.py`, and `Tests/UI/test_evals_authoring_e2e.py`, `_bench_editor.py`, `_cell_continuation_e2e.py`, `_continuation_e2e.py`, `_empty_states.py`, `_screen.py`, `_steering_e2e.py`). These UI files are contention-sensitive here: at load 60-100 one command over all ten failed 59 and 92 nodes at this branch and 14 with base sources. Every failure was a timing one (`NoMatches` right after a `select()` and one pause, "condition never became true") or the local `RecoveryRequired` trap. Controls: `test_evals_bench_editor.py` alone failed 5 with each source set at load 40-49; `test_evals_screen.py` + `test_evals_empty_states.py` failed 36 here and 10 at base back to back at load ~55, and **203 passed, 0 failed** here at load ~27 (so no node fails in every run at this branch); the remaining eight files at load ~23: 9 failed, 8 of them failing with base sources too (`RecoveryRequired`, the harness's `EvalsScreen._nodes`), the ninth (`test_add_from_picker_stages_a_row_and_save_persists_it`) passing 3 of 3 alone, as did 4 sample-bench and selection tests run alone 3 times.
 - `./scripts/preflight.sh` passed; the module and screen size ratchets passed (235, serial).
 
-Files: `tldw_chatbook/UI/Evals/sample_bench.py`, `Tests/Chat/test_local_server_discovery.py`. No User Guide page describes the bench's endpoint (checked `Docs/User_Guide/lab.md`).
+**Review r16ky-rev1 (Minor 2).** `Tests/UI/test_evals_empty_states.py::test_create_and_run_sample_bench_raises_when_no_target_available` called the sample bench with `{}` and no client factory, so after this change it passed on the endpoint refusal and never reached the "No configured target is available" guard. It now passes a fake client factory and matches the guard's message. With the guard temporarily removed it failed (`AttributeError: 'NoneType' object has no attribute 'get'`); with the guard restored it passes, and the file passed 109 of 109 (`-n 4`, load ~43; a first run at load ~55 failed two selection-timing nodes that passed 2 of 2 alone).
+
+Files: `tldw_chatbook/UI/Evals/sample_bench.py`, `Tests/Chat/test_local_server_discovery.py`, `Tests/UI/test_evals_empty_states.py`. No User Guide page describes the bench's endpoint (checked `Docs/User_Guide/lab.md`).
