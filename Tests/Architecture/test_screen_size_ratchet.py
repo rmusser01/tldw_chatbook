@@ -895,7 +895,8 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # `_restore_library_media_scope`,
     # `_valid_library_media_trash_delete_ack`), its own 4-line function-local
     # import of the controller class, since a static delegator forwards to the
-    # CLASS and the class is deliberately NOT a module-level name here);
+    # CLASS and the class is deliberately NOT a module-level name here;
+    # TASK-36952.3.8 pruned the two Trash ones once nothing called them);
     # -12 for four module-level constants relocated verbatim (with their
     # comments) to `Library_Modules/screen_constants.py`, because moved bodies
     # read them as bare module globals (`_MEDIA_VIEW_LIST`,
@@ -1403,7 +1404,9 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-11-15, TASK-36952.3.1 rebased onto dev cc6006fcf5 (dev's row
     #: 38188 lines, 1377 methods): the same -709 lines and -8 methods,
     #: measured 37479 lines, 1369 methods.
-    #: 2026-11-18 (rb5): the media series is rebased onto dev 45b1949ca3, so the slices' figures above predate dev's TASK-41129 lines; the row is re-measured per slice.
+    #: 2026-11-18 (rb5): the media series is rebased onto dev 45b1949ca3,
+    #: so the slices' figures above and below predate dev's TASK-41129
+    #: lines; the row is re-measured per slice.
     #: 2026-11-15, TASK-36952.3.2 (architecture review F2, media body move
     #: slice 2 of 8): 24 media bodies (the ADR-055 mutation interlock, bulk
     #: and single-item delete, Undo, the selection export, the edit save)
@@ -1479,7 +1482,36 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: binding kwargs arrived (-20), and ``ascii_glyph_mode``, imported only
     #: for those bodies, went with them (-1): 33780 -> 32912 lines,
     #: 1330 -> 1324 methods (measured with ``_measure``).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32996, 1326),
+    #: 2026-11-17, TASK-36952.3.8 (architecture review F2, media series
+    #: cleanup slice 8 of 8), commit 1 of 2: ``_sanitize_media_field``'s body
+    #: moved to ``LibraryMediaController`` behind a static delegator (ruling
+    #: R3, 28 -> 9 lines, -19) and its callback kwarg left the controller
+    #: call (-3): 32912 -> 32890 lines, 1324 methods (measured with
+    #: ``_measure``).
+    #: Commit 2 of 2 (ruling R4, the typed host): 30 media delegators nothing
+    #: reached through the screen any more were pruned, the two dead Trash
+    #: statics among them (-157, -30 methods); the
+    #: ``_library_source_total`` shell helper the media controller's
+    #: unfiltered total now calls arrived (+22, +1 method); the three Notes
+    #: getter kwargs left and the stage-pick getter, ``_land_stage_pick`` and
+    #: ``_library_source_total`` kwargs arrived (0); a comment at the
+    #: ``resolve_ingest_analysis_provider`` import (+2): 32890 -> 32757 lines,
+    #: 1324 -> 1295 methods (measured with ``_measure``).
+    #: Fix round 1 (review M1): 8 more media delegators nothing reached
+    #: through the screen, found once the census counted every kind of fake
+    #: attribute the same way, were pruned (-44, -8 methods): 32757 -> 32713
+    #: lines, 1295 -> 1287 methods (measured with ``_measure``).
+    #: Rebased onto dev 45b1949ca3 (rb5): measured 32797 lines, 1289 methods.
+    #: Fix round 2 (re-review N1): 2 more media delegators
+    #: (``_claim_library_media_mutation``,
+    #: ``_reset_library_media_reader_to_no_selection``) whose only string
+    #: references are on the controller (a ``monkeypatch.setattr`` on it, a
+    #: substring check against its methods' source) were pruned (-13, -2
+    #: methods): 32797 -> 32784 lines, 1289 -> 1287 methods (measured with
+    #: ``_measure``).
+    #: Review r2: the prune's orphaned ``Coroutine`` import is dropped:
+    #: 32784 -> 32783 lines (measured with ``_measure``).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32783, 1287),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard
@@ -1627,7 +1659,13 @@ def test_budget_is_not_left_slack_after_a_wave(rel_path: str) -> None:
 #: TASK-36952.3.7 lowered it to 398: the media controller lost 11 callbacks
 #: whose bodies it now owns, and gained 5 shell-helper callbacks, 1 getter and
 #: 1 setter (`_review_dismiss_undo_in_flight`).
-_LIBRARY_INIT_LAMBDAS = 398
+#: TASK-36952.3.8 lowered it to 397: the media controller lost its last
+#: media-named callback, `_sanitize_media_field` (ruling R3). Its typed-host
+#: commit (ruling R4) holds it at 397: the three Notes getters collapsed onto
+#: the bound `_notes_state` (-3), and the direct screen reaches became the
+#: `_library_stage_pick_landing` getter and the `_land_stage_pick` and
+#: `_library_source_total` callbacks (+3).
+_LIBRARY_INIT_LAMBDAS = 397
 #: Measured at dev 26b2e677dd by `_unbound_class_calls` over Tests/**/*.py:
 #: 724 in 59 files. TASK-36952.2 lowered it to 722 (still 59 files): the two
 #: `LibraryScreen.handle_library_media_reader_more(fake, ...)` calls now call

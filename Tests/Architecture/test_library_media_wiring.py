@@ -62,9 +62,11 @@ the zero-reference set would make that set's stated criterion false.
 """
 from __future__ import annotations
 
+import ast
 import dataclasses
 import inspect
 import re
+from pathlib import Path
 
 import pytest
 
@@ -73,6 +75,12 @@ from tldw_chatbook.UI.Library_Modules.library_media_state import (
     LibraryMediaState,
     media_state_shim_attr,
 )
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_MEDIA_CONTROLLER_PATH = (
+    _REPO_ROOT / "tldw_chatbook/UI/Library_Modules/library_media_controller.py"
+)
+_LIBRARY_SCREEN_PATH = _REPO_ROOT / "tldw_chatbook/UI/Screens/library_screen.py"
 
 #: The ownership census's own MOVE count (recipe §2 script, substring
 #: "media" over every ``__init__``-stored attribute of ``LibraryScreen``,
@@ -600,6 +608,10 @@ _MEDIA_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
     "handle_library_media_rail_return",
     "handle_library_media_review_dismiss_receipt_close",
     "handle_library_media_review_dismiss_undo",
+    # TASK-36952.3.8 (2026-11-17): ruling R3 -- the shared field sanitizer the
+    # Prompts, Skills and Notes clusters also call; its screen name stays as a
+    # static delegator, so their bindings are unchanged.
+    "_sanitize_media_field",
 )
 
 #: The names above that are ``@staticmethod`` on ``LibraryScreen``. Their
@@ -613,17 +625,28 @@ _MEDIA_CLUSTER_STATICMETHOD_NAMES: frozenset[str] = frozenset(
         "_valid_library_media_trash_delete_ack",
         # TASK-36952.3.4: moved with the Trash restore; its delegator is pruned.
         "_validated_library_media_trash_restore_summary",
+        # TASK-36952.3.8: ruling R3's shared sanitizer.
+        "_sanitize_media_field",
     }
 )
 
-#: Filled in by this series' own cleanup task (task 3, media series 3/3):
-#: the moved names whose screen delegator has ZERO references outside its
-#: own body anywhere in the repo, across all four census spellings
-#: (attribute, quoted-string, bare-assignment, patch-target table). Empty
-#: at the controller PR, exactly as every prior series' own wiring test
-#: carried it between its task 2 and task 3.
+#: The moved names whose screen delegator nothing reaches through a screen
+#: or ``LibraryScreen``. Every remaining reference to such a name is the
+#: controller's own ``self.<name>``, a ``*_media_controller`` /
+#: ``LibraryMediaController`` receiver (a ``monkeypatch.setattr`` or
+#: ``getattr`` string on one, and a substring check against a controller
+#: method's source, count as such), a fake's own attribute (a
+#: ``SimpleNamespace(<name>=...)`` keyword, an attribute assigned on a fake,
+#: or a ``def`` on a fake class), a pin in this file, or prose. Census roots:
+#: ``tldw_chatbook/``, ``Tests/``, ``scripts/``, ``Helper_Scripts/`` and
+#: ``Docs/``. TASK-36952.3.1-3.8 pruned by this rule.
 #:
-#: **22 of the 140**, from an ``ast``-based census (never a call-shaped
+#: History: wave-7 task 3 (the media series' own cleanup, 3/3) applied the
+#: stricter rule of ZERO references outside the delegator's own body, across
+#: all four census spellings (attribute, quoted-string, bare-assignment,
+#: patch-target table); the set was empty at the controller PR, as every
+#: prior series' own wiring test carried it between its task 2 and task 3.
+#: That task pruned **22 of the 140**, from an ``ast``-based census (never a call-shaped
 #: regex -- a bare callable passed as an argument is an ``ast.Attribute``
 #: too, and the prompts series lost three names to exactly that blind spot)
 #: over ``tldw_chatbook/`` + every ``Tests/`` root + ``Docs/`` + ``scripts/``
@@ -720,6 +743,60 @@ _MEDIA_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
         "_resolve_library_media_settlement_target",
         "_sync_library_media_rail_return",
         "_sync_library_media_surfaces_or_recompose",
+        # TASK-36952.3.8 (the cleanup slice): 30 delegators the earlier slices
+        # left with no caller through the screen. Every remaining reach is the
+        # controller's own ``self.<name>``, a ``screen._media_controller`` /
+        # ``LibraryMediaController`` receiver, or a fake's own attribute
+        # (receiver-aware ast census over tldw_chatbook/, Tests/, scripts/ and
+        # Helper_Scripts/, plus the f-string sweep). Includes the two Trash
+        # statics the 3.4 review found dead. Fix round 1 re-ran the census with
+        # Docs/ added and the fake rule applied consistently; it found the 8
+        # at the end of this block.
+        "_adopt_library_media_row_owner",
+        "_advance_library_media_content_match",
+        "_advance_library_media_presentation_epoch",
+        "_apply_library_media_active_surface",
+        "_bind_library_media_settlement_deadline",
+        "_bounded_library_media_trash_title",
+        "_cache_library_media_preview",
+        "_cancel_library_media_trash_delete_confirmation",
+        "_capture_library_media_trash_return",
+        "_expire_library_media_return_settlement",
+        "_fetch_library_media_highlights",
+        "_focus_library_media_content_search_input",
+        "_focus_library_media_page_control",
+        "_focus_library_media_trash_after_paint",
+        "_focus_library_media_trash_entry",
+        "_focus_library_media_trash_intent",
+        "_library_media_live_focus_is_allowed",
+        "_library_media_reader_target_id",
+        "_library_media_request_matches_current_authority",
+        "_load_library_media_list_if_needed",
+        "_patch_local_media_record",
+        "_recompose_library_media_detail_if_unrendered",
+        "_request_library_media_page",
+        "_request_library_media_trash_page",
+        "_schedule_library_media_image_preview",
+        "_scroll_library_media_content_to_line",
+        "_selected_media_handoff_payload",
+        "_set_library_media_content_mode",
+        "_start_library_media_read_later_toggle",
+        "_valid_library_media_trash_delete_ack",
+        # TASK-36952.3.8 fix round 1: 8 more by the same rule.
+        "_complete_library_media_mutation",
+        "_fetch_library_media_analysis_detail",
+        "_focus_library_media_items_pane",
+        "_library_media_mutation_summary",
+        "_notify_library_media_delete_warning",
+        "_request_library_media_filter",
+        "_required_library_media_backing_id",
+        "_sync_library_media_viewer_mutation_gate",
+        # TASK-36952.3.8 fix round 2: 2 more, once a string that names the
+        # delegator on a controller receiver (a ``monkeypatch.setattr`` on the
+        # controller, a substring check against a controller method's source)
+        # counted as a controller reference, as the header says.
+        "_claim_library_media_mutation",
+        "_reset_library_media_reader_to_no_selection",
     }
 )
 
@@ -819,7 +896,7 @@ _MEDIA_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     # TASK-36952.3.6: `_refresh_library_media_detail` and
     # `_queue_library_media_progress_write`, movers, read it
     "is_attached",
-    # -- shared shell state this cluster READS (getter-only accessors) (15)
+    # -- shared shell state this cluster READS (getter-only accessors) (16)
     "_library_canvas_projection_depth",
     "_library_compose_generation",
     "_library_list_entry_focus_deadline",
@@ -839,18 +916,17 @@ _MEDIA_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     "_notes_state",
     # TASK-36952.3.6: `_refresh_library_media_detail` fences on it
     "_library_snapshot_state_generation",
-    # task-32350 (critique #10 review, finding 10): more screen names are
-    # read by this controller and are deliberately NOT listed --
-    # `_library_loaded`, `_library_lookup_error` and
-    # `_local_source_total_known`, reached through `self._screen` by
-    # `_library_media_unfiltered_total`. They are absent because this census
-    # asserts every listed name is a PROPERTY on the controller, and those
-    # have no accessor: the injection site (`library_screen.py`'s
-    # `LibraryMediaController(...)` call) was outside the branch that needed
-    # them. Recorded here so the list still reads as a complete account of
-    # this controller's reach. (task-32350 also named `_local_source_counts`,
-    # which TASK-36952.3.2 bound above; that method still reads it through
-    # `self._screen`.)
+    # TASK-36952.3.8 (ruling R4): `_sync_library_media_viewer_state` gates the
+    # TASK-38981 stage-pick landing on it, which it read through
+    # `self._screen` until now
+    "_library_stage_pick_landing",
+    # task-32350 (critique #10 review, finding 10) read `_library_loaded`,
+    # `_library_lookup_error`, `_local_source_total_known` and
+    # `_local_source_counts` through `self._screen` in
+    # `_library_media_unfiltered_total`. TASK-36952.3.8 replaced those four
+    # reaches with the named `_library_source_total` shell helper below, and
+    # `test_media_controller_takes_a_typed_host_instead_of_the_screen` now
+    # fails on any screen read that is not a host framework service.
     # -- shared shell state this cluster also WRITES (getter + setter) (7)
     "_library_canvas_resync_pending",
     "_library_list_entry_focus_timer",
@@ -865,7 +941,7 @@ _MEDIA_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     # -- the 2 prior-extracted media WIRING controller instances (2)
     "_library_media_browse_controller",
     "_library_media_trash_browse_controller",
-    # -- general Library-wide shell helpers, named constructor callables (41)
+    # -- general Library-wide shell helpers, named constructor callables (43)
     "_acknowledge_library_destination_change",
     "_active_review_set_banner",
     "_apply_library_open_item_surface",
@@ -912,12 +988,17 @@ _MEDIA_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     "_review_dismiss_undo_worker",
     "_toggle_reviewed_unguarded",
     "action_library_narrow_stage_return",
+    # TASK-36952.3.8 (ruling R4): the two shell helpers that replace the
+    # controller's direct screen reaches (41 -> 43)
+    "_land_stage_pick",
+    "_library_source_total",
     # -- named late-binding callables for the excluded media methods a mover
-    #    still calls (35; TASK-36952.3.1 moved 5 of them here: 30;
+    #    still calls: 35 at wave 7; TASK-36952.3.1 moved 5 of them here: 30;
     #    TASK-36952.3.2 moved 2 more: 28; TASK-36952.3.3 moved 6 more: 22;
     #    TASK-36952.3.4 moved 5 more: 17; TASK-36952.3.5 moved 2 more: 15;
-    #    TASK-36952.3.6 moved 5 more: 10; TASK-36952.3.7 moved 9 more: 1)
-    "_sanitize_media_field",
+    #    TASK-36952.3.6 moved 5 more: 10; TASK-36952.3.7 moved 9 more: 1;
+    #    TASK-36952.3.8 moved the last, ``_sanitize_media_field``, here as a
+    #    staticmethod (ruling R3): 0.
 )
 
 
@@ -958,8 +1039,10 @@ def test_media_cluster_method_names_are_genuinely_media_named() -> None:
     # speaker-rename and review-decoration bodies.
     # 2026-11-17, TASK-36952.3.7: 265 -> 288, the 23 return-settlement,
     # reader-layout, rail-return and review-action bodies.
-    assert len(_MEDIA_CLUSTER_METHOD_NAMES) == 288, (
-        f"expected 288 moved names, got {len(_MEDIA_CLUSTER_METHOD_NAMES)}"
+    # 2026-11-17, TASK-36952.3.8: 288 -> 289, ``_sanitize_media_field``
+    # (ruling R3).
+    assert len(_MEDIA_CLUSTER_METHOD_NAMES) == 289, (
+        f"expected 289 moved names, got {len(_MEDIA_CLUSTER_METHOD_NAMES)}"
     )
     assert len(set(_MEDIA_CLUSTER_METHOD_NAMES)) == len(_MEDIA_CLUSTER_METHOD_NAMES), (
         "duplicate entries in _MEDIA_CLUSTER_METHOD_NAMES"
@@ -1057,9 +1140,14 @@ def test_the_canvas_owned_rows_are_movers_that_landed_on_the_canvas() -> None:
 
 @pytest.mark.unit
 def test_media_cluster_staticmethods_forward_to_the_controller_class() -> None:
-    """The 3 staticmethod names in the cluster forward to the CLASS.
+    """Each cluster staticmethod the screen still offers forwards to the CLASS.
 
-    A ``@staticmethod`` has no ``self`` to reach ``self._media_controller``
+    Five cluster names are staticmethods: two keep a screen delegator
+    (``_restore_library_media_scope``, ``_sanitize_media_field``) and three
+    were pruned (``_bounded_library_media_trash_title``,
+    ``_valid_library_media_trash_delete_ack``,
+    ``_validated_library_media_trash_restore_summary``), which must stay
+    absent. A ``@staticmethod`` has no ``self`` to reach ``self._media_controller``
     through, so its delegator names the module-level controller class
     directly -- the conversations exemplar's own corrected shape (recipe
     §11, "the static-method delegator pattern"), reused unchanged by every
@@ -1149,8 +1237,13 @@ def test_media_controller_binds_every_name_its_moved_bodies_use() -> None:
     # 2026-11-17, TASK-36952.3.7: 87 -> 84. Nine pinned late-binding callbacks
     # became moved methods (-9); five shell helpers and the
     # `_review_dismiss_undo_in_flight` getter and setter were bound (+6).
-    assert len(_MEDIA_CONTROLLER_BOUND_NAMES) == 84, (
-        f"expected 84 bound names, got {len(_MEDIA_CONTROLLER_BOUND_NAMES)}"
+    # 2026-11-17, TASK-36952.3.8: 84 -> 83. The last late-binding callback,
+    # `_sanitize_media_field`, became a staticmethod on the controller (-1).
+    # Then 83 -> 86: the controller's direct screen reaches became named
+    # dependencies, the `_library_stage_pick_landing` getter and the
+    # `_land_stage_pick` and `_library_source_total` shell helpers (+3).
+    assert len(_MEDIA_CONTROLLER_BOUND_NAMES) == 86, (
+        f"expected 86 bound names, got {len(_MEDIA_CONTROLLER_BOUND_NAMES)}"
     )
     assert len(set(_MEDIA_CONTROLLER_BOUND_NAMES)) == len(
         _MEDIA_CONTROLLER_BOUND_NAMES
@@ -1163,4 +1256,193 @@ def test_media_controller_binds_every_name_its_moved_bodies_use() -> None:
     assert not unbound, (
         "moved bodies reference these names, but the controller binds no "
         f"property for them: {unbound!r}"
+    )
+
+
+def _media_host_members() -> set[str]:
+    tree = ast.parse(_MEDIA_CONTROLLER_PATH.read_text(encoding="utf-8"))
+    host = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "LibraryMediaHost"
+    )
+    return {node.name for node in host.body if isinstance(node, ast.FunctionDef)}
+
+
+@pytest.mark.unit
+def test_media_controller_takes_a_typed_host_instead_of_the_screen() -> None:
+    """TASK-36952.3.8, coordinator ruling R4 (parent AC #2).
+
+    The controller's DOM handle is the ``LibraryMediaHost`` Protocol, its
+    module never imports ``LibraryScreen``, and everything it reads through
+    that handle is one of the Protocol's framework services: the shell state
+    and shell helpers it needs are named constructor dependencies. The handle
+    is also the identity the four ``<widget>.ancestors`` checks test, so a
+    bare ``self._screen`` may appear only in an ``in``/``not in`` test.
+    """
+    tree = ast.parse(_MEDIA_CONTROLLER_PATH.read_text(encoding="utf-8"))
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    members = _media_host_members()
+
+    imports = [
+        f"line {node.lineno}"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        and (
+            (node.module or "").endswith("library_screen")
+            or any(alias.name == "LibraryScreen" for alias in node.names)
+        )
+    ]
+    assert not imports, f"the media controller imports LibraryScreen: {imports}"
+    names = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name) and node.id == "LibraryScreen"
+    ]
+    assert not names, f"the media controller names LibraryScreen at lines {names}"
+
+    cls = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "LibraryMediaController"
+    )
+    init = next(
+        node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == "__init__"
+    )
+    handle = init.args.args[1]
+    assert handle.annotation is not None
+    assert ast.unparse(handle.annotation).strip("\"'") == "LibraryMediaHost"
+
+    reaches = []
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Attribute)
+            and node.attr == "_screen"
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "self"
+        ):
+            continue
+        parent = parents[node]
+        if isinstance(parent, ast.Attribute):
+            if parent.attr not in members:
+                reaches.append(f"line {parent.lineno}: self._screen.{parent.attr}")
+        elif isinstance(parent, ast.Compare) and all(
+            isinstance(op, (ast.In, ast.NotIn)) for op in parent.ops
+        ):
+            continue
+        elif isinstance(parent, ast.Assign) and node in parent.targets:
+            continue
+        else:
+            reaches.append(f"line {node.lineno}: {ast.unparse(parent)[:80]}")
+    assert not reaches, (
+        "the media controller reads the screen beyond its host's framework "
+        f"services: {reaches}"
+    )
+
+
+#: TASK-36952.3.8 (ruling R4): the host's members, pinned. Adding a member
+#: is the one way to widen what the controller may read off the screen, so
+#: it must change this set and pass the framework check below.
+_MEDIA_HOST_MEMBERS: frozenset[str] = frozenset(
+    {
+        "app",
+        "app_instance",
+        "call_after_refresh",
+        "call_next",
+        "check_action",
+        "focus_chain",
+        "focused",
+        "is_attached",
+        "is_mounted",
+        "is_running",
+        "notify",
+        "post_message",
+        "query",
+        "query_one",
+        "refresh",
+        "run_worker",
+        "set_focus",
+        "set_timer",
+        "size",
+    }
+)
+
+
+@pytest.mark.unit
+def test_library_screen_implements_the_media_host() -> None:
+    """The host offers framework services only, and ``LibraryScreen`` has them.
+
+    The member set is pinned (19). Every member but ``app_instance`` must
+    resolve on Textual's own ``Screen``, so a ``LibraryScreen`` attribute
+    (a shell field or helper) cannot be added to the Protocol and read
+    through the host. ``app_instance`` is the one exception: an instance
+    attribute that ``BaseAppScreen.__init__`` sets and ``LibraryScreen``
+    inherits.
+    """
+    from textual.screen import Screen
+
+    from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    members = _media_host_members()
+    assert members == _MEDIA_HOST_MEMBERS, (
+        f"host members drifted: added {sorted(members - _MEDIA_HOST_MEMBERS)}, "
+        f"removed {sorted(_MEDIA_HOST_MEMBERS - members)}"
+    )
+    not_framework = sorted(
+        name for name in members - {"app_instance"} if not hasattr(Screen, name)
+    )
+    assert not not_framework, (
+        f"host member(s) that are not Textual Screen services: {not_framework}"
+    )
+    assert issubclass(LibraryScreen, BaseAppScreen)
+    init = ast.parse(inspect.getsource(BaseAppScreen.__init__).lstrip()).body[0]
+    assigns_app_instance = any(
+        isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Attribute)
+            and target.attr == "app_instance"
+            and isinstance(target.value, ast.Name)
+            and target.value.id == "self"
+            for target in node.targets
+        )
+        for node in ast.walk(init)
+    )
+    assert assigns_app_instance, "BaseAppScreen.__init__ no longer sets app_instance"
+
+
+@pytest.mark.unit
+def test_no_media_controller_argument_calls_a_media_named_screen_method() -> None:
+    """TASK-36952.3.8 AC #3: under ruling R4 the screen passes no callback into
+    a media-named ``LibraryScreen`` method. Getters of shell state
+    (``self._media_state``, the two media wiring controllers) are not
+    methods; the shell, review-set, notes and workspace callbacks are not
+    media behaviour.
+    """
+    tree = ast.parse(_LIBRARY_SCREEN_PATH.read_text(encoding="utf-8"))
+    cls = next(
+        node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "LibraryScreen"
+    )
+    methods = {
+        node.name for node in cls.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    call = next(
+        node
+        for node in ast.walk(cls)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "LibraryMediaController"
+    )
+    media_callbacks = sorted(
+        f"{keyword.arg}: self.{node.attr}"
+        for keyword in call.keywords
+        for node in ast.walk(keyword.value)
+        if isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "self"
+        and node.attr in methods
+        and "media" in node.attr.lower()
+    )
+    assert not media_callbacks, (
+        f"media controller arguments still call media-named screen methods: {media_callbacks}"
     )

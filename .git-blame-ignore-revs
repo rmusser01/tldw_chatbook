@@ -391,3 +391,10 @@ a96b35d5e886ec26b7deb5e882662d308f32375b
 # except four R2(a) tokens (self -> self._screen in the ancestors membership
 # checks). Test edits are receiver-only, AST-proven against the parent.
 5d71d07ab4e4399c57ad83dbcd88ab15f220a239
+
+# TASK-36952.3.8, 2026-11-17 -- media series cleanup slice 8 of 8, ruling R3.
+# LibraryScreen._sanitize_media_field's body moved into LibraryMediaController
+# byte-for-byte as a staticmethod; the screen keeps a static delegator. Its
+# test edits are wiring and size pins only. The slice's second commit (the
+# typed host and the delegator prune) is not a move and is not listed.
+35c99312a17b0f64a5bf3c1e24ff85f412fd37e2

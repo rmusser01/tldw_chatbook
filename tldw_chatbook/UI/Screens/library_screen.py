@@ -16,7 +16,6 @@ import uuid
 from collections.abc import (
     Awaitable,
     Callable,
-    Coroutine,
     Iterable,
     Mapping,
     Sequence,
@@ -145,6 +144,8 @@ from ...Library.library_structural_wait import (
 from ...Widgets.Library.library_export_canvas import (
     apply_library_export_submit_gate,
 )
+# Read here only by the Analyze-after-import hint; the Reader and bulk Analyze
+# gate reads library_media_controller's copy, so patch both modules.
 from ...Library.ingest_analysis import (
     resolve_ingest_analysis_provider,
 )
@@ -3060,11 +3061,6 @@ class LibraryScreen(BaseAppScreen):
             library_list_entry_focus_generation_accessor=(
                 lambda: self._library_list_entry_focus_generation
             ),
-            library_notes_compact_accessor=lambda: self._notes_state.compact,
-            library_notes_focus_intent_generation_accessor=(
-                lambda: self._notes_state.focus_intent_generation
-            ),
-            library_notes_source_accessor=lambda: self._notes_state.source,
             library_pending_list_entry_focus_accessor=(
                 lambda: self._library_pending_list_entry_focus
             ),
@@ -3076,6 +3072,9 @@ class LibraryScreen(BaseAppScreen):
             ),
             library_snapshot_state_generation_accessor=(
                 lambda: self._library_snapshot_state_generation
+            ),
+            library_stage_pick_landing_accessor=(
+                lambda: self._library_stage_pick_landing
             ),
             local_source_counts_accessor=lambda: self._local_source_counts,
             local_source_records_accessor=lambda: self._local_source_records,
@@ -3174,6 +3173,7 @@ class LibraryScreen(BaseAppScreen):
             invalidate_library_workspace_depth_state=(
                 lambda *a, **k: self._invalidate_library_workspace_depth_state(*a, **k)
             ),
+            land_stage_pick=lambda *a, **k: self._land_stage_pick(*a, **k),
             library_adaptive_reader_allocation_is_current=(
                 lambda *a, **k: self._library_adaptive_reader_allocation_is_current(
                     *a, **k
@@ -3185,6 +3185,7 @@ class LibraryScreen(BaseAppScreen):
             library_open_choice_strip=(
                 lambda *a, **k: self._library_open_choice_strip(*a, **k)
             ),
+            library_source_total=lambda *a, **k: self._library_source_total(*a, **k),
             library_workspace_depth_state=(
                 lambda *a, **k: self._library_workspace_depth_state(*a, **k)
             ),
@@ -3257,9 +3258,6 @@ class LibraryScreen(BaseAppScreen):
             request_library_reader_layout_refresh=(
                 lambda *a, **k: self.request_library_reader_layout_refresh(*a, **k)
             ),
-            # -- named late-binding callables for the media exclusions a
-            #    MOVER still calls internally.
-            sanitize_media_field=(lambda *a, **k: self._sanitize_media_field(*a, **k)),
         )
         # wave-8 task 2 (notes series 2/N): constructed right after the
         # Media controller, matching every other controller in this file.
@@ -6064,16 +6062,6 @@ class LibraryScreen(BaseAppScreen):
     ) -> tuple[LibraryBrowseReaderShell, Vertical, LibraryMediaRowScroll] | None:
         return self._media_controller._library_media_settlement_tree()
 
-    def _adopt_library_media_row_owner(self, owner: LibraryMediaRowScroll) -> bool:
-        return self._media_controller._adopt_library_media_row_owner(owner)
-
-    def _advance_library_media_presentation_epoch(
-        self, owner: LibraryMediaRowScroll | None, *, rearm: bool = True
-    ) -> None:
-        return self._media_controller._advance_library_media_presentation_epoch(
-            owner, rearm=rearm
-        )
-
     def _library_media_return_candidate(
         self,
         receipt: _LibraryMediaReturnReceipt | None,
@@ -6090,23 +6078,6 @@ class LibraryScreen(BaseAppScreen):
     ) -> bool:
         return self._media_controller._library_media_semantic_row_is_current(
             receipt, items_host
-        )
-
-    def _library_media_request_matches_current_authority(
-        self,
-        request: _LibraryMediaReturnSettlement,
-        receipt: _LibraryMediaReturnReceipt,
-        tree: tuple[LibraryBrowseReaderShell, Vertical, LibraryMediaRowScroll],
-    ) -> bool:
-        return self._media_controller._library_media_request_matches_current_authority(
-            request, receipt, tree
-        )
-
-    def _library_media_live_focus_is_allowed(
-        self, focus_anchor: Widget | None, stable_id: str, target: Widget | None = None
-    ) -> bool:
-        return self._media_controller._library_media_live_focus_is_allowed(
-            focus_anchor, stable_id, target
         )
 
     def _library_media_successful_focus_is_allowed(
@@ -6136,11 +6107,6 @@ class LibraryScreen(BaseAppScreen):
             receipt, consume_latest_geometry=consume_latest_geometry
         )
 
-    def _bind_library_media_settlement_deadline(self, request_id: int) -> None:
-        return self._media_controller._bind_library_media_settlement_deadline(
-            request_id
-        )
-
     def _settle_library_media_return_from_geometry(
         self,
         request: _LibraryMediaReturnSettlement,
@@ -6149,13 +6115,6 @@ class LibraryScreen(BaseAppScreen):
     ) -> bool:
         return self._media_controller._settle_library_media_return_from_geometry(
             request, owner, geometry
-        )
-
-    def _expire_library_media_return_settlement(
-        self, request_id: int, outer_generation: int
-    ) -> None:
-        return self._media_controller._expire_library_media_return_settlement(
-            request_id, outer_generation
         )
 
     @on(LibraryMediaViewer.SpeakerRenamed)
@@ -12350,9 +12309,6 @@ class LibraryScreen(BaseAppScreen):
         # whole screen here is exactly the transitioning-surface stomp
         # lessons-testing-evidence.md records for TASK-15706.
 
-    async def _apply_library_media_active_surface(self) -> None:
-        return await self._media_controller._apply_library_media_active_surface()
-
     async def _apply_library_media_list_return(
         self, media_return: _LibraryMediaReturnReceipt | None
     ) -> None:
@@ -12911,32 +12867,13 @@ class LibraryScreen(BaseAppScreen):
 
     @staticmethod
     def _sanitize_media_field(value: Any, *, max_length: int) -> str:
-        """Sanitize a user-entered media field at the UI boundary.
+        from ..Library_Modules.library_media_controller import (
+            LibraryMediaController,
+        )
 
-        Runs the shared ``input_validation`` helpers before the value is
-        handed to a persistence service (``update_media_item`` /
-        ``create_highlight`` / ``save_analysis_version``), so over-long
-        input is truncated and control characters are stripped, and any
-        HTML/script markup that trips ``validate_text_input`` is neutralized
-        -- keeping unsafe or oversized content from reaching storage. Normal
-        text (including a lone ``<``/``>`` in prose) is returned unchanged.
-
-        Args:
-            value: The raw widget value to sanitize.
-            max_length: Maximum length to allow before truncation.
-
-        Returns:
-            The sanitized field value.
-        """
-        text = sanitize_string(str(value or ""), max_length=max_length)
-        if not validate_text_input(text, max_length=max_length, allow_html=False):
-            # A dangerous HTML/script pattern was detected: break it up
-            # (drop the angle brackets and inline handlers) but keep the
-            # rest of the field rather than discarding user content.
-            text = text.replace("<", "").replace(">", "")
-            for pattern in ("javascript:", "onclick=", "onerror="):
-                text = text.replace(pattern, "")
-        return text
+        return LibraryMediaController._sanitize_media_field(
+            value, max_length=max_length
+        )
 
     @staticmethod
     def _sanitize_note_content(value: Any, *, max_length: int) -> str:
@@ -13796,9 +13733,6 @@ class LibraryScreen(BaseAppScreen):
         self._sync_library_conversation_reader()
         return workspace_name
 
-    def _selected_media_handoff_payload(self) -> ChatHandoffPayload | None:
-        return self._media_controller._selected_media_handoff_payload()
-
     def _hub_table_cell(
         self, value: str, width: int = LIBRARY_HUB_RECENT_LABEL_WIDTH
     ) -> str:
@@ -13812,6 +13746,28 @@ class LibraryScreen(BaseAppScreen):
         if not shortened:
             shortened = clean_value[:limit].strip()
         return f"{shortened}{suffix}"
+
+    def _library_source_total(self, source_type: str) -> int | None:
+        """A source's whole count, or ``None`` while it is not trustworthy.
+
+        ``None`` before the local source snapshot loads, after a lookup
+        error, and while the count is only a lower bound (a bounded preview
+        page with no ``total``, the case every other consumer renders as
+        "5+"); a flat "of 5" beside a rail saying "5+" is the claim the
+        Media scope line's "N of M" must not make (task-32350, review
+        finding 2).
+
+        Args:
+            source_type: ``"notes"``, ``"media"`` or ``"conversations"``.
+
+        Returns:
+            The count, or ``None``.
+        """
+        if not self._library_loaded or self._library_lookup_error:
+            return None
+        if not self._local_source_total_known.get(source_type, True):
+            return None
+        return self._local_source_counts.get(source_type)
 
     def _hub_source_count_value(self, source_type: str) -> str:
         count = self._local_source_counts.get(source_type, 0)
@@ -16042,56 +15998,6 @@ class LibraryScreen(BaseAppScreen):
     def _library_media_selected_backing_id(self) -> int | None:
         return self._media_controller._library_media_selected_backing_id()
 
-    def _claim_library_media_mutation(
-        self,
-        work: Coroutine[Any, Any, None],
-        *,
-        on_failure: Callable[[], object] | None = None,
-    ) -> None:
-        return self._media_controller._claim_library_media_mutation(
-            work, on_failure=on_failure
-        )
-
-    def _complete_library_media_mutation(
-        self,
-        *,
-        committed: bool = False,
-        remove_ids: tuple[str, ...] = (),
-        upsert_items: tuple[Mapping[str, Any], ...] = (),
-        focus_identity: str = "",
-    ) -> None:
-        return self._media_controller._complete_library_media_mutation(
-            committed=committed,
-            remove_ids=remove_ids,
-            upsert_items=upsert_items,
-            focus_identity=focus_identity,
-        )
-
-    def _library_media_mutation_summary(
-        self,
-        media_id: str,
-        record: Mapping[str, Any],
-    ) -> Mapping[str, Any]:
-        return self._media_controller._library_media_mutation_summary(media_id, record)
-
-    @staticmethod
-    def _bounded_library_media_trash_title(title: str, limit: int = 80) -> str:
-        from ..Library_Modules.library_media_controller import (
-            LibraryMediaController,
-        )
-
-        return LibraryMediaController._bounded_library_media_trash_title(title, limit)
-
-    @staticmethod
-    def _valid_library_media_trash_delete_ack(result: Any, *, media_id: int) -> bool:
-        from ..Library_Modules.library_media_controller import (
-            LibraryMediaController,
-        )
-
-        return LibraryMediaController._valid_library_media_trash_delete_ack(
-            result, media_id=media_id
-        )
-
     @staticmethod
     def _restore_library_media_scope(state: Mapping[str, Any]) -> MediaBrowseScope:
         from ..Library_Modules.library_media_controller import (
@@ -16103,14 +16009,8 @@ class LibraryScreen(BaseAppScreen):
     def _adopt_library_media_highlight(self, media_state: Any) -> None:
         return self._media_controller._adopt_library_media_highlight(media_state)
 
-    def _reset_library_media_reader_to_no_selection(self) -> None:
-        return self._media_controller._reset_library_media_reader_to_no_selection()
-
     def _sync_library_media_browse_state(self, focus_identity: str | None) -> None:
         return self._media_controller._sync_library_media_browse_state(focus_identity)
-
-    def _focus_library_media_page_control(self, invoked: str) -> None:
-        return self._media_controller._focus_library_media_page_control(invoked)
 
     def _request_library_media_browse(
         self,
@@ -16138,19 +16038,6 @@ class LibraryScreen(BaseAppScreen):
     def _stop_library_media_filter_timer(self) -> None:
         return self._media_controller._stop_library_media_filter_timer()
 
-    def _request_library_media_filter(self, query: str) -> None:
-        return self._media_controller._request_library_media_filter(query)
-
-    def _load_library_media_list_if_needed(self) -> None:
-        return self._media_controller._load_library_media_list_if_needed()
-
-    def _request_library_media_page(
-        self, page: int, *, focus_identity: str | None
-    ) -> Any | None:
-        return self._media_controller._request_library_media_page(
-            page, focus_identity=focus_identity
-        )
-
     def _build_library_media_trash_state(self) -> LibraryMediaTrashState:
         return self._media_controller._build_library_media_trash_state()
 
@@ -16162,16 +16049,6 @@ class LibraryScreen(BaseAppScreen):
 
     def _sync_library_media_trash_state(self, focus_identity: str | None) -> None:
         return self._media_controller._sync_library_media_trash_state(focus_identity)
-
-    def _focus_library_media_trash_intent(self) -> None:
-        return self._media_controller._focus_library_media_trash_intent()
-
-    def _focus_library_media_trash_after_paint(
-        self, identity: str, generation: int
-    ) -> None:
-        return self._media_controller._focus_library_media_trash_after_paint(
-            identity, generation
-        )
 
     def _build_library_notes_state(self) -> LibraryNotesListState:
         """Build the notes canvas's list-view display state from local records."""
@@ -18358,34 +18235,6 @@ class LibraryScreen(BaseAppScreen):
             request_generation=request_generation,
             requested_id=requested_id,
         )
-
-    def _schedule_library_media_image_preview(
-        self,
-        *,
-        request_generation: int,
-        canonical_id: str,
-        backing_id: int | str,
-        detail: Mapping[str, Any],
-        force: bool = False,
-    ) -> None:
-        return self._media_controller._schedule_library_media_image_preview(
-            request_generation=request_generation,
-            canonical_id=canonical_id,
-            backing_id=backing_id,
-            detail=detail,
-            force=force,
-        )
-
-    def _cache_library_media_preview(self, canonical_id: str, image: Any) -> None:
-        return self._media_controller._cache_library_media_preview(canonical_id, image)
-
-    def _recompose_library_media_detail_if_unrendered(self) -> None:
-        return self._media_controller._recompose_library_media_detail_if_unrendered()
-
-    async def _fetch_library_media_highlights(
-        self, media_id: str
-    ) -> list[dict[str, Any]]:
-        return await self._media_controller._fetch_library_media_highlights(media_id)
 
     async def _project_library_note_entry_result(
         self, *, entry_origin: bool, then: Callable[[], None] | None = None
@@ -22068,9 +21917,6 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_media_trash_open(self, event: Button.Pressed) -> None:
         return self._media_controller.handle_library_media_trash_open(event)
 
-    def _capture_library_media_trash_return(self) -> _LibraryMediaReturnReceipt:
-        return self._media_controller._capture_library_media_trash_return()
-
     @on(Input.Changed, "#library-media-trash-search")
     def handle_library_media_trash_search_changed(self, event: Input.Changed) -> None:
         return self._media_controller.handle_library_media_trash_search_changed(event)
@@ -22090,13 +21936,6 @@ class LibraryScreen(BaseAppScreen):
         self, event: OptionList.OptionSelected
     ) -> None:
         return self._media_controller.handle_library_media_trash_type_choice(event)
-
-    def _request_library_media_trash_page(
-        self, page: int, *, focus_identity: str
-    ) -> Any | None:
-        return self._media_controller._request_library_media_trash_page(
-            page, focus_identity=focus_identity
-        )
 
     @on(Button.Pressed, "#library-media-trash-previous")
     def handle_library_media_trash_previous(self, event: Button.Pressed) -> None:
@@ -22121,9 +21960,6 @@ class LibraryScreen(BaseAppScreen):
     def action_library_media_trash_back(self) -> None:
         return self._media_controller.action_library_media_trash_back()
 
-    def _focus_library_media_trash_entry(self) -> None:
-        return self._media_controller._focus_library_media_trash_entry()
-
     def action_library_media_trash_restore(self) -> None:
         return self._media_controller.action_library_media_trash_restore()
 
@@ -22133,9 +21969,6 @@ class LibraryScreen(BaseAppScreen):
     @on(Button.Pressed, "#library-media-trash-delete")
     def handle_library_media_trash_delete(self, event: Button.Pressed) -> None:
         return self._media_controller.handle_library_media_trash_delete(event)
-
-    def _cancel_library_media_trash_delete_confirmation(self) -> None:
-        return self._media_controller._cancel_library_media_trash_delete_confirmation()
 
     @on(Button.Pressed, "#library-media-trash-delete-cancel")
     def handle_library_media_trash_delete_cancel(self, event: Button.Pressed) -> None:
@@ -22164,12 +21997,6 @@ class LibraryScreen(BaseAppScreen):
         self, media_id: str
     ) -> tuple[str, int | str] | None:
         return self._media_controller._library_media_reader_identity(media_id)
-
-    def _library_media_reader_target_id(self) -> str:
-        return self._media_controller._library_media_reader_target_id()
-
-    def _required_library_media_backing_id(self, media_id: str) -> int:
-        return self._media_controller._required_library_media_backing_id(media_id)
 
     @on(Button.Pressed, "#library-notes-sort")
     def handle_library_notes_sort(self, event: Button.Pressed) -> None:
@@ -30722,9 +30549,6 @@ class LibraryScreen(BaseAppScreen):
             service.set_cursor(review_set.set_id, resolved)
         return review_set.set_id, landing.backing_media_id
 
-    def _focus_library_media_items_pane(self) -> None:
-        return self._media_controller._focus_library_media_items_pane()
-
     def _library_media_list_surface_active(self, *, require_focus: bool = True) -> bool:
         return self._media_controller._library_media_list_surface_active(
             require_focus=require_focus
@@ -30770,13 +30594,6 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_media_edit_save(self, event: Button.Pressed) -> None:
         return self._media_controller.handle_library_media_edit_save(event)
 
-    def _patch_local_media_record(
-        self, media_id: str, *, title: str, author: str, url: str, keywords: list[str]
-    ) -> None:
-        return self._media_controller._patch_local_media_record(
-            media_id, title=title, author=author, url=url, keywords=keywords
-        )
-
     @on(Button.Pressed, "#library-media-delete")
     def handle_library_media_delete(self, event: Button.Pressed) -> None:
         return self._media_controller.handle_library_media_delete(event)
@@ -30788,9 +30605,6 @@ class LibraryScreen(BaseAppScreen):
     @on(Button.Pressed, "#library-media-delete-confirm")
     def handle_library_media_delete_confirm(self, event: Button.Pressed) -> None:
         return self._media_controller.handle_library_media_delete_confirm(event)
-
-    def _notify_library_media_delete_warning(self, message: str) -> None:
-        return self._media_controller._notify_library_media_delete_warning(message)
 
     @on(Button.Pressed, "#library-media-highlight-add")
     def handle_library_media_highlight_add(self, event: Button.Pressed) -> None:
@@ -30895,16 +30709,8 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         return self._media_controller._after_library_media_viewer_sync(follow_up)
 
-    def _sync_library_media_viewer_mutation_gate(self) -> None:
-        return self._media_controller._sync_library_media_viewer_mutation_gate()
-
     def _mounted_library_media_viewer(self) -> LibraryMediaViewer | None:
         return self._media_controller._mounted_library_media_viewer()
-
-    def _focus_library_media_content_search_input(self, *, _retries: int = 4) -> None:
-        return self._media_controller._focus_library_media_content_search_input(
-            _retries=_retries
-        )
 
     @on(Button.Pressed, "#library-media-content-mode-rendered")
     async def handle_library_media_content_mode_rendered(
@@ -30920,9 +30726,6 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         return await self._media_controller.handle_library_media_content_mode_raw(event)
 
-    async def _set_library_media_content_mode(self, mode: str) -> None:
-        return await self._media_controller._set_library_media_content_mode(mode)
-
     @on(Button.Pressed, "#library-media-content-search-next")
     def handle_library_media_content_search_next(self, event: Button.Pressed) -> None:
         return self._media_controller.handle_library_media_content_search_next(event)
@@ -30934,18 +30737,9 @@ class LibraryScreen(BaseAppScreen):
     def _library_media_content_matches(self) -> tuple[int, ...]:
         return self._media_controller._library_media_content_matches()
 
-    def _advance_library_media_content_match(self, step: int) -> None:
-        return self._media_controller._advance_library_media_content_match(step)
-
-    def _scroll_library_media_content_to_line(self, line_index: int) -> None:
-        return self._media_controller._scroll_library_media_content_to_line(line_index)
-
     @on(Button.Pressed, "#library-media-read-later")
     def handle_library_media_read_later(self, event: Button.Pressed) -> None:
         return self._media_controller.handle_library_media_read_later(event)
-
-    def _start_library_media_read_later_toggle(self) -> None:
-        return self._media_controller._start_library_media_read_later_toggle()
 
     def action_library_media_read_later(self) -> None:
         return self._media_controller.action_library_media_read_later()
@@ -31005,13 +30799,6 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         return self._media_controller._start_library_media_analyze(
             media_ids, overwrite=overwrite, on_item_done=on_item_done
-        )
-
-    async def _fetch_library_media_analysis_detail(
-        self, media_id: str, *, include_content: bool
-    ) -> Mapping[str, Any] | None:
-        return await self._media_controller._fetch_library_media_analysis_detail(
-            media_id, include_content=include_content
         )
 
     @on(Button.Pressed, "#library-media-open")
