@@ -259,7 +259,8 @@ async def test_actual_adopted_full_is_invalidated_before_the_first_independent_h
         message = client._channel.messages[-1]
         parent_receipt = client._requests[message.identity.request_id]
         original = backend.dispatch(message)
-        result = await original.work
+        result = await original.applied
+        await original.work
         assert await original.retired is True
         command = backend.adapter._commands[message.identity.request_id]
         body = encode_projection_payload(result, messages=[encode_message_projection(item) for item in result.messages])
@@ -278,7 +279,9 @@ async def test_actual_adopted_full_is_invalidated_before_the_first_independent_h
         assert client.controller_reader._parked_approval_payloads is None
     finally:
         if pending is not None:
-            backend.controller._signal_stop(session_id=session.id)
+            # The standalone approval has no running turn's Stop event.
+            # Retire its actual session round before joining the waiting worker.
+            backend.controller._interrupt_host._cancel_pending_decisions_for_session(session.id)
             await asyncio.gather(pending, return_exceptions=True)
         await backend.aclose()
 

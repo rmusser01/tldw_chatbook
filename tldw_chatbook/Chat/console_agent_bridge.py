@@ -9495,10 +9495,12 @@ class ConsoleAgentBridge:
         return _truncate_step_text(str(raw), limit=_console_tool_result_display_cap())
 
     def _previous_primary_run_id(self, conversation_id: str) -> str | None:
-        records = self._db.list_runs(
+        database = self._db
+        records = database.list_runs(
             conversation_id,
             include_superseded=False,
             agent_kind=AGENT_KIND_PRIMARY,
+            **({"limit": 1} if type(database) is AgentRunsDB else {}),
         )
         return records[0]["id"] if records else None
 
@@ -9511,6 +9513,7 @@ class ConsoleAgentBridge:
             conversation_id,
             include_superseded=False,
             agent_kind=AGENT_KIND_PRIMARY,
+            **({"limit": 1} if type(database) is AgentRunsDB else {}),
         )
         if not primary_records:
             return AgentLiveSnapshot()
