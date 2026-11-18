@@ -37,6 +37,64 @@ class _ProjectModal:
     head: object
     modal: object
     resolving: bool = False
+    attachment_id: str = ""
+    restoration: asyncio.Future | None = None
+
+
+def pending_project_visibility(client, screen, visit):
+    """Return only this exact dismissed modal's outstanding visibility join."""
+    state = getattr(client, "_project_modal_transition", None)
+    if state is None:
+        return None
+    if type(state) is not _ProjectModal or state.client is not client or state.restoration is None:
+        raise ConsoleChannelLost("Console project visibility owner changed")
+    published = client.projection_view
+    if (
+        state.screen is not screen or state.visit != visit or client._visit != visit
+        or state.source_revision != client._source_revision
+        or state.attachment_id != client._attachment_id or published is None
+        or published.active_session_id != state.head.session_id
+        or published.session(state.head.session_id).incarnation_id != state.head.incarnation_id
+    ):
+        return None  # An old transition cannot hold a different actual scope.
+    return state.restoration
+
+
+def _begin_project_visibility_restore(state) -> None:
+    """Close the read gate synchronously before the modal's hidden command."""
+    if state.restoration is not None:
+        return
+    state.restoration = asyncio.get_running_loop().create_future()
+    state.restoration.add_done_callback(lambda future: None if future.cancelled() else future.exception())
+    state.client._project_modal_transition = state
+
+
+async def _restore_project_visibility(state, receipt=None) -> None:
+    """Reopen reads only after the original visible FULL actually succeeds."""
+    from .execution_state import refresh_selected_view, start_selected_decision_refresh
+
+    client, screen, visit = state.client, state.screen, state.visit
+    try:
+        if receipt is not None:
+            await _observe_resolution(screen, client, visit, receipt, refresh=False)
+        if pending_project_visibility(client, screen, visit) is not state.restoration:
+            raise ConsoleChannelLost("Console project visibility scope changed")
+        _current(screen, client, visit)
+        restored = await refresh_selected_view(screen, checkpoint="visible")
+        _current(screen, client, visit)
+        if (
+            restored is not True
+            or pending_project_visibility(client, screen, visit) is not state.restoration
+            or client._project_modal_transition is not state
+        ):
+            raise ConsoleChannelLost("Console project visibility restoration is unproven")
+        state.restoration.set_result(True)
+        client._project_modal_transition = None
+        start_selected_decision_refresh(screen, force=True)
+    except BaseException as error:
+        if not state.restoration.done():
+            state.restoration.set_exception(error)
+        raise
 
 
 def is_owned_project_modal(client, screen, visit: int) -> bool:
@@ -108,7 +166,10 @@ async def present_selected_decision(screen, client, visit: int) -> bool:
         ProjectInstructionNoticeModal(head.notice)
         if head.kind == "dispatch" else ProjectInstructionSetupModal(head.choices)
     )
-    state = _ProjectModal(client, screen, visit, client._source_revision, head, modal)
+    state = _ProjectModal(
+        client, screen, visit, client._source_revision, head, modal,
+        attachment_id=client._attachment_id,
+    )
     modal._console_process_modal_owner = state
     client._project_modal = state
     screen._session._project_instruction_decision_modals[head.decision_id] = modal
@@ -207,6 +268,7 @@ def project_modal_visibility_changed(modal, visible: bool) -> None:
 def _dismiss_project_modal(state) -> None:
     """Retire stale display only; a dismissal never decides its original head."""
     state.resolving = True
+    _begin_project_visibility_restore(state)
     receipt = _project_checkpoint(state, "hidden")
     state.screen.run_worker(
         _observe_resolution(state.screen, state.client, state.visit, receipt, refresh=False),
@@ -223,13 +285,12 @@ def _finish_project_modal(state, result) -> None:
     client, screen = state.client, state.screen
     if client._project_modal is not state:
         return
+    _begin_project_visibility_restore(state)
     if state.resolving:
         _forget_project_modal(state)
         if screen.is_current and client._view is screen and client._visit == state.visit:
-            from .execution_state import refresh_selected_view
-
             screen.run_worker(
-                refresh_selected_view(screen, checkpoint="visible"),
+                _restore_project_visibility(state),
                 group="console-process-decision", exclusive=False,
             )
         return
@@ -260,7 +321,7 @@ def _finish_project_modal(state, result) -> None:
         session_id=state.head.session_id, incarnation_id=state.head.incarnation_id,
     )
     screen.run_worker(
-        _observe_resolution(screen, client, state.visit, receipt, checkpoint="visible"),
+        _restore_project_visibility(state, receipt),
         group="console-process-decision", exclusive=False,
     )
 

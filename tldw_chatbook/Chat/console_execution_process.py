@@ -266,6 +266,7 @@ class ConsoleExecutionClient:
         self._decision_head_sequence = 0
         self._display_checkpoint = None
         self._project_modal = None
+        self._project_modal_transition = None
         self._decision_hint = None
         self._decision_rendered_hint = None
         self._projection_sequence = 0
@@ -803,6 +804,12 @@ class ConsoleExecutionClient:
 
         async def read():
             current()
+            from tldw_chatbook.UI.Console_Modules.execution_decisions import pending_project_visibility
+
+            while (transition := pending_project_visibility(self, view, visit)) is not None:
+                if await asyncio.shield(transition) is not True:
+                    raise ConsoleChannelLost("Console project visibility restoration is unproven")
+                current()
             receipt = self.submit("ReadDecisionHead", {
                 "attachment_id": attachment, "visit": visit,
             }, session_id=session_id, incarnation_id=incarnation_id)

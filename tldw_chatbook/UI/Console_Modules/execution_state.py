@@ -527,6 +527,10 @@ async def reconcile_selected_view(screen: ChatScreen) -> None:
         return
     if selected_client(screen) is not client:
         raise RuntimeError("Console reconciliation owner changed")
+    from .execution_decisions import pending_project_visibility
+
+    if pending_project_visibility(client, screen, visit) is not None:
+        return  # The actual dismissal owner must restore visibility first.
     source = client._source_revision
     screen._console_attach_reconcile_running = True
     try:
@@ -644,13 +648,15 @@ def refresh_selected_when_due(screen: ChatScreen) -> None:
         return
     # A genuine decision change need not wait for an unrelated FULL read. It
     # still uses the same source-qualified channel and original UI owners.
-    from .execution_decisions import is_owned_project_modal
+    from .execution_decisions import is_owned_project_modal, pending_project_visibility
 
     owner = screen.app_instance.console_execution_client
     modal_visible = owner is not None and is_owned_project_modal(owner, screen, owner._visit)
     start_selected_decision_refresh(screen, force=modal_visible)
     if modal_visible:
         return  # The decision refresh above remains eligible; FULL is hidden.
+    if owner is not None and pending_project_visibility(owner, screen, owner._visit) is not None:
+        return  # Its original explicit visible FULL owns this transition.
     if (
         not screen.is_attached or (not screen.is_current and not modal_visible)
         or getattr(screen, "_console_sync_maintenance_paused", False)
@@ -679,6 +685,10 @@ def start_selected_decision_refresh(screen: ChatScreen, *, force: bool = False) 
         or getattr(screen, "_console_process_draft_switch", None) is not None
         or getattr(screen, "_console_sync_maintenance_paused", False)):
         return
+    from .execution_decisions import pending_project_visibility
+
+    if pending_project_visibility(client, screen, client._visit) is not None:
+        return  # Keep the hint owed until the actual visible checkpoint settles.
     if not force and not _decision_refresh_due(client):
         return
     worker = getattr(screen, "_console_decision_refresh_worker", None)
@@ -693,7 +703,7 @@ def start_selected_decision_refresh(screen: ChatScreen, *, force: bool = False) 
 async def _refresh_selected_decisions(screen, client, visit: int) -> None:
     """Paint only a positively retired head; leave newer invalidations owed."""
     from ...Chat.console_execution_process import ConsoleChannelLost
-    from .execution_decisions import present_selected_decision
+    from .execution_decisions import pending_project_visibility, present_selected_decision
 
     source = client._source_revision
     hint = getattr(client, "_decision_hint", None)
@@ -705,10 +715,14 @@ async def _refresh_selected_decisions(screen, client, visit: int) -> None:
             raise ConsoleChannelLost("Console decision owner changed")
         row = client.projection_view.session(client.projection_view.active_session_id)
         await client.read_decision_head(screen, visit, row.id, row.incarnation_id)
+        if pending_project_visibility(client, screen, visit) is not None:
+            return
         if _defer_selected_refresh(screen, client, visit):
             return
         client.require_view(screen, visit)
         await present_selected_decision(screen, client, visit)
+        if pending_project_visibility(client, screen, visit) is not None:
+            return
         if _defer_selected_refresh(screen, client, visit):
             return
         client.require_view(screen, visit)
