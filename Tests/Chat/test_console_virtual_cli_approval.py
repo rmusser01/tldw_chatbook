@@ -25,6 +25,7 @@ def _provider(root: Path) -> VirtualCliProvider:
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_review_hook_keeps_same_model_tool_calls_independent(tmp_path):
     (tmp_path / "a.txt").write_text("allowed", encoding="utf-8")
     (tmp_path / "b.txt").write_text("blocked", encoding="utf-8")
