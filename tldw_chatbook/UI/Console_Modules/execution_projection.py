@@ -187,7 +187,7 @@ def apply_console_process_projection(
         screen._pending_console_swipe_selection = None
     transcript.set_model_thinking_visible(screen._show_model_thinking())
     rows = projection.messages
-    ack = screen._console_send_ack
+    ack = getattr(screen, "_console_send_ack", None)
     if ack is not None:
         if (
             _session_presentation._require_ack is not _ACK_OWNER[0]

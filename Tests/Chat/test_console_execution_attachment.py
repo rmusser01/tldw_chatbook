@@ -54,6 +54,10 @@ def test_coalesced_controls_use_current_selected_publication(monkeypatch, entry)
     screen._console_sync_maintenance_paused = True
     assert not sync(screen)
     assert not updates
+    screen._console_sync_maintenance_paused = False
+    screen.is_current = False
+    monkeypatch.setattr(execution_state, "selected_client", lambda _: pytest.fail("covered view was used"))
+    assert not sync(screen)
 
 
 def test_selected_guidance_keeps_blocking_modal_on_original_readiness(monkeypatch):

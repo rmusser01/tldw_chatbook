@@ -309,15 +309,15 @@ async def refresh_selected_view(screen: ChatScreen, *, checkpoint: str | None = 
 
 def sync_selected_controls(screen: ChatScreen, *, draft_only: bool = False) -> bool:
     """Render the attached visit's controls from its current checked display."""
-    client = selected_client(screen)
-    if client is None:
-        raise RuntimeError("Console control presentation owner changed")
     if (
         not screen.is_attached or not screen.is_current
         or getattr(screen, "_console_sync_maintenance_paused", False)
         or getattr(screen, "_console_process_content_failed", False)
     ):
         return False
+    client = selected_client(screen)
+    if client is None:
+        raise RuntimeError("Console control presentation owner changed")
     if time.monotonic() < client._readiness_deadline:
         _require_methods(screen, _REFRESH_METHODS)
         try:
