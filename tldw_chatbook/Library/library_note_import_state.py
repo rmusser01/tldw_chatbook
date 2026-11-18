@@ -72,6 +72,16 @@ class NoteImportPhase(str, Enum):
 
 
 @dataclass(frozen=True, slots=True)
+class _ReviewPageLayout:
+    plan: NoteImportPlan
+    page_size: int
+    pages: tuple[tuple[ImportPreviewItem, ...], ...]
+    total_items: int
+    group_totals: tuple[tuple[str, int], ...]
+    run_totals: tuple[tuple[tuple[str, ...], int], ...]
+
+
+@dataclass(frozen=True, slots=True)
 class NoteImportPage:
     """One bounded window over an immutable review plan."""
 
@@ -99,6 +109,8 @@ class NoteImportPage:
     different number, with the real total nowhere on screen. The heading says
     which of the two it means by carrying both.
     """
+
+    _layout: _ReviewPageLayout | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -377,33 +389,47 @@ def _paginate(
 
 
 def _page(
-    plan: NoteImportPlan | None, page_number: int, page_size: int
+    plan: NoteImportPlan | None,
+    page_number: int,
+    page_size: int,
+    *,
+    previous: NoteImportPage | None = None,
 ) -> NoteImportPage:
     size = min(max(int(page_size), 1), MAX_IMPORT_REVIEW_PAGE_SIZE)
-    ordered = _review_order(plan)
-    total = len(ordered)
-    pages = _paginate(ordered, size)
-    page_count = len(pages)
+    if plan is None:
+        return NoteImportPage(page_size=size)
+    layout = previous._layout if previous is not None else None
+    if layout is None or layout.plan is not plan or layout.page_size != size:
+        ordered = _review_order(plan)
+        totals = Counter(item.classification.value for item in ordered)
+        run_sizes: Counter[tuple[str, ...]] = Counter()
+        for key, grouped in groupby(ordered, key=review_run_key):
+            run_sizes[key] += sum(1 for _ in grouped)
+        layout = _ReviewPageLayout(
+            plan=plan,
+            page_size=size,
+            pages=_paginate(ordered, size),
+            total_items=len(ordered),
+            group_totals=tuple(
+                (classification.value, totals[classification.value])
+                for classification in REVIEW_CLASSIFICATION_ORDER
+                if totals[classification.value]
+            ),
+            run_totals=tuple(run_sizes.items()),
+        )
+    page_count = len(layout.pages)
     number = min(max(int(page_number), 1), page_count)
-    items = pages[number - 1]
-    totals = Counter(item.classification.value for item in ordered)
-    run_sizes: Counter[tuple[str, ...]] = Counter()
-    for key, grouped in groupby(ordered, key=review_run_key):
-        run_sizes[key] += sum(1 for _ in grouped)
     return NoteImportPage(
-        items=items,
+        items=layout.pages[number - 1],
         page_number=number,
         page_size=size,
-        total_items=total,
+        total_items=layout.total_items,
         page_count=page_count,
         has_previous=number > 1,
         has_next=number < page_count,
-        group_totals=tuple(
-            (classification.value, totals[classification.value])
-            for classification in REVIEW_CLASSIFICATION_ORDER
-            if totals[classification.value]
-        ),
-        run_totals=tuple(run_sizes.items()),
+        group_totals=layout.group_totals,
+        run_totals=layout.run_totals,
+        _layout=layout,
     )
 
 
@@ -618,6 +644,7 @@ def show_review(
     plan: NoteImportPlan,
     *,
     review_effects: tuple[NoteImportReviewEffect, ...] = (),
+    page_number: int = 1,
 ) -> NoteImportWorkflowSnapshot:
     if state.phase is not NoteImportPhase.CHECKING:
         raise ValueError("Review may only follow checking.")
@@ -634,7 +661,7 @@ def show_review(
         phase=NoteImportPhase.REVIEW,
         plan=plan,
         review_effects=tuple(review_effects),
-        page=_page(plan, 1, state.page.page_size),
+        page=_page(plan, page_number, state.page.page_size),
         approved_plan=None,
         cancel_requested=False,
         decision_item_ids=frozenset(),
@@ -655,7 +682,10 @@ def set_review_page(
 ) -> NoteImportWorkflowSnapshot:
     if state.plan is None:
         raise ValueError("A review plan is required.")
-    return replace(state, page=_page(state.plan, page_number, state.page.page_size))
+    return replace(
+        state,
+        page=_page(state.plan, page_number, state.page.page_size, previous=state.page),
+    )
 
 
 def set_root_collision_resolution(
@@ -713,7 +743,9 @@ def set_collision_rename(
     return replace(
         state,
         plan=plan,
-        page=_page(plan, state.page.page_number, state.page.page_size),
+        page=_page(
+            plan, state.page.page_number, state.page.page_size, previous=state.page
+        ),
         approved_plan=None if changed else state.approved_plan,
         collision_rename_input=value,
         collision_rename_error=error,

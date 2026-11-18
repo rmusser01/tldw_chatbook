@@ -41,7 +41,7 @@ import asyncio
 import queue
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -1661,17 +1661,50 @@ async def reconcile_media_index(
 
 
 def _iter_note_entries(chachanotes_db: Any, page_size: int) -> Iterator[IndexEntry]:
-    """Yield IndexEntry items for all notes, paginated."""
+    """Walk active native notes from the last visited modification key."""
+    from ..DB.ChaChaNotes_DB import CharactersRAGDB
+
+    native = type(chachanotes_db) is CharactersRAGDB
+    # Keep the original SQLite value for paging. The DATETIME converter
+    # used for the projected timestamp can change the bound sort key.
+    query = (
+        "SELECT rowid AS note_rowid, id, title, content, last_modified, "
+        "+last_modified AS note_seek_time "
+        "FROM notes WHERE deleted = 0"
+    )
+    order = " ORDER BY last_modified DESC, rowid DESC LIMIT ?"
+    # Separate indexed ranges let SQLite seek past rowids within a large tie.
+    following_page = (
+        f"SELECT * FROM ({query} AND last_modified = ? AND rowid < ?{order})"
+        f" UNION ALL SELECT * FROM ({query} AND last_modified < ?{order})"
+        " ORDER BY note_seek_time DESC, note_rowid DESC LIMIT ?"
+    )
+    after = ()
     offset = 0
     while True:
-        rows = chachanotes_db.list_notes(limit=page_size, offset=offset) or []
+        if native:
+            statement = following_page if after else query + order
+            params = (
+                (*after, page_size, after[0], page_size, page_size)
+                if after
+                else (page_size,)
+            )
+            with closing(
+                chachanotes_db.execute_query(statement, params, redact_params=True)
+            ) as cursor:
+                rows = [dict(row) for row in cursor.fetchall()]
+        else:
+            rows = chachanotes_db.list_notes(limit=page_size, offset=offset) or []
         for row in rows:
             entry = note_index_entry(row)
             if entry is not None:
                 yield entry
-        if len(rows) < page_size:
+        if not rows or len(rows) < page_size:
             return
-        offset += page_size
+        if native:
+            after = rows[-1]["note_seek_time"], rows[-1]["note_rowid"]
+        else:
+            offset += page_size
 
 
 def _iter_conversation_entries(
