@@ -282,3 +282,48 @@ The candidate was removed after the paired run. The patch, initial
 failures, final controls and full recordings remain in the private
 experiment directory. The 145-entry receipt manifest has SHA-256
 `0bd591d76f817e7becf9d1f3444737909e9c46bef1301bf8f1498417ac75e32c`.
+
+## Notes Sync preparation timing control
+
+Both arms used the exact `505dbf69e1` product source, the same sealed
+120×50 macOS PTY fixture, and alternating order. A diagnostic wrapper
+on an unprepared runtime's first Library visit called through immediately
+on the baseline. The deferred arm released the same native preparation
+after the terminal flushed the frame with the exact populated counts.
+The runtime was constructed in all six runs. Native preparation occupied
+169–229 ms before that frame on the baseline and finished 134–353 ms
+after the frame in the deferred arm, inside the same observation window.
+
+| Run order | One-minute load, start → end | Cold populated paint | Warm populated paint | Cold source snapshot | Worst cold loop gap |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 1 baseline | 72.3 → 89.9 | 3,097 ms | 537 ms | 1,353 ms | 1,028 ms |
+| 1 deferred | 91.2 → 99.8 | 2,811 ms | 343 ms | 1,082 ms | 1,279 ms |
+| 2 deferred | 96.3 → 80.3 | 3,030 ms | 254 ms | 1,329 ms | 1,143 ms |
+| 2 baseline | 80.0 → 86.7 | 3,312 ms | 484 ms | 1,921 ms | 1,051 ms |
+| 3 baseline | 88.9 → 103.5 | 2,201 ms | 761 ms | 1,274 ms | 963 ms |
+| 3 deferred | 106.6 → 123.8 | 2,075 ms | 396 ms | 1,150 ms | 872 ms |
+
+Median cold paint moved from 3,097 ms to 2,811 ms. The three cold
+pairs were 286 ms, 282 ms, and 126 ms faster. In the third pair the
+deferred arm reached the preparation request 150 ms earlier and took
+24 ms longer from that request to paint. Cold source reads also varied
+substantially and the host reported 18 CPUs. Median warm paint moved
+from 537 ms to 343 ms, with native preparation already complete before
+each warm visit. Median launch to usable input stayed near 20.6 seconds
+on both arms. The variation in phases outside the hold limits how much
+of the cold gain can be attributed to Notes Sync timing.
+
+Across the full cold windows, gaps over 50 ms moved from 25 to 24 and
+the worst gap grew from 1,051 ms to 1,279 ms. Across the warm windows,
+gaps moved from 14 to 15 and the worst gap fell from 340 ms to 274 ms.
+All six runs kept the 13-second first-input, cold and warm windows.
+They quit normally and left zero scoped SQLite descriptors and zero
+profile or network guard violations. These journeys cover Library
+navigation and initial typing.
+
+The timing hold stayed in the diagnostic harness. In the cold traces,
+0.84–1.65 s elapsed before source loading began and 1.08–1.92 s during
+the source snapshot. The Conversations scope read returned within
+38 ms of snapshot completion in all six runs. The 104-entry private
+receipt manifest has SHA-256
+`4e4ddffecab1546dd355be2ef48b0175b6f7404d22f935ecea71d4c2ae2d741c`.
