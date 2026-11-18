@@ -104,6 +104,15 @@ reclamation requires proof that every physical invocation has drained and is
 outside this fix; host disposal releases its sets. This restores the existing
 cancellation contract without adding a provider dispatch authority boundary.
 
+## TASK-41637 clarification (2026-11-18): no running app, no wait
+
+"Indefinite" assumes someone can still answer. A round whose App is not
+running (constructed but never started, or already exited) can show no card
+and receive no decision, so `InterruptRoundHost.run_round` settles it as
+`cancelled` within one poll: fail closed, recorded as unresolved, never as a
+user Deny. Hosts without an `is_running` attribute (the mobile
+`HeadlessAppContext`) are answered elsewhere and keep waiting as above.
+
 ## Renumbering provenance
 
 Renumbered from ADR-067 to ADR-314 on 2026-11-03 under TASK-36943.3 (owner decision 2026-10-25: the younger file of a shared number is renumbered). ADR-067 now refers to 067-library-top-level-pagination-contracts.md.
