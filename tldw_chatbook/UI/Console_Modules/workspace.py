@@ -7755,6 +7755,8 @@ class ConsoleWorkspaceController:
                 if runtime is not None and runtime._disposed:
                     return
                 lifecycle = self._screen_lifecycle_token()
+                client = getattr(self.app_instance, "console_execution_client", None)
+                visit_source = (client._visit, client._source_revision) if client is not None else None
                 registry_request = self._registry_display_pending
                 self._registry_display_pending = None
                 refresh_availability = self._workspace_files_availability_pending
@@ -7829,7 +7831,18 @@ class ConsoleWorkspaceController:
                 source_current = (
                     registry is current_registry and database is getattr(registry, "db", None)
                     and lifecycle is self._screen_lifecycle_token()
+                    and getattr(self.app_instance, "console_execution_client", None) is client
                 )
+                if source_current and client is not None and (values or availability is not None):
+                    from .execution_state import defer_selected_passive_render, selected_client
+
+                    # A reusable Chat's pump can keep running after its visit ends.
+                    # The read has retired. Only its original visible visit can publish it.
+                    source_current = (
+                        (client._visit, client._source_revision) == visit_source
+                        and not defer_selected_passive_render(self._screen)
+                        and selected_client(self._screen) is client
+                    )
                 registry_changed = (
                     bool(values) and source_current and registry_request is not None
                     and self._console_registry_reads_view() is registry_request.view

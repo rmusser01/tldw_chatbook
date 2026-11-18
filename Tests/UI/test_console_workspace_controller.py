@@ -289,6 +289,92 @@ async def test_workspace_files_availability_snapshot_never_blocks_context_build(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "transition",
+    ["current", "local", "covered", "new_visit", "new_source", "new_client",
+     "local_to_selected", "selected_to_local", "refused"],
+)
+async def test_availability_worker_only_publishes_to_its_current_process_visit(
+    monkeypatch, transition,
+):
+    from tldw_chatbook.Chat import console_preparation_reads
+    from tldw_chatbook.Chat.console_execution_process import ConsoleChannelLost
+    from tldw_chatbook.UI.Console_Modules import execution_state
+
+    entered, release = asyncio.Event(), asyncio.Event()
+    screen = _AsyncWorkerScreen()
+    client = SimpleNamespace(_visit=1, _source_revision=1)
+    app = SimpleNamespace(
+        workspace_registry_service=object(),
+        console_execution_client=None if transition in ("local", "local_to_selected") else client,
+    )
+    visible = True
+    replacement_unreadable = False
+    guard_calls = []
+    published = []
+    controller = _workspace_controller(
+        screen=screen, app_instance=app,
+        sync_workspace_context=lambda: published.append(app.console_execution_client),
+    )
+
+    async def read(*args, **kwargs):
+        entered.set()
+        await release.wait()
+        return {"ws": True}, {"ws": ()}
+
+    def deferred(_screen):
+        guard_calls.append("defer")
+        if replacement_unreadable:
+            raise ConsoleChannelLost("replacement has no current publication")
+        return not visible
+
+    def current(_screen):
+        guard_calls.append("current")
+        if transition == "refused" or replacement_unreadable:
+            raise ConsoleChannelLost("original current-view refusal")
+        return app.console_execution_client
+
+    monkeypatch.setattr(console_preparation_reads, "run_preparation_read", read)
+    monkeypatch.setattr(execution_state, "defer_selected_passive_render", deferred)
+    monkeypatch.setattr(execution_state, "selected_client", current)
+    controller._request_workspace_files_availability_refresh(("ws",))
+    worker = screen.workers[-1][0]
+    await entered.wait()
+    if transition == "covered":
+        visible = False
+    elif transition == "new_visit":
+        client._visit += 1
+    elif transition == "new_source":
+        client._source_revision += 1
+    elif transition in ("new_client", "local_to_selected"):
+        app.console_execution_client = SimpleNamespace(_visit=1, _source_revision=1)
+        replacement_unreadable = True
+    elif transition == "selected_to_local":
+        app.console_execution_client = None
+    release.set()
+    if transition == "refused":
+        with pytest.raises(ConsoleChannelLost, match="original current-view refusal"):
+            await worker
+    else:
+        await worker
+    assert not controller._workspace_files_availability_refresh_in_flight
+    if transition in ("current", "local"):
+        assert len(published) == 1 and published[0] is app.console_execution_client
+        assert controller._workspace_files_availability_by_id == {"ws": True}
+        assert guard_calls == (["defer", "current"] if transition == "current" else [])
+    else:
+        assert published == [] and controller._workspace_files_availability_cached_generation is None
+        if transition != "refused":
+            assert guard_calls == (["defer"] if transition == "covered" else [])
+            # A visible, fresh request still runs and publishes after displacement.
+            visible = True
+            replacement_unreadable = False
+            controller._request_workspace_files_availability_refresh(("ws",))
+            await screen.workers[-1][0]
+            assert len(published) == 1 and published[0] is app.console_execution_client
+
+
+@pytest.mark.asyncio
 async def test_workspace_files_availability_snapshot_discards_stale_generation(
     monkeypatch,
 ):
