@@ -1041,6 +1041,10 @@ _MUST_MASK: dict[str, tuple[str, str]] = {
     # review r16tr-rev4: "api key" after leading hyphens, as base's \bapi read it
     "hyphen-api-key": ("-api " + "key: hunter2xyz", "hunter2xyz"),
     "double-hyphen-api-key": ("--api " + "key=hunter2xyz", "hunter2xyz"),
+    # review r16tr-rev5: a label after a run of "-", "_" and "." that starts a word
+    "after-underscore-hyphen": ("_-pass" + "word:hunter2xyz", "hunter2xyz"),
+    "after-hyphen-dot": ("-.pass" + "word:hunter2xyz", "hunter2xyz"),
+    "after-hyphen-underscore-dotted": ("-_db.pass" + "word:hunter2xyz", "hunter2xyz"),
     # review r16tr-rev3 Critical 2: base64 with "=" padding below a label
     **{
         f"base64-below-{name}": (text, value)
@@ -1579,6 +1583,9 @@ _ADVERSARIAL_TEXTS = {
     "dot-runs-after": "a..." * 40_000,
     # review r16tr-rev4: "api key" after leading hyphens, repeated
     "hyphen-api-key-runs": ("-api " + "key ") * 40_000,
+    # review r16tr-rev5: a label may follow a "-_." run, matched once from its
+    # start (a leading run inside the label took 7.7 s here).
+    "separator-runs": "._." * 40_000,
     "chained-simple-credential-labels-spaced": ("tok" + "en= ") * 30_000,
     "api-words": "api " * 50_000 + "key",
 }

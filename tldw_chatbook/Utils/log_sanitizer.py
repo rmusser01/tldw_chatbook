@@ -579,13 +579,17 @@ CREDENTIAL_VALUE_PATTERNS = (
 #: Labels may repeat separators (pydantic's ``APP__X``) and may be quoted, or
 #: escape-quoted inside a JSON string (``\"client_secret\":``). A separator
 #: holds at most one ``.``, so a label after ``..`` cannot run on through
-#: every later ``..`` (quadratic; review r16tr-rev3). Any
+#: every later ``..`` (quadratic; review r16tr-rev3). A label may also follow
+#: a run of ``-``, ``_`` and ``.`` that starts after a non-word character
+#: (``_-password:``, ``-.password:``, as base's ``\b`` read them); the run is
+#: matched once, from its start, so a run of them stays linear (review
+#: r16tr-rev5). Any
 #: non-line-break whitespace may surround the separator (NBSP, ideographic
 #: space; review r16tr-rev2). ``==`` is a comparison, never a separator
 #: (review r15tr-rev8).
 _LABEL = re.compile(
     r"""
-    (?<![A-Za-z0-9_-])(?<![A-Za-z0-9_-]\.)
+    (?:(?<![A-Za-z0-9_-])(?<![A-Za-z0-9_-]\.)|(?<![A-Za-z0-9_.-])[-_.]++(?=[A-Za-z0-9]))
     (?:\\?(?P<label_quote>["']))?
     (?P<label>(?i:-*(?:[A-Za-z0-9_]+[.-])*api[ ]key)|-*[A-Za-z0-9]+(?:(?:[_-]++\.?|\.)[_-]*+[A-Za-z0-9]+)*)
     (?(label_quote)\\?(?P=label_quote))

@@ -4,7 +4,7 @@ title: "Trace export masks credentials by an older simple-label rule that hides 
 status: Done
 assignee:
 - '@claude'
-updated_date: 2026-11-18 05:39
+updated_date: 2026-11-18 05:55
 created_date: 2026-11-17 05:27
 labels:
 - follow-up
@@ -93,3 +93,5 @@ Simple labels are judged as compound labels are, and a URL's `?key=` value is ma
 - **Runs** (load 60-112): trace set (`-n 4`) 1248 passed; log byte-identity 2,420 texts x 5 functions, 0 diffs; serial size and identity ratchets 270 passed; `ruff_gate` OK; `preflight.sh` passed.
 
 **Review r16tr-rev4 (fix round 4).** One Minor: the `api key` alternative of `_LABEL` took no leading hyphens (`-*` belonged only to the other alternative), so `-api key: hunter2xyz` and `--api key=hunter2xyz` were kept where base's `\bapi` masked them. It is now `(?i:-*(?:[A-Za-z0-9_]+[.-])*api[ ]key)` (the reviewer's fix). Rows `hyphen-api-key` and `double-hyphen-api-key` failed before the fix and pass after; adversarial `hyphen-api-key-runs` (`"-api key " * 40_000`) stays linear (0.023/0.047/0.094 s CPU at 10k/20k/40k). Runs (load 15-19): trace set (`-n 4`) 1251 passed; log byte-identity 2,430 texts x 5 functions, 0 diffs; serial size and identity ratchets 270 passed; probe unchanged (632,060 texts, 39,312 kept, all accepted code headers or `if it is`, 0 elsewhere); `preflight.sh` passed.
+
+**Review r16tr-rev5 (fix round 5), linear route.** A label after a run of `-`, `_` and `.` (`_-password:`, `-.password:`, `-_db.password:`) was kept where base's `\b` masked it; the reviewer's widening (a leading `[-_.]*+` inside the label) was quadratic on `"._." * n`. `_LABEL` now has a second start: a `[-_.]++` run that is not preceded by a word, `-`, `_` or `.` character, followed by the label's first alphanumeric. Only a run's first character can begin it and the possessive run is matched once, so it stays linear (CPU s at 10k/20k/40k, `_credential_text`: `._.` 0.006/0.012/0.024, `_-` 0.003/0.007/0.014, `-.` 0.003/0.006/0.012, `-_` 0.004/0.007/0.015, `_-password ` 0.025/0.050/0.098, `_-password:x ` 0.056/0.111/0.224). Rows `after-underscore-hyphen`, `after-hyphen-dot`, `after-hyphen-underscore-dotted` failed at 56a5793c29 and pass now; adversarial `separator-runs` (`"._." * 40_000`) passes, and under a temporary edit to the in-label leading run it failed at 11.0 s CPU. Runs (load 12-23): trace set (`-n 4`) 1255 passed; log byte-identity 2,445 texts x 5 functions, 0 diffs; serial size and identity ratchets 270 passed; probe (670,956 texts, separator-run contexts added): 39,312 kept, 36,288 under accepted code headers and 3,024 under `if it is`, 0 elsewhere; `preflight.sh` passed.
