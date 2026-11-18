@@ -33,7 +33,7 @@ class ConsoleBackendProjectDecisions:
                 for name, record in _RUNTIME_METHODS
             )
             or any(
-                getattr_static(type(self), name) is not record[0]
+                getattr_static(self, name) is not record[0]
                 or not _definition_current(record)
                 for name, record in _METHODS
             )
@@ -137,6 +137,9 @@ class ConsoleBackendProjectDecisions:
         if (
             presentation.parent_attachment != (attachment_id, visit)
             or not lifecycle.display_checkpoint_current(checkpoint)
+            or runtime._chat_controller._interrupt_host is not host
+            or any(getattr_static(host, name) is not record[0]
+                   or not _definition_current(record) for name, record in _HEAD_METHODS)
             or identity.source_revision != backend.controls.source_revision
             or runtime._chat_store.active_session_id != identity.session_id
             or runtime._chat_store._sessions[identity.session_id].incarnation_id != identity.incarnation_id

@@ -788,7 +788,7 @@ class ConsoleExecutionClient:
                 "attachment_id": attachment, "visit": visit,
             }, session_id=session_id, incarnation_id=incarnation_id)
             try:
-                payload = await asyncio.shield(receipt.applied)
+                await asyncio.shield(receipt.applied)
             finally:
                 admission_refused = False
                 try:
@@ -802,7 +802,7 @@ class ConsoleExecutionClient:
                     self._fail(error)
                     raise error
             current()
-            head = decode_decision_head(payload)
+            head = decode_decision_head(encode_message(receipt.projection_message)["payload"])
             if (head.source_revision, head.session_id, head.incarnation_id,
                 head.attachment_id, head.visit) != (
                 source, session_id, incarnation_id, attachment, visit,
@@ -1413,7 +1413,7 @@ class ConsoleExecutionClient:
                     if message.payload["source_revision"] != self._source_revision:
                         raise ConsoleProtocolError("unexpected_publication_revision")
                     self._intake_open = True
-                elif receipt.operation == "ReadProjection":
+                elif receipt.operation in {"ReadProjection", "ReadDecisionHead"}:
                     receipt.projection_message = message
                 receipt.applied.set_result(message.payload)
             elif message.kind == "retired":

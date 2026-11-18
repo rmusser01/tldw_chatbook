@@ -310,7 +310,6 @@ async def refresh_selected_view(screen: ChatScreen, *, checkpoint: str | None = 
     if selected_client(screen) is not client:
         raise RuntimeError("Console process refresh requires its selected owner")
     source = client._source_revision
-    decision_hint = getattr(client, "_decision_hint", None)
     screen._console_selected_refresh_count = getattr(screen, "_console_selected_refresh_count", 0) + 1
     refreshed = False
     try:
@@ -320,17 +319,14 @@ async def refresh_selected_view(screen: ChatScreen, *, checkpoint: str | None = 
             if client._source_revision == source and _defer_selected_refresh(screen, client, visit):
                 return False
             raise
-        if refreshed:
-            _decision_refresh_rendered(client, decision_hint)
         return refreshed
     finally:
         screen._console_selected_refresh_count -= 1
-        if (refreshed and not screen._console_selected_refresh_count
-            and _decision_refresh_due(client)):
+        if refreshed and not screen._console_selected_refresh_count:
             _require_methods(screen, _DECISION_WAKE_METHODS)
-            # Return from the current direct read/reconcile worker before the
-            # original coalescer considers a hint received during that read.
-            screen.call_later(refresh_selected_when_due, screen)
+            # FULL never acknowledges a decision hint or overwrites its head.
+            # Keep the original periodic reconciliation as the missed-hint hedge.
+            screen.call_later(partial(start_selected_decision_refresh, screen, force=True))
 
 
 async def _refresh_current_selected_view(screen, client, visit, checkpoint) -> bool:
@@ -349,10 +345,9 @@ async def _refresh_current_selected_view(screen, client, visit, checkpoint) -> b
     if selected_client(screen) is not client:
         raise RuntimeError("Console refreshed publication changed")
     screen._console_process_projection_view = client.projection_view
-    from .execution_decisions import is_owned_project_modal, present_selected_decision
+    from .execution_decisions import is_owned_project_modal
 
     if is_owned_project_modal(client, screen, visit):
-        await present_selected_decision(screen, client, visit)
         return not _defer_selected_refresh(screen, client, visit)
     from .execution_rail import replay_selected_rail_toggles
 
@@ -374,7 +369,6 @@ async def _refresh_current_selected_view(screen, client, visit, checkpoint) -> b
         return False
     if not sync_selected_controls(screen):
         return False
-    await present_selected_decision(screen, client, visit)
     if _defer_selected_refresh(screen, client, visit):
         return False
     client.require_view(screen, visit)
@@ -640,6 +634,9 @@ def refresh_selected_when_due(screen: ChatScreen) -> None:
     """Request the original readiness refresh after its published expiry."""
     if defer_selected_passive_render(screen):
         return
+    # A genuine decision change need not wait for an unrelated FULL read. It
+    # still uses the same source-qualified channel and original UI owners.
+    start_selected_decision_refresh(screen)
     from .execution_decisions import is_owned_project_modal
 
     owner = screen.app_instance.console_execution_client
@@ -655,14 +652,65 @@ def refresh_selected_when_due(screen: ChatScreen) -> None:
     ):
         return
     client = selected_client(screen)
-    if client is None or (
-        time.monotonic() < client._readiness_deadline and not _decision_refresh_due(client)
-    ):
+    if client is None or time.monotonic() < client._readiness_deadline:
         return
     screen._console_attach_reconcile_worker = screen.run_worker(
         partial(reconcile_selected_view, screen),
         group="console-attach-reconciliation", exclusive=False,
     )
+
+
+def start_selected_decision_refresh(screen: ChatScreen, *, force: bool = False) -> None:
+    """Coalesce the existing hint into one finite read, without a second queue."""
+    if defer_selected_passive_render(screen):
+        return
+    client = selected_client(screen)
+    if (client is None or getattr(screen, "_console_process_mounted_visit", None) != client._visit
+        or getattr(screen, "_console_process_draft_switch", None) is not None
+        or getattr(screen, "_console_sync_maintenance_paused", False)):
+        return
+    if not force and not _decision_refresh_due(client):
+        return
+    worker = getattr(screen, "_console_decision_refresh_worker", None)
+    if worker is not None and not worker.is_finished:
+        return
+    screen._console_decision_refresh_worker = screen.run_worker(
+        partial(_refresh_selected_decisions, screen, client, client._visit),
+        group="console-process-decision-read", exclusive=False,
+    )
+
+
+async def _refresh_selected_decisions(screen, client, visit: int) -> None:
+    """Paint only a positively retired head; leave newer invalidations owed."""
+    from ...Chat.console_execution_process import ConsoleChannelLost
+    from .execution_decisions import present_selected_decision
+
+    source = client._source_revision
+    hint = getattr(client, "_decision_hint", None)
+    rendered = False
+    try:
+        if _defer_selected_refresh(screen, client, visit):
+            return
+        if selected_client(screen) is not client:
+            raise ConsoleChannelLost("Console decision owner changed")
+        row = client.projection_view.session(client.projection_view.active_session_id)
+        await client.read_decision_head(screen, visit, row.id, row.incarnation_id)
+        if _defer_selected_refresh(screen, client, visit):
+            return
+        client.require_view(screen, visit)
+        await present_selected_decision(screen, client, visit)
+        if _defer_selected_refresh(screen, client, visit):
+            return
+        client.require_view(screen, visit)
+        _decision_refresh_rendered(client, hint)
+        rendered = True
+    except ConsoleChannelLost:
+        if client._source_revision != source or not _defer_selected_refresh(screen, client, visit):
+            raise
+    finally:
+        if rendered and _decision_refresh_due(client):
+            _require_methods(screen, _DECISION_WAKE_METHODS)
+            screen.call_later(refresh_selected_when_due, screen)
 
 
 def defer_selected_passive_render(screen: ChatScreen) -> bool:

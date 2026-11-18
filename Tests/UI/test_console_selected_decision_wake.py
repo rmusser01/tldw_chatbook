@@ -28,12 +28,19 @@ def _scope(monkeypatch):
     )
 
     def start(callback, **kwargs):
-        assert kwargs == {"group": "console-attach-reconciliation", "exclusive": False}
+        assert kwargs["group"] in {"console-attach-reconciliation", "console-process-decision-read"}
+        assert kwargs["exclusive"] is False
         worker = SimpleNamespace(is_finished=False, work=callback)
         workers.append(worker)
         return worker
 
     screen.run_worker = start
+    async def read(*_):
+        return None
+    async def present(*_):
+        return True
+    client.read_decision_head = read
+    monkeypatch.setattr(execution_decisions, "present_selected_decision", present)
     monkeypatch.setattr(execution_decisions, "is_owned_project_modal", lambda *_: False)
     return screen, client, app, scheduled, workers
 
@@ -69,7 +76,7 @@ def test_current_decision_wakes_before_ttl_and_coalesces_original_worker(monkeyp
     assert not workers  # The authenticated receiver enters the actual screen pump.
     _deliver(scheduled)
     assert len(workers) == 1
-    assert screen._console_attach_reconcile_worker is workers[0]
+    assert screen._console_decision_refresh_worker is workers[0]
     assert client._decision_rendered_hint is None
     assert execution_state._decision_refresh_due(client)
 
@@ -114,11 +121,11 @@ async def test_hint_during_checked_read_survives_and_requests_one_followup(monke
         await complete.wait()
         return True
 
-    monkeypatch.setattr(execution_state, "_refresh_current_selected_view", render)
+    client.read_decision_head = render
     task = asyncio.create_task(workers[0].work())
     try:
         await asyncio.wait_for(entered.wait(), 5)
-        assert screen._console_attach_reconcile_running
+        assert not screen._console_attach_reconcile_running
         assert execution_state.request_selected_decision_refresh(client, later)
         _deliver(scheduled)
         assert len(workers) == 1
@@ -141,7 +148,7 @@ async def test_hint_during_checked_read_survives_and_requests_one_followup(monke
 
 
 @pytest.mark.asyncio
-async def test_hint_during_direct_refresh_waits_for_that_existing_read(monkeypatch):
+async def test_hint_during_full_refresh_reads_and_renders_independently(monkeypatch):
     screen, client, _, scheduled, workers = _scope(monkeypatch)
     first, later = _hint(client), _hint(client, 2)
     assert execution_state.request_selected_decision_refresh(client, first)
@@ -157,20 +164,26 @@ async def test_hint_during_direct_refresh_waits_for_that_existing_read(monkeypat
     try:
         await asyncio.wait_for(entered.wait(), 5)
         _deliver(scheduled)
-        assert not workers and screen._console_selected_refresh_count == 1
+        assert len(workers) == 1 and screen._console_selected_refresh_count == 1
+        await workers[0].work()
+        workers[0].is_finished = True
+        assert client._decision_rendered_hint == first and not task.done()
         assert execution_state.request_selected_decision_refresh(client, later)
         _deliver(scheduled)
-        assert not workers
+        assert len(workers) == 2
+        await workers[1].work()
+        workers[1].is_finished = True
+        assert client._decision_rendered_hint == later and not task.done()
         complete.set()
         assert await task
     finally:
         complete.set()
         await asyncio.gather(task, return_exceptions=True)
     assert screen._console_selected_refresh_count == 0
-    assert client._decision_rendered_hint == first
-    assert execution_state._decision_refresh_due(client)
+    assert client._decision_rendered_hint == later
+    assert not execution_state._decision_refresh_due(client)
     _deliver(scheduled)
-    assert len(workers) == 1
+    assert len(workers) == 3  # Original completed FULL supplies the missed-hint hedge.
 
 
 @pytest.mark.asyncio

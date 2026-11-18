@@ -1596,7 +1596,20 @@ class ConsoleLocalControls:
             )
             return receipt
         if type(command) is ReadDecisionHead:
-            receipt.applied.set_result(self._domain.presentation.project_decisions.read_head(
+            from inspect import getattr_static
+            from .console_backend_project_decisions import ConsoleBackendProjectDecisions, _METHODS
+            from .console_domain_services import _definition_current
+
+            presentation = self._domain.presentation
+            owner = presentation.project_decisions
+            if (
+                type(owner) is not ConsoleBackendProjectDecisions
+                or owner.presentation is not presentation
+                or any(getattr_static(owner, name, None) is not record[0]
+                       or not _definition_current(record) for name, record in _METHODS)
+            ):
+                raise RuntimeError("Console decision reader source changed")
+            receipt.applied.set_result(owner.read_head(
                 identity, command.attachment_id, command.visit,
             ))
             return receipt

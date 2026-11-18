@@ -6,6 +6,7 @@ import asyncio
 from dataclasses import dataclass
 
 from ...Chat.console_execution_process import ConsoleChannelLost, ConsoleExecutionClient
+from ...Chat.console_execution_decision_head import ConsoleDecisionHead
 from ...Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
 from ...Widgets.Console.console_project_instructions import (
     ProjectInstructionNoticeModal, ProjectInstructionSetupModal, ProjectInstructionSetupResult,
@@ -21,7 +22,10 @@ _SCREEN_METHODS = tuple(
         "_set_console_pending_decision", "set_task_resume_state", "sync_task_resume_state",
     )
 )
-_CLIENT_METHODS = (("submit", _definition(ConsoleExecutionClient.submit)),)
+_CLIENT_METHODS = tuple(
+    (name, _definition(getattr(ConsoleExecutionClient, name)))
+    for name in ("submit", "read_decision_head")
+)
 
 
 @dataclass(eq=False, slots=True)
@@ -62,7 +66,7 @@ def _current(screen, client, visit) -> None:
 async def present_selected_decision(screen, client, visit: int) -> bool:
     """Render the exact published mixed head through the original task cards."""
     _current(screen, client, visit)
-    projection = client._projection
+    projection = _current_head(client, visit)
     decision = projection.decision
     if decision is not None and decision.session_id != projection.session_id:
         raise RuntimeError("Console decision presentation session changed")
@@ -88,7 +92,7 @@ async def present_selected_decision(screen, client, visit: int) -> bool:
                 screen._console_process_answerable_approval = key
     else:
         screen._console_process_answerable_approval = None
-    head = client.project_head
+    head = projection.project
     state = client._project_modal
     if state is not None:
         if type(state) is not _ProjectModal:
@@ -135,6 +139,21 @@ async def present_selected_decision(screen, client, visit: int) -> bool:
             _dismiss_project_modal(state)
         raise
     return shown
+
+
+def _current_head(client, visit):
+    head = client.decision_head
+    frame = client._projection
+    if (
+        type(head) is not ConsoleDecisionHead
+        or (head.source_revision, head.session_id, head.incarnation_id,
+            head.attachment_id, head.visit) != (
+            client._source_revision, frame.session_id, frame.incarnation_id,
+            client._attachment_id, visit,
+        )
+    ):
+        raise ConsoleChannelLost("Console decision publication scope changed")
+    return head
 
 
 def _project_checkpoint(state, action):
@@ -253,7 +272,7 @@ def handle_selected_approval_event(screen, event) -> bool:
     _current(screen, client, client._visit)
     if type(event) is not ChatApprovalCard.ApprovalDecided:
         raise TypeError("Original Console approval decision event is required")
-    projection = client._projection
+    projection = _current_head(client, client._visit)
     decision = projection.decision
     if (
         decision is None or decision.decision_type != "approval"
@@ -299,6 +318,11 @@ async def _observe_resolution(screen, client, visit, receipt, *, refresh=True, c
             raise ConsoleChannelLost("Console decision retirement is unproven")
     if refresh and client._view is screen and client._visit == visit and screen.is_current:
         _current(screen, client, visit)
-        from .execution_state import refresh_selected_view
+        from .execution_state import refresh_selected_view, start_selected_decision_refresh
 
-        await refresh_selected_view(screen, checkpoint=checkpoint)
+        if checkpoint is not None:
+            # Restoring actual visibility retains its original FULL lifecycle
+            # and native retirement. The finite decision read cannot seed it.
+            await refresh_selected_view(screen, checkpoint=checkpoint)
+        else:
+            start_selected_decision_refresh(screen, force=True)
