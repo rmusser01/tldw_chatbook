@@ -70,6 +70,22 @@ An external sampler measured actual UI and backend process CPU counters against 
 
 The sampler itself used **14.891 CPU-s over 70.751 s**. That load limits comparisons with unobserved runs. Use these counters to locate work in both processes and keep the original sequential pairs as the acceptance evidence. Raw numeric counter SHA-256: `4a487abc8f9abe4cd9aa99a58b71ef51f3ba070e84f8113a4ec8c3897cb5e78c`.
 
+### Where the two processes spent CPU
+
+A separate Windows 10 run on `4c2860349a` passed the original README and approved edit in **21.2700 s** and **21.0923 s**. Both guards retired. The original five/six requests and two/three Once approvals completed. An optional sampler read each observed thread's Windows CPU counter and associated the interval with its ending Python stack. The table sums only whole intervals inside Send → first HTTP or first HTTP → persisted reply. Those windows include the original human waits.
+
+| Sampled endpoint across both turns | Backend CPU-s | UI CPU-s |
+|---|---:|---:|
+| Application | 24.750 | 2.344 |
+| Textual or Rich | 0 | 7.234 |
+| Python standard library | 17.266 | 15.578 |
+| Fixture or other dependencies | 0.250 | 0 |
+| Unqualified endpoint | 0.453 | 3.969 |
+
+Backend samples repeatedly ended in Windows handle opening, handle information and security-descriptor reads. They occurred during character metadata reads, trace persistence, recovery history and hook permission checks. The UI often sampled inside the Windows event loop after it had processed messages. Interval CPU can accrue before the sampled frame starts, so these figures cannot identify recoverable CPU in a single method. The two processes run concurrently.
+
+The observer threads used 0.594 CPU-s in the UI and 0.078 CPU-s in the backend. No sampling cap, missed thread counter or handle-close failure was reported. The original receipt SHA-256 is `711face30206fe0f42c4c53f0faf858d4b271c1ee2f482880405e5dfbf20e35d`. The source-qualified numeric readout SHA-256 is `9b6060356565281f002fc41fae519294048525c7a16bf08ce98755407d161371`. This diagnostic supplies no new baseline/candidate comparison.
+
 ### What scales with the number of widgets
 
 One activity update reconciles the headers of all retained activities. The previous renderer called Textual's layout-requesting `Static.update` twice per header. With eight mounted activities, a final status change and an externally restyled first label produced 16 updates. Comparing each freshly derived label/status with the installed styled content reduced that to **two updates**. The original class, focus, layout and timer checks still ran. All 67 activity-widget tests passed on Windows.
