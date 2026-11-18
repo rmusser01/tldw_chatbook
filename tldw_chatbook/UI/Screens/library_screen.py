@@ -16,7 +16,6 @@ import uuid
 from collections.abc import (
     Awaitable,
     Callable,
-    Coroutine,
     Iterable,
     Mapping,
     Sequence,

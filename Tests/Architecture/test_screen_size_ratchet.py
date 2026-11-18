@@ -1399,7 +1399,9 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-11-15, TASK-36952.3.1 rebased onto dev cc6006fcf5 (dev's row
     #: 38188 lines, 1377 methods): the same -709 lines and -8 methods,
     #: measured 37479 lines, 1369 methods.
-    #: 2026-11-18 (rb5): the media series is rebased onto dev 45b1949ca3, so the slices' figures above and below predate dev's TASK-41129 lines; the row is re-measured per slice.
+    #: 2026-11-18 (rb5): the media series is rebased onto dev 45b1949ca3,
+    #: so the slices' figures above and below predate dev's TASK-41129
+    #: lines; the row is re-measured per slice.
     #: 2026-11-15, TASK-36952.3.2 (architecture review F2, media body move
     #: slice 2 of 8): 24 media bodies (the ADR-055 mutation interlock, bulk
     #: and single-item delete, Undo, the selection export, the edit save)
@@ -1502,7 +1504,9 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: substring check against its methods' source) were pruned (-13, -2
     #: methods): 32797 -> 32784 lines, 1289 -> 1287 methods (measured with
     #: ``_measure``).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32784, 1287),
+    #: Review r2: the prune's orphaned ``Coroutine`` import is dropped:
+    #: 32784 -> 32783 lines (measured with ``_measure``).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32783, 1287),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard
