@@ -2265,6 +2265,7 @@ def _prepare_native_reply(
             continuation_target is not None
             and callable(getattr(self._gateway, "prepare_chat_request", None))
         ),
+        continuation_owner_key=continuation_owner_key,
         # PR3a-1 Task 1: every fleet child gets its own model-call
         # lifeline, entered on the child's own thread and torn down
         # when the CHILD finishes -- never when this turn does.

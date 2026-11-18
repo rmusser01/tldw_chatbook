@@ -1,5 +1,7 @@
 """TASK-41310: Capture On around a native ``spawn_subagent`` call.
 
+TASK-41651 adds the child's own native tool round (Capture On and Off).
+
 The real ``ConsoleChatController``, ``ConsoleChatStore``, agent bridge,
 provider gateway and ``ConsoleTraceBoundaryFactory`` run over real SQLite.
 Only the HTTP socket is a double. It answers in the OpenAI streaming shape:
@@ -61,8 +63,11 @@ async def _spawn_turn(
     tamper_parent=False,
     tasks=None,
     tamper_child_route=False,
+    child_native=False,
+    capture="capture_on",
 ) -> SimpleNamespace:
-    """Send one Capture-On turn whose model spawns a child; return the facts."""
+    """Send one turn (Capture On unless ``capture`` says otherwise) whose model
+    spawns a child; return the facts."""
     import httpx
     import urllib3
 
@@ -80,6 +85,7 @@ async def _spawn_turn(
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
     facts = SimpleNamespace(wire=[], refusals=[], boundary_errors=[], tools=[])
+    facts.applied, facts.persisted = [], []
     # The child re-resolves the inherited custom endpoint from app config,
     # which conftest redirects into the test root; refuse outside it.
     assert config.get_cli_config_path().is_relative_to(
@@ -90,7 +96,7 @@ async def _spawn_turn(
     original_preparation = console_chat_controller.ConsoleTurnPreparation
 
     def capture_on(**kwargs):
-        kwargs["capture_mode"] = ConsoleTraceCaptureMode.CAPTURE_ON
+        kwargs["capture_mode"] = ConsoleTraceCaptureMode(capture)
         return original_preparation(**kwargs)
 
     monkeypatch.setattr(console_chat_controller, "ConsoleTurnPreparation", capture_on)
@@ -169,6 +175,26 @@ async def _spawn_turn(
             ConsoleAgentTraceRequestFactory, "_turn_revision_id", drifting_turn
         )
     monkeypatch.setattr(ConsoleTraceBoundaryFactory, "__call__", boundary)
+    from tldw_chatbook.LLM_Calls import hosted_provider_engine
+
+    original_apply = hosted_provider_engine._apply_continuations
+
+    def applied(record, messages, checkpoints, resolution):
+        # The continuation checkpoints each actor's request carried.
+        kind = getattr(current_run_actor(), "kind", None)
+        facts.applied.append((kind, [each.state for each in checkpoints]))
+        return original_apply(record, messages, checkpoints, resolution)
+
+    monkeypatch.setattr(hosted_provider_engine, "_apply_continuations", applied)
+    original_persist = ConsoleChatStore.persist_provider_continuation_event
+
+    def persisted(store, event, **kwargs):
+        facts.persisted.append(event.context.agent_kind)
+        return original_persist(store, event, **kwargs)
+
+    monkeypatch.setattr(
+        ConsoleChatStore, "persist_provider_continuation_event", persisted
+    )
 
     async def metadata(transport, request):
         assert request.method == "GET" and request.url.path == "/v1/models"
@@ -211,10 +237,18 @@ async def _spawn_turn(
                 for index, each in enumerate(tasks or (task,))
             ]
             body = _sse({"tool_calls": calls}, "tool_calls")
+        elif child_native and kind != "primary" and "tool" not in roles:
+            # The child's own native tool round (a provider continuation).
+            call = {
+                "index": 0,
+                "id": "call_child_1",
+                "type": "function",
+                "function": {"name": "get_current_datetime", "arguments": "{}"},
+            }
+            body = _sse({"tool_calls": [call]}, "tool_calls")
         elif child_tool and kind != "primary" and len(roles) == 2:
             # A fenced call: the child's own tool round without a provider
-            # continuation (native child rounds on this endpoint fail before
-            # any trace, Capture Off too; see the task notes).
+            # continuation (the native round is test_child_native_tool_round_*).
             from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
 
             call = json.dumps({"name": "get_current_datetime", "arguments": {}})
@@ -271,6 +305,13 @@ async def _spawn_turn(
                 ) and all(status != "running" for _, status in facts.runs):
                     break
                 await asyncio.sleep(0.05)
+        facts.child_errors = [
+            step.get("summary")
+            for row in runs.list_runs(session.persisted_conversation_id)
+            if row["agent_kind"] == "subagent"
+            for step in (runs.get_run(row["id"]) or {}).get("steps") or ()
+            if step.get("kind") == "error"
+        ]
         facts.calls = [
             tuple(row)
             for row in chat.get_connection().execute(
@@ -426,3 +467,27 @@ async def test_a_child_route_naming_another_turn_is_refused_before_dispatch(
     why = str(vars(facts))
     assert [kind for kind, _ in facts.wire].count("subagent") == 0, why
     assert not any(status == "done" for kind, status in facts.runs if kind == "subagent"), why
+
+
+@pytest.mark.parametrize("capture", ["capture_on", "capture_off"])
+async def test_child_native_tool_round_completes(tmp_path, monkeypatch, capture):
+    """TASK-41651: a child's own native tool call (a provider continuation)
+    completes its round, Capture On and Off."""
+    facts = await _spawn_turn(
+        tmp_path, monkeypatch, "Say child done.", child_native=True, capture=capture
+    )
+    why = str(vars(facts))
+    child_wire = [roles for kind, roles in facts.wire if kind == "subagent"]
+    assert child_wire == [["system", "user"], ["system", "user", "assistant", "tool"]], why
+    assert ("subagent", "done") in facts.runs and facts.child_errors == [], why
+    assert facts.boundary_errors == [] and facts.refusals == [], why
+    # The round's continuation reaches the provider, not dropped, and stays
+    # the child's: the host's persistence (and trace custody) never sees it.
+    assert facts.persisted and set(facts.persisted) == {"primary"}, why
+    assert [states for kind, states in facts.applied if kind == "subagent"] == [
+        [],
+        ["active"],
+    ], why
+    if capture == "capture_on":
+        child = [call[4:] for call in facts.owned_calls if not call[0]]
+        assert child == [("agent_first", "complete"), ("tool_loop", "complete")], why

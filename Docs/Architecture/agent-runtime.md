@@ -32,7 +32,7 @@ This document describes the agent execution loop: the pure control loop in `Agen
 - `fork_chat` / `new_chat` (ADR-348, primary-only);
 - fleet tools (`wait_agents`, `check_agents`, `merge_agent_worktree`, `discard_agent_worktree`, `send_to_agent`, `report_to_supervisor`, `read_agent_messages`, `drain_mailbox`) — dispatched **in-loop**, deliberately not through `invoke_tool`, because waits must not be killed by the per-call timeout;
 - `on_step` / `on_trace_step` / `on_record` — observation hooks, never load-bearing (wrapped never-raise);
-- `persist_provider_continuation` / `expand_provider_continuation` — durable provider continuation.
+- `persist_provider_continuation` / `expand_provider_continuation` — durable provider continuation. A primary run's only: a sub-agent has no assistant row, so `AgentService` gives it an ephemeral continuation owned by its own run id and marked with the service's `continuation_owner_key` (the adapter's), and wires neither callback nor the trace acknowledgment for it (TASK-41651).
 
 `AgentService` implements these closures. Its constructor takes the `AgentRunsDB`, a `ToolCatalogRegistry`, the `chat_call` provider function, the review/guard hooks, skill runners, fleet coordinator, and capacity inputs. `run_turn()` documents two contracts: the run-log writer is per run TREE and rebuilt fresh per call; and sub-agent rows may still be `running` when `run_turn` returns (`subagents_outlive_turn`) — readers must wait on `on_child_settled`, never on scope exit.
 

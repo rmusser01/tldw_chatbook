@@ -1,7 +1,7 @@
 ---
 id: TASK-41651
 title: "A spawned child's native tool round fails on a provider-continuation endpoint, with capture on or off"
-status: To Do
+status: Done
 assignee: []
 created_date: 2026-11-17 19:05
 labels:
@@ -25,6 +25,35 @@ Found during the TASK-41306..41320 follow-up burn-down (2026-11-17, merged as #3
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A spawned child completes a native tool round on a provider-continuation endpoint
-- [ ] #2 A test reproduces the failure on dev and passes after the fix, with capture on and off
+- [x] #1 A spawned child completes a native tool round on a provider-continuation endpoint
+- [x] #2 A test reproduces the failure on dev and passes after the fix, with capture on and off
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no (applies ADR-063's existing rule that an ownerless run's continuation is ephemeral; no new policy)
+
+1. Reproduce through the TASK-41310 harness (real controller, store, bridge, gateway, trace runtime; socket double): the child's first reply is a native `tool_calls` call, Capture On and Off. Show it red on dev.
+2. Find which `_continuation_error` site fires and why.
+3. Fix where every child launch path (spawn, send_to_agent resume, workflow child) routes through: `AgentService._run_one`.
+4. Prove the child's checkpoint reaches the provider (not dropped) and never reaches the host's persistence or trace custody; mutation-check each part of the fix.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+**Cause.** Every child launch path (spawn, `send_to_agent` resume, workflow child) handed the child the parent's continuation durability (`persistent`) and no owner. A child has no assistant row: the Console store persists only a primary's continuation, and a persistent context without an owner fails `_valid_continuation_context`. So the child's first native tool batch stopped at `_phase_persist_tool_batch` with "Provider continuation could not be persisted", before any provider call was traced and whatever the capture mode. Present since `11bd94dbbf` (2026-08-12, the native tool lifecycle barriers). With durability fixed alone, the child's follow-up then failed in `make_call_model` ("Active provider continuation requires an owner"): its in-memory checkpoint needs an owner id and the owner key the Console adapter reads.
+
+**Fix** (`AgentService._run_one`, the one place all child launches meet): a non-primary run gets `continuation_durability="ephemeral"`, owner id = its own run id, owner key = `AgentService.continuation_owner_key`, which `_prepare_native_reply` now passes (the same value it gives the adapter, so the child's marked row attaches). The host's `persist_provider_continuation`, trace `acknowledge_provider_continuation` and `expand_provider_continuation` are wired for the primary only: a child's events would otherwise reach the shared adapter and reset the primary's live trace custody (`_live_native_custody`, `_live_native_persisted_event`) from another thread. This matches the runtime's existing rule (`test_cycle_4b_persistent_missing_owner_stops_but_ephemeral_is_non_resumable`: an ownerless subagent runs ephemeral, non-resumable). The checkpoint is kept, not dropped, so providers that need the round's reasoning replayed (`hosted_provider_engine._apply_continuations`) still get it.
+
+**Evidence** (`Tests/Chat/test_console_spawn_subagent_trace_capture.py::test_child_native_tool_round_completes[capture_on|capture_off]`, the TASK-41310 harness: real controller, store, bridge, gateway, trace runtime; socket double; the child answers its first request with a native `tool_calls` call):
+- Red on dev d0486978dd (product files checked out, test kept): both fail, child run `error` with "Provider continuation could not be persisted"; the other 10 tests in the file pass.
+- Green after: the child sends `[system,user]` then `[system,user,assistant,tool]`, run `done`; its follow-up carries one `active` checkpoint to the provider handler; the host store sees only `primary` continuation events; under Capture On both child calls are `complete` in its own linked segment.
+- Mutations (each fails both cases; rerun alone, not while editing): no durability override ("could not be persisted"), no owner id or no owner key from preparation ("requires an owner"), host callbacks wired for children (store sees `fleet` events).
+- File: 12 passed at `-n 4`.
+
+**Files:** `tldw_chatbook/Agents/agent_service.py`, `tldw_chatbook/Chat/console_agent_preparation.py`, `Tests/Chat/test_console_spawn_subagent_trace_capture.py`, `Tests/Architecture/test_module_size_ratchet.py` (agent_service 7680 -> 7692, +12), `Docs/Architecture/agent-runtime.md`, `Docs/Architecture/llm-providers.md`.
+
+**Not covered (read from the code, not run):** when the parent's endpoint has no continuation protocol, the service and adapter get no owner key, so a child routed to an endpoint that does produce continuations would still fail its native round with "requires an owner". Reported as a follow-up.
+<!-- SECTION:NOTES:END -->

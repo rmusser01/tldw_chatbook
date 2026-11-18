@@ -2591,6 +2591,7 @@ class AgentService:
             | None
         ) = None,
         prepare_provider_continuation_request: bool = False,
+        continuation_owner_key: str | None = None,
         startup_instruction_candidate: StartupInstructionCandidate | None = None,
         confirm_project_instruction_dispatch: (
             Callable[[InstructionSnapshot], str] | None
@@ -2899,6 +2900,7 @@ class AgentService:
         self.prepare_provider_continuation_request = bool(
             prepare_provider_continuation_request
         )
+        self.continuation_owner_key = continuation_owner_key
         # Per-TURN fleet state, all owned by the primary run's thread (a
         # child never spawns -- contain_child_budget zeroes max_subagents,
         # PR3a-1 Task 5's replacement for clamp_child_budget), so no lock
@@ -6211,6 +6213,13 @@ class AgentService:
                 ).tool_id
                 in hook_tool_ids
             ]
+        if agent_kind != AGENT_KIND_PRIMARY:
+            # TASK-41651: no assistant row owns a child's continuation, so it
+            # stays in its run (never the host's persistence or trace custody),
+            # marked with chat_call's owner key.
+            continuation_durability = "ephemeral"
+            continuation_owner_message_id = run_id
+            continuation_owner_key = self.continuation_owner_key
         context_callback_ref: dict[str, Callable[[tuple[str, ...]], None]] = {}
         context_steps_ref: dict[str, AgentStep] = {}
         call_model = self._make_call_model(
@@ -6895,10 +6904,13 @@ class AgentService:
                 durability=continuation_durability,
             ),
         )
-        if self.persist_provider_continuation is not None:
-            deps.persist_provider_continuation = self.persist_provider_continuation
-        deps.acknowledge_provider_continuation = self.acknowledge_provider_continuation
-        deps.expand_provider_continuation = self.expand_provider_continuation
+        if agent_kind == AGENT_KIND_PRIMARY:  # the host's, never a child's
+            if self.persist_provider_continuation is not None:
+                deps.persist_provider_continuation = self.persist_provider_continuation
+            deps.acknowledge_provider_continuation = (
+                self.acknowledge_provider_continuation
+            )
+            deps.expand_provider_continuation = self.expand_provider_continuation
         budget_tokens_known = True
         lifecycle_owner_seq, lifecycle_event_id = self._append_run_lifecycle(
             run_id,
