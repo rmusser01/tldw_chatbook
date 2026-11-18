@@ -453,6 +453,86 @@ async def test_reordered_admission_is_not_a_source_change(tmp_path):
         assert sources_changed((*reordered, ("agents.history", tmp_path)))
 
 
+def _reordered_capture():
+    from tldw_chatbook.Agents.activation import (
+        captured_sources,
+        execution,
+        selected_sources,
+    )
+
+    with execution(sources=tuple(reversed(selected_sources(None)))):
+        return captured_sources(None)
+
+
+def _legacy_hook_event(sources):
+    from tldw_chatbook.Agents.legacy_hook_ownership import _EventSource
+
+    event = object.__new__(_EventSource)
+    event.sources, event.current_memory = sources, lambda: True
+    return event.check
+
+
+def _plugin_hook_preparation(sources):
+    from tldw_chatbook.Chat.console_plugin_hook_preparation import _Preparation
+
+    preparation = object.__new__(_Preparation)
+    preparation.sources, preparation.check_memory = sources, lambda _service: None
+    return lambda: preparation.check(None)
+
+
+def _reference_read(sources):
+    from tldw_chatbook.Chat.console_reference_preparation import _ReferenceRead
+
+    read = object.__new__(_ReferenceRead)
+    read.sources, read.authority, read.check_memory = sources, None, lambda: None
+    return read.check
+
+
+@pytest.mark.parametrize(
+    "site", [_legacy_hook_event, _plugin_hook_preparation, _reference_read]
+)
+async def test_source_check_accepts_reordered_admission(site):
+    """The same sources captured in another order are no change (TASK-41639)."""
+    from tldw_chatbook.Agents.activation import captured_sources, execution
+
+    reordered = _reordered_capture()
+    with execution():
+        assert captured_sources(None) != reordered
+        site(reordered)()
+        with pytest.raises(RuntimeError, match="source changed"):
+            site(reordered[1:])()
+
+
+async def test_sources_changed_observes_the_named_service(tmp_path):
+    """Workflow checks compare against their bridge's sources (TASK-41639)."""
+    from tldw_chatbook.Agents.activation import selected_sources, sources_changed
+
+    bridge = SimpleNamespace(run_log_writer=SimpleNamespace(log_dir=tmp_path))
+    captured = tuple(reversed(selected_sources(bridge)))
+    assert not sources_changed(captured, bridge)
+    assert sources_changed(captured)
+
+
+async def test_no_source_check_compares_captured_sources_in_order():
+    """Admitted sources are a set; an ordered check refuses a reordered nest."""
+    import re
+    from pathlib import Path
+
+    import tldw_chatbook
+
+    ordered = re.compile(
+        r"captured_sources\([^()]*\)\s*[!=]=|[!=]=\s*(?:_guard\.)?captured_sources\("
+    )
+    root = Path(tldw_chatbook.__file__).parent
+    hits = [
+        f"{path.relative_to(root)}:{number}"
+        for path in sorted(root.rglob("*.py"))
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if ordered.search(line)
+    ]
+    assert not hits, f"use activation.sources_changed(): {hits}"
+
+
 def _refused_source_turn(owner):
     """An ordinary turn whose original sources changed (TASK-41315)."""
     import threading
