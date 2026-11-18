@@ -4,20 +4,22 @@ TASK-40608 measures from Send to the persisted reply, subtracting only the origi
 
 ## Where the time goes
 
-The diagram follows the README journey on `g27` (`f08b23a708`). Each arrow uses the original journey clock.
+On `g29` (`50e868df9f`), the README journey passed every original assertion. The arrows use adjacent timestamps on the original journey clock. The last two events happen after the timed reply.
 
 ```mermaid
 flowchart TD
-    S["README Send"] -->|"0.071 s"| F["Sending appears"]
-    F -->|"12.336 s"| D["Project disclosure appears"]
-    D -->|"0.733 s measured user wait"| C["Proceed clicked"]
-    C -->|"1.291 s"| H["First request reaches loopback provider"]
-    H -->|"13.098 s including 1.047 s in measured approval waits"| L["Fifth request reaches provider"]
-    L -->|"2.603 s"| R["Expected completed reply has persisted ID"]
-    R -.->|"300 s deadline"| X["Final transcript row missing, edit never started"]
+    S["README Send"] -->|"0.172 s"| F["Sending appears"]
+    F -->|"15.496 s"| D["Project disclosure appears"]
+    D -->|"0.412 s measured user wait"| C["Proceed clicked"]
+    C -->|"1.177 s"| H["First request reaches loopback provider"]
+    H -->|"18.761 s including 1.953 s in measured approval waits"| L["Fifth request reaches provider"]
+    L -->|"3.664 s"| R["Expected completed reply has persisted ID"]
+    R -->|"1.433 s"| V["Rendered answer, saved message, owning run and files verified"]
+    V -->|"0.039 s"| G["Grant write access in Settings"]
+    G -.-> X["Returning to Chat refused the display revision before edit Send"]
 ```
 
-Between consecutive provider receipts, the four `g27` README rounds took **1.760, 1.610, 3.520 and 5.161 s** after the two measured approval waits. The total was **12.051 s**, versus **319.329 s** over the same boundaries on the completed baseline. The diagnostic failed the final row assertion. Its receipt has no matching per-round foreground storage counts.
+The four `g29` intervals between provider requests took **1.933, 2.051, 6.540 and 6.284 s** after the measured approval waits, totaling **16.808 s**. Over the same boundaries the completed baseline took **319.329 s**, and the earlier `g27` diagnostic took **12.051 s** (1.760, 1.610, 3.520 and 5.161 s). The `g27` run failed its final row assertion. The two diagnostic runs have different instrumentation and supply no paired estimate.
 
 On the earlier `g25` run, Send to first request took **14.267 s**. The interval from Send to painted disclosure took **12.633 s**. A separate UI observer recorded **3.328 s** from entering Send capture to the draft commit returning. It first sampled the modal present **9.219 s** after that return. These same-observer deltas locate a large gap after the draft commit. Sampling cannot distinguish backend preparation, notification delivery, UI scheduling and paint within the gap.
 
@@ -34,6 +36,7 @@ On the earlier `g25` run, Send to first request took **14.267 s**. The interval 
 | `g27` | Same-turn retry after a retired readiness read on `f08b23a708` | 12.407 s | 0.733 s | 1.291 s | 14.431 s | Five provider requests and two approval clicks. The fixture found the expected completed assistant message with a persisted message ID at Send +30.132 s (28.352 s after measured waits). The final assistant row lookup then timed out during evidence verification. The edit did not run. |
 | `g28` | Checked first-persistence marker refresh on `0be0ccab9e` | 13.754 s | 0.935 s | 1.338 s | 16.026 s | Expected persisted reply at +33.867 s (32.023 s adjusted). All 12 observations during the final row wait found the reply in both the published snapshot and the transcript widget's message list. The reply belonged to the visible window, yet its row was absent. The 300 s assertion expired. |
 | `g29` | Mount the original transcript rows on `50e868df9f` | 15.667 s | 0.412 s | 1.177 s | 17.256 s | README passed its original checks, including paint, persisted answer, run ownership and unchanged files. The reply took 39.681 s raw and 37.316 s adjusted. The Settings round-trip for write access failed before edit Send. |
+| `g30` | Refresh the resumed Chat through the checked read, and use the existing permission owner for the virtual CLI kill-switch lookup on `aab319544e` | — | — | — | — | Workspace setup stopped before Send. The configuration cache changed identity during the readiness read. The original source check refused the new identity. This run provides no timing for either fix. |
 
 The 2.318 s difference in time to first request between `g21` and `g25` is an observation across two diagnostic runs. Several code and instrumentation changes separate them.
 
@@ -184,7 +187,7 @@ The earlier local implementation completed three sequential pairs with the origi
 | Batch | Pair | README baseline / candidate | Approved edit baseline / candidate | State |
 |---|---|---|---|---|
 | `q2` | 1 | 470.518 s / — | 575.079 s / — | Baseline passed. Candidate timed out at disclosure. Batch stopped. |
-| `q3` | 1–3 | — / — | — / — | A clean candidate was pinned at `f08b23a708`. The run ledger showed no pair start when the `g27` diagnostic ended. |
+| `q3` | 1–3 | — / — | — / — | A clean candidate was prepared at `aab319544e`. No qualifying pair had started when `g30` ended. |
 
 Times in the pair table use the benchmark's original adjusted duration. A dash means there is no measurement for that cell. With each new Windows result, append its run ID and commit, retain failed rows and update the diagram to the latest measured path. For a performance claim, record the comparable before/after boundary, wall-time delta, available work count and source receipt. Publish qualifying pair rows separately from instrumented replays.
 
