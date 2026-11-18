@@ -348,6 +348,49 @@ class TestConversationParity:
             empty_conversation_id: 0,
         }
 
+    def test_message_counts_for_a_page_do_not_scan_unrelated_messages(
+        self, db_instance: CharactersRAGDB
+    ):
+        conversation_ids = [f"conversation-{index}" for index in range(1024)]
+        deleted_id = conversation_ids[19]
+        with db_instance.transaction() as cursor:
+            cursor.executemany(
+                "INSERT INTO conversations (id, root_id, client_id, deleted) "
+                "VALUES (?, ?, 'parity_client', ?)",
+                [(cid, cid, cid == deleted_id) for cid in conversation_ids],
+            )
+            cursor.executemany(
+                "INSERT INTO messages (id, conversation_id, sender, content, client_id, deleted) "
+                "VALUES (?, ?, 'user', 'fixture message', 'parity_client', ?)",
+                [
+                    (f"{cid}-message-{index}", cid, index == 0)
+                    for cid in conversation_ids
+                    for index in range(6)
+                ],
+            )
+
+        visible_ids = [*conversation_ids[:20], "missing", conversation_ids[0]]
+        instruction_blocks = 0
+
+        def record_progress():
+            nonlocal instruction_blocks
+            instruction_blocks += 1
+            return 0
+
+        connection = db_instance.get_connection()
+        connection.set_progress_handler(record_progress, 100)
+        try:
+            counts = db_instance.count_messages_for_conversations(visible_ids)
+        finally:
+            connection.set_progress_handler(None, 0)
+
+        assert counts == {
+            **dict.fromkeys(conversation_ids[:19], 5),
+            deleted_id: 0,
+            "missing": 0,
+        }
+        assert instruction_blocks < 200
+
     def test_update_conversation_persists_aligned_metadata_fields(
         self, db_instance: CharactersRAGDB
     ):
