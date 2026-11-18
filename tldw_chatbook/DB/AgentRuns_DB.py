@@ -336,7 +336,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
     # to v21 and chains after v20. The guarded ALTERs below are idempotent
     # either way, and the from-now-on contract only requires the constant to
     # equal the HIGHEST recorded version.
-    _CURRENT_SCHEMA_VERSION = 31
+    _CURRENT_SCHEMA_VERSION = 32
     _swept_paths: set[str] = set()  # DB files already reconciled this process
 
     #: BaseDB-provenance (ADR-353): connections open through BaseDB's
@@ -3874,12 +3874,13 @@ def _workflow_schema_transaction(conn: sqlite3.Connection) -> Iterator[None]:
 
 
 def _upgrade_workflow_schema(conn: sqlite3.Connection) -> None:
+    """Apply recorded workflow migrations and their additive history index."""
     installed = {
         row[0] for row in conn.execute(
-            "SELECT version FROM schema_version WHERE version BETWEEN 26 AND 31"
+            "SELECT version FROM schema_version WHERE version BETWEEN 26 AND 32"
         )
     }
-    if len(installed) == 6:
+    if len(installed) == 7:
         return
 
     from . import recovery_workflow_schema as schema
@@ -3891,6 +3892,7 @@ def _upgrade_workflow_schema(conn: sqlite3.Connection) -> None:
         (29, schema.WORKFLOW_WINDOW_MIGRATION),
         (30, schema.WORKFLOW_REPAIR_INPUT_MIGRATION),
         (31, schema.WORKFLOW_RECOVERY_REVIEW_MIGRATION),
+        (32, schema.NEWEST_PRIMARY_MIGRATION),
     ):
         if version in installed:
             continue

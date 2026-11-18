@@ -64,7 +64,7 @@ The single write seam is `add_media_with_keywords`: URL/content-hash dedup with 
 - `Prompts_DB` — prompts + keywords, own migrations to v6, Python-side FTS, soft deletes, expected-version conflicts, and Prompt/Recipe/Mix-in discriminator. The v5-to-v6 file-backed rebuild preserves IDs, sequence, references, indexes, FTS and retained sync history; recovery accepts exact v4/v5 catalogs and migrates staged copies under its restricted authorizer.
 - `Evals_DB` — eval tasks/models/runs/results + FTS; version tracked via `PRAGMA user_version` (no version table).
 - `Subscriptions_DB` — watchlist/subscription state + briefing provenance; FTS-with-LIKE-fallback at the search boundary ("the search box must never raise into the reader").
-- `AgentRuns_DB` — agent run/step records, automatic-work accounting, private Goal history, and native workflow admission/history (schema v29).
+- `AgentRuns_DB` — agent run and step records, automatic-work accounting, private Goal history and native workflow history. Schema 32 indexes non-superseded primary runs by conversation, newest creation time and ID. The Console reads the current log target through that index. [ADR-126](../../backlog/decisions/126-complete-local-backup-and-recovery.md#newest-primary-run-in-a-conversation)
 - `Library_Collections_DB` / `Library_Ingest_Jobs_DB` — collections and the durable ingest job queue.
 - `RAG_Indexing_DB` — incremental indexing state (see [rag.md](./rag.md)).
 - `Workspace_DB`, `VisualIdentity_DB`, `Chunking_Lab_DB` — workspace bindings, visual identity, chunking experiments.

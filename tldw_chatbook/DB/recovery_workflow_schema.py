@@ -550,8 +550,6 @@ WORKFLOW_RECOVERY_REVIEW_MIGRATION = (
 
 def workflow_recovery_review_catalog(catalog):
     """Append fixed v31 DDL without opening SQLite while importing declarations."""
-    import re
-
     column = WORKFLOW_RECOVERY_REVIEW_MIGRATION[0].partition(" ADD COLUMN ")[2]
     objects = [
         sql[:-1] + ", " + column + ")"
@@ -560,6 +558,28 @@ def workflow_recovery_review_catalog(catalog):
         for sql in catalog
     ]
     objects.append(WORKFLOW_RECOVERY_REVIEW_MIGRATION[1])
+    return _catalog_order(objects)
+
+
+NEWEST_PRIMARY_INDEX = (
+    "CREATE INDEX idx_agent_runs_newest_primary\n"
+    "ON agent_runs(conversation_id, created_at DESC, id DESC)\n"
+    "WHERE agent_kind = 'primary' AND status != 'superseded'"
+)
+NEWEST_PRIMARY_MIGRATION = (
+    NEWEST_PRIMARY_INDEX,
+    "INSERT INTO schema_version(version) VALUES (32)",
+)
+
+
+def newest_primary_catalog(catalog):
+    """Append the v32 index in SQLite's catalog order."""
+    return _catalog_order((*catalog, NEWEST_PRIMARY_INDEX))
+
+
+def _catalog_order(objects):
+    import re
+
     return tuple(
         sorted(
             objects,

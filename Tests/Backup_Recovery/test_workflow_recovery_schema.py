@@ -75,7 +75,10 @@ def test_workflow_archive_rejects_hybrid_or_cross_owned_rows(tmp_path, damage):
         elif damage == "extra_column":
             conn.execute("ALTER TABLE workflow_runs ADD COLUMN extra TEXT")
         elif damage == "wrong_stamp":
-            conn.execute("DELETE FROM schema_version WHERE version=31")
+            conn.execute(
+                "DELETE FROM schema_version WHERE version=?",
+                (AgentRunsDB._CURRENT_SCHEMA_VERSION,),
+            )
         elif damage == "bad_request":
             conn.execute("DROP TRIGGER workflow_launch_immutable")
             conn.execute("UPDATE workflow_runs SET request_json='{}'")
@@ -130,7 +133,7 @@ def test_staging_v24_migration_uses_installed_allowlist(tmp_path):
     assert validate_candidate(owner(), path, Event(), migrate=True) == ()
     with closing(sqlite3.connect(path)) as conn:
         assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone() == (
-            31,
+            AgentRunsDB._CURRENT_SCHEMA_VERSION,
         )
         assert conn.execute(
             "SELECT result FROM agent_runs WHERE id='legacy'"
@@ -382,7 +385,7 @@ def test_workflow_statistics_preserve_exact_schema_validation_and_upgrade(
     assert validate_candidate(owner(), path, Event(), migrate=True) == ()
     with closing(sqlite3.connect(path)) as conn:
         assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone() == (
-            31,
+            AgentRunsDB._CURRENT_SCHEMA_VERSION,
         )
         conn.execute("PRAGMA writable_schema=ON")
         conn.execute(

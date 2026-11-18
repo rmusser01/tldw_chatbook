@@ -950,6 +950,17 @@ class _Restrictions:
                     or action == sqlite3.SQLITE_INSERT
                     and first in {"sqlite_master", "schema_version"}
                 )
+                # Fixed v31->v32 lookup index. No other index/table acquires
+                # migration authority; exact catalog validation still follows.
+                allowed |= (
+                    database == "main"
+                    and source is None
+                    and first == "idx_agent_runs_newest_primary"
+                    and (
+                        action == sqlite3.SQLITE_CREATE_INDEX and second == "agent_runs"
+                        or action == sqlite3.SQLITE_REINDEX and second is None
+                    )
+                )
                 # Fixed ADR-219 migration objects; unrelated DDL and domain
                 # row writes remain refused under this temporary owner gate.
                 allowed |= (

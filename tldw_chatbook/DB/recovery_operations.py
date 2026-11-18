@@ -353,6 +353,7 @@ class _AgentRunsAdapter(_SQLiteDeclaration):
                 (28, 29, WORKFLOW_WINDOW_MIGRATION),
                 (29, 30, WORKFLOW_REPAIR_INPUT_MIGRATION),
                 (30, 31, WORKFLOW_RECOVERY_REVIEW_MIGRATION),
+                (31, 32, NEWEST_PRIMARY_MIGRATION),
             ),
         )
 
@@ -1396,7 +1397,7 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
             "db.agent_runs",
             None,
             "agent_runs.db",
-            (18, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31),
+            (18, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32),
             (*_AGENT_RUNS_SCHEMA, *_LEGACY_WORKFLOW_SCHEMAS),
             ("db.chachanotes.primary",),
             optional_default=True,
@@ -1832,6 +1833,15 @@ _AGENT_RUNS_SCHEMA += tuple(
     (31, workflow_recovery_review_catalog(catalog))
     for version, catalog in _AGENT_RUNS_SCHEMA
     if version == 30
+)
+
+
+from .recovery_workflow_schema import NEWEST_PRIMARY_MIGRATION, newest_primary_catalog
+
+_AGENT_RUNS_SCHEMA += tuple(
+    (32, newest_primary_catalog(catalog))
+    for version, catalog in _AGENT_RUNS_SCHEMA
+    if version == 31
 )
 
 

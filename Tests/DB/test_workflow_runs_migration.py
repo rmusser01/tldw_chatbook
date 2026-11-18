@@ -50,7 +50,7 @@ def test_v24_upgrade_reopen_and_repeat_preserves_history(tmp_path, standalone):
             ("legacy", "preserved result")
         ]
         assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone() == (
-            31,
+            AgentRunsDB._CURRENT_SCHEMA_VERSION,
         )
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
         actual = tuple(
@@ -60,7 +60,8 @@ def test_v24_upgrade_reopen_and_repeat_preserves_history(tmp_path, standalone):
             )
         )
         assert actual in [
-            schema for version, schema in _AGENT_RUNS_SCHEMA if version == 31
+            schema for version, schema in _AGENT_RUNS_SCHEMA
+            if version == AgentRunsDB._CURRENT_SCHEMA_VERSION
         ]
 
 
@@ -104,6 +105,11 @@ def test_standalone_and_constructor_workflow_catalogs_match_exactly(tmp_path):
         conn.executescript(
             Path(
                 "tldw_chatbook/DB/migrations/agent_runs_v30_to_v31_workflow_recovery_review.sql"
+            ).read_text()
+        )
+        conn.executescript(
+            Path(
+                "tldw_chatbook/DB/migrations/agent_runs_v31_to_v32_newest_primary_index.sql"
             ).read_text()
         )
     catalogs = []
@@ -210,7 +216,7 @@ def test_v28_repair_metadata_upgrade_preserves_existing_history(tmp_path, standa
             "SELECT result FROM agent_runs WHERE id='old'"
         ).fetchone() == ("unchanged",)
         assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone() == (
-            31,
+            AgentRunsDB._CURRENT_SCHEMA_VERSION,
         )
         assert "repair_instruction_sha256" in {
             row[1] for row in conn.execute("PRAGMA table_info(workflow_phase_attempts)")
@@ -261,7 +267,7 @@ def test_v29_recovery_marker_is_additive_and_failure_rolls_back(
     AgentRunsDB(path).close()
     with closing(sqlite3.connect(path)) as conn:
         assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone() == (
-            31,
+            AgentRunsDB._CURRENT_SCHEMA_VERSION,
         )
         assert conn.execute(
             "SELECT result FROM agent_runs WHERE id='old'"
@@ -372,11 +378,17 @@ def test_shipped_dev25_review_rows_survive_native_workflow_upgrade(
             ).read_text()
             with closing(sqlite3.connect(path)) as conn:
                 conn.executescript(sql)
+        with closing(sqlite3.connect(path)) as conn:
+            conn.executescript(
+                Path(
+                    "tldw_chatbook/DB/migrations/agent_runs_v31_to_v32_newest_primary_index.sql"
+                ).read_text()
+            )
     else:
         AgentRunsDB(path).close()
     with closing(sqlite3.connect(path)) as conn:
         assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone() == (
-            31,
+            AgentRunsDB._CURRENT_SCHEMA_VERSION,
         )
         assert {
             table: conn.execute(
@@ -392,7 +404,8 @@ def test_shipped_dev25_review_rows_survive_native_workflow_upgrade(
             )
         )
         assert actual in [
-            catalog for version, catalog in _AGENT_RUNS_SCHEMA if version == 31
+            catalog for version, catalog in _AGENT_RUNS_SCHEMA
+            if version == AgentRunsDB._CURRENT_SCHEMA_VERSION
         ]
     with closing(AgentRunsDB(path)) as db:
         workflow = db.workflow_runs.create(
@@ -422,7 +435,7 @@ def test_standalone_legacy_workflow_history_remains_unreviewed_after_integration
         AgentRunsDB(path).close()
     with closing(sqlite3.connect(path)) as conn:
         assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone() == (
-            31,
+            AgentRunsDB._CURRENT_SCHEMA_VERSION,
         )
         assert (
             conn.execute(
@@ -439,7 +452,7 @@ def test_standalone_legacy_workflow_history_remains_unreviewed_after_integration
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
         assert {
             v for (v,) in conn.execute("SELECT version FROM schema_version")
-        } >= set(range(4, 32))
+        } >= set(range(4, AgentRunsDB._CURRENT_SCHEMA_VERSION + 1))
     assert validate_candidate(owner, path, Event(), migrate=False) == ()
     with closing(AgentRunsDB(path)) as db:
         assert db.workflow_runs.get("legacy").status == "closed"
@@ -650,7 +663,9 @@ def test_concurrent_workflow_upgrade_rechecks_after_the_writer_lock(
         first.result(timeout=10)
 
     with closing(sqlite3.connect(path)) as conn:
-        assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone() == (31,)
+        assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone() == (
+            AgentRunsDB._CURRENT_SCHEMA_VERSION,
+        )
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
         catalog = tuple(
             row[0]
@@ -659,7 +674,8 @@ def test_concurrent_workflow_upgrade_rechecks_after_the_writer_lock(
             )
         )
         assert catalog in [
-            installed for version, installed in _AGENT_RUNS_SCHEMA if version == 31
+            installed for version, installed in _AGENT_RUNS_SCHEMA
+            if version == AgentRunsDB._CURRENT_SCHEMA_VERSION
         ]
         if lineage == "shipped-v25":
             assert conn.execute("SELECT id,result FROM agent_runs").fetchall() == [

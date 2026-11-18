@@ -4,6 +4,45 @@ TASK-40608 measures from Send to the persisted reply, subtracting only the origi
 
 On November 18 the latest complete Windows 10 comparison (`495b3249e9`, process route) reduced median README time from **303.03 to 24.18 s** and approved edit time from **459.20 to 23.91 s**. All three pairs passed the original checks. All six candidate turns exceeded five seconds. [Pair results](#qualifying-pairs) · [Revalidated measurements and work counts](original-journey/qc-windows10-results.json)
 
+## Remaining time on the latest fully paired candidate
+
+Pair 3 on `495b3249e9` used the opt-in process backend and the original Windows 10 fixture. Each arrow below measures a different part of the same turn. Together they give **22.1459 s for README** and **23.9084 s for approved edit**. To get below five seconds requires saving more than **17.1459 s** and **18.9084 s**, respectively.
+
+```mermaid
+flowchart LR
+    RS["README Send"] -->|"9.611 s"| R1["Provider receives request 1"]
+    R1 -->|"10.444 s"| R5["Provider receives request 5"]
+    R5 -->|"2.090 s"| RD["Persisted reply"]
+    ES["Edit Send"] -->|"6.682 s"| E1["Provider receives request 1"]
+    E1 -->|"14.704 s"| E6["Provider receives request 6"]
+    E6 -->|"2.522 s"| ED["Persisted reply"]
+```
+
+| Candidate turn | Send → first receipt | First → last receipt | Last receipt → persisted reply | Adjusted total |
+|---|---:|---:|---:|---:|
+| README C1 | 9.3868 s | 12.6651 s | 2.1236 s | 24.1755 s |
+| README C2 | 12.0371 s | 10.3406 s | 1.9237 s | 24.3015 s |
+| README C3 | 9.6113 s | 10.4444 s | 2.0902 s | 22.1459 s |
+| Edit C1 | 7.4541 s | 14.7869 s | 2.2961 s | 24.5370 s |
+| Edit C2 | 5.8483 s | 14.3652 s | 1.9770 s | 22.1905 s |
+| Edit C3 | 6.6822 s | 14.7044 s | 2.5218 s | 23.9084 s |
+
+The first README interval deducts only the original painted disclosure to click. The middle interval deducts observation to click for two README approvals or three edit approvals. The last interval has no deduction. The fixture also verified the visible reply, read-only tree, write grant, approved diff and shutdown after the timing endpoint. Across the three pairs, README ranged from **22.15–24.30 s** and edit from **22.19–24.54 s**. Whole-turn medians were **24.18 s** and **23.91 s**. Pair 3's loopback handlers took only **0.0564 / 0.0849 s** in total. [Matched baseline and candidate receipts](original-journey/qc-windows10-results.json)
+
+### Ranked foreground changes to investigate
+
+1. **Reduce repeated work between provider requests, especially on edit.** In pair 3, the edit rounds containing `fs_read`, `fs_edit` and `git_diff` took **3.791, 3.629 and 4.326 s**. Together those rounds used **11.746 s**. README's `fs_list` and `fs_read` rounds used **4.002 and 3.516 s**. These are request-to-request envelopes. They include approval presentation, tool dispatch, process work, step commits and the next model request. The earlier instrumented `g47d` assigned 9.153 s to approvals, 5.991 s to tools and 5.154 s to the union of step writes and run-log appends across both turns. It left 8.544 s of inter-model time unassigned. Target the calls between `AgentService._run_one`, the scoped permission store, `WorkspaceToolExecutor.execute` and the next `ConsoleProviderGateway._stream_generic_chat`. Group adjacent verified reads only within a single admitted operation. Keep every Once decision, fresh kill-switch and path check, before/after file proof, commit-before-callback and physical worker exit. [Earlier foreground breakdown](#a-replacement-design)
+2. **Shorten foreground preparation before request one on both paths.** That stretch alone exceeded five seconds in all six samples. In `g47d`, provider composition included **1.939 / 1.451 s** awaiting `prepare_project_index_for_composition`. Complete configuration capture took **1.429 / 1.305 s**. The durable commit and its parent acknowledgement took **1.227 / 0.530 s**. The edit's then-observed nested permission-process startup has since been removed. The current whole-turn comparison has no exclusive per-caller times. A fixed preparation owner can batch source reads for one selected binding and hand one result back after physical retirement. Retain the original source, registry, membership and archive checks, cancellation and ordered adoption. Starting optional index creation before an earlier prerequisite could fail would change observable state. [Preparation and ownership evidence](#cost-evidence)
+3. **Publish a committed terminal row from its backend owner.** In pair 3 the entire tail was **2.090 / 2.522 s**. In `g62reads1` the explicit terminal full-display read took **0.912 / 0.951 s**. A scoped terminal row could be displayed as soon as the accepted turn and native resources have positively retired. The original full reconciliation, acknowledgement and same-visit validation still have to run. The tail includes other work, and these two measurements used different runs. [Display measurements](#periodic-display-work-during-send)
+
+The paired receipts assign elapsed time to the arrows and tool rounds. They do not divide that time among Python execution, lock waits, the Windows scheduler, native calls or independent display work. In particular, the `g62` passive-display overlap spans **9.402 / 10.260 s** during a turn that can make foreground progress concurrently. Counting that overlap as recoverable latency would double-count time. The 2,000-row index test and the faster warm-lease component test measure separate workloads. [History query](#source-checks-during-both-completed-windows-turns)
+
+### Next matched original-journey experiment
+
+On the same Windows 10 host, compare the stock guarded backend with a disposable backend that requests 1 ms Windows wait resolution and a 1 ms CPython switch interval. Use the same application bytes, original fixture, scripted provider, UI clock, checks and shutdown. Run both arms sequentially from fresh profiles and report the three nonoverlapping intervals above, physical admissions when observed, five/six request counts, two/three ordered approvals and both adjusted end-to-end times. Retire the process's timer request and restore its interpreter setting on exit. A functional failure invalidates the arm. The isolated stress test motivates this comparison. Only a fast clean product candidate advances to three fresh baseline/candidate pairs. [Windows timer resolution and power trade-off](https://learn.microsoft.com/en-us/windows/win32/api/timeapi/nf-timeapi-timebeginperiod)
+
+Later runs `g62`, `g63` and `g66` are individual diagnostics. Their clocks and application revisions are separate from the three paired candidates in the diagram.
+
 ## Where the time goes
 
 On the separate Windows 10 diagnostic `g57s` (`5a8b730cfa`), README
@@ -1046,6 +1085,15 @@ created_at DESC, id DESC)` restricted to non-superseded runs produced the
 same row in 55 instructions. That index would require an AgentRuns and
 recovery-schema migration. The original README starts in a new conversation,
 so this history scan cannot explain its eleven seconds to first HTTP.
+
+The schema 32 implementation indexes only non-superseded primary rows on
+`(conversation_id, created_at DESC, id DESC)`. On the same 2,000-row
+fixture, the parameterized newest-primary list went from 76,053 to 57 VM
+instructions. The full, metadata-only and bounded-list readers retained
+their existing SQL. Seventeen Windows cases passed, including live and
+staged upgrades, ordering ties, index membership after writes, restricted
+migration, cancellation and refusal of changed or missing index definitions.
+The original end-to-end qualification still pins schema 31.
 
 Each model dispatch can also search stored trace request headers. When 64
 headers have identical scalar fields and only the last has matching
