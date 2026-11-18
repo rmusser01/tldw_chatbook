@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-17 05:39
-updated_date: 2026-11-18 09:05
+updated_date: 2026-11-18 14:49
 labels:
 - follow-up
 - tests
@@ -72,7 +72,7 @@ Reported by the coordinator at the filing review (round 15). Since PR #3446 (mer
 - Counted right at `_ui_ready` with no settle, the count moves with timing: this head read 93 and 80 in two runs. Only the settled count compares across trees.
 - Third-party: `textual_serve` is no longer imported.
 - Boot and warm-up: the trio moved from before ready to after it, and `console_snapshot` moved the other way.
-- Owner ruling: pending.
+- Owner ruling 2026-11-18, "Accept until #3571". The +1 live first-send module (the `scope_evidence`/`agent_lesson_promotion` collision) is accepted until PR #3571 unlists `scope_evidence`; re-measure when #3571 merges. Recorded in ADR-097's exception ledger (row 2026-11-18, first-send warm-up).
 
 **More real sheds were looked for and not found.** The search covered modules the live warm-up loads after a 3 s settle that are neither resident at UI-ready nor in the live first-send record (`LIVE_FIRST_SEND_IMPORTS` / `LIVE_LIBRARY_FIRST_SEND_IMPORTS`):
 - the trio and `console_agent_reply`: agent sends need them on the UI loop (above);
@@ -82,7 +82,7 @@ Reported by the coordinator at the filing review (round 15). Since PR #3446 (mer
 - the `hooks_v2` and `response_rules` package modules: parents of listed modules;
 - seven `Tools.*` modules (`local_tool_impls`, `patch_tool_impls`, `workspace_tool_executor` and its protocol, wire, root-pin and watchdog modules), pulled in by `Agents.local_tool_provider`. The provider builds a `WorkspaceToolExecutor` when it is constructed, and `Tests/Agents/test_local_tool_provider.py` patches `local_tool_provider.WorkspaceToolExecutor`.
 
-None of these can leave without a behaviour change. That leaves one live module (the collision) until #3571; the owner's decision goes under "Owner ruling" above. The line growth is informational.
+None of these can leave without a behaviour change. That leaves one live module (the collision) until #3571; the owner accepted it until #3571 ("Owner ruling" above). The line growth is informational.
 
 **App-import census: 688 -> 687 (limit `< 688`).** No raise. The snapshot showed +4/-3:
 - `DB.chachanotes_sql_steps`: 3911d7df50 (TASK-41310 A, #3592) made `ChaChaNotes_DB` import it at module level. This is the +1 that took dev from 687 (CI 43917600520 at 5e3c8b2bd4: 687/688, drift +3/-3) to 688. It is deferred: the two upgrade steps that use it (v85->v86 and v86->v87) import it where they run. The module-size row for `ChaChaNotes_DB.py` rises by that fix's own line, 22544 -> 22545, with a dated comment, as the owner's size-ratchet rule for fixes asks.

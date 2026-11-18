@@ -242,13 +242,14 @@ MAX_SINGLE_ROUTE_ADDED_LOC = 135_111
 #: The last in-budget trees, a94c4aec67 and 5d1fc43130, load 77, so this is
 #: one live module more. That module is the collision: those trees listed
 #: only one of scope_evidence and agent_lesson_promotion, and this one lists
-#: both. It goes away when #3571 unlists scope_evidence. The owner's decision
-#: is recorded in TASK-41533. Otherwise, the trio's +3 is matched by the two
-#: served-mode sheds and by ``MCP.console_snapshot``, which TASK-41308 made
-#: resident at UI-ready. For information only: at today's file sizes that is
-#: about 1,500 to 2,300 more lines. Counted right at ``_ui_ready`` with no
-#: settle, the same tree read 80 and 93 in two runs, so that count is not
-#: comparable from one run to the next.
+#: both. It goes away when #3571 unlists scope_evidence. The owner accepted
+#: it until then ("Accept until #3571", 2026-11-18). The ruling is recorded in
+#: TASK-41533 and in ADR-097's exception ledger. Otherwise, the trio's +3 is
+#: matched by the two served-mode sheds and by ``MCP.console_snapshot``,
+#: which TASK-41308 made resident at UI-ready. For information only: at
+#: today's file sizes that is about 1,500 to 2,300 more lines. Counted right
+#: at ``_ui_ready`` with no settle, the same tree read 80 and 93 in two
+#: runs, so that count is not comparable from one run to the next.
 MAX_FIRST_SEND_WARMUP_ADDED_MODULES = 94
 
 _CENSUS_SCRIPT = """
