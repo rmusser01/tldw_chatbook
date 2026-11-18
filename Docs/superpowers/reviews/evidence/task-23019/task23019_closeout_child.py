@@ -47,6 +47,7 @@ DENIED_ROOTS: tuple[str, ...] = ()
 _REAL_OS_OPEN = os.open
 _REAL_OS_CLOSE = os.close
 _REAL_OS_DUP = os.dup
+_DIAGNOSTIC_STDERR = _REAL_OS_DUP(2)
 _REAL_OS_REPLACE_FD_APIS = {
     name: getattr(os, name) for name in ("dup2", "dup3") if hasattr(os, name)
 }
@@ -79,9 +80,31 @@ _OS_SUPPORT_SETS = (
 
 
 def _contain(record: bytes) -> None:
-    _REAL_OS_WRITE(_ATTEMPT_FD, record)
-    _REAL_OS_FSYNC(_ATTEMPT_FD)
-    _REAL_OS_EXIT(CONTAINMENT_EXIT_STATUS)
+    try:
+        frames = []
+        frame = sys._getframe(1)
+        while frame is not None and len(frames) < 16:
+            fields = {}
+            for name in ("event", "name", "path", "frozen_path", "resolved"):
+                value = frame.f_locals.get(name)
+                if isinstance(value, str):
+                    fields[name] = value.replace(_SCRATCH, "<scratch>").replace(
+                        sys.base_prefix, "<python>"
+                    )[:500]
+            frames.append({
+                "file": frame.f_code.co_filename.rsplit(os.sep, 1)[-1],
+                "function": frame.f_code.co_name,
+                "line": frame.f_lineno,
+                "fields": fields,
+            })
+            frame = frame.f_back
+        _REAL_OS_WRITE(_DIAGNOSTIC_STDERR, ("LIGHT_CI_CONTAINMENT_META " + json.dumps({
+            "category": record.decode("utf-8").strip(), "frames": frames,
+        }) + "\n").encode("utf-8"))
+    finally:
+        _REAL_OS_WRITE(_ATTEMPT_FD, record)
+        _REAL_OS_FSYNC(_ATTEMPT_FD)
+        _REAL_OS_EXIT(CONTAINMENT_EXIT_STATUS)
 
 
 def _resolved(path: object) -> str | None:
