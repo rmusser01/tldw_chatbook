@@ -831,8 +831,9 @@ async def _settle_collections_entry(screen, pilot):
 
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile  # the Library harness's profile (TASK-39141)
+@pytest.mark.parametrize("terminal_width", [80, 127])
 async def test_a_pane_toggle_sent_before_the_shell_is_measured_lands_once_it_is(
-    monkeypatch,
+    terminal_width, monkeypatch
 ):
     """TASK-41503: a toggle that arrives before the first measure is kept.
 
@@ -842,6 +843,13 @@ async def test_a_pane_toggle_sent_before_the_shell_is_measured_lands_once_it_is(
     is not yet current the layout sync returns early, so that priority was
     dropped and the measured sync resolved the stage again: the first press
     did nothing.
+
+    127 (review r16mo-rev1): the terminal widens before the measure, so the
+    stored layout still has Library closed from 80 columns, and the shell is
+    then 123 cells wide. Kept only as the stored layout's inherited priority,
+    the toggle lost to the resolver's reopen hysteresis there (a 122-125 cell
+    shell with Items open); it has to reach the measured resolve as an
+    explicit priority.
     """
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
     from tldw_chatbook.Widgets.Library.library_adaptive_reader_shell import (
@@ -866,8 +874,17 @@ async def test_a_pane_toggle_sent_before_the_shell_is_measured_lands_once_it_is(
     async with host.run_test(size=(80, 24)) as pilot:
         await _wait_for_library_shell(screen, pilot)
         await _settle_collections_entry(screen, pilot)
+        if terminal_width != 80:
+            await pilot.resize_terminal(terminal_width, 40)
+            await _settle_collections_entry(screen, pilot)
         shell = screen.query_one("#library-collections-reader-shell")
         assert not shell.effective_layout.library_open, shell.effective_layout
+        if terminal_width != 80:
+            await _wait_for_condition(
+                pilot,
+                lambda: 122 <= shell.content_size.width <= 125,
+                message=lambda: f"Shell left the band: {shell.content_size.width}",
+            )
 
         claimed = screen._library_reader_persistence_generations["library"]
         shell.library_grip.press()

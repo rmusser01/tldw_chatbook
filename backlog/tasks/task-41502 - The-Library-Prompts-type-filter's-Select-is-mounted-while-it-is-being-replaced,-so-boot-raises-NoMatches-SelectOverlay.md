@@ -4,7 +4,7 @@ title: "The Library Prompts type filter's Select is mounted while it is being re
 status: Done
 assignee:
 - '@claude'
-updated_date: 2026-11-18 07:11
+updated_date: 2026-11-18 07:44
 created_date: 2026-11-17 05:27
 labels:
 - follow-up
@@ -41,7 +41,7 @@ Found by TASK-41127 and re-measured in its fix round (round 15). `#library-promp
 ## Implementation Notes
 
 - **Cause: a prune, not the exit fence.** At boot on Prompts (and on the Prompts route) the browse result's `sync_state` recomposes `#library-prompts-canvas`. Meanwhile the Library snapshot reconcile (`_reconcile_library_entry_state`, `library_screen.py:13472`) removes that canvas to mount the source-error callout, which the test harness shows because its Library sources are unavailable. The recompose's new type filter is registered but has not composed yet. `App._prune` marks it `_pruning`, so its compose mounts nothing, and the stock `Select._on_mount` raised `NoMatches 'SelectOverlay'` (or `SelectCurrent`'s `'#label'`) into `App._exception`, which ends the app. A probe of `App._prune` and `Select._on_mount` found `_pruning` True at the filter's Mount in 10 of 10 failing runs. `App._exit` was False in all but one, where the app was already shutting down. The replacement is the reconcile's intended order, so it stays as it is.
-- **Fix.** The type filter is a `PruneSafeSelect` (TASK-1960). It skips child setup only while `_pruning`, `_closing` or `App._exit` is set, and catches no exception. It is the filter's only `Select`. `PruneSafeSelect` is already resident at UI-ready and the canvas is not imported by `import tldw_chatbook.app`, so the import-weight and UI-ready censuses are unchanged.
+- **Fix.** The type filter is a `PruneSafeSelect` (TASK-1960). It skips child setup only while `_pruning`, `_closing` or `App._exit` is set, and catches no exception. It is the canvas's only `Select`. `PruneSafeSelect` is already resident at UI-ready and the canvas is not imported by `import tldw_chatbook.app`, so the import-weight and UI-ready censuses are unchanged.
 - **Pin.** `Tests/UI/test_library_prompts_canvas.py::test_type_filter_survives_its_canvas_being_replaced_mid_recompose` holds the new filter's Compose during a `sync_state` recompose, removes the canvas as the reconcile does, then releases the Compose.
   - Red with stock `Select`: `assert NoMatches("No nodes match 'SelectOverlay' on Select(id='library-prompts-type-filter', ...)") is None`.
   - Green with the fix. It also passed 8 of 8 parallel runs at load 18-28.

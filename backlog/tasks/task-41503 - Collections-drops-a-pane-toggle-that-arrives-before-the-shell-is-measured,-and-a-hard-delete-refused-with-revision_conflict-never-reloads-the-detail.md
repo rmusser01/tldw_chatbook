@@ -4,7 +4,7 @@ title: "Collections drops a pane toggle that arrives before the shell is measure
 status: Done
 assignee:
 - '@claude'
-updated_date: 2026-11-18 07:11
+updated_date: 2026-11-18 07:44
 created_date: 2026-11-17 05:27
 labels:
 - follow-up
@@ -42,7 +42,11 @@ Found by TASK-41126 (libcoll, round 15; both also on base). (1) `LibraryScreen._
 ## Implementation Notes
 
 - **Toggle: what was dropped.** At 80x24, Collections opens on its reader stage: Library is closed while its preference says open. A grip press, or Escape (`action_library_narrow_stage_return`), therefore reopens Library through `priority="library"` alone, because the preference it writes is already "open". `_sync_library_collections_reader_layout_from_shell` returned early while the shell's allocation was not current, and that discarded the priority. The measured sync then resolved the stage again, so the press did nothing. A probe at 170x48 showed the other case was already fine: there the toggle changes the preference, and the measured sync applies it.
-- **Toggle fix.** When the sync cannot measure and was given a priority, it stores the priority as `priority_pane` on the Collections layout. The measured resolve already inherits `previous.priority_pane` while that pane's preference is open, so no new path was needed. This stores only what the sync would have applied had it measured.
+- **Toggle fix.** When the sync cannot measure and was given a priority, the controller keeps it with the shell it was meant for (`_deferred_layout_priority`). That shell's next measured sync passes it to the resolver as an explicit `priority=`, and only while that pane's preference is still open, so a later close cancels it. A newer explicit priority wins, and each measured sync clears the deferral.
+- **Review r16mo-rev1 (fix round 1).** The first version stored the toggle as the layout's `priority_pane`, so the measured resolve took it as an inherited priority. Its reopen hysteresis (`explicit_priority != "library"`) then closed Library again whenever the stored layout had Library closed from a narrower width and the shell measured 122-125 cells with Items open, or 82-85 with Items closed: after a resize, or on returning to Collections in a wider terminal. The first version's notes claimed it stored "only what the sync would have applied had it measured"; that was wrong for that band. The toggle test is now parametrized over the terminal width:
+  - `[80]`: the original case.
+  - `[127]`: the terminal widens before the measure, so the shell measures 123 cells; the test asserts it is in the band. Red with the first version: `The early toggle was dropped: AdaptiveReaderEffectiveLayout(library_open=False, items_open=True, library_width=0, items_width=56, reader_width=57, priority_pane=None, ...)`. Green with the explicit priority.
+  - Fix-round runs: both Collections pins 6 of 6 in parallel at load 45-53; the journeys file at `-n 4`, 14 passed and 8 failed, all eight the local `RecoveryRequired` trap as in the first round; the serial ratchets and wiring tests 93 passed; preflight passed. The toggle entry is now two cases, 2.2 s call each serially at load ~13 (6.7 s for the process); the census line selects both.
 - **Hard delete fix.** When a confirm is refused with `revision_conflict`, the controller warns as before, then reloads the selected capture (`refresh_selected_detail`, through `_run_library_collections_capture_transition` so the reader repaints). The confirm stays armed, so the next **Delete permanently** sends the current revision. A failed reload warns with its reason.
 - **Tests** (`Tests/UI/test_library_collection_reader_journeys.py`, real Library screen):
   - `test_a_pane_toggle_sent_before_the_shell_is_measured_lands_once_it_is` gates `_library_adaptive_reader_allocation_is_current` to False at 80x24. It presses the Library grip and waits for the toggle's persistence claim, checks nothing applied yet, then lifts the gate and posts the shell's own `AdaptiveReaderShellResized`.
@@ -58,6 +62,6 @@ Found by TASK-41126 (libcoll, round 15; both also on base). (1) `LibraryScreen._
   - All 53 are the local `RecoveryRequired: raw_source_selection_changed` trap on tests without a profile marker.
   - All 53 fail the same way with the base source restored.
 - **Architecture, serial.** The size ratchets and the Collections and Prompts wiring tests: 93 passed.
-- **Size.** `library_collections_controller.py` 1756 -> 1771 (measured). The pin was raised with a dated comment.
+- **Size.** `library_collections_controller.py` 1756 -> 1771 (measured), then 1782 in fix round 1. The pin was raised with a dated comment each time.
 - **Docs.** The `Docs/User_Guide/library/collections.md` row for Delete Permanently… now says what a refused delete does.
 - Files: `tldw_chatbook/UI/Library_Modules/library_collections_controller.py`, `Tests/UI/test_library_collection_reader_journeys.py`, `Tests/Architecture/test_library_modules_size_ratchet.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `Docs/User_Guide/library/collections.md`.
