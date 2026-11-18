@@ -1,6 +1,6 @@
 ---
 id: TASK-41721
-title: "Three replacement publication scope tests are red on dev"
+title: "A replacement publication scope test is red on dev, and two more time out under load"
 status: To Do
 assignee: []
 created_date: 2026-11-18 06:57

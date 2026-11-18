@@ -39,4 +39,4 @@ Reproduce: run the file alone from a detached origin/dev worktree (`.venv/bin/py
 
 **2026-11-15 (round-14 closeout).** Still red at the round-14 stack top c7d4a41717: `Tests/Architecture/test_timer_path_static_update_inventory.py` serially through run.sh, 2 failed (`test_no_timer_path_update_defaults_to_layout_true`, `test_clock_root_set_is_pinned`), 17 passed. No new task was filed; this task owns both.
 
-**2026-11-18 (round 16).** Still red at the round-16 wave-1 stack top (dev 97f8c58c0c plus wave 1): 2 failed / 17 passed serially through run.sh. Several round-16 implementers saw it; no new task was filed (a duplicate, TASK-41724, was dropped in review).
+**2026-11-18 (round 16).** Still red at the round-16 wave-1 stack top (dev 97f8c58c0c plus wave 1): 2 failed / 17 passed serially through run.sh. Several round-16 implementers saw it; no new task was filed (a duplicate filed in round 16 was dropped in review).

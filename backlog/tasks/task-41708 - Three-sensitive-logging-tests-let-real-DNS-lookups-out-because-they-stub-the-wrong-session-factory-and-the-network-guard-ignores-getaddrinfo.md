@@ -1,6 +1,6 @@
 ---
 id: TASK-41708
-title: "Two sensitive-logging tests let real DNS lookups out because they stub the wrong session factory and the network guard ignores getaddrinfo"
+title: "Three sensitive-logging tests let real DNS lookups out because they stub the wrong session factory and the network guard ignores getaddrinfo"
 status: To Do
 assignee: []
 created_date: 2026-11-18 06:57
