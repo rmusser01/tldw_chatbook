@@ -31,7 +31,6 @@ async def exercise():
     from tldw_chatbook import app_service_wiring as wiring
     from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
     from tldw_chatbook.UI.Console_Modules import skill
-    from tldw_chatbook.Widgets import compact_model_bar as metadata
     from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
     from tldw_chatbook.Chat import console_preparation_reads
 
@@ -45,10 +44,10 @@ async def exercise():
         facade = app.skills_scope_service
         local = app.local_skills_service
         owner = skill._capture_console_skill_discovery(controller)
-        assert owner is not None and owner[0]()
+        assert owner is not None and owner()
         context = await controller._fetch_console_skill_context()
         assert context.get('available_skills'), context
-        assert skill._capture_console_skill_context_read(app, facade, wiring, metadata) is not None
+        assert skill._capture_console_skill_context_read(app, facade, wiring) is not None
 
         # Observe/hold the ORIGINAL method after its ORIGINAL content admission.
         # No product callback or source proof is patched for this control.
@@ -115,7 +114,7 @@ async def exercise():
         facade.policy_enforcer = local.policy_enforcer = policy
         app._local_skills_stack_inputs = (policy, original_inputs[1])
         try:
-            assert skill._capture_console_skill_context_read(app, facade, wiring, metadata) is None
+            assert skill._capture_console_skill_context_read(app, facade, wiring) is None
             assert (await controller._fetch_console_skill_context()).get('available_skills')
             assert calls and set(calls) == {main}, (main, calls)
         finally:
@@ -125,7 +124,7 @@ async def exercise():
         original_loader = local._builtin_disabled_loader
         local._builtin_disabled_loader = lambda: frozenset()
         try:
-            assert skill._capture_console_skill_context_read(app, facade, wiring, metadata) is None
+            assert skill._capture_console_skill_context_read(app, facade, wiring) is None
         finally:
             local._builtin_disabled_loader = original_loader
         trust = local._trust_service
@@ -134,35 +133,34 @@ async def exercise():
                 raise AssertionError('classification invoked a custom callback')
         local._trust_service = CustomTrust()
         try:
-            assert skill._capture_console_skill_context_read(app, facade, wiring, metadata) is None
+            assert skill._capture_console_skill_context_read(app, facade, wiring) is None
         finally:
             local._trust_service = trust
         for method in ('status_for_skill', '_status_for_skill'):
             setattr(trust, method, lambda name: None)
             try:
-                assert skill._capture_console_skill_context_read(app, facade, wiring, metadata) is None
+                assert skill._capture_console_skill_context_read(app, facade, wiring) is None
             finally:
                 delattr(trust, method)
 
-        body = inspect.unwrap(LocalSkillsService.get_context)
-        original_code = body.__code__
-        body.__globals__['_skill_context_control_threads'] = calls
-        async def changed_context(self):
-            import threading
-            _skill_context_control_threads.append(threading.get_ident())
+        # TASK-41642 (ADR-356 rule 4): a changed method body is no longer a
+        # refusal; an override on this local service is, and it keeps the
+        # custom reader on its UI loop.
+        async def changed_context(*args, **kwargs):
+            calls.append(threading.get_ident())
             return {'available_skills': [{'name': 'custom-context'}]}
         calls.clear()
         try:
-            body.__code__ = changed_context.__code__
-            assert skill._capture_console_skill_context_read(app, facade, wiring, metadata) is None
+            assert 'get_context' not in vars(local)
+            vars(local)['get_context'] = changed_context
+            assert skill._capture_console_skill_context_read(app, facade, wiring) is None
             assert await controller._fetch_console_skill_context() == {
                 'available_skills': [{'name': 'custom-context', 'backend': 'local', 'record_id': 'local:skill:custom-context'}],
                 'backend': 'local',
             }
             assert calls == [main]
         finally:
-            body.__code__ = original_code
-            del body.__globals__['_skill_context_control_threads']
+            vars(local).pop('get_context', None)
     assert not network_guard.blocked_attempts()
     assert not real_profile_guard.take_violations()
     print('retired and reopened')
