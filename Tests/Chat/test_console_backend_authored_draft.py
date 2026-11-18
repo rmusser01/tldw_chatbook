@@ -85,9 +85,13 @@ async def test_backend_empty_authored_draft_retains_handoff_order_and_view_curre
             await asyncio.shield(mounted.applied)
         finally:
             assert await asyncio.shield(mounted.retired) is True
-        assert (
-            backend.presentation._capture_composition(session)["draft_spend_run_active"]
-            is False
+        published = backend.presentation.projection_view(
+            mounted.identity, mounted.applied.result()
+        )
+        assert published["composition"]["draft_spend_run_active"] is False
+        assert published["composition"]["queue"]["snapshot"]["session_id"] == session.id
+        assert published["composition"]["queue"]["snapshot"]["total_count"] == (
+            backend.controller.prompt_queue_registry.snapshot(session.id).total_count
         )
 
         def update(draft, *, expected=None):

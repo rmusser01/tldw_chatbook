@@ -146,6 +146,9 @@ async def test_due_refresh_is_accepted_by_textual_async_workers(monkeypatch):
         run_worker=lambda callback, **_: work.append(callback) or SimpleNamespace(is_finished=False),
     )
     monkeypatch.setattr(execution_state, "reconcile_selected_view", reconcile)
+    # Visit eligibility has separate coverage; this tests Textual's async
+    # worker callable contract with the same isolated presentation doubles.
+    monkeypatch.setattr(execution_state, "defer_selected_passive_render", lambda _: False)
     monkeypatch.setattr(execution_state, "selected_client", lambda _: SimpleNamespace(_readiness_deadline=0))
     monkeypatch.setattr(execution_decisions, "is_owned_project_modal", lambda *_: False)
     execution_state.refresh_selected_when_due(screen)
