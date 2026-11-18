@@ -39,6 +39,7 @@ from tldw_chatbook.Chat.console_context_policy import (
     ContextCompactionMode,
 )
 from tldw_chatbook.Chat.console_turn_preparation import ConsolePreparationPauseKind
+from tldw_chatbook.DB.base_db import SqliteRetirementIncomplete
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.Console_Modules.provider_continuation_recovery import (
     TraceCallRecoveryCallout,
@@ -51,6 +52,16 @@ _ASK = ConsoleContextPolicyOverrides(
     summary_max_tokens=100,
 )
 _SUMMARY = "The user asked numbered questions; the assistant answered each."
+
+
+async def _dispose_runtime(console) -> None:
+    """Dispose after the harness exits; an AgentRuns reader may still be
+    draining, which refuses retirement. ``owned_console_apps`` disposes again
+    and stays loud if it is still refused (as in response_rules_fixtures)."""
+    try:
+        await console._console_runtime().dispose()
+    except SqliteRetirementIncomplete:
+        pass
 
 
 def _frame(host) -> str:
@@ -251,7 +262,7 @@ async def test_deferred_compact_worker_never_targets_a_later_chat(
         for work in scheduled:
             work.close()
         if console is not None:
-            await console._console_runtime().dispose()
+            await _dispose_runtime(console)
         database.close()
 
 
@@ -326,7 +337,7 @@ async def test_an_ask_hold_shows_the_card_and_each_action_completes(
             assert "waiting for dispatch" not in _frame(host)
     finally:
         if console is not None:
-            await console._console_runtime().dispose()
+            await _dispose_runtime(console)
         database.close()
 
 
@@ -404,7 +415,7 @@ async def test_the_hold_card_names_its_trigger_and_policy_with_no_dispatch_panel
             assert controller.context_compaction_hold(held.preparation_id) is not None
     finally:
         if console is not None:
-            await console._console_runtime().dispose()
+            await _dispose_runtime(console)
         database.close()
 
 
@@ -477,7 +488,7 @@ async def test_a_held_send_reads_blocked_and_after_cancel_the_pause_is_forecast(
             assert "Next send pauses for compaction approval" in chip.tooltip
     finally:
         if console is not None:
-            await console._console_runtime().dispose()
+            await _dispose_runtime(console)
         database.close()
 
 
@@ -570,7 +581,7 @@ async def test_compact_action_compacts_and_the_next_send_no_longer_pauses(
             )
     finally:
         if console is not None:
-            await console._console_runtime().dispose()
+            await _dispose_runtime(console)
         database.close()
 
 
@@ -639,7 +650,7 @@ async def test_rewind_summarize_works_while_a_send_is_held(
             assert controller.context_compaction_hold(held.preparation_id) is not None
     finally:
         if console is not None:
-            await console._console_runtime().dispose()
+            await _dispose_runtime(console)
         database.close()
 
 
@@ -689,5 +700,5 @@ async def test_continue_over_the_ask_trigger_stops_before_commit_not_failed(
             assert runtime.recoveries_for_session(session.id) == ()
     finally:
         if console is not None:
-            await console._console_runtime().dispose()
+            await _dispose_runtime(console)
         database.close()
