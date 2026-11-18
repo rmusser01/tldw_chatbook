@@ -160,6 +160,7 @@ async def present_selected_decision(screen, client, visit: int) -> bool:
         if state.head == head and is_owned_project_modal(client, screen, visit):
             return shown
         _dismiss_project_modal(state)
+        return shown  # Restore the actual Console before reading its next head.
     if head is None or not screen.is_current:
         return shown
     modal = (

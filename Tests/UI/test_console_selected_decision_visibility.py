@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from Tests.UI.test_console_selected_decision_wake import _deliver, _hint, _scope
+from tldw_chatbook.Chat.console_execution_decision_head import ConsoleDecisionHead
 from tldw_chatbook.Chat.console_execution_process import ConsoleChannelLost
 from tldw_chatbook.UI.Console_Modules import execution_decisions, execution_state
 
@@ -103,3 +104,40 @@ async def test_project_answer_holds_hints_through_resolution_and_visible_full(
     finally:
         release.set()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_replacement_head_cannot_push_over_its_predecessors_restoration(monkeypatch):
+    present = execution_decisions.present_selected_decision
+    screen, client, _, _, workers = _scope(monkeypatch)
+    row = client.projection_view.session(client.projection_view.active_session_id)
+    old = SimpleNamespace(decision_id="old", session_id=row.id, incarnation_id=row.incarnation_id)
+    replacement = SimpleNamespace(decision_id="next", kind="dispatch", notice=object())
+    state = execution_decisions._ProjectModal(
+        client, screen, client._visit, client._source_revision, old, object(),
+        attachment_id=client._attachment_id,
+    )
+    client._project_modal = state
+    client._projection = SimpleNamespace(session_id=row.id, incarnation_id=row.incarnation_id)
+    client.decision_head = ConsoleDecisionHead(
+        client._source_revision, row.id, row.incarnation_id, client._attachment_id,
+        client._visit, None, replacement,
+    )
+    screen._set_console_pending_decision = lambda _: False
+    monkeypatch.setattr(execution_decisions, "selected_client", lambda _: client)
+    monkeypatch.setattr(execution_decisions, "_require_methods", lambda *_: None)
+    dismissed = []
+
+    def dismiss(actual):
+        assert actual is state
+        dismissed.append(actual)
+        execution_decisions._begin_project_visibility_restore(actual)
+
+    monkeypatch.setattr(execution_decisions, "_dismiss_project_modal", dismiss)
+    monkeypatch.setattr(execution_decisions, "ProjectInstructionNoticeModal", lambda _: pytest.fail(
+        "replacement modal bypassed the outstanding original visibility restoration"
+    ))
+    assert await present(screen, client, client._visit) is False
+    assert dismissed == [state] and not workers
+    assert execution_decisions.pending_project_visibility(client, screen, client._visit) is state.restoration
+    state.restoration.cancel()  # This orchestration case issued no physical work.
