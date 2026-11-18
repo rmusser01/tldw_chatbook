@@ -116,6 +116,7 @@ from tldw_chatbook.Chat.conversation_local_marks_service import (
 from tldw_chatbook.Chat.library_activity import LibraryActivityContribution
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.DB.base_db import operation_owned_connection
+from tldw_chatbook.DB.profile_writer_chacha import console_mutation
 from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDB,
     ConflictError,
@@ -520,6 +521,7 @@ class ChatPersistenceService:
         """Return the thinking envelope version this local adapter round-trips."""
         return 1
 
+    @console_mutation
     def persist_console_library_activity(
         self,
         *,
@@ -1259,6 +1261,7 @@ class ChatPersistenceService:
         with operation_owned_connection(self.db), self.db.transaction() as cursor:
             return read_preferences(cursor, conversation_id)
 
+    @console_mutation
     def save_conversation_mixin_preferences(
         self, *, conversation_id: str, expected_revision: int, value: "MixinPreferences"
     ) -> "MixinPreferences":
@@ -1270,6 +1273,7 @@ class ChatPersistenceService:
                 cursor, conversation_id, expected_revision=expected_revision, value=value
             )
 
+    @console_mutation
     def save_conversation_mixin_attempt(
         self,
         conversation_id: str,
@@ -1302,6 +1306,7 @@ class ChatPersistenceService:
                     native_message_ids=native_message_ids,
                 )
 
+    @console_mutation
     def save_pending_assistant(
         self,
         conversation_id: str,
@@ -1728,6 +1733,7 @@ class ChatPersistenceService:
             )
         return self.db.add_conversation(conversation_data)
 
+    @console_mutation
     def persist_console_conversation_with_policy(
         self,
         *,
@@ -1794,6 +1800,7 @@ class ChatPersistenceService:
             if cursor.rowcount != 1:
                 raise RuntimeError("handoff launch publication conflict")
 
+    @console_mutation
     def update_agent_handoff_draft(
         self,
         conversation_id: str,
@@ -1850,6 +1857,7 @@ class ChatPersistenceService:
             )
             return updated.rowcount == 1
 
+    @console_mutation
     def commit_durable_turn(
         self,
         *,
@@ -3528,6 +3536,7 @@ class ChatPersistenceService:
             expected_version=expected_version,
         )
 
+    @console_mutation
     def replace_assistant_generation_projection_with_contributions(
         self,
         *,
@@ -3827,6 +3836,7 @@ class ChatPersistenceService:
         """
         return self.db.update_message_metadata_local(message_id, metadata_json)
 
+    @console_mutation
     def create_message(
         self,
         *,

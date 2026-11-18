@@ -2078,6 +2078,42 @@ def test_supersede_marks_old_tree_before_new_run(db, monkeypatch):
     "failed_kind",
     ["agent_run_created", "agent_run_started", "agent_run_completed"],
 )
+def test_unknown_step_or_terminal_write_is_never_automatically_replayed(db, monkeypatch, failed_kind):
+    from tldw_chatbook.DB.profile_writer import ProfileWriterOutcomeUnknown
+
+    attempts = []
+    insert = db.insert_steps_at_indices
+    terminal = db.set_terminal_with_step
+
+    def write_steps(run_id, records):
+        if any(step["kind"] == failed_kind for _, step in records):
+            attempts.append(run_id)
+            raise ProfileWriterOutcomeUnknown("receipt lost")
+        return insert(run_id, records)
+
+    def write_terminal(run_id, status, result, step, **kwargs):
+        if step["kind"] == failed_kind:
+            attempts.append(run_id)
+            raise ProfileWriterOutcomeUnknown("receipt lost")
+        return terminal(run_id, status, result, step, **kwargs)
+
+    monkeypatch.setattr(db, "insert_steps_at_indices", write_steps)
+    monkeypatch.setattr(db, "set_terminal_with_step", write_terminal)
+    service, _ = make_service(db, ["an answer"])
+    with pytest.raises(ProfileWriterOutcomeUnknown, match="receipt lost"):
+        service.run_turn(
+            conversation_id="uncertain-agent-write",
+            messages=[{"role": "user", "content": "hello"}],
+            config=CFG,
+            api_endpoint="llama_cpp",
+        )
+    assert len(attempts) == 1
+
+
+@pytest.mark.parametrize(
+    "failed_kind",
+    ["agent_run_created", "agent_run_started", "agent_run_completed"],
+)
 def test_agent_lifecycle_capture_failure_uses_actual_diagnostic_cause_after_reload(
     db, monkeypatch, failed_kind
 ):

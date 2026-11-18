@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from types import EllipsisType
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
@@ -60,6 +61,7 @@ if TYPE_CHECKING:
         ServerChatDictionaryService,
     )
     from .Chat.chat_conversation_scope_service import ChatConversationScopeService
+    from .Chat.console_library_policy import ConsoleLibraryMigrationSeed
     from .Chat.console_runtime import ConsoleRuntime
     from .Chat.console_raw_cli import RawCliRuntime
     from .Chat.chat_conversation_service import ChatConversationService
@@ -312,8 +314,9 @@ def open_chachanotes_db(
     client_id: str,
     check_integrity: bool = False,
     seed_builtin_content: bool = False,
+    migration_seed: ConsoleLibraryMigrationSeed | None | EllipsisType = ...,
 ) -> CharactersRAGDB:
-    """Open ChaChaNotes; the Console Library migration seed is always passed."""
+    """Open ChaChaNotes using the configured seed or the original caller's seed."""
     from .config import load_console_library_migration_seed
     from .config import seed_builtin_content as seed_builtins
     from .DB.ChaChaNotes_DB import CharactersRAGDB
@@ -322,7 +325,9 @@ def open_chachanotes_db(
         path,
         client_id=client_id,
         check_integrity_on_startup=check_integrity,
-        console_library_migration_seed=load_console_library_migration_seed(),
+        console_library_migration_seed=(
+            load_console_library_migration_seed() if migration_seed is ... else migration_seed
+        ),
     )
     if seed_builtin_content:
         try:

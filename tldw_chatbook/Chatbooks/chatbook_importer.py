@@ -20,6 +20,7 @@ import os
 import re
 import shutil
 import stat
+import sys
 import tempfile
 import unicodedata
 import uuid
@@ -160,6 +161,45 @@ _IMPORTABLE_CONTENT_TYPES: Tuple["ContentType", ...] = (
     ContentType.MEDIA,
     ContentType.KEPT_BRIEFING,
 )
+
+_PROFILE_IMPORT_STORES = {
+    "ChaChaNotes": "chachanotes_db_path", "Prompts": "prompts_db_path", "Media": "media_db_path",
+}
+
+
+def _execute_profile_import(profile: Path, arguments: dict) -> dict:
+    """Import the selected archive with the stock preflight and per-item transactions."""
+    from ..Backup_Recovery.profile_paths import database_leaf
+    from .database_paths import get_chatbook_database_paths
+
+    if set(arguments) != {"stores", "archive", "selections", "resolution", "prefix", "media", "status"}:
+        raise ValueError("Invalid Chatbook import command.")
+    stores = arguments["stores"]
+    if (
+        type(stores) is not list or not all(type(key) is str for key in stores)
+        or "ChaChaNotes" not in stores or not set(stores) <= _PROFILE_IMPORT_STORES.keys()
+        or type(arguments["archive"]) is not str or not Path(arguments["archive"]).is_absolute()
+        or type(arguments["prefix"]) is not bool or type(arguments["media"]) is not bool
+    ):
+        raise ValueError("Invalid Chatbook import destination or options.")
+    current = get_chatbook_database_paths()
+    if any(Path(current[key]) != profile / database_leaf(_PROFILE_IMPORT_STORES[key]) for key in stores):
+        raise ValueError("Chatbook import destination changed.")
+    selections = arguments["selections"]
+    if selections is not None:
+        if type(selections) is not dict or not all(
+            type(ids) is list and all(type(item) is str for item in ids) for ids in selections.values()
+        ):
+            raise ValueError("Invalid Chatbook import selection.")
+        selections = {ContentType(key): ids for key, ids in selections.items()}
+    status = ImportStatus()
+    status._adopt_writer_status(arguments["status"])
+    importer = ChatbookImporter({key: current[key] for key in stores})
+    success, message = importer.import_chatbook(
+        Path(arguments["archive"]), selections, ConflictResolution(arguments["resolution"]),
+        arguments["prefix"], arguments["media"], status,
+    )
+    return {"success": success, "message": message, "status": status.to_dict()}
 
 
 class ImportConflict:
@@ -427,6 +467,29 @@ class ImportStatus:
         """Add a warning message."""
         self.warnings.append(warning)
 
+    def _adopt_writer_status(self, snapshot: dict) -> None:
+        """Restore the original counters on the caller's existing progress object."""
+        totals = ("total_items", "processed_items", "successful_items", "failed_items", "skipped_items")
+        counts = ("attempted", "excluded", "unsupported", "successful", "skipped", "failed")
+        if type(snapshot) is not dict or type(snapshot.get("by_type")) is not dict:
+            raise ValueError("Invalid Chatbook import status.")
+        by_type = {ContentType(key): values for key, values in snapshot["by_type"].items()}
+        for values, fields in [(snapshot, totals), *((row, counts) for row in by_type.values())]:
+            if type(values) is not dict or any(type(values.get(field)) is not int or values[field] < 0 for field in fields):
+                raise ValueError("Invalid Chatbook import count.")
+        for field in ("errors", "warnings"):
+            items = snapshot.get(field)
+            if type(items) is not list or not all(type(item) is str for item in items):
+                raise ValueError("Invalid Chatbook import diagnostics.")
+        for field in totals:
+            setattr(self, field, snapshot[field])
+        for kind, values in by_type.items():
+            result = self.result_for(kind)
+            for field in counts:
+                setattr(result, field, values[field])
+        self.errors[:] = snapshot["errors"]
+        self.warnings[:] = snapshot["warnings"]
+
     def to_dict(self) -> dict:
         """Convert status to dictionary."""
         return {
@@ -470,6 +533,30 @@ class ChatbookImporter:
         """Create one collision-resistant owner-only extraction directory."""
 
         return Path(tempfile.mkdtemp(prefix=prefix, dir=self.temp_dir))
+
+    def _profile_writer_target(self) -> Path | None:
+        """Select only the exact installed store set and ordinary conflict resolver."""
+        if (
+            sys.platform != "win32" or type(self) is not ChatbookImporter
+            or type(self.conflict_resolver) is not ConflictResolver or self.conflict_resolver.ask_callback is not None
+            or "ChaChaNotes" not in self.db_paths or not self.db_paths.keys() <= _PROFILE_IMPORT_STORES.keys()
+        ):
+            return None
+        from ..Backup_Recovery.profile_paths import database_leaf
+
+        if not all(
+            path and Path(path).name.casefold() == database_leaf(_PROFILE_IMPORT_STORES[key]).casefold()
+            for key, path in self.db_paths.items()
+        ):
+            return None
+        from ..DB.profile_writer import in_profile_writer
+
+        if in_profile_writer():
+            return None
+        profile = get_user_data_dir()
+        if not all(Path(path) == profile / database_leaf(_PROFILE_IMPORT_STORES[key]) for key, path in self.db_paths.items()):
+            return None
+        return profile
 
     @staticmethod
     def _validated_archive_parts(member: zipfile.ZipInfo) -> tuple[str, ...]:
@@ -1122,6 +1209,24 @@ class ChatbookImporter:
             except ValueError:
                 status.add_error(_ARCHIVE_SOURCE_PATH_ERROR)
                 return False, _ARCHIVE_SOURCE_PATH_ERROR
+
+            profile = self._profile_writer_target()
+            if profile is not None and type(status) is ImportStatus:
+                from ..DB.profile_writer import call_profile_writer
+
+                reply = call_profile_writer(profile, "chatbook.import", {
+                    "stores": list(self.db_paths),
+                    "archive": str(chatbook_path.absolute()),
+                    "selections": None if content_selections is None else {
+                        key.value: list(ids) for key, ids in content_selections.items()
+                    },
+                    "resolution": conflict_resolution.value,
+                    "prefix": prefix_imported,
+                    "media": import_media,
+                    "status": status.to_dict(),
+                })
+                status._adopt_writer_status(reply["status"])
+                return reply["success"], reply["message"]
 
             logger.info(
                 f"ChatbookImporter.import_chatbook: Starting import of {chatbook_path}"

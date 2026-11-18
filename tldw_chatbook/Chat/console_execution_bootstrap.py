@@ -148,6 +148,8 @@ class ConsolePermissionBootstrap:
             client._monitor.join(max(0.0, deadline - time.monotonic()))
             joined = joined and not client._monitor.is_alive()
         client._physically_closed = joined and client._close_pipes()
+        if client._physically_closed:
+            client._release_profile_writer()
 
     def require_adoptable(self, profile) -> None:
         client = self.client

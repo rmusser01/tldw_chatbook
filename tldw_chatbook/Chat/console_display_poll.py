@@ -16,6 +16,11 @@ _SECTIONS = frozenset({
     "sessions", "active_session_id", "fingerprints", "pressed_inputs",
     "readiness", "workspace", "composition", "session_surface",
 })
+_READINESS = frozenset({
+    "effective_settings", "state", "provider_label", "control_provider_label", "model",
+    "remaining_seconds", "captured_at_monotonic", "context_summary", "agent_rail",
+    "prompt_history", "send_selection", "project_head",
+})
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,7 +47,8 @@ class DisplayPublication:
 
 def validate_delta(payload: Mapping) -> None:
     """Validate the delta envelope. Only an expanded, checked result can be applied."""
-    if payload.keys() != {"after", "attachment_id", "visit", "fields", "sections"}:
+    required = {"after", "attachment_id", "visit", "fields", "sections"}
+    if payload.keys() not in (required, required | {"readiness"}):
         raise ConsoleProtocolError("invalid_display_delta_fields")
     _REFERENCE(payload["after"], "payload.after")
     _REFERENCE(payload["attachment_id"], "payload.attachment_id")
@@ -51,6 +57,11 @@ def validate_delta(payload: Mapping) -> None:
         value = payload[name]
         if type(value) is not MappingProxyType or not value.keys() <= allowed:
             raise ConsoleProtocolError("invalid_display_delta_section")
+    if "readiness" in payload and (
+        type(payload["readiness"]) is not MappingProxyType
+        or not payload["readiness"].keys() <= _READINESS or "readiness" in payload["sections"]
+    ):
+        raise ConsoleProtocolError("invalid_display_delta_readiness")
 
 
 def _same_value(left, right) -> bool:
@@ -89,14 +100,21 @@ def poll_response(
         key: _thaw(after[key]) for key in after.keys() & _FIELDS
         if not _same_value(before[key], after[key])
     }
+    old_view, new_view = before["session_view"], after["session_view"]
     sections = {
-        key: _thaw(value) for key, value in after["session_view"].items()
-        if not _same_value(before["session_view"][key], value)
+        key: _thaw(value) for key, value in new_view.items()
+        if key != "readiness" and not _same_value(old_view[key], value)
     }
-    return ConsoleWireMessage(
-        current.identity, "projection_delta", current.operation,
-        {**poll, "fields": fields, "sections": sections},
-    )
+    delta = {**poll, "fields": fields, "sections": sections}
+    if "readiness" in new_view:
+        old, new = old_view["readiness"], new_view["readiness"]
+        if old.keys() != new.keys():
+            sections["readiness"] = _thaw(new)
+        else:
+            changed = {key: _thaw(value) for key, value in new.items() if not _same_value(old[key], value)}
+            if changed:
+                delta["readiness"] = changed
+    return ConsoleWireMessage(current.identity, "projection_delta", current.operation, delta)
 
 
 def expand_projection_delta(
@@ -116,4 +134,9 @@ def expand_projection_delta(
         raise ConsoleProtocolError("display_poll_shape_changed")
     body.update(_thaw(delta.payload["fields"]))
     body["session_view"].update(_thaw(delta.payload["sections"]))
+    if "readiness" in delta.payload:
+        readiness = body["session_view"].get("readiness")
+        if readiness is None or not delta.payload["readiness"].keys() <= readiness.keys():
+            raise ConsoleProtocolError("display_poll_readiness_shape_changed")
+        readiness.update(_thaw(delta.payload["readiness"]))
     return ConsoleWireMessage(delta.identity, "applied", "ReadProjection", body)

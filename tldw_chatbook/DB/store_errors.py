@@ -17,3 +17,7 @@ class StoreConflictError(Exception):
 
 class StoreSchemaError(Exception):
     """Any store's schema-version mismatch or migration failure."""
+
+
+class StoreMutationOutcomeUnknown(RuntimeError):
+    """An acknowledged outcome is unavailable. The write must not be replayed."""

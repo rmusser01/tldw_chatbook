@@ -87,6 +87,18 @@ def test_delta_cannot_publish_inconsistent_or_unknown_sections():
         decode_message(bad)
 
 
+def test_readiness_clock_update_publishes_no_unchanged_inspector_or_history_data():
+    body = projection_payload()
+    first = full(body, "first", 4)
+    base = DisplayPublication("ui", 1, first)
+    body["session_view"]["readiness"]["captured_at_monotonic"] += 1.0
+    changed = full(body, "second", 8)
+    delta = poll_response(changed, poll(), base)
+    assert not delta.payload["sections"]
+    assert delta.payload["readiness"].keys() == {"captured_at_monotonic"}
+    assert expand_projection_delta(delta, poll(), base) == changed
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("retired", [True, False])
 async def test_client_polls_after_last_adopted_result_and_waits_for_retirement(retired):

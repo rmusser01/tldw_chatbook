@@ -1070,7 +1070,9 @@ class TldwCli(
     # User ID for notes, will be initialized in __init__
     current_user_id: str = "default_user"  # Will be overridden by self.notes_user_id
 
-    def __init__(self, *, console_execution: str = "local"):
+    def __init__(self, *, console_execution: str = "auto"):
+        if type(console_execution) is str and console_execution == "auto":
+            console_execution = "process" if os.name == "nt" and type(self) is TldwCli else "local"
         if type(console_execution) is not str or console_execution not in {"local", "process"}:
             raise ValueError("Unknown Console execution selection")
         if console_execution == "process" and type(self) is not TldwCli:
@@ -1216,7 +1218,7 @@ class TldwCli(
         # (`leave_console_runtime`); the runtime itself is destroyed once,
         # here, at exit (`_shutdown_console_runtime`).
         self.console_needs_attention = False
-        # Explicit qualification route; ordinary construction remains local.
+        # The Windows UI owns a client. Its child owns the Console runtime.
         self.console_execution_client = None
         self._console_execution_start_task = None
         self._console_execution_profile = None

@@ -39,6 +39,7 @@ from tldw_chatbook.Notes.note_folder_models import (
     portable_relative_path,
 )
 from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
+from tldw_chatbook.DB.profile_writer_chacha import notes_mutation
 from tldw_chatbook.Utils.private_paths import (
     lexical_path,
     verify_trusted_directory,
@@ -814,6 +815,7 @@ class NotesInteropService:
         )
         return detail
 
+    @notes_mutation
     def save_note_with_organization(
         self,
         user_id: str,
@@ -2130,6 +2132,7 @@ class NotesInteropService:
             "updated_at": row["updated_at"],
         }
 
+    @notes_mutation
     def create_note_link(
         self,
         user_id: str,
@@ -2171,6 +2174,7 @@ class NotesInteropService:
             ).fetchone()
         return self._note_link_record(row)
 
+    @notes_mutation
     def list_note_links(
         self,
         user_id: str,
@@ -2202,6 +2206,7 @@ class NotesInteropService:
         )
         return [self._note_link_record(row) for row in rows]
 
+    @notes_mutation
     def delete_note_link(self, user_id: str, edge_id: str) -> Dict[str, Any]:
         db = self._get_db(user_id)
         self._ensure_note_link_schema(db)

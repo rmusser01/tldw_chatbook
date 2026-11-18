@@ -1123,8 +1123,13 @@ async def _serve_backend(initial, input_stream, output_stream) -> None:
 
 def main() -> int:
     """Run the canonical module once, with original isolated profile selection."""
+    import os
     import sys
 
+    if os.name == "nt":
+        from tldw_chatbook.DB.profile_writer import use_host_profile_writer
+
+        use_host_profile_writer()
     input_stream, output_stream = sys.stdin.buffer, sys.stdout.buffer
     sys.stdout = sys.stderr
     initial = read_message(_ConsoleFrameInput(input_stream))

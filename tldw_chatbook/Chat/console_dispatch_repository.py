@@ -65,6 +65,7 @@ from tldw_chatbook.Chat.conversation_local_marks_service import (
 )
 from tldw_chatbook.Chat.message_metadata import MessageMetadata, AgentChatStartMetadata
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.profile_writer_chacha import dispatch_mutation
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 
@@ -1300,6 +1301,7 @@ class ConsoleDispatchRepository:
             error_code=bounded,
         )
 
+    @dispatch_mutation
     def cas_state(
         self, transition: ConsoleDispatchTransition
     ) -> ConsoleDispatchWriteResult:
@@ -1422,6 +1424,7 @@ class ConsoleDispatchRepository:
                 payload_hash,
             )
 
+    @dispatch_mutation
     def settle_with_assistant(
         self, settlement: ConsoleAssistantSettlement
     ) -> ConsoleDispatchWriteResult:
@@ -1657,6 +1660,7 @@ class ConsoleDispatchRepository:
                 ),
             )
 
+    @dispatch_mutation
     def handoff_to_provider_continuation(
         self, handoff: ConsoleContinuationHandoff
     ) -> ConsoleDispatchWriteResult:
@@ -1769,6 +1773,7 @@ class ConsoleDispatchRepository:
                 ),
             )
 
+    @dispatch_mutation
     def normalize_provider_continuation_owner(
         self,
         *,

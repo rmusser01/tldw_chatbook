@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 
 from loguru import logger
 
+from tldw_chatbook.DB.store_errors import StoreMutationOutcomeUnknown
 from tldw_chatbook.Provider_Contract.provider_continuation import (
     EPHEMERAL_ORIGIN_KEY,
     ContinuationRestoreTarget,
@@ -1389,6 +1390,8 @@ def run_agent_loop(
         # for the run itself.
         try:
             deps.on_step(step)
+        except StoreMutationOutcomeUnknown:
+            raise
         except Exception:  # noqa: BLE001 — best-effort observation only
             pass
         return step
@@ -1426,6 +1429,8 @@ def run_agent_loop(
         trace_steps += 1
         try:
             deps.on_trace_step(step)
+        except StoreMutationOutcomeUnknown:
+            raise
         except Exception:  # noqa: BLE001 — best-effort observation only
             pass
         if deps.on_tool_activity is not None:

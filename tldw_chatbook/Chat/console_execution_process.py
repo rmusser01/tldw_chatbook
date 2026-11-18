@@ -217,6 +217,7 @@ class ConsoleExecutionClient:
         self._permission_bootstrap = None
         self._channel: _ConsoleFramedChannel | None = None
         self._process: subprocess.Popen[bytes] | None = None
+        self._profile_writer_host = None
         self._tree: Any = None
         self._monitor: threading.Thread | None = None
         self._initialization_attempted = False
@@ -1414,15 +1415,25 @@ class ConsoleExecutionClient:
             + repr([*application_paths, *dependencies])
             + ";runpy.run_module('tldw_chatbook.Chat.console_execution_worker',run_name='__main__')"
         )
-        process = subprocess.Popen(
-            [executable, "-I", "-S", "-B", "-c", code],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            shell=False,
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-            start_new_session=os.name == "posix",
-        )
+        if os.name == "nt":
+            from tldw_chatbook.DB.profile_writer import start_profile_writer
+
+            # The normal app is outside the Console's Windows job. Every
+            # instance registers its own lifetime with the same profile writer.
+            self._profile_writer_host = start_profile_writer(Path(self._profile.data_directory))
+        try:
+            process = subprocess.Popen(
+                [executable, "-I", "-S", "-B", "-c", code],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                shell=False,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                start_new_session=os.name == "posix",
+            )
+        except BaseException:
+            self._release_profile_writer()
+            raise
         self._process = process
         self._tree = ExecutorProcessTree(
             _PopenProcessAdapter(process),
@@ -1950,6 +1961,12 @@ class ConsoleExecutionClient:
                         self._fail(error)
                 pipes_closed = await asyncio.to_thread(self._close_pipes)
                 self._physically_closed = joined and pipes_closed
+            if self._physically_closed and self._profile_writer_host is not None:
+                try:
+                    await asyncio.to_thread(self._release_profile_writer)
+                except BaseException as error:
+                    self._cleanup_errors.append(error)
+                    self._fail(error)
         self._disposed = (
             drained
             and self._physically_closed
@@ -1959,6 +1976,13 @@ class ConsoleExecutionClient:
         if cancellation is not None:
             raise cancellation
         return self._disposed
+
+    def _release_profile_writer(self) -> None:
+        """Leave this app's registration after its contained runtime has exited."""
+        host = self._profile_writer_host
+        if host is not None:
+            host.close()
+            self._profile_writer_host = None
 
     def _close_uninitialized_process(self) -> bool:
         """Retain partial startup through the original containment stop bounds."""

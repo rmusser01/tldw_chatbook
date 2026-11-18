@@ -105,7 +105,9 @@ async def test_selected_process_home_to_chat_composes_original_surface(request):
         # A real child has a separate interpreter and owns its actual runtime.
         with _observe(ConsoleRuntime.__init__.__code__, sys.monitoring.events.PY_START,
                       runtime_entry):
-            app = TldwCli(console_execution="process")
+            app = TldwCli() if os.name == "nt" else TldwCli(console_execution="process")
+            assert type(app.console_execution_client) is ConsoleExecutionClient
+            assert app.console_runtime is None
             client = app.console_execution_client
             assert type(client) is ConsoleExecutionClient
             def created(frame):

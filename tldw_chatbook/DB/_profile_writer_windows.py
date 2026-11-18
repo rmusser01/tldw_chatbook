@@ -35,6 +35,8 @@ _final_path.argtypes = [W.HANDLE, W.LPWSTR, W.DWORD, W.DWORD]
 _final_path.restype = W.DWORD
 _server_pid = _kernel.GetNamedPipeServerProcessId
 _server_pid.argtypes, _server_pid.restype = [W.HANDLE, C.POINTER(W.ULONG)], W.BOOL
+_client_pid = _kernel.GetNamedPipeClientProcessId
+_client_pid.argtypes, _client_pid.restype = [W.HANDLE, C.POINTER(W.ULONG)], W.BOOL
 
 
 def final_directory_name(fd: int) -> str:
@@ -47,8 +49,8 @@ def final_directory_name(fd: int) -> str:
     return result.value.casefold()
 
 
-def _require_owner(handle: int) -> None:
-    """Authenticate the connected pipe before putting a domain payload on it."""
+def require_owner(handle: int) -> None:
+    """Require a kernel object owned by and accessible to this token user alone."""
     native = _native()
     owner, acl, descriptor = C.c_void_p(), C.c_void_p(), C.c_void_p()
     status = native.advapi.GetSecurityInfo(
@@ -73,8 +75,8 @@ def _require_owner(handle: int) -> None:
 
 
 @contextmanager
-def server(name: str) -> Iterator[int]:
-    """Elect one owner. Keep this handle across disconnect and physical work."""
+def private_security_attributes() -> Iterator[_SecurityAttributes]:
+    """Supply a protected DACL for exactly this TokenUser on a new kernel object."""
     native = _native()
     descriptor = C.c_void_p()
     sddl = f"O:{native.user_sid}D:P(A;;GA;;;{native.user_sid})"
@@ -82,14 +84,20 @@ def server(name: str) -> Iterator[int]:
         sddl, 1, C.byref(descriptor), None,
     ))
     try:
-        attributes = _SecurityAttributes(C.sizeof(_SecurityAttributes), descriptor, False)
+        yield _SecurityAttributes(C.sizeof(_SecurityAttributes), descriptor, False)
+    finally:
+        native.kernel.LocalFree(descriptor)
+
+
+@contextmanager
+def server(name: str) -> Iterator[int]:
+    """Elect one owner. Keep this handle across disconnect and physical work."""
+    with private_security_attributes() as attributes:
         handle = _winapi.CreateNamedPipe(
             name, _winapi.PIPE_ACCESS_DUPLEX | _winapi.FILE_FLAG_FIRST_PIPE_INSTANCE
             | _winapi.FILE_FLAG_OVERLAPPED, _PIPE_REJECT_REMOTE_CLIENTS, 1,
             _BUFFER_BYTES, _BUFFER_BYTES, 0, C.addressof(attributes),
         )
-    finally:
-        native.kernel.LocalFree(descriptor)
     try:
         yield handle
     finally:
@@ -104,7 +112,7 @@ def client(name: str) -> Iterator[int]:
         _winapi.OPEN_EXISTING, _winapi.FILE_FLAG_OVERLAPPED | _SECURITY_SQOS_PRESENT, 0,
     )
     try:
-        _require_owner(handle)
+        require_owner(handle)
         yield handle
     finally:
         _winapi.CloseHandle(handle)
@@ -117,14 +125,24 @@ def server_process(handle: int) -> int:
     return _winapi.OpenProcess(_winapi.SYNCHRONIZE, False, pid.value)
 
 
+def client_pid(handle: int) -> int:
+    """Read the host PID from the connected kernel pipe, never from JSON."""
+    pid = W.ULONG()
+    _native().check(_client_pid(handle, C.byref(pid)))
+    return pid.value
+
+
 def wait_available(name: str, timeout: float) -> None:
     _winapi.WaitNamedPipe(name, max(1, int(timeout * 1000)))
 
 
-def _complete(overlapped, deadline: float) -> int:
+def _complete(overlapped, deadline: float | None) -> int:
     """A timeout cancels and joins native I/O before the handle can be reused."""
     try:
-        milliseconds = max(0, int((deadline - time.monotonic()) * 1000))
+        milliseconds = (
+            _winapi.INFINITE if deadline is None
+            else max(0, int((deadline - time.monotonic()) * 1000))
+        )
         if _winapi.WaitForSingleObject(overlapped.event, milliseconds) != _winapi.WAIT_OBJECT_0:
             raise TimeoutError("profile writer pipe timed out")
     except BaseException:
@@ -145,7 +163,7 @@ def disconnect(handle: int) -> None:
     _native().check(_disconnect(handle))
 
 
-def _read_exact(handle: int, size: int, deadline: float) -> bytes:
+def _read_exact(handle: int, size: int, deadline: float | None) -> bytes:
     data = bytearray()
     while len(data) < size:
         read, _ = _winapi.ReadFile(handle, min(size - len(data), _BUFFER_BYTES), True)
@@ -155,8 +173,8 @@ def _read_exact(handle: int, size: int, deadline: float) -> bytes:
     return bytes(data)
 
 
-def read_frame(handle: int, timeout: float) -> bytes:
-    deadline = time.monotonic() + timeout
+def read_frame(handle: int, timeout: float | None) -> bytes:
+    deadline = None if timeout is None else time.monotonic() + timeout
     size, = struct.unpack("!I", _read_exact(handle, 4, deadline))
     if not 0 < size <= MAX_FRAME_BYTES:
         raise ValueError("profile writer frame length out of bounds")

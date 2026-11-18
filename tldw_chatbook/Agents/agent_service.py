@@ -77,6 +77,7 @@ from tldw_chatbook.Provider_Contract.sampling_params import (
     params_to_tuple,
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.DB.store_errors import StoreMutationOutcomeUnknown
 from tldw_chatbook.Utils.token_counter import (
     count_tokens_messages,
     estimate_tokens,
@@ -4235,6 +4236,8 @@ class AgentService:
             if tree is not None:
                 tree.required_steps(run_id, [(index, record)])
             self.db.insert_steps_at_indices(run_id, [(index, record)])
+        except StoreMutationOutcomeUnknown:
+            raise
         except Exception as exc:  # noqa: BLE001 — capture is best effort
             logger.warning(
                 "could not persist agent run lifecycle run_id={} kind={} error_type={}",
@@ -4264,6 +4267,8 @@ class AgentService:
                     ],
                 )
                 return sequence + 1, f"agent-step:{run_id}:{diagnostic.index}"
+            except StoreMutationOutcomeUnknown:
+                raise
             except Exception:  # noqa: BLE001 — non-recursive containment
                 logger.warning("could not persist agent lifecycle diagnostic")
                 return sequence + 1, self._latest_durable_event_id(run_id)
@@ -4320,6 +4325,8 @@ class AgentService:
                 if budget_tokens is not None:
                     self.db.set_status(run_id, status, budget_tokens=budget_tokens)
                 return False
+        except StoreMutationOutcomeUnknown:
+            raise
         except Exception:  # noqa: BLE001 — atomic write below owns truth
             pass
         lifecycle_kind = self._terminal_lifecycle_kind(status)
@@ -4366,6 +4373,8 @@ class AgentService:
                 if persisted:
                     self._maybe_emit_run_webhook(run_id, status)
                 return persisted
+            except StoreMutationOutcomeUnknown:
+                raise
             except Exception as status_exc:  # noqa: BLE001 — bounded containment
                 logger.warning(
                     "could not persist terminal status without observation "
@@ -4386,6 +4395,9 @@ class AgentService:
                 if persisted:
                     self._maybe_emit_run_webhook(run_id, status)
                 return persisted
+            except StoreMutationOutcomeUnknown:
+                # The writer may have committed the terminal state and observation.
+                raise
             except Exception as exc:  # noqa: BLE001 — bounded containment
                 logger.warning(
                     "could not persist atomic terminal state "
@@ -4401,6 +4413,8 @@ class AgentService:
                                 run_id, status, budget_tokens=budget_tokens
                             )
                         return False
+                except StoreMutationOutcomeUnknown:
+                    raise
                 except Exception:  # noqa: BLE001 — retry owns containment
                     pass
         diagnostic = AgentStep(
@@ -4421,6 +4435,8 @@ class AgentService:
                 [(diagnostic.index, _safe_agent_step_record(run_id, diagnostic))],
             )
             diagnostic_written = True
+        except StoreMutationOutcomeUnknown:
+            raise
         except Exception:  # noqa: BLE001 — non-recursive containment
             logger.warning("could not persist atomic terminal diagnostic")
         if diagnostic_written:
@@ -4428,6 +4444,8 @@ class AgentService:
                 return self.db.set_status(
                     run_id, status, result, budget_tokens=budget_tokens
                 )
+            except StoreMutationOutcomeUnknown:
+                raise
             except Exception as exc:  # noqa: BLE001 — refusal remains contained
                 logger.warning(
                     "could not persist terminal status fallback "
@@ -4728,6 +4746,8 @@ class AgentService:
                 tree.required_steps(run_id, step_dicts)
             try:
                 self.db.insert_steps_at_indices(run_id, step_dicts)
+            except StoreMutationOutcomeUnknown:
+                raise
             except Exception as exc:  # noqa: BLE001 — best-effort capture
                 logger.warning(
                     "could not persist terminal agent steps run_id={} error_type={}",
@@ -4765,6 +4785,8 @@ class AgentService:
                 self.db.insert_steps_at_indices(
                     run_id, [(terminal_step.index, expected)]
                 )
+            except StoreMutationOutcomeUnknown:
+                raise
             except Exception as exc:  # noqa: BLE001 — one bounded recovery attempt
                 logger.warning(
                     "could not recover terminal agent step "
@@ -4798,6 +4820,8 @@ class AgentService:
                             )
                         ],
                     )
+                except StoreMutationOutcomeUnknown:
+                    raise
                 except Exception:  # noqa: BLE001 — non-recursive containment
                     logger.warning("could not persist terminal capture diagnostic")
         review_capture = getattr(self.registry, "_review_service", None)
@@ -8443,6 +8467,8 @@ class AgentService:
                     omit_content=config.review_binding is not None,
                 )
                 self.db.insert_steps_at_indices(run_id, [(step.index, record)])
+            except StoreMutationOutcomeUnknown:
+                raise
             except Exception as exc:  # noqa: BLE001 — trace capture is best-effort
                 logger.warning(
                     "could not persist agent step incrementally "
@@ -8475,6 +8501,8 @@ class AgentService:
                             )
                         ],
                     )
+                except StoreMutationOutcomeUnknown:
+                    raise
                 except Exception:  # noqa: BLE001 — non-recursive containment
                     logger.warning("could not persist control capture diagnostic")
             if self._on_step is not None:
@@ -8492,6 +8520,8 @@ class AgentService:
                     run_id, step, omit_content=config.review_binding is not None
                 )
                 self.db.insert_steps_at_indices(run_id, [(step.index, record)])
+            except StoreMutationOutcomeUnknown:
+                raise
             except Exception as exc:  # noqa: BLE001 — trace capture is best-effort
                 logger.warning(
                     "could not persist agent lifecycle step "
@@ -8525,6 +8555,8 @@ class AgentService:
                             )
                         ],
                     )
+                except StoreMutationOutcomeUnknown:
+                    raise
                 except Exception:  # noqa: BLE001 — non-recursive containment
                     logger.warning("could not persist agent capture diagnostic")
 
@@ -9144,6 +9176,8 @@ class AgentService:
                     status=RUN_ERROR,
                     steps=[self._service_error_step(run_id, str(error))],
                 )
+            except StoreMutationOutcomeUnknown:
+                raise
             except Exception as exc:  # noqa: BLE001 — a run never raises out
                 from tldw_chatbook.Provider_Contract import ChatAPIError
                 from tldw_chatbook.Chat.console_trace_service import (

@@ -125,6 +125,7 @@ from tldw_chatbook.Backup_Recovery.participants import (
     register_core_connection,
 )
 from .private_sqlite import backup_connection_to_private, connect_private_sqlite
+from .profile_writer_chacha import chacha_mutation, initialize_profile_schema
 from .private_sqlite_process import HelperTimeoutError
 from .base_db import (
     _QuiescentSQLiteConnection,
@@ -2920,7 +2921,8 @@ DELETE FROM keywords
             None if self.is_memory_db else self.db_path_str
         )
         try:
-            self._initialize_schema()
+            if not initialize_profile_schema(self):
+                self._initialize_schema()
 
             # Run integrity check if requested and not in-memory
             if check_integrity_on_startup and not self.is_memory_db:
@@ -3439,6 +3441,7 @@ DELETE FROM keywords
             )
         return int(row[0])
 
+    @chacha_mutation
     def increment_character_conversation_search_revision(self) -> int:
         """Advance and return the search revision in one owned transaction."""
 
@@ -3458,6 +3461,7 @@ DELETE FROM keywords
             ).fetchone()
         return int(row[0])
 
+    @chacha_mutation
     def backfill_character_conversation_legacy_links(self) -> int:
         """Backfill only exact local legacy character identities."""
 
@@ -9127,6 +9131,7 @@ DELETE FROM keywords
             return json.dumps(new_data)
         return json.dumps(data)
 
+    @chacha_mutation
     def add_character_card(self, card_data: Dict[str, Any]) -> Optional[int]:
         """
         Adds a new character card to the database.
@@ -9559,6 +9564,7 @@ DELETE FROM keywords
 
     # --- Reaction-avatar expression images (P3d) ---
 
+    @chacha_mutation
     def set_character_expression_image(
         self, character_id: int, state_id: str, image: bytes, mime: str | None = None
     ) -> None:
@@ -9633,6 +9639,7 @@ DELETE FROM keywords
         )
         return [row[0] for row in cursor.fetchall()]
 
+    @chacha_mutation
     def delete_character_expression_image(
         self, character_id: int, state_id: str
     ) -> None:
@@ -10051,6 +10058,7 @@ DELETE FROM keywords
                 entity_id=character_id,
             )
 
+    @chacha_mutation
     def update_character_card(
         self, character_id: int, card_data: Dict[str, Any], expected_version: int
     ) -> Optional[bool]:
@@ -10346,6 +10354,7 @@ DELETE FROM keywords
                 f"Unexpected error updating character card: {e}"
             ) from e
 
+    @chacha_mutation
     def soft_delete_character_card(
         self, character_id: int, expected_version: int
     ) -> Optional[bool]:
@@ -10496,6 +10505,7 @@ DELETE FROM keywords
             )
             raise
 
+    @chacha_mutation
     def delete_character_card(self, character_id: int) -> bool:
         """
         Soft-deletes a character card with version checking.
@@ -10558,6 +10568,7 @@ DELETE FROM keywords
             """
         )
 
+    @chacha_mutation
     def restore_character_card(
         self, character_id: int, expected_version: int
     ) -> Optional[bool]:
@@ -11138,6 +11149,7 @@ DELETE FROM keywords
 
         return runtime_value, owner_value, normalized_entity_id
 
+    @chacha_mutation
     def add_conversation(self, conv_data: Dict[str, Any]) -> Optional[str]:
         """
         Adds a new conversation to the database.
@@ -11458,6 +11470,7 @@ DELETE FROM keywords
                 states.update({row["id"]: bool(row["archived"]) for row in rows})
         return states
 
+    @chacha_mutation
     def set_conversations_archived(
         self,
         conversation_ids: Iterable[str],
@@ -12925,6 +12938,7 @@ DELETE FROM keywords
                     }
         return result
 
+    @chacha_mutation
     def update_conversation(
         self, conversation_id: str, update_data: Dict[str, Any], expected_version: int
     ) -> Optional[bool]:
@@ -13284,6 +13298,7 @@ DELETE FROM keywords
                 f"Unexpected error during update_conversation: {e}"
             ) from e
 
+    @chacha_mutation
     def set_conversation_active_cursor(
         self,
         conversation_id: str,
@@ -13374,6 +13389,7 @@ DELETE FROM keywords
             return None, None
         return row["active_leaf_message_id"], row["active_leaf_before_message_id"]
 
+    @chacha_mutation
     def set_conversation_active_leaf(
         self, conversation_id: str, message_id: str | None
     ) -> None:
@@ -13397,6 +13413,7 @@ DELETE FROM keywords
         active_leaf, _before = self.get_conversation_active_cursor(conversation_id)
         return active_leaf
 
+    @chacha_mutation
     def set_conversation_context_summary(
         self,
         conversation_id: str,
@@ -13439,6 +13456,7 @@ DELETE FROM keywords
             return None, None
         return row["context_summary"], row["summary_boundary_message_id"]
 
+    @chacha_mutation
     def set_conversation_console_project_context(
         self, conversation_id: str, project_context_json: str | None
     ) -> None:
@@ -13487,6 +13505,7 @@ DELETE FROM keywords
             ).fetchone()
         return row["console_project_context_json"] if row else None
 
+    @chacha_mutation
     def soft_delete_conversation(
         self, conversation_id: str, expected_version: int
     ) -> Optional[bool]:
@@ -13589,6 +13608,7 @@ DELETE FROM keywords
             )
             raise
 
+    @chacha_mutation
     def restore_conversation(
         self, conversation_id: str, expected_version: int
     ) -> Optional[bool]:
@@ -13925,6 +13945,7 @@ DELETE FROM keywords
             tuple(value for _, value in written),
         )
 
+    @chacha_mutation
     def add_message(
         self,
         msg_data: Dict[str, Any],
@@ -13933,6 +13954,7 @@ DELETE FROM keywords
 
         return self._add_message_with_semantic_sidecars(msg_data)
 
+    @chacha_mutation
     def add_message_import_batch(
         self,
         staged_messages: Sequence[Dict[str, Any]],
@@ -14073,6 +14095,7 @@ DELETE FROM keywords
             ):
                 fail()
 
+    @chacha_mutation
     def add_message_with_semantic_sidecars(
         self,
         msg_data: Dict[str, Any],
@@ -14443,6 +14466,7 @@ DELETE FROM keywords
                 WHERE singleton_id = 1"""
         )
 
+    @chacha_mutation
     def create_assistant_with_continuation(
         self,
         *,
@@ -14555,6 +14579,7 @@ DELETE FROM keywords
                 "Database error creating assistant continuation."
             ) from None
 
+    @chacha_mutation
     def update_provider_continuation(
         self,
         *,
@@ -14784,6 +14809,7 @@ DELETE FROM keywords
                 "Database error updating assistant continuation."
             ) from None
 
+    @chacha_mutation
     def replace_assistant_generation_projection(
         self,
         *,
@@ -15130,6 +15156,7 @@ DELETE FROM keywords
                     cursor.close()
         return results
 
+    @chacha_mutation
     def set_message_attachments(self, message_id: str, rows: list[dict]) -> None:
         """Replace the extra attachments (positions >= 1) for a message.
 
@@ -15242,6 +15269,7 @@ DELETE FROM keywords
                     )
         return result
 
+    @chacha_mutation
     def set_message_generation_metadata(
         self, message_id: str, rows: list[dict]
     ) -> None:
@@ -15334,6 +15362,7 @@ DELETE FROM keywords
                     )
         return result
 
+    @chacha_mutation
     def append_message_attachment_with_metadata(
         self,
         message_id: str,
@@ -15434,6 +15463,7 @@ DELETE FROM keywords
             )
         return next_position
 
+    @chacha_mutation
     def swap_message_attachment_with_scalar(
         self, message_id: str, position: int
     ) -> None:
@@ -15681,6 +15711,7 @@ DELETE FROM keywords
             )
             raise
 
+    @chacha_mutation
     def update_message(
         self,
         message_id: str,
@@ -15733,6 +15764,7 @@ DELETE FROM keywords
                 )
             )
 
+    @chacha_mutation
     def update_message_with_attachments(
         self,
         message_id: str,
@@ -16142,6 +16174,7 @@ DELETE FROM keywords
             )
             raise
 
+    @chacha_mutation
     def update_message_usage_local(self, message_id: str, usage_json: str) -> bool:
         """Write a message's local-only ``usage_json`` WITHOUT bumping sync metadata.
 
@@ -16210,6 +16243,7 @@ DELETE FROM keywords
                 f"Database error writing local usage: {e}"
             ) from e
 
+    @chacha_mutation
     def update_message_metadata_local(
         self, message_id: str, metadata_json: str
     ) -> bool:
@@ -16267,6 +16301,7 @@ DELETE FROM keywords
                 f"Database error writing local metadata: {e}"
             ) from e
 
+    @chacha_mutation
     def append_message_exchanges_local(
         self, message_id: str, rows: Sequence[Dict[str, Any]]
     ) -> int:
@@ -16408,6 +16443,7 @@ DELETE FROM keywords
                 f"Database error reading Full exchange keys: {e}"
             ) from e
 
+    @chacha_mutation
     def delete_full_exchanges_for_conversation(
         self,
         conversation_id: str,
@@ -16461,6 +16497,7 @@ DELETE FROM keywords
         ).fetchone()
         return int(row[0]) + 1
 
+    @chacha_mutation
     def upsert_trajectory_rows(self, rows: Sequence[TrajectoryRowWrite]) -> None:
         """Upsert trajectory sidecar rows for one or more conversations.
 
@@ -16537,6 +16574,7 @@ DELETE FROM keywords
                 f"Database error upserting trajectory rows: {e}"
             ) from e
 
+    @chacha_mutation
     def upsert_transcript_annotation(
         self,
         *,
@@ -16628,6 +16666,7 @@ DELETE FROM keywords
             ) from exc
         return [dict(row) for row in rows]
 
+    @chacha_mutation
     def soft_delete_transcript_annotation(self, annotation_id: str) -> bool:
         """Soft-delete one annotation; False when unknown or already deleted."""
         now = self._get_current_utc_timestamp_iso()
@@ -16695,6 +16734,7 @@ DELETE FROM keywords
                 f"Database error reading trajectory rows: {e}"
             ) from e
 
+    @chacha_mutation
     def soft_delete_message(
         self, message_id: str, expected_version: int
     ) -> Optional[bool]:
@@ -16796,6 +16836,7 @@ DELETE FROM keywords
             )
             raise
 
+    @chacha_mutation
     def soft_delete_message_subtree(
         self,
         message_id: str,
@@ -16918,6 +16959,7 @@ DELETE FROM keywords
                 for row in rows
             ]
 
+    @chacha_mutation
     def restore_message_subtree(
         self, tombstones: Sequence[tuple[str, int]]
     ) -> List[Dict[str, Any]]:
@@ -17208,6 +17250,7 @@ DELETE FROM keywords
             for row in rows
         ]
 
+    @chacha_mutation
     def update_message_feedback(
         self, message_id: str, feedback: str, expected_version: int
     ) -> bool:
@@ -17244,6 +17287,7 @@ DELETE FROM keywords
         update_data = {"feedback": feedback}
         return self.update_message(message_id, update_data, expected_version)
 
+    @chacha_mutation
     def create_message_variant(
         self,
         original_message_id: str,
@@ -17441,6 +17485,7 @@ DELETE FROM keywords
             )
             raise CharactersRAGDBError(f"Failed to get message variants: {e}") from e
 
+    @chacha_mutation
     def select_message_variant(self, variant_id: str) -> bool:
         """
         Selects a specific message variant as the active one.
@@ -18223,6 +18268,7 @@ DELETE FROM keywords
             raise
 
     # Keywords
+    @chacha_mutation
     def add_keyword(
         self, keyword_text: str, *, cursor: sqlite3.Cursor | None = None
     ) -> Optional[int]:
@@ -18250,6 +18296,7 @@ DELETE FROM keywords
             "keywords", "keyword", {}, keyword_text.strip(), {}, cursor=cursor
         )  # No other_fields_map
 
+    @chacha_mutation
     def update_keyword(
         self,
         keyword_id: int,
@@ -18323,6 +18370,7 @@ DELETE FROM keywords
         )
         return [dict(row) for row in cursor.fetchall()]
 
+    @chacha_mutation
     def soft_delete_keyword(
         self,
         keyword_id: int,
@@ -18393,6 +18441,7 @@ DELETE FROM keywords
         return [dict(row) for row in cursor.fetchall()]
 
     # Keyword Collections
+    @chacha_mutation
     def add_keyword_collection(
         self,
         name: str,
@@ -18474,6 +18523,7 @@ DELETE FROM keywords
             "keyword_collections", "name COLLATE NOCASE", limit, offset
         )
 
+    @chacha_mutation
     def update_keyword_collection(
         self,
         collection_id: int,
@@ -18512,6 +18562,7 @@ DELETE FROM keywords
             cursor=cursor,
         )
 
+    @chacha_mutation
     def soft_delete_keyword_collection(
         self,
         collection_id: int,
@@ -18617,6 +18668,7 @@ DELETE FROM keywords
         logger.debug(f"Added note ID: {final_note_id}.")
         return final_note_id
 
+    @chacha_mutation
     def add_note(
         self,
         title: str,
@@ -18665,6 +18717,7 @@ DELETE FROM keywords
             raise ValueError("Research Quick Note owner proof is invalid.")
         return owner_proof
 
+    @chacha_mutation
     def add_research_quick_note_owner_proof(
         self, note_id: str, owner_proof: str
     ) -> bool:
@@ -18706,6 +18759,7 @@ DELETE FROM keywords
         )
         return row is not None
 
+    @chacha_mutation
     def remove_research_quick_note_owner_proof(
         self, note_id: str, owner_proof: str
     ) -> bool:
@@ -20243,6 +20297,7 @@ DELETE FROM keywords
         )
         return True
 
+    @chacha_mutation
     def update_note(
         self,
         note_id: str,
@@ -20363,6 +20418,7 @@ DELETE FROM keywords
                 (now, now, str(review_id), str(review_id)),
             )
 
+    @chacha_mutation
     def soft_delete_note(self, note_id: str, expected_version: int) -> bool:
         """Soft-delete one active note using optimistic locking.
 
@@ -20459,6 +20515,7 @@ DELETE FROM keywords
             )
             raise
 
+    @chacha_mutation
     def restore_note(self, note_id: str, expected_version: int) -> Optional[bool]:
         """Restore one soft-deleted note using optimistic locking.
 
@@ -20690,6 +20747,7 @@ DELETE FROM keywords
             raise
 
     # Conversation <-> Keyword
+    @chacha_mutation
     def link_conversation_to_keyword(
         self,
         conversation_id: str,
@@ -20707,6 +20765,7 @@ DELETE FROM keywords
             cursor=cursor,
         )
 
+    @chacha_mutation
     def unlink_conversation_from_keyword(
         self,
         conversation_id: str,
@@ -20762,6 +20821,7 @@ DELETE FROM keywords
             grouped.setdefault(conversation_id, []).append(record)
         return grouped
 
+    @chacha_mutation
     def replace_keywords_for_conversation(
         self, conversation_id: str, keyword_ids: List[int]
     ) -> bool:
@@ -20870,6 +20930,7 @@ DELETE FROM keywords
         return [dict(row) for row in cursor.fetchall()]
 
     # Collection <-> Keyword
+    @chacha_mutation
     def link_collection_to_keyword(
         self,
         collection_id: int,
@@ -20887,6 +20948,7 @@ DELETE FROM keywords
             cursor=cursor,
         )
 
+    @chacha_mutation
     def unlink_collection_from_keyword(
         self,
         collection_id: int,
@@ -20932,6 +20994,7 @@ DELETE FROM keywords
         return [dict(row) for row in cursor.fetchall()]
 
     # Note <-> Keyword
+    @chacha_mutation
     def link_note_to_keyword(
         self,
         note_id: str,
@@ -20949,6 +21012,7 @@ DELETE FROM keywords
             cursor=cursor,
         )
 
+    @chacha_mutation
     def unlink_note_from_keyword(
         self,
         note_id: str,
@@ -21637,6 +21701,7 @@ DELETE FROM keywords
             # keeps incoming Sync from replacing opaque local state by accident.
             return "invalid-local-chat-message"
 
+    @chacha_mutation
     def append_chat_message(
         self, stable_key: str, payload: dict[str, Any], payload_hash: str
     ) -> None:
@@ -21746,6 +21811,7 @@ DELETE FROM keywords
                 mutate=apply_sync_message,
             )
 
+    @chacha_mutation
     def delete_chat_message(self, stable_key: str, payload_hash: str) -> None:
         """Apply one Chat Sync tombstone while retaining its semantic envelope."""
         from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
@@ -22087,6 +22153,7 @@ DELETE FROM keywords
             )
         return escape_identifier(table), escape_identifier(id_column)
 
+    @chacha_mutation
     def delete_sync_log_entries(self, change_ids: List[int]) -> int:
         """Delete specific sync log entries by ``change_id``.
 
@@ -22122,6 +22189,7 @@ DELETE FROM keywords
             )
             raise CharactersRAGDBError("Failed to delete sync log entries") from e
 
+    @chacha_mutation
     def delete_sync_log_entries_before(self, change_id_threshold: int) -> int:
         """Delete sync log entries at or below ``change_id_threshold``.
 
@@ -22160,6 +22228,7 @@ DELETE FROM keywords
                 "Failed to delete sync log entries before threshold"
             ) from e
 
+    @chacha_mutation
     def delete_sync_log_entries_older_than(self, cutoff_timestamp: str) -> int:
         """Delete ``sync_log`` rows whose ``timestamp`` predates a cutoff.
 
@@ -22211,6 +22280,7 @@ DELETE FROM keywords
                 "Failed to delete sync log entries older than cutoff"
             ) from e
 
+    @chacha_mutation
     def prune_sync_log(self) -> int:
         """Delete every ``sync_log`` row no reader can reach, for all nine writers.
 
@@ -22374,6 +22444,7 @@ DELETE FROM keywords
             logger.error(f"Error pruning sync_log: exception_type={type(e).__name__}")
             raise CharactersRAGDBError("Failed to prune sync log") from e
 
+    @chacha_mutation
     def backfill_messages_fts(
         self, chunk_size: int = 500, *, after_rowid: int = 0
     ) -> Tuple[int, int]:
@@ -22509,6 +22580,7 @@ DELETE FROM keywords
 
     _ALLOWED_KEPT_BRIEFING_ORIGINS = ("manual", "scheduled")
 
+    @chacha_mutation
     def create_kept_briefing(
         self,
         *,
@@ -22777,6 +22849,7 @@ DELETE FROM keywords
         )
         return [dict(row) for row in cursor.fetchall()]
 
+    @chacha_mutation
     def delete_kept_briefing(self, kept_id: int) -> bool:
         """Hard-delete a kept briefing, cascading its kept scripts.
 
@@ -22798,6 +22871,7 @@ DELETE FROM keywords
             cursor.execute("DELETE FROM kept_briefings WHERE id = ?", (kept_id,))
             return cursor.rowcount > 0
 
+    @chacha_mutation
     def create_kept_script(
         self,
         kept_briefing_id: int,

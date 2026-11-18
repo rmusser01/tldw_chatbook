@@ -67,6 +67,8 @@ from tldw_chatbook.Provider_Contract.sampling_params import (
 from tldw_chatbook.config import save_settings_to_cli_config
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.base_db import run_owned_db_call
+from tldw_chatbook.DB.store_errors import StoreMutationOutcomeUnknown
+from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 from tldw_chatbook.Widgets.state_checkbox import StateCheckbox
 from tldw_chatbook.Widgets.status_line import set_status_line
 
@@ -590,10 +592,15 @@ class AgentsSettingsPanel(Vertical):
         try:
             defn = self._form_definition(stored_tools=stored_tools)
             if self._selected_id is None:
-                self._runs_db.create_agent_definition(defn)
+                await run_owned_db_call(self._runs_db, self._runs_db.create_agent_definition, defn)
             else:
-                self._runs_db.update_agent_definition(self._selected_id, defn)
-        except (ValueError, sqlite3.Error) as exc:
+                await run_owned_db_call(
+                    self._runs_db, self._runs_db.update_agent_definition, self._selected_id, defn
+                )
+        except StoreMutationOutcomeUnknown:
+            self._set_status("Save unconfirmed. Reopen Agents to check the saved definition.")
+            return
+        except (ValueError, sqlite3.Error, RecoveryRequired, OSError) as exc:
             # A locked/corrupt agent_runs.db must surface as a status-line
             # message, not an uncaught exception that would crash the
             # Settings screen's compose (compose-exception lesson: a crash
@@ -961,8 +968,13 @@ class AgentsSettingsPanel(Vertical):
             self._set_status("Select a definition to delete.")
             return
         try:
-            self._runs_db.soft_delete_agent_definition(self._selected_id)
-        except (ValueError, sqlite3.Error) as exc:
+            await run_owned_db_call(
+                self._runs_db, self._runs_db.soft_delete_agent_definition, self._selected_id
+            )
+        except StoreMutationOutcomeUnknown:
+            self._set_status("Deletion unconfirmed. Reopen Agents to check the definition.")
+            return
+        except (ValueError, sqlite3.Error, RecoveryRequired, OSError) as exc:
             self._set_status(str(exc))
             return
         self._clear_form()

@@ -33,6 +33,7 @@ from tldw_chatbook.Agents.run_log import DEFAULT_MAX_RECORD_BYTES
 from tldw_chatbook.Provider_Contract.sampling_params import params_to_dict
 from . import store_kernel as _store_kernel
 from .base_db import BaseDB
+from .profile_writer_commands import agent_runs_writer_profile, profile_run_mutation
 from .store_kernel import SQLiteStoreKernel
 
 if TYPE_CHECKING:
@@ -355,7 +356,17 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         self._init_store_kernel()
         self._join_connection_registry(db_path)  # owner's idle close (TASK-39117)
         self.receipt_capability_available = False
-        super().__init__(db_path, client_id)
+        self._writer_profile = agent_runs_writer_profile(db_path) if type(self) is AgentRunsDB else None
+        super().__init__(db_path, client_id, initialize_schema=self._writer_profile is None)
+        if self._writer_profile is not None:
+            from tldw_chatbook.Backup_Recovery.participants import core_access
+            from .profile_writer import call_profile_writer
+
+            core_access(self)
+            capability = call_profile_writer(self._writer_profile, "agent_runs.open", {})
+            if type(capability) is not bool:
+                raise ValueError("Invalid AgentRuns open receipt")
+            self.receipt_capability_available = capability
         # After super().__init__: the agent_runs table exists (base_db ran
         # _initialize_schema) and self.is_memory_db is set. Reconcile once per
         # file per process so a crash mid-run doesn't leave a 'running' row
@@ -1111,6 +1122,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         )
         return activity_id, True
 
+    @profile_run_mutation
     def publish_console_activity(
         self,
         *,
@@ -1189,6 +1201,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             next_cursor = (str(last["created_at"]), str(last["activity_id"]))
         return ConsoleActivityReceiptPage(visible, next_cursor)
 
+    @profile_run_mutation
     def acknowledge_console_activity(self, activity_ids: Sequence[str]) -> int:
         """Acknowledge only the supplied current receipt revisions."""
         self._require_receipt_capability()
@@ -1285,6 +1298,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             kind=kind,
         )
 
+    @profile_run_mutation
     def record_change_snapshots_batch(
         self,
         *,
@@ -1328,6 +1342,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             ids.append(cursor.lastrowid)
         return ids
 
+    @profile_run_mutation
     def delete_change_snapshots_older_than(self, cutoff_iso: str) -> int:
         """Delete snapshot rows created before ``cutoff_iso`` (TASK-1975).
 
@@ -1359,6 +1374,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             rows = conn.execute("SELECT DISTINCT root FROM change_snapshots").fetchall()
         return {str(row[0]) for row in rows}
 
+    @profile_run_mutation
     def update_change_snapshot_reverted(
         self, row_id: int, reverted_paths: list[str]
     ) -> None:
@@ -1455,6 +1471,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             ).fetchall()
         return [dict(row) for row in rows]
 
+    @profile_run_mutation
     def add_change_note(
         self,
         *,
@@ -1558,6 +1575,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             )
             return int(cursor.lastrowid)
 
+    @profile_run_mutation
     def delete_change_note(self, note_id: int) -> bool:
         """Delete a pending (undelivered) note.
 
@@ -1690,6 +1708,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             ).fetchall()
         return [dict(row) for row in rows]
 
+    @profile_run_mutation
     def mark_notes_delivered(
         self, note_ids: Sequence[int], delivered_by_run_id: str | None = None
     ) -> list[int]:
@@ -1889,6 +1908,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         record["budget"] = json.loads(record["budget"]) if record["budget"] else None
         return record
 
+    @profile_run_mutation
     def create_run(
         self,
         *,
@@ -2010,6 +2030,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             )
         return run_id
 
+    @profile_run_mutation
     def create_agent_definition(self, defn: AgentDefinition) -> str:
         """Insert a definition; returns its id.
 
@@ -2052,6 +2073,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             raise ValueError(f"an agent named '{defn.name}' already exists") from exc
         return definition_id
 
+    @profile_run_mutation
     def update_agent_definition(
         self, definition_id: str, defn: AgentDefinition
     ) -> None:
@@ -2099,6 +2121,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         except sqlite3.IntegrityError as exc:
             raise ValueError(f"an agent named '{defn.name}' already exists") from exc
 
+    @profile_run_mutation
     def soft_delete_agent_definition(self, definition_id: str) -> None:
         with self.transaction() as conn:
             conn.execute(
@@ -2136,6 +2159,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             ).fetchone()
         return self._definition_row_to_dict(row) if row else None
 
+    @profile_run_mutation
     def append_steps(self, run_id: str, steps: list[dict]) -> None:
         """Append step records to a run's step log.
 
@@ -2207,6 +2231,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                 (stamp, run_id),
             )
 
+    @profile_run_mutation
     def insert_steps_at_indices(
         self, run_id: str, steps: Sequence[tuple[int, dict]]
     ) -> None:
@@ -2290,6 +2315,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                 f"step payload conflicts with durable indices: {indices}"
             )
 
+    @profile_run_mutation
     def set_status(
         self,
         run_id: str,
@@ -2342,6 +2368,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             )
         return cursor.rowcount > 0
 
+    @profile_run_mutation
     def set_terminal_with_step(
         self,
         run_id: str,
@@ -2452,6 +2479,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             ),
         }
 
+    @profile_run_mutation
     def reconcile_orphaned_runs(self) -> int:
         """Mark runs left ``running`` by a crashed process as ``error``.
 
@@ -2502,7 +2530,12 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                 while sweeping; the path is left unregistered so a later
                 call in this process retries the sweep.
         """
-        if self.is_memory_db or self.db_path_str in self._swept_paths:
+        return self._reconcile_orphaned_runs()
+
+    def _reconcile_orphaned_runs(self, writer_profile: Path | None = None) -> int:
+        # Each attaching app may request repair from the elected writer. Its
+        # previous sweep says nothing about another executor's current lifetime.
+        if self.is_memory_db or (writer_profile is None and self.db_path_str in self._swept_paths):
             return 0
         with self.transaction() as conn:
             # TASK-32804.10: step payloads for the terminal-row scan are
@@ -2578,6 +2611,16 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                     "AND agent_kind = 'local_command'"
                 ).fetchall()
             ]
+            if writer_profile is not None:
+                from .profile_writer_run_presence import run_is_live
+
+                orphan_rows = [
+                    row for row in orphan_rows if not run_is_live(writer_profile, row["id"])
+                ]
+                orphan_ids = [row["id"] for row in orphan_rows]
+                local_orphan_ids = [
+                    run_id for run_id in local_orphan_ids if not run_is_live(writer_profile, run_id)
+                ]
             observed_at = _now_iso()
             diagnostic_index = AGENT_LIFECYCLE_INDEX_BASE + 500
             for orphan in orphan_rows:
@@ -2656,6 +2699,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         self._swept_paths.add(self.db_path_str)
         return rowcount
 
+    @profile_run_mutation
     def set_run_assistant_message_id(
         self, run_id: str, assistant_message_id: str | None
     ) -> None:
@@ -2860,6 +2904,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             "original_target": targets[0],
         }
 
+    @profile_run_mutation
     def set_run_active_fallback(self, run_id: str, index: int) -> None:
         """Persist selection before dispatch; failed persistence stops fallback."""
         with self.transaction() as conn:
@@ -3457,6 +3502,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             ).fetchall()
         return [dict(row) for row in rows]
 
+    @profile_run_mutation
     def mark_wake_delivered(self, run_ids: Sequence[str]) -> int:
         """Stamp runs as wake-delivered; already-stamped rows are left alone.
 
@@ -3543,6 +3589,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             ).fetchall()
         return {row["conversation_id"]: int(row["n"]) for row in rows}
 
+    @profile_run_mutation
     def supersede_run_tree(self, run_id: str) -> int:
         """Mark an exact primary and terminal direct sub-agents superseded.
 
