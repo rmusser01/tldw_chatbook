@@ -1144,6 +1144,10 @@ MINIMUM_FILES = 2251
 # TASK-41127 left red, and the two that pin their fix, at the tail. The floor
 # is the measured entry count.
 MINIMUM_FILES = 2256
+MINIMUM_FILES = 2248
+# TASK-41702 (2026-11-18): append the exit-fence late-completion node at the tail.
+# The floor is the measured entry count.
+MINIMUM_FILES = 2257
 
 
 def read_census(path: Path) -> list[str]:
