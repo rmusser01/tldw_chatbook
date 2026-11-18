@@ -3142,3 +3142,66 @@ Tests/UI/test_library_collection_reader_journeys.py::test_annotation_drafts_surv
 # Linked-note text outlives an action's pane repaint; Clear and a landed link
 # still empty it. 7.5 s call / 14.3 s serial at load ~32.
 Tests/UI/test_library_collection_reader_journeys.py::test_unsubmitted_filter_and_link_text_survives_a_pane_repaint
+# TASK-41127 (2026-11-16): off-lane Library nodes that failed locally at the
+# round-14 stack, re-pinned or de-raced and green under a plain command. All
+# 36 ran in one serial lane-flag process in 291.6 s (load 7-35); per-entry
+# times are in the task's notes. Media Reader: the Escape chip set, the
+# no-analysis-provider reasons, Find/More/Info/filter presses on the live
+# Reader chrome, and the select-mode settlement.
+Tests/UI/test_library_media_render_fixes.py::test_escape_labels_are_one_of_five
+Tests/UI/test_library_media_render_fixes.py::test_generate_is_disabled_with_its_reason_when_no_provider_is_configured
+Tests/UI/test_library_media_render_fixes.py::test_reader_generate_reason_is_painted_inline_not_hover_only
+Tests/UI/test_library_media_render_fixes.py::test_select_mode_analyze_reason_is_painted_inline_not_hover_only
+Tests/UI/test_library_media_render_fixes.py::test_find_toggles_the_bar_closed_when_it_is_open
+Tests/UI/test_library_media_render_fixes.py::test_read_mode_walk_with_an_empty_find_bar_never_steals_focus
+Tests/UI/test_library_media_reader_flow.py::test_filter_uses_authoritative_search_and_restores_page_three_anchor
+Tests/UI/test_library_media_reader_flow.py::test_entering_select_mode_cancels_pending_single_item_settlement
+Tests/UI/test_library_media_reader_flow.py::test_t_key_in_reader_arms_delete_confirm_end_to_end
+Tests/UI/test_library_media_reader_flow.py::test_l_key_in_reader_toggles_read_later_end_to_end
+Tests/UI/test_library_media_reader_flow.py::test_escape_from_reader_focuses_loaded_row_and_down_advances
+Tests/UI/test_library_media_reader_flow.py::test_edit_metadata_from_read_routes_to_info_form_actions
+Tests/UI/test_library_media_reader_flow.py::test_info_calls_empty_content_metadata_only_like_console
+Tests/UI/test_library_media_reader_flow.py::test_more_strip_move_to_trash_is_danger_marked_and_separated[wide]
+Tests/UI/test_library_media_reader_flow.py::test_any_non_markdown_item_with_content_says_why_rendered_is_absent
+# TASK-41127: the Collections rail count waits for the scoped Favorites page.
+Tests/UI/test_library_crit8_collections_row.py::test_rail_count_never_falls_back_to_the_unfiltered_total_after_a_visit
+# TASK-41127: literal history restore presses the mounted Restore/Confirm.
+Tests/UI/test_library_prompt_mixins.py::test_literal_history_restore_keeps_kind_definition_and_guards
+# TASK-41127: screen-navigation nodes re-pinned to the seams production now
+# calls (Files leave seams, generation-guarded entry focus, reusable routes,
+# ctrl+n landing chip, stack-owned route commit, Console badge cell).
+Tests/UI/test_screen_navigation.py::test_file_notes_source_transition_blocks_mutation_through_recompose
+Tests/UI/test_screen_navigation.py::test_file_notes_create_route_returns_to_database_notes
+Tests/UI/test_screen_navigation.py::test_file_notes_collections_source_transition_blocks_mutation_through_targeted_reconcile
+Tests/UI/test_screen_navigation.py::test_file_notes_mutation_admitted_during_source_flush_vetoes_switch
+Tests/UI/test_screen_navigation.py::test_action_library_notes_files_back_returns_to_database
+Tests/UI/test_screen_navigation.py::test_action_library_notes_files_back_cancels_open_reload_confirmation_first
+Tests/UI/test_screen_navigation.py::test_files_back_navigation_workspace_contract_matches_real_workspace
+Tests/UI/test_screen_navigation.py::test_action_show_workbench_help_includes_landing_footer_keys
+Tests/UI/test_screen_navigation.py::test_action_library_media_viewer_back_returns_to_list_and_refocuses_it
+Tests/UI/test_screen_navigation.py::test_action_library_note_editor_back_honors_dirty_guard
+Tests/UI/test_screen_navigation.py::test_action_library_prompt_editor_back_honors_dirty_guard
+Tests/UI/test_screen_navigation.py::test_action_library_list_focus_rail_focuses_search_input
+Tests/UI/test_screen_navigation.py::test_compose_content_reapplies_pending_list_entry_focus_on_every_recompose
+Tests/UI/test_screen_navigation.py::test_arm_library_list_entry_focus_schedules_immediate_attempt_and_settle_timer
+Tests/UI/test_screen_navigation.py::test_arm_library_list_entry_focus_twice_cancels_the_stale_timer_handle
+Tests/UI/test_screen_navigation.py::test_on_descendant_focus_disarms_when_focus_leaves_the_armed_list
+Tests/UI/test_screen_navigation.py::test_screen_navigation_always_constructs_fresh_instances
+Tests/UI/test_screen_navigation.py::test_screen_navigation_routes_reach_real_app_handler
+Tests/UI/test_screen_navigation.py::test_nav_bar_uses_overflow_instead_of_truncating_at_160_cols
+# TASK-41127 review r15lt-rev1 (2026-11-17): screen-navigation route and boot
+# nodes on wall-clock waits (each passed 3 of 3 alone at load 56-81), the
+# bindings audit, and TASK-41303's Shift+F6-on-the-landing pin. Times are in
+# the task notes.
+Tests/UI/test_screen_navigation.py::test_library_screen_bindings_are_all_gated_or_universal
+Tests/UI/test_screen_navigation.py::test_shift_f6_walks_the_landing_panes_back_the_way_f6_came
+Tests/UI/test_screen_navigation.py::test_console_staged_live_work_launch_survives_navigate_away_and_back
+Tests/UI/test_screen_navigation.py::test_deep_link_library_route_lands_its_canvas_over_restored_state
+Tests/UI/test_screen_navigation.py::test_generic_library_entry_lands_hub_on_first_visit
+Tests/UI/test_screen_navigation.py::test_media_route_round_trips_to_the_library_media_row
+Tests/UI/test_screen_navigation.py::test_prompt_receipt_owner_vetoes_real_app_navigation_until_settlement
+Tests/UI/test_screen_navigation.py::test_research_workspace_runs_round_trip_restores_independent_context
+Tests/UI/test_screen_navigation.py::test_search_all_palette_command_lands_on_library_with_honest_toast
+Tests/UI/test_screen_navigation.py::test_search_route_round_trips_to_the_library_rag_row
+Tests/UI/test_screen_navigation.py::test_skills_route_lands_on_library_with_skills_row_selected
+Tests/UI/test_screen_navigation.py::test_study_screen_escape_returns_to_library_study_staging_canvas

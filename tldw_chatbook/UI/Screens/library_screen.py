@@ -26997,8 +26997,6 @@ class LibraryScreen(BaseAppScreen):
                 self._library_media_item_traversal_active()
                 and self._review_set_active()
             )
-        if action == "focus_previous_workbench_pane":
-            return bool(self._library_selected_row_id)
         return True
 
     def action_show_workbench_help(self) -> None:
