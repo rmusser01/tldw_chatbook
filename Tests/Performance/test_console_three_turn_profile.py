@@ -25,6 +25,7 @@ from urllib.request import Request
 import pytest
 
 from Tests.Performance import run_console_three_turn_profile as profile
+from Tests.private_profile import private_profile_test
 
 
 REVIEWED_ARTIFACT_NAMES = {
@@ -11583,8 +11584,10 @@ def test_prepare_workspace_runtime_enabled_waits_for_real_ready_snapshot(
 
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile
+@private_profile_test
 async def test_scripted_mounted_sample_uses_real_composer_queue_and_fs_write(
     tmp_path: Path,
+    request: pytest.FixtureRequest,
 ) -> None:
     run_scripted_mounted_sample = getattr(profile, "run_scripted_mounted_sample", None)
 
