@@ -11,7 +11,12 @@ from tldw_chatbook.app_services import (
     read_mcp_service,
     read_workspace_registry,
 )
-from .activation import _sources, captured_sources, execution
+from .activation import (
+    OriginalSourceChanged,
+    _sources,
+    captured_sources,
+    execution,
+)
 from tldw_chatbook.DB.base_db import _OPERATION_OWNERS, operation_owned_connection
 from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
 
@@ -131,7 +136,7 @@ class _AgentSources:
 
         self._check_original_bindings()
         if config.current_config_identity() != self.config_identity:
-            raise RuntimeError("original agent storage source changed")
+            raise OriginalSourceChanged("original agent storage source changed")
 
     def _check_original_bindings(self):
         tree = getattr(self, "ordinary_tree", None)
@@ -178,7 +183,7 @@ class _AgentSources:
             or getattr(self.permission, "path", None) != self.permission_path
             or self.controller._scratch_spaces is not self.scratch_manager
         ):
-            raise RuntimeError("original agent storage source changed")
+            raise OriginalSourceChanged("original agent storage source changed")
 
     def check_memory(self):
         self._check_original_sources()
@@ -213,7 +218,7 @@ class _AgentSources:
     def prepare(self):
         self.check_memory()
         if self.scratch is None:
-            raise RuntimeError("original agent scratch source unavailable")
+            raise OriginalSourceChanged("original agent scratch source unavailable")
         with self.activate(), self.scratch_manager.lease(self.scratch):
             roots = self._allowed_roots()
             self.root = roots[1] if len(roots) > 1 else roots[0]
@@ -269,12 +274,12 @@ class _AgentSources:
             capture_directory_chain(self.root) != self.root_identity
             or self.root not in self._allowed_roots()
         ):
-            raise RuntimeError("original agent log root changed")
+            raise OriginalSourceChanged("original agent log root changed")
         if (
             self.bound is not None
             and capture_directory_chain(self.bound[1]) != self.bound[2]
         ):
-            raise RuntimeError("original agent log binding changed")
+            raise OriginalSourceChanged("original agent log binding changed")
 
     def _check_writer(self, writer):
         writer_class, directory, scope, on_bound = self.writer_state
@@ -289,7 +294,7 @@ class _AgentSources:
             or writer._on_bound is not on_bound
             or writer.log_dir != (self.bound[1] if self.bound is not None else None)
         ):
-            raise RuntimeError("original agent log writer changed")
+            raise OriginalSourceChanged("original agent log writer changed")
 
     def writer_root(self, writer):
         self._check_original_sources()
@@ -308,10 +313,10 @@ class _AgentSources:
             / run_id
         )
         if self.bound is not None or root != self.root or directory != expected:
-            raise RuntimeError("original agent log binding changed")
+            raise OriginalSourceChanged("original agent log binding changed")
         identity = capture_directory_chain(directory)
         if identity.canonical_root != directory:
-            raise RuntimeError("original agent log binding changed")
+            raise OriginalSourceChanged("original agent log binding changed")
         self.bound = (run_id, directory, identity)
 
 
@@ -325,7 +330,7 @@ def console_writer_source(writer: object) -> _AgentSources | None:
     if source is None:
         return None
     if type(source) is not _AgentSources or source.writer is not writer:
-        raise RuntimeError("original agent writer source changed")
+        raise OriginalSourceChanged("original agent writer source changed")
     source.writer_root(writer)
     return source
 

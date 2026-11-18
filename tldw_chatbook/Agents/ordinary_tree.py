@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from concurrent.futures import Future
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from inspect import getattr_static
 from threading import Lock
@@ -12,6 +12,9 @@ from threading import Lock
 from tldw_chatbook.app_services import read_mcp_service
 from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
 
+from loguru import logger
+
+from .activation import OriginalSourceChanged
 from .execution_capacity import CapacityRefused, WorkOrigin
 
 
@@ -721,6 +724,7 @@ class OrdinaryTurn:
         with self.lock:
             self.members[owner].drained = proven is True
         self._retire_scratch()
+        self.runtime._wake_first_send()
 
     def _retire_scratch(self):
         lease = None
@@ -898,6 +902,7 @@ class OrdinaryTurn:
             member.durable = proven
             member.host_returned = True
         self._retire_scratch()
+        self.runtime._wake_first_send()  # a now-unproven-only turn ends the save wait
 
     def finish(self):
         with self.lock:
@@ -921,24 +926,60 @@ class OrdinaryTurn:
             self.primary_hosts.remove(token)
         self._finish_primary_if_returned()
 
+    def return_host(self, owner, release):
+        """Return an owner's host under the original sources.
+
+        A changed original source refuses the scope before any effect. The
+        owner still returned: its host settles unproven (its durability read
+        is refused too), so the claim stays held (TASK-40716) and disposal can
+        leave the turn instead of waiting on a live owner (TASK-41315).
+
+        Returns:
+            None, or the refusal when an original source changed.
+        """
+        stack = ExitStack()
+        try:
+            stack.enter_context(
+                self.source.activate()
+                if self.source is not None
+                else self.retain_source_scope()
+            )
+        except Exception as refused:
+            # The scope's cleanup never ran, so the owner can never drain
+            # proven: its claim stays held (TASK-40716) whatever its row did.
+            # It still returns, once, so disposal never waits on a live owner.
+            owner.mark_cleanup_unproven()
+            self.host_returned(owner)
+            owner.finish_root()
+            if not isinstance(refused, OriginalSourceChanged):
+                raise
+            logger.warning(
+                "ordinary host return refused: {}", type(refused).__name__
+            )
+            return refused
+        with stack:
+            release()
+            self.close_unused_events(owner)
+            self.host_returned(owner)
+            owner.finish_root()
+        return None
+
     def _finish_primary_if_returned(self):
         with self.lock:
             if not self.sealed or self.primary_hosts or self.primary_finishing:
                 return
             self.primary_finishing = True
         if self.owner is not None:
-            with (
-                self.source.activate()
-                if self.source is not None
-                else self.retain_source_scope()
-            ):
+
+            def release():
                 if self.stop_notification is not None:
                     _engine, custody = self.stop_notification
                     if custody is not None and not custody.notification_claimed:
                         custody.abandon_unstarted()
-                self.close_unused_events(self.owner)
-                self.host_returned(self.owner)
-                self.owner.finish_root()
+
+            # The turn's run already recorded its outcome; a refusal here is
+            # left held, not raised into the Send that is returning.
+            self.return_host(self.owner, release)
 
 
 def capture_ordinary_local_provider_sources(provider, names):

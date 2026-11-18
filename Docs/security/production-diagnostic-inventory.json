@@ -127,6 +127,13 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
+      "call_count": 1,
+      "diagnostic_digest": "fb18d1ba0ef200092820",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Agents/ordinary_tree.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 2,
       "diagnostic_digest": "10775b44040b4dee7eb0",
       "owner": "TASK-494",
