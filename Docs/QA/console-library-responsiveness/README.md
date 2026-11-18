@@ -129,3 +129,55 @@ The database and shutdown suite passed 79 cases with one platform skip.
 The derived-artifact checks and Ruff gates passed. Final source formatting
 was verified against the measured source hashes and has identical syntax
 trees.
+
+## Startup saved-agent discovery
+
+TASK-41607 used the same sealed macOS PTY and the exact `b2b6163032`
+product baseline. Two diagnostic traces and two follow-up stock traces
+identified Console browser construction and launch recovery before the
+first usable composer. A disposable projection-sharing candidate removed
+only a 0.40–0.82 ms rebuild. Its three launch pairs had medians of 6.27 s
+on the baseline and 8.16 s on the candidate. The experiment lives in the
+private evidence directory.
+
+The bounded change queues launch recovery through the app's existing
+deferred startup task. It issues a single read-only lookup through the
+finite worker. The baseline ran that lookup on MainThread. All three
+candidates ran it on a worker and finished the lookup before the
+composer's first usable frame.
+
+| Run order | One-minute load, start → end | Launch to usable composer | First key to echo | Time in launch scheduling on UI thread | Worst loop gap through first-input window |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 1 baseline | 57.5 → 47.0 | 14.34 s | 38 ms | 114.69 ms | 2,103 ms |
+| 1 candidate | 46.5 → 37.7 | 10.83 s | 37 ms | 8.81 ms | 2,275 ms |
+| 2 candidate | 36.5 → 40.0 | 10.74 s | 38 ms | 3.83 ms | 1,664 ms |
+| 2 baseline | 41.9 → 56.8 | 9.86 s | 32 ms | 76.63 ms | 1,694 ms |
+| 3 baseline | 57.2 → 59.5 | 10.64 s | 28 ms | 74.35 ms | 1,672 ms |
+| 3 candidate | 59.6 → 59.3 | 9.57 s | 78 ms | 7.32 ms | 1,629 ms |
+
+The known UI-thread stall fell from 76.63 ms to 7.32 ms at the median.
+Launch-to-usable moved from 10.64 s to 10.74 s at the median, and two
+of the three pairs improved. Across both startup and 13 seconds after
+typing, there were 56 then 61 gaps above 50 ms, and the worst gap rose
+from 2,103 ms to 2,275 ms. First-keystroke and whole-startup results
+varied across the pairs.
+
+Every run retained the full first-input window. All three candidates
+and two baselines completed both 13-second Library windows. The first
+baseline hit the existing five-second Library source deadline while
+initializing a second Notes database instance. Its cold failure and
+startup measurements are retained. Its warm visit was skipped by the
+driver following that failure. All six child processes quit ordinarily
+with zero scoped SQLite descriptors and zero profile or network guard
+violations.
+
+The baseline regression opened native SQLite synchronously in the
+production scheduling entry point. The final tests hold the real
+connection opener and check worker affinity, current-source and
+automatic-wake revalidation, physical cancellation retirement, and
+the unchanged durable recovery checks. The 37 targeted tests passed.
+Eight boot and module-size checks passed with two census warnings
+(1,040 of 1,040 UI-ready modules and 687 of 688 boot imports).
+Derived-artifact preflight, Backlog guards, and Ruff gates passed.
+The SHA-256 of the private evidence manifest is
+`1a2904a16eebc4715f1e5a99eebeb57a4a529019d2f920354ef63a9b0d8911a2`.
