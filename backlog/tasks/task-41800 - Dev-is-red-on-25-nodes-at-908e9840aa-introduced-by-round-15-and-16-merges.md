@@ -34,34 +34,30 @@ Several round-15/16 PRs merged with CI red (#3583, #3590, #3592, #3599, #3600, #
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 The Console modal inventory, wide-tier, Python-style and CSS-consolidation nodes pass with ConsoleHeldToolSlotsModal registered and its CSS bundled
+- [x] #1 The Console modal inventory, wide-tier, Python-style and CSS-consolidation nodes pass (landed by #3625 / TASK-41730 while this was in review; verified on the rebased branch)
 - [x] #2 The 12 Personas list-geometry nodes pass, and the Actor Pack recovery notice still shows only when an import is interrupted
 - [x] #3 The three semantic-mutation inventory nodes pass, with Personal Context's dynamic SQL reviewed and no rule loosened
 - [x] #4 Layer direction and the Widgets app-lookup census pass without raising the pin
-- [x] #5 The boot-import, first-send warm-up and skill held-pointer nodes pass, with no limit raised and no snapshot refreshed
+- [x] #5 The boot-import and first-send warm-up nodes pass with no limit raised and no snapshot refreshed; the skill held-pointer node passes (#3625 retargeted it to the app slot TASK-41319 made decide)
 - [x] #6 Preflight and the module-size and code-identity ratchets pass
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Five independent fixes, one commit group each:
+Rebased onto dev 5266c33936. While this was in review, #3625 (TASK-41730) landed the held tool slots modal fixes (group A), the bundling of both widgets' CSS, and the held-pointer skill node. Those commits were dropped here; dev's versions stand. That includes keeping TASK-41319's app-slot design rather than restoring the module-pointer refusal this branch first proposed.
 
-- **A, #3590 / TASK-41307.** The new `ConsoleHeldToolSlotsModal` was never registered.
-  - It is now in the Console modal inventory (root-inventory-only, with safe dismissal) and in the wide tier (cap 120, like its sibling list modals).
-  - `console_cleanup_release.py` uses a token-backed class in place of `styles.margin = 0`.
-  - `DEFAULT_CSS` became `BUNDLED_CSS`, and the bundle was regenerated.
 - **B, #3599 / TASK-41114.** The product was right; the fixture was stale.
   - `PersonasScreen` mounts the recovery notice when `blocked_intent_ids` is truthy. The shared `mock_app_instance` is a bare MagicMock, so that was always truthy and the 5-row notice sat above the list.
-  - The fixture now states `()`. The notice's CSS is bundled.
+  - The fixture now states `()`.
+  - The same fixture fix also clears 53 of `Tests/UI/test_personas_workbench.py`'s 55 failures on dev 5266c33936, including the laned human-identity nodes. The other two (`test_resize_sync_skips_work_when_compact_state_is_unchanged`, `test_floating_buddy_close_refreshes_active_personas_inspector`) fail on dev too and are on no lane.
 - **C, 1534a6f3d4 / d32a546f54.** `repository_keys.py` split `_DROPPABLE` into a literal `_LOCAL_POINTERS` mapping and a frozenset. The inventory can then derive both dynamic SQL tables, and both sites gained review entries.
 - **D.**
   - `keep_legacy_custom_2_endpoint` and its constants moved from `Chat/console_provider_endpoints.py` to the kernel module `Utils/legacy_custom_2_endpoint.py`, which `config.py` imports.
-  - The notice's two `getattr(app, ...)` lookups became plain attribute reads.
+  - The notice's two `getattr(app, ...)` lookups became plain attribute reads (TASK-41654's census row).
 - **E.**
   - `ChaChaNotes_DB.py` imports `chachanotes_sql_steps` inside the two migration steps that use it, so boot is now 687 of 688.
   - Five modules the built Console already holds left the first-send warm-up: lazy and TYPE_CHECKING imports in the Canvas modules and `console_ordinary_tree`, and `app_served` dropped from `FIRST_SEND_MODULES`. The warm-up is now 94 of 94.
-  - `app_skill_wiring.source_current()` again refuses a replaced wiring pointer before any wiring read. #3583 had removed that check along with its code-identity capsules.
 
 Review (Opus, READY) also found `Tests/UI/test_roleplay_stylesheet.py::test_no_full_app_test_pushes_roleplay_without_its_sheet` red on dev in the required UI lane: #3599's real-app notice test pushed `PersonasScreen` before loading its sheet. It now calls `_ensure_screen_owned_css("personas")` first.
 
