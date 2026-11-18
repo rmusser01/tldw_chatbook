@@ -489,7 +489,9 @@ def native_persona_negatives(tmp_path_factory):
 @pytest.mark.timeout(3600)
 def test_native_persona_mapping_refuses_unproved_graph(native_persona_negatives, case):
     # TASK-41638: fail on a hang (no CPU for 60 s), not on a slow loaded child.
-    output = _child(native_persona_negatives, _NEGATIVE, case, timeout=600, idle=60)
+    output = _child(
+        native_persona_negatives, _NEGATIVE, case, timeout=600, idle=_HANG_SECONDS
+    )
     assert "NATIVE_PERSONA_NEGATIVE_COMPLETE" in output
 
 
@@ -582,7 +584,8 @@ def test_native_persona_retirement_keeps_ancestor_exclusion(
         native_persona_negatives,
         _OVERLAP,
         case,
-        timeout=180 if sys.platform == "win32" else 60,
+        timeout=600,
+        idle=_HANG_SECONDS,  # TASK-41638: was a fixed 60 s (180 s on Windows)
     )
     assert "NATIVE_PERSONA_OVERLAP_REFUSED" in output
 
