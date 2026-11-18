@@ -1162,10 +1162,14 @@ class _CapturedFingerprint:
 
     def read_fingerprint_sources(self):
         """The permission store's identity, then the local service's reads."""
-        return (
-            self.permission.catalog_fingerprint(),
-            self.local._catalog_fingerprint_sources(),
-        )
+        from tldw_chatbook.Chat.console_control_tools import service_permission_scope
+
+        # Selected Console commands already own this exact permission service.
+        # Keep the fresh stock read and its finite native retirement, as for
+        # read_permission_payload, instead of starting a nested permission host.
+        with service_permission_scope(self.service):
+            permission = self.permission.catalog_fingerprint()
+        return (permission, self.local._catalog_fingerprint_sources())
 
 
 def _capture_fingerprint(service, local, permission) -> _CapturedFingerprint | None:
