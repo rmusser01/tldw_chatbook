@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError, replace
+from dataclasses import FrozenInstanceError, fields, replace
 from contextlib import contextmanager
 import hashlib
 
@@ -1050,10 +1050,12 @@ def test_explicit_prepared_request_constructor_rejects_missing_on_provenance() -
         count_fn=_word_count,
     )
 
+    # The constructor's own fields: cache_boundary (init=False, 7970fbcada) is
+    # derived in __post_init__ and refused as a keyword (TASK-41508).
     values = {
-        field: getattr(prepared, field)
-        for field in prepared.__dataclass_fields__
-        if field != "provenance"
+        field.name: getattr(prepared, field.name)
+        for field in fields(prepared)
+        if field.init and field.name != "provenance"
     }
     with pytest.raises(TraceProvenanceAlignmentError, match="missing"):
         type(prepared)(**values)

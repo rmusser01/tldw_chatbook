@@ -1119,6 +1119,9 @@ class ConsoleFleetWakeCoordinator:
         )
         from tldw_chatbook.Agents.automatic_work_runtime import AutomaticWorkContext
         from tldw_chatbook.Chat.console_chat_models import ConsoleSubmissionOrigin
+        from tldw_chatbook.Chat.console_configuration_preparation import (
+            publish_cold_skill_trust,
+        )
 
         authorization = None
         returned = False
@@ -1126,6 +1129,9 @@ class ConsoleFleetWakeCoordinator:
         ledger = getattr(self._runs_db(), "automatic_work", None)
         chain_id = None
         try:
+            # The runtime submitter captures synchronously, before any submit
+            # could build the skill trust a cold Console lacks (TASK-41507).
+            await publish_cold_skill_trust(self._controller.app)
             if ledger is None:
                 await self._pause(
                     conversation_id, None, "history_unavailable", review=True

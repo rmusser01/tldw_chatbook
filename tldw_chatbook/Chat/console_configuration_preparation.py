@@ -144,6 +144,36 @@ def _ready_attribute(owner, name, backing=None, factory=None):
     return values.get(name, descriptor)
 
 
+async def publish_cold_skill_trust(app: Any) -> None:
+    """Build the skill trust service a capture reads, before it reads it.
+
+    TASK-41138, TASK-41507. A mounted Console builds it during skill
+    discovery. A send that captures its own configuration before that (a
+    Buddy reply, a fleet wake, a submit on a Console still discovering) found
+    the slot empty in ``_ready_attribute`` and was refused with
+    ``RecoveryRequired('console_capture_source_not_ready')``. The build does
+    keyring discovery, so it goes through the app's off-loop builder. Only
+    ``TldwCli`` holds a local skills service; any other app returns at once.
+    """
+    try:
+        fields = vars(app)
+    except TypeError:  # no app, or a double without instance slots
+        return
+    scope = fields.get("_skills_scope_service")
+    local = getattr(scope, "local_service", None) or fields.get("_local_skills_service")
+    try:  # Build only what the capture would refuse.
+        _ready_attribute(local, "trust_service", "_trust_service", "_trust_service_factory")
+        return
+    except RecoveryRequired:
+        pass
+    if scope is not None:  # the gate mount discovery keeps ahead of this build
+        scope._enforce_policy("skills.context.list.local")
+    service = await app.ensure_local_skill_trust_service()
+    # Keep one another owner installed meanwhile, as Console preparation does.
+    if vars(local).get("_trust_service") is None:
+        local.trust_service = service
+
+
 class _ConfigurationSources(NamedTuple):
     app_config: Any
     registry: Any

@@ -9259,6 +9259,7 @@ class ConsoleChatController:
         _hook_read: Any = None,
     ) -> ConsoleSubmitResult:
         """Observe the whole attempt, including refusals before trace setup."""
+        from .console_configuration_preparation import publish_cold_skill_trust
         from .console_send_diagnostics import send_diagnostic_scope
 
         runtime = self._hooks_v2_runtime
@@ -9268,6 +9269,8 @@ class ConsoleChatController:
             else contextlib.nullcontext()
         )
         async with scope, send_diagnostic_scope("controller_submit") as diagnostic:
+            if configuration is None and _resume_preparation_id is None:
+                await publish_cold_skill_trust(self.app)  # TASK-41507
             result = await self._submit_draft_lifecycle(
                 draft,
                 session_id=session_id,

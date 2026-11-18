@@ -348,14 +348,13 @@ async def test_staged_context_tray_survives_a_markup_hostile_title() -> None:
 
 @pytest.mark.asyncio
 async def test_staged_context_summary_normalizes_launch_text() -> None:
-    """PR-T1 I1 (defence in depth): the summary goes through the module's
-    shared display-text normalizer instead of raw f-string interpolation,
-    so it no longer stands out as this module's one unescaped exit.
+    """PR-T1 I1: the summary goes through the module's shared display-text
+    normalizer instead of raw f-string interpolation, like every other value
+    in ``ConsoleStagedContextState``.
 
-    This does NOT fix the markup crash above (HTML escaping leaves ``[/]``
-    untouched -- that is fixed at the sink with ``markup=False``); it is
-    the same treatment every other value in
-    ``ConsoleStagedContextState`` already receives.
+    TASK-32802.4 stopped that normalizer HTML-escaping: every sink renders
+    the text literally (``markup=False``), so ``R&D`` read ``R&amp;D``. The
+    summary keeps the title as typed (TASK-41511).
     """
     launch = ConsoleLiveWorkLaunch.from_values(
         source="Library Search/RAG",
@@ -364,9 +363,7 @@ async def test_staged_context_summary_normalizes_launch_text() -> None:
         status="staged",
     )
     state = ConsoleStagedContextState.from_live_work(launch)
-    assert "&amp;" in state.summary
-    assert "&lt;notes&gt;" in state.summary
-    assert "<notes>" not in state.summary
+    assert state.summary == "Q&A <notes> (Library Search/RAG, staged)"
 
 
 @pytest.mark.asyncio

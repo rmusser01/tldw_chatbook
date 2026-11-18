@@ -216,12 +216,14 @@ async def test_buddy_conversation_poll_keeps_unchanged_text(monkeypatch, unavail
                 return original(*args, **kwargs)
 
             monkeypatch.setattr(modal.coordinator, "resolve", resolve)
+            # The poll's own call (_on_poll_tick). A direct refresh_projection()
+            # forces a full repaint by design (077e5bfa09; TASK-41511).
             for _ in range(8):
-                modal.refresh_projection()
+                modal.refresh_projection(force=False)
             assert len(resolutions) >= 8
             assert calls == [], f"Unchanged conversation repaints: {calls}"
             modal.coordinator.notices[binding] = "Changed notice"
-            modal.refresh_projection()
+            modal.refresh_projection(force=False)
             assert (
                 str(modal.query_one("#buddy-reply-notice", Static).renderable)
                 == "Changed notice"

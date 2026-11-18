@@ -107,7 +107,13 @@ async def test_a_queued_send_over_the_ask_trigger_returns_to_the_queue_not_faile
                 ),
                 10,
             )
-            queued = controller.prompt_queue_registry.snapshot(session.id)
+            # The receipt queues it from its own task (queue_prompt in
+            # console_received_dispatch), not before Send returns.
+            for _ in range(100):
+                queued = controller.prompt_queue_registry.snapshot(session.id)
+                if queued.total_count:
+                    break
+                await pilot.pause(0.1)
             assert queued.total_count == 1, queued
             release.set()
             await asyncio.wait_for(second, 60)

@@ -91,7 +91,9 @@ async def _quiet(pilot, predicate, seconds: float = 2.0) -> bool:
     return not predicate()
 
 
-def _launch_app(tmp_path, *, tree=None, gateway_reply=LAUNCH_REPLY, real_service=False):
+def _launch_app(
+    tmp_path, *, tree=None, gateway_reply=LAUNCH_REPLY, real_service=False, tab="library"
+):
     """A SECOND process over the same durable state, Console never opened.
 
     `default_tab="library"` is what keeps Console out of it: the real
@@ -110,7 +112,7 @@ def _launch_app(tmp_path, *, tree=None, gateway_reply=LAUNCH_REPLY, real_service
             double. Used by the headline e2e so its "the payload carried
             real prior history" claim is not a claim about a fixture.
     """
-    app = _build_test_app("library")
+    app = _build_test_app(tab)
     marks = _attach_real_dbs(app, tmp_path)
     _configure_native_ready_console(app)
     app.app_config.setdefault("console", {})["agent_runtime"] = False
@@ -330,6 +332,89 @@ async def test_a_launch_delivers_a_wake_owed_from_a_previous_process(tmp_path):
             "the launch-built controller has no app handle, so a headless "
             "approval round in a launch wake could surface nothing"
         )
+
+
+@pytest.mark.asyncio
+async def test_a_launch_into_home_builds_the_skill_trust_its_wake_captures(tmp_path):
+    """TASK-41507: Library builds the skill trust service as it starts, which
+    hid that a launch wake captures its configuration before anything else
+    does. Home builds none, so the capture found the slot empty and refused
+    with ``console_capture_source_not_ready``; nothing reached the provider.
+    """
+    conversation_id, run_id, _rows = await _seed_a_finished_background_job(tmp_path)
+    app, _marks, gateway = _launch_app(tmp_path, real_service=True, tab="home")
+    assert vars(app)["_local_skill_trust_service"] is None, "precondition: cold"
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        delivered = await _settle(pilot, lambda: bool(gateway.payloads))
+        _assert_console_never_mounted(app)
+        assert delivered, "the cold launch delivered no wake turn"
+        assert CHILD_RESULT in str(gateway.payloads[-1][-1]["content"])
+        runs_db = app.console_runtime.agent_bridge.runs_db
+        assert await _settle(
+            pilot, lambda: (runs_db.get_run(run_id) or {}).get("wake_delivered_at")
+        ), f"the wake for {conversation_id} was never stamped delivered"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("slot", "factory", "deny", "events", "built"),
+    [
+        ("ready", True, False, [], "ready"),
+        (None, False, False, [], None),
+        (None, True, False, ["skills.context.list.local", "build"], "built"),
+        (None, True, True, ["skills.context.list.local"], None),
+    ],
+)
+async def test_the_cold_trust_build_runs_only_where_capture_refuses_and_after_the_gate(
+    slot, factory, deny, events, built
+):
+    """TASK-41507: the shared build mirrors ``_ready_attribute`` (an empty slot
+    with a factory) and keeps the scope policy gate ahead of the build, as
+    mount discovery does; any other app is left alone."""
+    from tldw_chatbook.Chat.console_configuration_preparation import (
+        publish_cold_skill_trust,
+    )
+
+    seen = []
+
+    class Local:
+        def __init__(self):
+            self._trust_service = slot
+            self._trust_service_factory = object() if factory else None
+
+        @property
+        def trust_service(self):
+            return self._trust_service
+
+        @trust_service.setter
+        def trust_service(self, value):
+            self._trust_service = value
+
+    class Scope:
+        local_service = Local()
+
+        def _enforce_policy(self, action_id):
+            seen.append(action_id)
+            if deny:
+                raise PermissionError(action_id)
+
+    class App:
+        def __init__(self):
+            self._skills_scope_service = Scope()  # the helper reads vars(app)
+
+        async def ensure_local_skill_trust_service(self):
+            seen.append("build")
+            return "built"
+
+    app = App()
+    try:
+        await publish_cold_skill_trust(app)
+    except PermissionError:
+        assert deny
+    assert seen == events
+    assert app._skills_scope_service.local_service._trust_service == built
+    await publish_cold_skill_trust(None)  # no app: nothing to build
 
 
 @pytest.mark.asyncio

@@ -13,6 +13,10 @@ from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentTraceRequestFact
 from tldw_chatbook.Chat.console_trace_native_reader import ConsoleTraceNativeReader
 from tldw_chatbook.Chat.console_trace_redaction import CredentialSanitizer
 
+# The Console bridge reads the tool gates through config, which keeps the
+# collection-time profile only (TASK-41508; RecoveryRequired otherwise).
+pytestmark = pytest.mark.bootstrap_profile
+
 
 def _privacy(app, enabled):
     app.controller.set_next_trace_privacy(

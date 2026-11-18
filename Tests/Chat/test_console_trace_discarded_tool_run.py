@@ -18,6 +18,10 @@ from tldw_chatbook.Chat.console_trace_models import new_opaque_id
 from tldw_chatbook.Chat.console_trace_native_reader import ConsoleTraceNativeReader
 from tldw_chatbook.Chat.console_trace_redaction import CredentialSanitizer
 
+# The Console bridge reads the tool gates through config, which keeps the
+# collection-time profile only (TASK-41508; RecoveryRequired otherwise).
+pytestmark = pytest.mark.bootstrap_profile
+
 
 async def _reload_console(app):
     conversation = app.session.persisted_conversation_id

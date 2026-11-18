@@ -14,6 +14,10 @@ from Tests.Chat.test_console_agent_bridge import (
 from tldw_chatbook.Chat.console_provider_gateway import ProviderThinkingDelta
 from tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture
 
+# The agent loop reads config, which keeps the collection-time profile only
+# (TASK-41508; the runs ended "error" under the per-test sandbox).
+pytestmark = pytest.mark.bootstrap_profile
+
 
 def _delta(text, provider="llama_cpp"):
     return ProviderThinkingDelta(
@@ -36,7 +40,6 @@ def test_aggregate_tool_thinking_cannot_become_final_answer_thinking(provider):
 
 
 @pytest.mark.parametrize("provider", ["llama_cpp", "strata", "polystrata"])
-@pytest.mark.bootstrap_profile
 def test_live_native_loop_passes_exact_call_envelope_before_preparation(
     tmp_path, provider
 ):
@@ -700,7 +703,9 @@ def test_resumed_child_retains_its_final_call_thinking_only(
             cfg.reasoning_replay is (policy if child_model == "reasoner" else None)
             for cfg in configs
         )
-        assert retained.messages[-1].get("_tldw_call_thinking") is envelope
+        # Retention deep-copies the transcript (827b622638), so the envelope
+        # comes back equal, not the same object.
+        assert retained.messages[-1].get("_tldw_call_thinking") == envelope
         resumed_rows = chat.child_calls["calculate"][1]["messages_payload"]
         projected = project_reasoning_history(
             resumed_rows, provider="llama_cpp", model=child_model, policy=policy
