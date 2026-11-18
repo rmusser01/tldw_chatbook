@@ -4,7 +4,7 @@ title: "Trace export masks credentials by an older simple-label rule that hides 
 status: Done
 assignee:
 - '@claude'
-updated_date: 2026-11-18 03:53
+updated_date: 2026-11-18 04:15
 created_date: 2026-11-17 05:27
 labels:
 - follow-up
@@ -63,3 +63,7 @@ Simple labels are judged as compound labels are, and a URL's `?key=` value is ma
 - **Red evidence.** Against round 1's sanitizer (314ff9c5fa): 22 failed (13 must-mask, the 2 call-naming keep rows, `value-after-blank` and the 6 block cases); `many-label-lines` 5.36 s CPU against the 2 s bound and `label-lines` 1.55 s against 8 x 0.19 s. Controls: Minor 3's literal line-start rule, 7 failed (above); no own-name argument and no quoted-key exclusion, 3 failed. Green: `test_trace_v2_collaboration.py` + `test_log_sanitizer.py` 918 passed (`-n 4`, load 35-59).
 - **Corrected probe** (22 labels x 13 values x 13 separators, including `:\n`, `:\n\n`, `=\n`, x 19 contexts, including `users[0].`, `get_user().`, `?.`, `$.`, `  .`, `const`, `my`, `- `, `if`, `class` and `1.`; 70,642 texts): 3,024 values masked at base are kept at head, every one a `label:` whose line opens a code block or list item (`if`, `class`, `1. Generate a`) with the value on a later line, which is Minor 3's carve-out. No other context keeps a value base masked.
 - **Logs.** Base vs head over 2,215 texts (both tables, look-alikes, sanitizer shapes, CR, LF and CRLF line texts) x 5 log functions, plus `sanitize_dict`/`sanitize_list`: 0 diffs.
+
+**Coordinator ruling on the carve-out (after fix round 1).** A credential-shaped value base masked must not be kept, so list items leave `_BLOCK_OPENER`: only code-block openers (`if`, `elif`, `else`, `while`, `for`, `with`, `match`, `case`, `class`, `def`, `async`, `try`, `except`, `finally`) keep the value below out. `1. Password:\n   hunter2xyz`, `- Your password:`, `* API key:` and `+ token:` with a value below are masked (`_MUST_MASK` +4: `list-numbered`, `list-dash-prose`, `list-star`, `list-plus`); `- password:` stays the YAML-key form. `1. Generate a token:\n   Go to Settings > Tokens` now masks the whole line below, not only the first word as base did: "Go" starts an expression that is masked whole (exact case `list-item-first-word`; the block case `block-list-item` is gone). Red at the previous commit (4c6535a161): those 5 failed; green after.
+- **Probe re-run** (85,514 texts: the 19 contexts above plus `* `, `+ the `, `- Your ` and `  2) `): 2,016 values masked at base are kept at head, all under `if` or `class` lines (2 openers x 4 later-line separators x 252 label/value pairs). No list-marker or prose context keeps one.
+- **Runs** (load 23-35): `test_trace_v2_collaboration.py`, `test_log_sanitizer.py`, the trajectory export/import files, `Tests/UI/test_trajectory_import_ui.py`, `Tests/CI/test_ci_queue_pressure_contract.py` (`-n 4`): 1119 passed. Log byte-identity probe: 2,235 texts, 0 diffs. Serial size and identity ratchets: 270 passed. `preflight.sh`: passed.

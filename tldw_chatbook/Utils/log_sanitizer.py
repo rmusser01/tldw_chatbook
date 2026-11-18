@@ -647,11 +647,11 @@ _VALUE_BELOW = re.compile(
 )
 #: What may precede a YAML key on its line: indentation and one ``- ``.
 _KEY_PREFIX = re.compile(r"[ \t]*(?:-[ \t]+)?")
-#: A line that opens a block whose body follows: a code statement
-#: (``if token:``, ``class Password:``) or a list item (``1. Get a token:``).
+#: A line that opens a code block whose body follows (``if token:``,
+#: ``class Password:``). A list item is not one: ``1. Password:\n   hunter2``
+#: is a value (coordinator ruling, review r16tr-rev1).
 _BLOCK_OPENER = re.compile(
-    r"[ \t]*(?:(?:if|elif|else|while|for|with|match|case|class|def|async|try|except|finally)\b"
-    r"|\d+[.)][ \t]|[-*+][ \t])"
+    r"[ \t]*(?:if|elif|else|while|for|with|match|case|class|def|async|try|except|finally)\b"
 )
 _INDENTED_LINES = re.compile(r"(?:[ \t]+[^\r\n]*(?:\r\n|\r|\n|$))+")
 #: Longer values are masked whole, never examined (review r15tr-rev3).
@@ -1159,11 +1159,11 @@ def _owns_value_below(text: str, label: re.Match) -> bool:
     """Whether the value below a label that ends its line is the label's.
 
     After ``=`` it always is (``const password =\n  "..."``). After ``:`` it
-    is for a YAML key (only indentation or ``- `` before the label) and for
-    prose (``my password:\nhunter2``), not when the label's line opens a
-    code block or a list item (``if token:\n    return token``, ``1. Get a
-    token:\n   Go to Settings``). Reads the label's line back to its start,
-    once per line.
+    is for a YAML key (only indentation or ``- `` before the label), for
+    prose (``my password:\nhunter2``) and for a list item (``1. Password:\n
+    hunter2``), not when the label's line opens a code block (``if token:\n
+    return token``). Reads the label's line back to its start, once per
+    line.
     """
     if label.group().rstrip().endswith("="):
         return True

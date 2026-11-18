@@ -995,6 +995,11 @@ _MUST_MASK: dict[str, tuple[str, str]] = {
     "next-line-after-blank": ("user" + "name: bob\npass" + "word:\n\n  hunter2xyz", "hunter2xyz"),
     "next-line-prose": ("my pass" + "word:\nhunter2xyz", "hunter2xyz"),
     "next-line-indented-prose": ("Use this pass" + "word:\n    hunter2xyz", "hunter2xyz"),
+    # coordinator ruling (review r16tr-rev1): a list item's value below it
+    "list-numbered": ("1. Pass" + "word:\n   hunter2xyz", "hunter2xyz"),
+    "list-dash-prose": ("- Your pass" + "word:\n  hunter2xyz", "hunter2xyz"),
+    "list-star": ("* API " + "key:\n  " + _P8 + "abc", _P8 + "abc"),
+    "list-plus": ("+ tok" + "en:\n    " + _P8, _P8),
     # ...and a URL's ?key= value is masked whatever its shape, as logs mask it.
     "url-key-placeholder": (
         "https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&callback=init",
@@ -1290,10 +1295,10 @@ def test_a_masked_label_value_keeps_its_closing_bracket_and_full_stop(
             "user" + "name: bob\npass" + "word:\n\n  hunter2xyz\nhost: db",
             "user" + "name: bob\npass" + "word:\n\n  [credential redacted]\nhost: db",
         ),
-        # Review r16tr-rev1 Minor 3: a block a label line opens (code, a list
-        # item) or a nested quoted key is not the label's value. Each is kept
-        # and the field after it is masked. (Not _MUST_KEEP rows: a preview
-        # joins the lines, and on one line the code is masked as before.)
+        # Review r16tr-rev1 Minor 3: a code block a label line opens, or a
+        # nested quoted key, is not the label's value. Each is kept and the
+        # field after it is masked. (Not _MUST_KEEP rows: a preview joins the
+        # lines, and on one line the code is masked as before.)
         *(
             (shape + "\ntok" + "en: " + _P8, shape + "\ntok" + "en: [credential redacted]")
             for shape in (
@@ -1301,9 +1306,16 @@ def test_a_masked_label_value_keeps_its_closing_bracket_and_full_stop(
                 "if not pass" + 'word:\n    raise ValueError("missing")',
                 "class Pass" + "word:\n    def __init__(self):",
                 "match sec" + 'ret:\n    case "a": pass',
-                "1. Generate a tok" + "en:\n   Go to Settings > Tokens",
                 "sec" + 'ret:\n  "name": x',
             )
+        ),
+        # A list item is not a code block: the line below is judged as the
+        # label's value (coordinator ruling, review r16tr-rev1). "Go" starts
+        # an expression ("Go to Settings > Tokens"), masked whole; base masked
+        # the first word.
+        (
+            "1. Generate a tok" + "en:\n   Go to Settings > Tokens",
+            "1. Generate a tok" + "en:\n   [credential redacted]",
         ),
     ],
     ids=(
@@ -1316,8 +1328,8 @@ def test_a_masked_label_value_keeps_its_closing_bracket_and_full_stop(
         "block-if-not",
         "block-class",
         "block-match",
-        "block-list-item",
         "nested-quoted-key",
+        "list-item-first-word",
     ),
 )
 def test_a_masked_run_stops_before_the_next_field(text: str, expected: str) -> None:
