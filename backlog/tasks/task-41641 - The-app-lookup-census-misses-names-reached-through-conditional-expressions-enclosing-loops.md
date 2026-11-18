@@ -1,7 +1,7 @@
 ---
 id: TASK-41641
 title: "The app-lookup census misses names reached through conditional expressions, enclosing loops and global or nonlocal bindings"
-status: In Progress
+status: Done
 assignee: []
 created_date: 2026-11-17 19:05
 labels:
@@ -82,6 +82,12 @@ Evidence (2026-11-18, base = dev d0486978dd, load 60-105):
     - `UI/Library_Modules/library_artifacts_controller.py:1006`: `"subscriptions_db" if key.source == "live_report" else "chachanotes_db"`.
   - Each site counts 2. These are the two conditional expressions TASK-41318 named.
   - The `global`/`nonlocal` and enclosing-loop `=` rules add nothing in the real tree today. No other package moved, `app_private_attrs.txt` is unchanged (both private names were already allowed), and `app_nonliteral_lookups.tsv` is unchanged.
+- **Serial `Tests/Architecture` on head** (load 60-105, 72 min): 1485 passed, 5 skipped, 4 failed. None is in a file this change touches.
+  - Three also fail on base d0486978dd, run there serially:
+    - `test_persistent_diagnostic_inventory::test_reviewed_diagnostic_changes_are_metadata_only`: `agent_service.py` diagnostics.
+    - `test_timer_path_static_update_inventory` x2: the new `ProjectIndexBindingCard._poll` clock root.
+  - `test_task_15103_review_ledger_canonical_schema_and_arithmetic` hit its 300 s pytest-timeout, in the suite and alone. With `--timeout=1800` it passed on both trees: base 291 s, head 294 s.
+- `./scripts/preflight.sh` passed (`PYTHON` set to the repo venv).
 - **Scan cost:** user CPU was 20.78 / 21.20 s on base and 20.64 / 20.69 s on head, in alternating runs. The change is not measurable.
 - **Files:**
   - `Tests/Architecture/test_app_string_lookup_census.py`
