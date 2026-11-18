@@ -70,8 +70,9 @@ _CASES = {
             "notes.file_notes",
             "tts.profile_store",
         ),
-        # After the restore a writer leaves this created database's -wal and
-        # -shm files behind; they retire with it.
+        # After the restore a writer adds a board to this created database and
+        # exits without a checkpoint: the board is only in its -wal. The files
+        # retire together, and the new safety copy must hold the board.
         "wal": ("kanban.local",),
         "refusal": None,
     },
@@ -178,6 +179,11 @@ _CASES = {
         "refusal": "local_snapshot_created_config_folder_shared",
     },
 }
+
+# The row the [databases] writer adds after the restore, only in the WAL.
+_BOARD_INSERT = (
+    "INSERT INTO kanban_boards(uuid,name,created_at,updated_at) VALUES (?,?,?,?)"
+)
 
 _SCENARIO = r"""
 import json,os,subprocess,sys
@@ -323,9 +329,11 @@ try:
         operation=restored['result']['journal_operation_id']
         assert present(paths)==set(paths),sorted(set(paths)-present(paths))
         for label in case.get('wal',()):
-            writer="import os,sqlite3,sys;c=sqlite3.connect(sys.argv[1]);c.execute('PRAGMA journal_mode=WAL');c.execute('PRAGMA wal_autocheckpoint=0');c.execute('SELECT count(*) FROM sqlite_master').fetchall();os._exit(0)"
-            subprocess.run([sys.executable,'-c',writer,str(paths[label])],check=True,timeout=60)
-            assert all(Path(str(paths[label])+suffix).exists() for suffix in ('-wal','-shm')),label
+            writer=("import os,sqlite3,sys;c=sqlite3.connect(sys.argv[1]);c.execute('PRAGMA journal_mode=WAL');"
+                "c.execute('PRAGMA wal_autocheckpoint=0');c.execute(sys.argv[2],('post-restore-board','Post-restore board','2026-11-18T00:00:00Z','2026-11-18T00:00:00Z'));c.commit();os._exit(0)")
+            subprocess.run([sys.executable,'-c',writer,str(paths[label]),BOARD_INSERT],check=True,timeout=60)
+            assert Path(str(paths[label])+'-wal').stat().st_size>0,label
+            assert Path(str(paths[label])+'-shm').exists(),label
         if case.get('second_profile'):
             from tldw_chatbook.Backup_Recovery.control_records import bind_profile
             other=source.parent/'other.toml'
@@ -349,11 +357,31 @@ try:
                 approved=rollback if not issues else service.preview_rollback(operation,old_password=b'rollback-test-password',
                     target=service.preview_backup((source,),options={}),acknowledged_credential_issues=issues)
                 return service.start_rollback(operation,approved,old_password=b'rollback-test-password',new_password=b'second-safety-password')
-            reviewed(service,later,later)
+            rolled=reviewed(service,later,later)
             kept=present(paths)
             assert not kept,'rollback kept created files: '+repr(sorted(kept))
             sidecars=[str(path)+suffix for path in paths.values() for suffix in ('-wal','-shm') if Path(str(path)+suffix).exists()]
             assert not sidecars,sidecars
+            if case.get('wal'):
+                # The post-restore board reached the new safety copy before the
+                # database retired (as test_later_created_destinations checks
+                # for created edits).
+                import sqlite3,zipfile
+                from contextlib import closing
+                from tldw_chatbook.Backup_Recovery import archive_reader
+                from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
+                from tldw_chatbook.Backup_Recovery.recovery_copies import list_recovery_copies
+                saved=next(row for row in list_recovery_copies(service.control_root)
+                    if row.operation_id==rolled['result']['journal_operation_id'])
+                acquired=archive_reader.acquire(saved.path,Path.home()/'new-safety-readback',ArchiveLimits(),b'second-safety-password',Event())
+                document=archive_reader.verify_sealed(acquired)
+                for label in case['wal']:
+                    payload=next(row for row in document.files if row.owner_id==label)
+                    copy=Path.home()/(label+'-readback.db')
+                    with zipfile.ZipFile(acquired.path) as packed:copy.write_bytes(packed.read(payload.payload))
+                    with closing(sqlite3.connect(copy)) as db:
+                        found=db.execute("SELECT name FROM kanban_boards WHERE uuid='post-restore-board'").fetchall()
+                    assert found==[('Post-restore board',)],(label,found)
 finally:
     service.close()
 assert not network_guard.blocked_attempts()
@@ -366,7 +394,14 @@ print('retired and reopened')
 def test_later_rollback_retires_the_files_a_restore_created(tmp_path, case):
     """TASK-41521: every file the case's restore created is gone after the
     later rollback, as it was before the restore."""
-    script = "CASES=" + repr(_CASES) + "\n" + _SCENARIO
+    script = (
+        "CASES="
+        + repr(_CASES)
+        + "\nBOARD_INSERT="
+        + repr(_BOARD_INSERT)
+        + "\n"
+        + _SCENARIO
+    )
     for name in ("source", "target"):
         (tmp_path / name).mkdir(mode=0o700)
     _run(
