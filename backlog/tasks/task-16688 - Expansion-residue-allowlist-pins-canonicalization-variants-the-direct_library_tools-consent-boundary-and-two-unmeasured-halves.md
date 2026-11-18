@@ -211,4 +211,7 @@ into a second task.
 `Docs/User_Guide/mcp.md`,
 `Docs/superpowers/qa/2026-08-16-expansion-residue/continuation_walk.py` +
 `report.md` (new).
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/mcp.md`: Docs pass against code and tests, not a live screen.
 <!-- SECTION:NOTES:END -->

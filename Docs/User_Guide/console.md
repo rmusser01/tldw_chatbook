@@ -295,6 +295,8 @@ While the card shows, the only Console keys the footer names are the ones
 that work under it: **Enter**, **F1** help and **Ctrl+P** palette (the
 app-wide Ctrl+Shift+F and Ctrl+Q stay). Alt+M, Ctrl+O, F6 and the other
 Console keys do nothing until setup is done, so they are not listed.
+Typing while the card shows brings up one notice: "Typing is locked until
+setup finishes — press Enter to use the highlighted action."
 While a dialog is open over the Console (Switch model, for one), with the
 card showing or not, the footer names only **Ctrl+P** palette and **Ctrl+Q**
 quit: Enter acts on the dialog, and F1, F6, Ctrl+Shift+F and the Console's
@@ -455,8 +457,7 @@ the other; Tab and Shift+Tab move between the ones shown, wrapping at either
 end, and the focused one grows heavy side rails, so which one Enter will press
 is visible without reading the text. Focus stays where Tab put it while the
 card refreshes; only a newly found server's action takes it, once. Esc does
-not close the card. *(Was "Both actions" — superseded by task-32558 below: the
-count contradicted this page's own task-32555 stamp, which names three.)*
+not close the card.
 
 If you land here with a handoff already staged — e.g. from Library's
 **Use in Console** on a Search/RAG result or on an open note while a
@@ -1155,7 +1156,8 @@ keep it.", "Catalog unavailable. Use a configured model or Custom ID." and
 by the count, however long the list. When catalog refresh is turned off (for
 every provider, or for this one in its list of opted-out providers), the last
 of these says why instead: "Catalog refresh is off. Showing N configured
-models."
+models." A provider that reports no models reads "No models reported for
+this provider. Use Custom ID if needed."
 
 #### After Return to Console
 
@@ -1609,144 +1611,6 @@ this tab's in-flight run, use **Stop**, **Ctrl+G**, or `/stop` instead.
   escape delay longer than that (in tmux, `set -s escape-time 10` keeps
   the pair together). Switch model is always reachable via `/model` or
   **Ctrl+P** → "Console: Switch model…".
-
-—
-*Verified against working tree — 2026-09-04 (TASK-31429, Context-rail colour
-grammar: live tmux captures of the real app on textual-dark, textual-light,
-and the Orb apricot theme, colour-decoded from `capture-pane -e`, show the
-active-chat line and selected row in each theme's text-primary, label/value
-pairs as muted label + text-accent value, and the Agent line in the theme
-primary while a real llama-server run was in progress; a mounted rule-match
-probe pins the same three resolutions in `test_console_rail_color_grammar.py`).
-Verified against working tree — 2026-08-30 (TASK-23193/23195/23196/23197/
-23198/23199/23200, Context rail UX pass: the rail's default open set is now
-Sessions + Conversations and the whole rail fits at 160x48 with all seven
-headers reachable; the header reads **Context ◂**; the outer hint names the
-sections below the fold; the Model section no longer repeats the status
-bar's provider/model; conversation rows carry an **\*** action menu in place
-of the retired star column; and the 118-128 column band no longer evicts the
-rail. Measured with the headless UAT harness in `output/ux-review-console/`
-across ten terminal geometries, plus layout-containment probes at 118/120/
-125/128 columns). Verified against working tree — 2026-08-27 (TASK-23021: the Get started
-card's snow backdrop is now a still frame — mounted-harness check on the
-real unconfigured ChatScreen: field renders behind the card, no timers, no
-repaints between resizes; idle CPU 0.02–0.05% vs 2.0–7.4% with the retired
-animation re-emulated, interleaved 15 s windows). Verified against working
-tree — 2026-08-25 (TASK-21145: clickable setup-blocked reason; first send never intercepted by the project-instructions folder dialog on a fresh profile). Verified against 4646922ed — 2026-08-04 (PR-4 Task 6 live check, including
-a real-provider send round trip). Verified against e2c706303 — 2026-08-06
-(PR-T2, docs pass against shipped code/tests, live check pending Task 9):
-a legacy `[API] <provider>_api_key` now satisfies this screen's own
-readiness check too, and a modern `api_settings.<provider>.api_key` now
-outranks that provider's environment variable. Verified against
-42b28089f — 2026-08-06 (task-2852: live check on a fresh profile — a
-Library Search/RAG handoff staged while locked now shows a receipt line
-on the Get started card, and the same handoff on a configured Console
-still lands on the unchanged staged-evidence strip). "Long conversations"
-verified against the TASK-15455 windowing (PR #1538) plus its reconciliation
-delta — shipped tests and an isolated 500-message load probe; not re-checked
-live. "Long conversations" sliding scroll-back and bounded far jumps
-verified against TASK-15777 — shipped tests plus isolated 400/500-message
-mounted probes (scroll-back walks the full history with mounted rows bounded
-by the watermarks — measured ~150 rows / height ~600 at the default marks;
-a far jump mounted 5 rows instead of 490); not re-checked live. The
-head-pinned-selection pause (TASK-16851) verified by shipped tests — a
-post-jump walk-down held ≤1100 virtual rows against a 900 high mark where
-it previously grew to 1966 and kept growing; not re-checked live. Verified
-against the Console bottom-stack de-clutter programme — tasks 17650-17661,
-eight merged PRs, dev @ b6036515e — 2026-08-18 (headless painted probes at
-150×44 and 150×30, both status-row placements, ready/long-draft/collapsed/
-setup-blocked states, plus a staged-sources probe): the control deck below
-the conversation is now transient strips (staged evidence, prompt queue)
-→ status row → blank → composer (1-8 rows, demand-grown, dense-form left
-edge) → blank → footer; the workbench frame closes at the grid's single
-border; transcript message rules reach edge to edge at any terminal
-width; the footer token counter is retired in favor of the status row's
-cost chip; the Status ▾ collapse choice and the status-row placement
-setting persist; compact mode (under 35 rows) drops the breathing-room
-rows. This page's layout tour re-verified against that build.*
-
-*Verified against fix/library-notes-onboarding — 2026-09-09 (task-32140:
-added the "Write a note in Library" action beside the Get started card's
-provider steps — needs no provider, opens Library's New note view, and
-stays available for the whole time the card is blocking. Widget-level
-check in `Tests/UI/test_library_notes_wave_onboarding.py`.)*
-
-*Verified against fix/library-notes-w4-console-handoff — 2026-09-14 (task-32555
-AC#1, at 235x52 and 100x30): the Get started card's actions render as bordered
-buttons — "Set up provider", "Write a note in Library" and, when one is found,
-"Use detected llama.cpp …" — and the focused one is marked by heavy left and
-right rails rather than by text styling
-(`wave4-caps/console-handoff/handoff-10-console-card`, `11-card-focus`,
-`10b-console-card-100x30`). They were `compact` Buttons before, which Textual
-renders with `border: none !important`, so all three read as plain text lines
-two rows apart.*
-
-*Not verified live — task-32533, 2026-09-14, fix/library-notes-w4-crash.* The
-quick **Model** popover's provider picker (**Alt+M**) can no longer be handed a
-provider it does not list: an empty or unrecognised provider opens the picker
-blank instead of raising `InvalidSelectValueError`, and the same guard now
-covers the later re-sync that **Custom ID** plus a keystroke triggers
-(`Widgets/select_values.py`, pinned by
-`Tests/UI/test_console_model_popover_no_provider.py`). This carries no "Verified
-against" stamp on purpose: no profile that can be driven live reaches the broken
-state. With no provider configured, **Alt+M** is refused by the setup gate
-("Typing is locked until setup finishes — press Enter to use the highlighted
-action"); with one configured, the draft always names a provider the picker
-lists. The evidence is the three headless pins, not a capture.
-
-*Verified against fix/library-notes-w4-docs — 2026-09-14 (task-32558, the
-wave-4 guide sweep). The Get started card's body said "Both actions" while
-this page's own task-32555 stamp, in this same "Verified against" section,
-named three: a
-detected loopback server adds "Use detected \<provider\> (\<host:port\>)"
-(`Chat/console_onboarding_state.py:101-153`, loopback-only, scheme and
-credentials stripped). Corrected from the source, not from a capture — this
-sweep drove no Console profile with a local server running, and does not
-claim to have seen the third button.)*
-
-*Verified against feat/model-config-p1-root-fixes — 2026-09-26 (TASK-33001.1,
-provider switch picks that provider's own model). Switching llama.cpp to
-Anthropic under the shipped `[chat_defaults]` pair (OpenAI /
-`gpt-5.6-terra`) used to fill `gpt-5.6-terra`; it now fills Anthropic's own
-configured model, or no model with a "Missing model" readiness block. The
-evidence is headless: real-path rebase tests in
-`Tests/Chat/test_console_settings_apply.py` for both editors' field sets, and
-a mounted Conversation settings modal driving the real controller rebase in
-`Tests/Chat/test_console_session_settings.py`. Not re-checked live.)*
-
-*Re-verified live on feat/model-config-p1-root-fixes — 2026-09-26
-(TASK-33001.1 fix round 1). A scratch profile from the shipped template
-(OpenAI / `gpt-5.6-terra` defaults), driven in tmux: in the **Alt+M**
-popover, OpenAI → Anthropic filled `claude-sonnet-5`, and Anthropic →
-llama.cpp (shipped `model = ""`) left the model field on its "Choose or
-search models" placeholder with "No models reported for this provider. Use
-Custom ID if needed." **Apply to this chat** showed "Choose a model." and
-the chat stayed on OpenAI / `gpt-5.6-terra`; **Defaults…** read "Defaults
-target: llama_cpp/No model" and "Unavailable: choose a model first." A
-mounted popover test (`Tests/Chat/test_console_session_settings.py`) pins
-the same states. The full modal was not driven live.)*
-
-*Verified against feat/model-config-p1-root-fixes — 2026-09-27 (TASK-33001.7,
-picker focus and counts). Driven live at 211x44 on a scratch profile
-(llama.cpp / `qwen`, users_name `verify_mc33001_t7`): the Conversation
-settings modal opened with **Provider** focused and still reading
-"llama.cpp", selected, over the open provider list; Tab to **Model** kept
-"qwen" painted and selected, with "1 model available. Type to filter."
-below; typing `q` replaced it and Escape restored "qwen". A second run
-clicked into the Model field (reading `qwen-t7`) and typed `q`: the field
-read `q`, a fresh search, not an edit of the value. Before this fix
-both fields blanked to their "Choose or search …" placeholders on focus. The
-20-row cap line is pinned by mounted picker tests, not seen live.)*
-
-*Verified against feat/model-config-p1-root-fixes — 2026-09-27 (TASK-33001
-final fix wave, merged with dev 88b61879b9). The model field's status line
-keeps a catalog warning over the 20-row count on focus: before the fix,
-focusing the Model field on a catalog of more than 20 models replaced "Current
-model is not in the latest catalog…", "Catalog unavailable…" and "Live
-catalog unavailable…" with "Showing 20 of N matching models". Pinned by a
-widget test with 25 models for each warning
-(`Tests/Widgets/test_model_search_picker.py`), not driven live. The rest of
-this page's content unchanged from the prior stamp.)*
 
 ## Optional keyword search for a workspace folder
 

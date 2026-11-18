@@ -34,4 +34,7 @@ Critique #3 P2. The focused list's highlighted row differs from the list backgro
 
 <!-- SECTION:NOTES:BEGIN -->
 #settings-theme-list > .option-list--option-highlighted now inverts like a focused card chip ($text-primary fill, $ds-surface-panel text, bold). $block-cursor-background was tried first and measured 2.84:1 on solarized_light. Measured fill vs list: textual-dark 6.26/5.61 (unfocused/focused), textual-light 9.90/8.97, gruvbox_dark 8.10/7.07, solarized_light 5.90/5.57; name text on the fill 5.12-10.30. test_theme_picker_use_and_try_chips_meet_contrast measures the fill (>=3:1) and the text on it (>=4.5:1), focused and not, via a new _highlighted_row helper.
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/settings.md`: Pinned by pilot tests, not driven live.
 <!-- SECTION:NOTES:END -->

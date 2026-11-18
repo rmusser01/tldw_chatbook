@@ -388,6 +388,3 @@ awareness rules you explicitly opt in with *feeds Dreams* contribute their
 topic **counts** (never message text) to this profile — and crisis-flagged
 rules can never opt in, so crisis-adjacent text never becomes a search
 query.
-
-—
-*Verified against feat/dreams-phase-3 @ a5f7daa078 — 2026-09-28*

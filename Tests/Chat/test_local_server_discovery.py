@@ -3439,20 +3439,24 @@ def test_detach_moves_conversations_whose_own_url_the_custom_provider_accepts(mo
         (
             {"temperature": 5},
             "Provider blocked: this custom endpoint is not loaded: 'temperature' "
-            "must be between 0.0 and 2.0. Fix it in config.toml, or delete the "
-            "entry in Settings ▸ Custom endpoints.",
+            "must be between 0.0 and 2.0. Fix it in config.toml (see 'Custom "
+            "endpoints' in the User Guide's Settings page), or delete the entry "
+            "in Settings ▸ Custom endpoints.",
         ),
         (
             {"bogus": 1},
             "Provider blocked: this custom endpoint is not loaded: unknown "
-            "sampling param 'bogus'. Fix it in config.toml, or delete the entry "
+            "sampling param 'bogus'. Fix it in config.toml (see 'Custom "
+            "endpoints' in the User Guide's Settings page), or delete the entry "
             "in Settings ▸ Custom endpoints.",
         ),
     ],
 )
 def test_a_custom_endpoint_not_loaded_says_where_its_reason_can_be_fixed(params, copy):
     """Review r14ep-rev3 Mi-1: the copy ran the reason into the next sentence
-    and sent a sampling-params refusal to Settings, which cannot edit params."""
+    and sent a sampling-params refusal to Settings, which cannot edit params.
+    TASK-41146: the config.toml advice names the guide section that lists
+    the params keys and ranges."""
     from tldw_chatbook.Chat.custom_endpoint_registry import missing_custom_endpoint_copy
 
     url = "http://127.0.0.1:8000/v1?token=not-a-real-secret" if not params else "http://127.0.0.1:8000/v1"

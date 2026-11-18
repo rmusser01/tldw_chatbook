@@ -191,4 +191,7 @@ has no dispatch frame") were rewritten: the run loop *does* carry
 `_process_messages_loop` and is excluded only by `pump is not self`, so both
 clauses are named as load-bearing together.
 
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/console.md`: Not verified live: no profile that can be driven live reaches the broken state; the evidence is the three headless pins (`Tests/UI/test_console_model_popover_no_provider.py`), not a capture.
+- `Docs/User_Guide/library/notes.md`: No capture shows the error notification rendering, and when the pump that raised is the screen it may never render; the log record is the reliable signal. Captures `wave4-caps/crash/crash-02-add-to-folder-dialog-survives`, `crash-03-choose-with-nothing-selected-stays-open`, `crash-07-add-to-folder-dialog-100x30`.
 <!-- SECTION:NOTES:END -->

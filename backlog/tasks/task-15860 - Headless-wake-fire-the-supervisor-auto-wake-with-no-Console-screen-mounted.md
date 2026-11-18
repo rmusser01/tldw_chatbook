@@ -124,4 +124,7 @@ scratch profile, tmux): wake in another session, wake while on Library,
 wake at launch with Console never opened, exactly-once on a second
 relaunch, and the kill switch off/on — all driven and checked against the
 app's own databases. Details and panes in the close-out report.
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/console/agent-runs-and-tools.md`: Could not confirm live: the `⚙ <tool> · Ns` state (every tool call started and finished inside the same second); the advancing elapsed was seen live (Generating… → Thinking… · 1s … · 18s).
 <!-- SECTION:NOTES:END -->

@@ -158,7 +158,9 @@ The screen has a floor of **80×24** and degrades in two steps:
   Runs-on transfer dropdown, Pause/Resume, Run now, Edit in full. It is
   a fresh view of the same pane, not a moved one, so the list keeps its
   place behind it. **Escape** closes it (and, while a row editor is
-  open, Escape closes *the editor* first). The four filter chips
+  open, Escape closes *the editor* first). It stays on the row you opened
+  it for: if that row leaves the queue, it closes with "'*Title*' is no
+  longer in the queue." The four filter chips
   collapse into one **Filter: …** button that cycles them, and the rail
   keeps its buttons on a single row — Create ▾ and Results, plus
   **Mark all read** whenever there is anything unread to mark (that
@@ -176,6 +178,9 @@ and "Sync finished — nothing was pulled or pushed." otherwise. With a
 Local owner and no scheduling server connected, the bar collapses to a
 single line ("Local schedules — no scheduling server connected; sync is
 off"), and the **Clear** button only appears once a sync error exists.
+With no server to reach, **s** syncs nothing and says so: "Local only —
+nothing to sync (no server connection).", or "Server configured but not
+reachable — nothing to sync."
 
 A sync cycle runs several independent phases (reminders, then automation
 review/definition pushback, definitions pull, results pull); one of them
@@ -195,7 +200,8 @@ poll intervals, so reminders have silently stopped; a stall shows the last
 error the loop hit, if any. Staleness is judged against your configured poll
 interval, so a deliberately long interval is not mistaken for a stall. The
 signal is durable (a small heartbeat file), so a stalled or dead loop is
-distinguishable from an idle one even across a restart.
+distinguishable from an idle one even across a restart. The line refreshes
+every 5 seconds.
 
 When the Console's **emergency stop** is active, the line adds "scheduled
 dispatches are held by the emergency stop (/emergency-stop clear in
@@ -350,14 +356,6 @@ live "Runs: …" preview, validation, and Save/Cancel stay pinned at the
 bottom while you edit. Closing a form that has unsaved edits asks first
 (**Discard changes?** — **Keep editing** returns to the form), and so
 does **Ctrl+Q** while the form is open (**Discard changes and quit?**).
-
-*Copy synced with code — task-31710, 2026-09-05: the chooser's other
-button was **Reminder…**, and the page title/intro sentence said "When
-jobs, watchlists, and workflows run" — both stale (watchlist/briefing
-projections never enter this screen's list; the button and this page's
-own vocabulary now match "Scheduled task" everywhere else it appears).
-Text-parity fix only, not independently re-verified live in the TUI for
-this pass.*
 
 Every create/edit form also has a **Runs on** selector — **This device**
 or **Server (\<id\>)** when a scheduling server is connected — defaulting
@@ -753,7 +751,9 @@ active state carries over** — pausing before duplicating, or after, is
 your call, but Duplicate itself never turns a paused definition into a
 running one behind your back. (An archived or otherwise inactive
 source collapses to paused, not archived — a brand-new row starting
-out archived would be a copy you could not even see turned on.) A
+out archived would be a copy you could not even see turned on.) If
+pausing the copy fails, a warning says so: the copy exists and is active
+until you pause it from its detail pane. A
 generation mode/sources/finding-policy/retention field the source left
 unset ("Not set") is written as its concrete default in the copy
 (e.g. "Balanced findings") rather than staying unset — display only;
@@ -830,7 +830,8 @@ many succeeded and how many failed; failed rows stay unread and can be retried.
 **Mark solved** only applies to a `finding` whose automation is not
 already solved — a `failure` row, or a finding whose automation was
 already marked solved, refuses with the specific reason instead of
-attempting the call. Marking solved on a server-owned automation
+attempting the call. A finding's detail pane says which applies: "Solve:
+eligible" or "Solve: not eligible — \<reason\>". Marking solved on a server-owned automation
 requires that server connection right now: this repo does not yet queue
 a solved/reopen mutation for later delivery, so an offline attempt
 refuses honestly ("…this action requires a server connection") rather
@@ -870,262 +871,3 @@ The default bound is `handler_timeout_seconds` under `[scheduling]` in
 `config.toml` (**300** seconds). Set it to `0` (or negative) to disable the
 bound entirely — every handler may then run as long as it likes, and a
 wedged handler will wedge the scheduler, which is why the default is on.
-
-*Verified against task-31823's final review wave (F1/F2) — docs pass
-against shipped code/tests, 2026-09-06. (1) F2: the reminder pane no
-longer renders a **View results** button at all (it used to render one,
-permanently disabled, plus its own permanent explanation Static — pure
-standing weight on the one pane whose outstanding problem is running
-out of vertical room at the 24-row floor, for an action that can never
-apply to a reminder). AC#1 only requires the action reachable from a
-reminder **or** definition pane; the automation pane's own **View
-results** covers it. (2) F1: duplicating a paused/archived/disabled
-definition whose pause follow-up itself fails (returns non-`saved`, or
-raises) now gets exactly ONE honest warning toast, never also the
-contradictory plain success toast, and never the create's own "Failed
-to duplicate" error (which would misreport an ACTIVE copy that exists
-on disk as a failed duplicate — the opposite of what happened). Pinned
-by `Tests/UI/test_schedules_workbench.py`'s
-`test_duplicate_pause_followup_returning_non_saved_warns_without_a_
-success_toast` and `test_duplicate_pause_followup_raising_warns_and_
-never_reports_failed_to_duplicate`, and
-`Tests/UI/test_schedules_transfer_actions.py`'s
-`test_view_results_is_not_rendered_on_the_reminder_pane`.
-
-*Verified against task-31823 (the detail-pane Duplicate/View runs/View
-results affordance — the redesign spec §5 kebab item deferred twice) —
-docs pass against shipped code/tests, 2026-09-06 (revised after review
-round 1: the first pass of this page wrongly said Duplicate always
-resets a definition's lifecycle to active — see below). New: both
-detail panes gained a second button row under their existing lifecycle
-buttons. Reminder pane: **Duplicate** (creates a local copy, disabled
-mid-transfer same as Edit/Enable/Disable/Delete) and **View runs**
-(scrolls to Recent runs — reminders have no separate run-history
-screen); **View results** was removed from this pane in the final
-review wave above — see there. Automation pane: **Duplicate**/**View
-runs**/**View results**, with **View runs**/**View results** reusing
-the `Last run`/`Unread results` rows' own navigation verbatim, and
-**Duplicate** additionally gated on family (only recurring-question
-definitions can be duplicated). Review round 1 caught two things the
-first pass got wrong or left unsaid: (1) Duplicate must NOT silently
-reactivate a paused definition — the due-run selector gates strictly on
-`lifecycle = 'configured'`, so an unpaused copy would start spending on
-its own schedule unasked; fixed so a paused/archived/disabled source's
-Duplicate collapses to **paused** (never to archived or disabled — a
-fresh row starting there would be invisible to Resume), while an active
-source still duplicates active, unchanged. (2) A duplicated definition's
-unset optional config fields (generation mode, sources scope, finding
-policy, retention policy) get written as concrete defaults in the copy
-rather than staying "Not set" — a display-only divergence from the
-source (the create path's own normalize-on-create step, task-31414),
-never a behavioral one: an unset field already resolves to that same
-default at run time. Pinned by
-`Tests/UI/test_schedules_transfer_actions.py`,
-`Tests/UI/test_schedules_workbench.py` (including
-`test_duplicate_button_collapses_a_paused_source_to_a_paused_copy_not_
-due_for_selection` and its active-source control), and
-`Tests/UI/test_schedules_automations_tab.py`.*
-
-*Verified against the schedules UAT remediation, Tasks 1/3/4 — live in
-the real TUI, 2026-09-05 (scratch profile, 235x52 and 80x24). Copy
-changed in three places, each because the behaviour behind it changed:
-**Moving a task…** now separates "no server is configured" from "the
-configured server is not reachable" — the offer is gated on a real probe
-rather than on a server profile merely existing, so the `Runs on`
-dropdown lists only **This device** when nothing answers (confirmed
-live: with nothing listening, both the create form's dropdown and a
-row's `m` dropdown offered exactly one option, and `s` refused with
-"Local only — nothing to sync (no server connection)"). The same
-section gained the stranded-transfer paragraph: a queued local -> server
-move whose server is no longer configured settles to *failed* with a
-stated reason instead of reading "(Moving to server…)" forever. **The
-results view** gained the server-too-old paragraph for the capabilities
-handshake. The keyboard table's `Esc` row now says it leaves the filter
-box first. Fixed without a copy change, re-verified live: the in-pane
-row editors and the queue filter paint their text while focused (they
-rendered as a bare top border before), and the detail pane scrolls to
-its `History` group while keeping the Edit/Run now/Enable/Disable/Delete
-row above the fold at both sizes. Pinned by
-`Tests/UI/test_schedules_responsive_floor.py`,
-`Tests/UI/test_schedules_workbench.py`,
-`Tests/Scheduling/test_scheduling_service.py` and
-`Tests/Scheduling/test_sync_engine.py`.*
-
-*Verified against the schedules UAT remediation, Task 2 (the stale-
-display cluster) — 2026-09-04. Two corrections to prior copy in this
-page, both fixed defects: the **Disabled tasks** section used to
-describe a fired one-time reminder as reading "Disabled" with a
-"— (disabled)" Next Run while simultaneously sitting under the
-**Completed** chip — that was the bug (badge and chip disagreeing on
-the same row), not a documented quirk; it now reads Completed
-everywhere. The **Sync bar honesty** section gained a paragraph on
-mixed-cycle sync (one phase fails, another succeeds): the toast now
-reports both truths separately rather than a blanket "Sync failed"
-masking a phase that actually succeeded. Also fixed without a copy
-change: a scheduler-fired reminder's row now repaints without
-navigating away and back, and the scheduler-liveness line refreshes
-every 5s instead of only alongside the 60s relative-time ticker.
-Pinned by `Tests/UI/test_schedules_disabled_state.py`,
-`Tests/UI/test_schedules_workbench.py`, and
-`Tests/Scheduling/test_sync_engine.py`/`test_scheduler_loop.py`.*
-
-*Verified against the schedules redesign PR-4 — 2026-09-04 (docs pass
-against shipped code/tests, live check pending the redesign program's
-own §14 gate). This page was REWRITTEN for the single surface: the tab
-bar is gone, and with it the Automations, Conflicts and Results tabs and
-every instruction that named one. What replaced them, all documented
-above: automation rows are fully actionable from the one list (run now,
-edit in full, pause/resume, move owner, mark read) instead of
-view-only; the spec §12 keyboard map (`1`-`4`/`f` chips, `/` search, `n`
-create, `p` pause/resume, `m` move owner, `r` mark read, `e` edit,
-`space`/`d`/`x`, `s`, `a`, `Esc`) replaces the old `c`/`r`-run-now/
-`o`/`M`/`m`/`y`/`k` set; the `Runs on` row's dropdown is the ONE
-transfer surface (the Move/Cancel/Retry buttons and the four
-automation-only transfer keys are deleted); Run now is a detail-pane
-button, not a key; the results inbox, a definition's run history, and
-the conflicts view open OVER the list and close with `Esc`, reached from
-the rail's `Results` button, the pane's `Last run`/`Unread results` rows,
-and the status strip's `Conflicts` badge; and the 80x24 floor now pushes
-the same detail pane full-screen on `Enter` (chips collapsing to one
-cycling control, the rail to a single row) instead of hiding the detail
-region behind a "widen the window" notice. Pinned by
-`Tests/UI/test_schedules_responsive_floor.py` (the floor, the push, the
-hosted-editor `Esc` rule, every operation reachable at 80x24, and the
-~110/full-width layouts), `Tests/UI/test_workbench_host_screen.py`,
-`Tests/UI/test_schedules_keyboard_map.py`,
-`Tests/UI/test_schedules_unified_list.py`,
-`Tests/UI/test_schedules_results_tab.py` and
-`Tests/UI/test_schedules_workbench.py`. Final fix wave (2026-09-04): `m`
-below 84 columns now pushes the detail and opens the Runs-on dropdown
-inside it instead of activating the hidden pane, a pushed detail is
-pinned to the row it was opened for (and closes with a notice if that row
-leaves the queue), and resolving a conflict reloads the queue while the
-conflicts view is still open — all four pinned in
-`Tests/UI/test_schedules_responsive_floor.py`. The `m` row above and the
-rail sentence in "Narrow terminals" were corrected in the same pass.)*
-
-*Verified against the schedules redesign PR-3 final fix wave —
-2026-09-03 (docs pass against shipped code/tests, live check pending the
-redesign
-program's later PRs per spec §14: reminder Repeat/At/Timezone rows and
-recurring-question Model/Generation/Finding policy/Sources/Notifications
-rows now edit in place per "Editing rows in place" and "Automations tab
-— definition detail pane" above — commit-on-close for a Select, Enter to
-commit an Input, Escape to cancel without saving, a bad **At** value
-restoring the last-saved value with an inline error, and a locked row
-answering activation with its lock reason instead of going silent; the
-`Runs on` row's dropdown drives the same transfer_refusal → confirm
-dialog with warnings → begin_transfer flow the Move/Retry/Cancel buttons
-already used, as a second surface onto the same facade, coexisting with
-those buttons through this PR; and the definition pane's header
-Pause/Resume button is `set_definition_lifecycle`'s first UI caller,
-repainting optimistically and protected from a racing server pull by a
-lifecycle-scoped pull guard. Pinned by `Tests/UI/test_detail_value_row.py`,
-the Frequency/owner-row/lifecycle assertions added to
-`Tests/UI/test_schedules_workbench.py` and
-`Tests/UI/test_schedules_automations_tab.py`, and
-`Tests/Scheduling/test_scheduling_service.py` /
-`Tests/Scheduling/test_scheduled_tasks_db.py` /
-`Tests/Scheduling/test_sync_engine.py` for the edit bridge and pull
-guard.)*
-
-*Verified against the schedules redesign PR-2 final fix wave —
-2026-09-03 (docs pass against shipped code/tests, live check pending the
-redesign program's later PRs per spec §14: an automation created from
-the Queue rail's **Create ▾** now appears in the list immediately; a
-definition moved to the server keeps its earlier unread results in the
-Queue's count, so the unread dots and **Mark all read** agree with the
-Results tab's badge; results pulled from the server (or marked read
-anywhere) refresh both surfaces; reminder enable/disable and delete act
-under the row's OWN owner, so a server-owned row's change is pushed
-instead of silently reverted by the next sync; and the reminder keys
-answer honestly on a definition row. Pinned by
-`Tests/UI/test_schedules_unified_list.py`,
-`Tests/Scheduling/test_unified_rows.py`, and
-`Tests/Scheduling/test_scheduling_service.py`.)*
-
-*Verified against the schedules redesign PR-2 Task 4 fix wave —
-2026-09-03 (docs pass against shipped code/tests, live check pending the
-redesign program's later PRs per spec §14: the Queue rail's **Create ▾**
-relabel (was "+ New") and **Mark all read** button, the bottom status
-strip's relocation of the sync bar plus its new **Conflicts** count
-button, the Watchlists Sources pane's restored **Next check** column
-and its cross-reference here, and the 60-second relative-next-run
-ticker — repaints the visible Queue rows in place, pauses while another
-screen covers Schedules, and refreshes immediately on return, never
-reloading data. Pinned by `Tests/UI/test_schedules_next_run_relative.py`
-(tick/suspend/resume), `Tests/UI/test_schedules_workbench.py` (rail +
-status strip), `Tests/UI/test_schedules_new_button.py` (Create ▾), and
-`Tests/Watchlists/test_watchlists_sources_pane.py` (Next check).)*
-
-*Verified against the schedules redesign PR-2 Task 2 fix wave —
-2026-09-03 (docs pass against shipped code/tests, live check pending the
-redesign program's later PRs per spec §14: the Queue tab's unified list
-— reminders + automation definitions spanning both owners in one table,
-the All/Active/Paused/Completed chip row, per-row status glyphs, the
-combined schedule-summary-plus-next-run subtitle line replacing the old
-Type/Status/Next-Run columns, the unread dot on a definition row, and
-detail-pane routing between the reminder and definition detail panes on
-highlight. Automation-definition rows stay view-only from the Queue tab
-in this PR; every reminder action is unchanged. Pinned by
-`Tests/UI/test_schedules_unified_list.py` and the updated assertions in
-`Tests/UI/test_schedules_workbench.py`.)*
-
-*Verified against the schedules redesign PR-1 fix wave — 2026-09-02
-(docs pass against shipped code/tests, live check pending the redesign
-program's later PRs per spec §14: the reminder Task Detail pane's body
-card and grouped Details/Frequency/History rows, and the Automations
-tab's definition detail pane — question card, Details/Frequency/History
-rows incl. Model/Generation/Finding policy/Sources/Notifications, and the
-History group's owner-honest run/unread counts. The owner vocabulary,
-"Not set" placeholders and server-owned History copy documented above are
-each pinned by a test in `Tests/UI/test_schedules_workbench.py` /
-`test_schedules_automations_tab.py`). Verified against a running tldw_server — 2026-09-02 (schedules-handoff
-PR-6 task 6, the program's §10 live gate: real TUI in tmux against
-tldw_server `origin/dev` 25fb0eca59 on a local single-user profile.
-Verified live: authoring a local recurring question, transferring it to
-the server (server returns 201) and the local row rebinding to the
-server owner; server-owned results syncing down as unread with the
-kind/owner/created/review-state columns and the answer/evidence/review
-detail pane; `r` marking a result read and that read reaching the server
-(`review_state: read` + `reviewed_at`); and the Results tab refreshing
-on a server finish notification with no `s` pressed. The three defects
-that run found — every server automation reading as `[This device]` (and
-the `r`/`m` refusals that followed from it), the inert Results/Conflicts
-unread badge, and mark-solved never becoming eligible for a synced
-result — were fixed the same day and **re-driven live in a second round**,
-which confirmed all three: `r` on a server automation now dispatches on
-the server, the badge renders "Results (2)" and drops to "Results (1)"
-after a read, and a result carrying the server's definition id now reads
-"Solve: eligible". Round 2 also cleared the legs round 1 could not
-reach — moving a server automation to this device (dormant → server
-archives its copy → armed → local run-now), a reminder round-trip whose
-`link_type`/`link_id` are visible server-side, and the past-`run_at`
-question: **the server accepts such a transfer and parks the task
-disabled** (`status: "disabled"`, `enabled: false`, no catch-up run),
-which this screen mirrors as a Disabled row. The two rendering/copy
-gaps round 2 found (a swallowed owner prefix; the archived-refusal
-wording) were fixed in the same branch and are pinned by rendered-cell
-tests, though those two specific fixes were not re-driven against a
-live server. The full live record lives in the TASK-18940 progress log
-(`backlog/tasks/`).
-Supersedes the same-day PR-6 task
-4 stamp: the Queue tab's own "(server: \<id\>)" owner suffix, hidden at
-compact width; and the Results tab's automatic refresh on a server
-finish notification, debounced so a burst of notifications settles into
-one pull; supersedes the same-day PR-6 task 3 stamp, which covered the
-new Results tab — unread badge, kind/owner/created/review-state
-columns, failure styling, the answer/evidence/review-metadata detail
-pane, and the r/d/o/a read/dismiss/mark-solved/mark-all-read keys with
-their tab-scoping and refusal reasons; and, before that, PR-5's final
-fix wave: the Automations tab's
-M/m/y/k transfer keys and their tab-scoping, the read-only-except-cancel
-rule on in-flight rows, and the corrected cancel copy; plus PR-5 task 7's
-the detail pane's Move to server/Move to local/Cancel transfer/Retry
-transfer buttons, the confirm dialog and its warnings, honest transfer
-toasts, and the queue row's transfer-state suffix; and the 2026-09-01
-stamp before that, which covered recurring-question create/edit form,
-the Queue tab's New/Reminder/Recurring-question chooser, the Automations
-tab's own New button, the "Runs on" selector on both forms, the merged
-local+server Automations listing including not-yet-synced server-owned
-rows, and its local run-now/edit routing).*

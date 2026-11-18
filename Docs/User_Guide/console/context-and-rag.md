@@ -388,9 +388,9 @@ this, what are my sub-agents doing?* Three collapsible sections sit above
 the "Sources — next send" tray:
 
 **Environment** — the git working tree behind the conversation. It reports
-on the **active workspace's change-review root** (the same tree the
-`Review changes` action opens), so the rail and Change Review can never
-describe different trees. Rows, top to bottom:
+on the **active workspace's change-review root** (the same tree its **Review in
+Change Review…** and **Review & commit…** actions open), so the rail and
+Change Review can never describe different trees. Rows, top to bottom:
 
 A trailing marker on each row's own text says what Enter does to it, since
 the rows otherwise look alike: a `▸` (or `▾` once expanded) means Enter
@@ -406,6 +406,10 @@ the composer draft. A row with none of these is inert — Enter does nothing.
 | **Review & commit… · N files** | shown when the tree is dirty; `Push ↑n…` when it is only ahead — **absent when the tree is clean and in sync** | — | opens Change Review directly on its working-tree mode |
 | **PR ▸** | `PR #N · Open` / `· Draft` / `· Merged`, with `Merged 6d ago` beside a merged one | the PR title with its ± counts (inert) | **Open in browser…**, **+ Add to chat** (pastes a PR summary into the composer) |
 | **checks ▸** | `3 failing checks`, `2 pending checks`, or `12 checks passed` | the failing check names (inert) | **+ Fix — add failure summary to chat** (pastes the failing check names and their details URLs into the composer) |
+
+**Review in Change Review…** and **Review & commit…** open Change Review on
+the working tree; the run inspector's **Review changes** and a turn card's
+**Review** open that run's recorded turn instead.
 
 Large counts compact rather than wrap: a seven-digit pair reads
 `+1.7M −278k` in the rail's 30-column width, and the exact figures stay one
@@ -453,7 +457,8 @@ the numbers are freshest exactly when they just changed. PR and check data
 is cached for 60 seconds; the **Refresh** action on the Environment header
 forces a fresh fetch past that cache — the button reads **Refreshing…**
 until the fetch lands, even when it comes back unchanged, so pressing it
-never looks like a dead control while the network call is in flight.
+never looks like a dead control while the network call is in flight. Its
+tooltip names the section it refreshes: **Refresh — Environment**.
 
 **When things are missing.** Absence is quiet by design — an unavailable
 source never renders as an error:
@@ -467,6 +472,7 @@ source never renders as an error:
 | `gh` not installed, not authenticated, or the remote isn't GitHub | the PR and check rows are simply absent — the git rows still work |
 | No open or recent PR for the branch | same: no PR row |
 | No `backlog/` directory | no Tasks section |
+| Git status cannot be read and there is no earlier answer to fall back on | one **Environment unavailable — Refresh to retry** row |
 | A source errors or times out after previously working | the last good data stays, marked `(stale)` in the row's own text (not color alone) — no toast, no flashing |
 | A source fails three times running | it stops polling until you press **Refresh** or switch workspace, so a broken tool can't produce a 10-second flap loop |
 
@@ -1380,176 +1386,6 @@ exports, and snapshots can retain bytes. Full details are in
   a mid-run drop is one typed tool error. If the SSH add form or folder
   picker refuses with "OpenSSH client (ssh) not found", install an
   OpenSSH client — the feature needs `ssh` on `PATH`.
-
-—
-*Verified against c2cbb8081 — 2026-08-04 (PR-T1 live check S1-S6: staged
-evidence survives Console <-> Library navigation and a fresh handoff
-supersedes a stale restored one. Media/notes/conversation handoffs
-delivering content on send is covered by capture round-trip tests
-(task-2374); the live check's own handoff scenario was blocked on this
-profile by an unrelated Library workspace-eligibility gate, so that part
-is verified at the code level, not live). Verified against e2c706303 —
-2026-08-06 (PR-T2, docs pass against shipped code/tests, live check
-pending Task 9): staged evidence now counts toward the context estimate
-and the cost chip (as an estimated `~` row) instead of reporting zero.
-The 2026-08-07 global auto-toggle walkthrough is superseded by ADR-079. The
-current access modal saves only when **Save** is pressed; Escape discards dirty
-choices. Automatic retrieval is conversation-local and uses the recoverable
-pre-dispatch gate described above. Slash commands, `$skill` invocations, tool
-approvals, and regenerates still do not trigger automatic retrieval.*
-
-*Chip and strip positions re-verified against dev @ b6036515e — 2026-08-18
-(task-17662, after the bottom-stack programme moved the status chips above
-the composer and the staged-evidence strip above the status chips).*
-
-*Verified against dd4921901 — 2026-08-20 (task-18300 Task 11a, Conversation
-Inspector programme): the token/cost chip, Ctrl+Shift+P, and the palette's
-"Console: View chat context" entry now all open one Conversation Inspector
-modal (Costs / Exchange / Next Send tabs) in place of the former separate
-cost breakdown and Current Context viewer; the retired viewer's content
-lives on unchanged as the Next Send tab. Docs pass against shipped
-code/tests (`console_conversation_inspector.py`, `console_exchange_
-capture.py`, the design spec's UI and Risks sections); live verification of
-the Exchange tab against a real provider is a separate, later pass.*
-
-*Verified against the task-23026 working tree — 2026-08-27 (ADR-096 Safe
-capture retention: text above matches `console_exchange_capture.py`'s
-`compact_safe_history_rows`/`CAPTURE_SAFE_HISTORY_TAIL_ROWS`, the Inspector's
-Messages-title counts, and the v52→v53 one-time compaction in
-`ChaChaNotes_DB.py`; code-level pass backed by the pure, gateway, migration,
-and inspector test suites — not a live-provider walkthrough).*
-
-*Verified against `feat/console-inspector-environment` @ 08ca0957b1 —
-2026-09-04 (TASK-31450, Inspect rail Environment redesign): the Environment /
-Tasks / Agents sections above were driven live in tmux at 80x24 and 200x50
-against an isolated scratch profile bound to a real dirty git worktree.
-Confirmed live: the "No git workspace" empty state; real working-tree counts
-(`+121 -24`) matching `git diff --numstat`; the branch row's `up18 down112
-wt:<name>` divergence and worktree marker; `Commit or push - 3 files`; the
-`Refresh` action; per-file expansion via Enter (three files with their own
-counts, then "Review in Change Review"); the Tasks card (`61 doing - 543
-todo`, expanding to the in-progress-first list); collapse of both sections
-surviving an app restart; and — on a workspace with no `backlog/` — the Tasks
-card's silent absence. The PR and check rows were absent in every live
-capture because the isolated profile's `HOME`/`XDG_CONFIG_HOME` hide `gh`'s
-own credentials, which is the documented no-`gh` degradation; the `gh` path
-itself was verified out-of-app against a real open PR (number, state, +/-
-counts, and a 13-check rollup parsed correctly). The Agents section renders
-only once a reply has spawned sub-agents and was not exercised in this pass.*
-
-*Amended on the same branch — 2026-09-04 (TASK-31450 final review fixes): the
-Tasks paragraph previously promised a `Scanning backlog…` placeholder row.
-That row exists in the projection but nothing in production ever sets the
-flag that renders it, and the cold scan measured ~0.2s off-thread, so the
-claim is removed rather than restated. Also amended in the same pass: the
-Environment header summary is now column-budgeted (a long branch name used to
-squeeze the section title and collapse chevron off the header at every
-terminal size), expanding a row keeps keyboard focus on that row, an errored
-git tier now says "Environment unavailable — Refresh to retry" instead of
-"No git workspace", and the Refresh action revives a backed-off local tier —
-which is what "until manual refresh or scope change" above always promised.*
-
-*Amended — 2026-09-05 (TASK-31660, state honesty): the table above gained two
-rows because "No git workspace" used to be shown for three different
-situations, only one of which it described. It now means exactly one thing —
-"we looked, and the bound folder is not a git repository". Before any source
-has answered the panel says **Checking workspace…** (it used to assert "No git
-workspace" for the ~20s until the first `git status` landed, inside a real
-worktree), and when the conversation's workspace binds no folder at all it
-says so in Change Review's own words — including that this is not a report
-that nothing changed. Switching to an unbound workspace now clears the
-previous repository's branch, counts and **Commit or push** offer within one
-10-second poll instead of leaving them painted indefinitely, and pressing
-**Refresh** in that state re-checks the binding rather than doing nothing.
-Code-level pass (pure projection, deferred-fake controller, and screen-wiring
-suites); not re-driven live.*
-
-*Amended — 2026-09-05 (TASK-31662, rail density): rows in these three
-sections now take ONE line unless they genuinely need two. A row with no
-detail text no longer paints a blank second line, and a row whose detail
-fits beside its label (a **Changes** row and its `+10 −2`, a file row and
-its counts) puts the detail flush right on the same line; only a pair too
-wide for the rail's 27-column row width — a fleet row's task summary, a
-long file path with its counts — still stacks. Measured on the real
-Console: the Environment section at rest went from eleven lines to seven at
-80x24. Two related changes: an OPEN Environment or Tasks section no longer
-repeats itself in its own header (the summary is what a COLLAPSED section
-shows, and standing it down is what lets "Environment" paint in full at
-80x24 instead of "Environm…"), and the Tasks row without a branch task
-stopped restating the header's counts in different words. The rail's real
-content width is 30 columns at 80x24 and 36 at 200x50; the "34 columns at
-every size" reading in the previous amendment was a width no supported
-terminal produces, and the summary budgets are now derived from the
-measured 30. Code-level pass (widget-geometry, projection, and screen-wiring
-suites, plus a live-geometry probe of the real Console at both sizes); not
-re-driven by hand in tmux.*
-
-*Amended — 2026-09-05 (TASK-31664, affordance and consequence legibility):
-every row's own text now carries a trailing marker naming what Enter does to
-it (`▸`/`▾` expand in place, `…` opens Change Review or the browser, a
-leading `+` pastes into the composer draft; an inert row carries none),
-since Enter previously had five different outcomes on visually identical
-rows. **Commit or push · N files** is renamed **Review & commit… · N files**
-(and the ahead-only **Push ↑n** row gained the same `…`), matching the `…`
-Change Review's own **Commit…**/**Push…** actions already use. Pressing
-**Refresh** now flips its label to **Refreshing…** immediately, closing a gap
-where a fetch that came back unchanged (measured ~12s for a fresh `gh` call)
-looked identical to a dead control. A stale source's row now says `(stale)`
-in its own text, not only in color — the color alone previously matched the
-row's own error hue closely enough to be misread as a failure. The
-"no folder is bound" copy (both here and in Change Review's empty state) is
-now cause-agnostic: the same empty signal can also mean Change Review isn't
-enabled for an otherwise-bound folder, so the panel now says only what is
-always true (changes aren't tracked) and names both fixes (bind AND enable).
-Code-level pass (pure projection, widget, and screen-wiring suites); not
-re-driven live.*
-
-*Amended — 2026-09-05 (TASK-31665, minors batch): the Environment section's
-**Refresh** now sits flush under its last row instead of floating a blank
-line away from it, and its tooltip names its scope (**Refresh — Environment**).
-Rows revealed by expanding another row are indented under it, so a block of
-file rows or task entries reads as belonging to the row above it. Task rows
-show the title the task file's own frontmatter carries rather than the
-hyphenated filename slug. Task ROWS now use the backlog's own vocabulary --
-each entry's status reads **In Progress** / **To Do**, matching the task
-files themselves. The collapsed Tasks header keeps its compact
-**N doing · M todo** summary — it is a one-line teaser, and both counts fit
-there at every width, which the canonical words would not. The collapsed rail
-handles read **Context ▸** and **◂ Inspect**, the same arrow vocabulary the
-open rails' own collapse controls use (`>` / `<` in ASCII-glyph mode). Both
-**Changes** actions — **Review in Change Review…** and
-**Review & commit… · N files** — now open the same working-tree view; a
-Change Review opened from a run (the run inspector's button, a turn card's
-**Review**) still opens that run's recorded turn. Change Review no longer
-flashes "No file changes recorded for this conversation." for a moment on
-entry while it is still looking, and its header says "1 file", not "1 files".
-Code-level pass (compositor contrast sweep at 80x24 and 200x50, pure
-projection, widget, controller and screen-wiring suites) plus a live
-`tmux` capture at 235x52 for the background diagnosis; not re-driven live
-for the rest.*
-
-*Verified against fix/library-decisions-32302-32393-32306 — 2026-09-11
-(task-32303, user decision: this modal adopts the Library glyph legend, so the
-Library search modal's source toggles paint ☑/☐ from the shared constants
-instead of the ✓/○ pair. The per-conversation Library access modal's radio
-buttons still use ●/○ — a separate decision, task-32464.)*
-
-*Verified against fix/library-riders-32461-32464 — 2026-09-14 (task-32464,
-controller's decision, revisitable: the per-conversation Library access
-modal keeps `●`/`○`, and the Library legend now carves radio groups out
-explicitly instead of counting them as the `☑`/`☐` selection pair. The
-glyphs come from the same shared constants as the RAG modal's toggles, so a
-future legend change cannot pass this surface by.)*
-
-*Added — 2026-09-24 (task-33009 Task 21, SSH remote workspace bindings,
-ADR-181): the "SSH workspace folders (remote bindings)" section, its
-`[console_ssh]` settings bullet, and the unreachable-remote quirks entry
-were written against the shipped feature code and its suites (Settings
-editor + picker chips in `Tests/UI/test_settings_ssh_bindings.py`,
-availability refusals in `Tests/test_ssh_feature_availability.py`,
-degradation/status vocabulary in `Tools/remote_binding_status.py` and the
-wire/transport/executor suites) — a code-level pass; live walkthrough
-against a real server is recorded separately on the task.*
 
 ## Assistant archive recovery and Library scope
 

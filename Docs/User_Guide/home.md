@@ -194,7 +194,3 @@ Palette entries that land here: "Tab Navigation: Switch to Home".
   content, or the count queries failed silently — the two cases look
   identical, and a failed count also revives the "Import Library sources"
   suggestion for a full Library.
-
-—
-*Verified against dev @ 642567627 — 2026-08-10; readiness/refresh/scroll/
-action-coherence quirks re-verified after tasks 2760–2765 — 2026-10-11*

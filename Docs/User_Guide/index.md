@@ -179,8 +179,3 @@ Full detail on runs, approvals, and tools:
 - 🚧 marks stub pages awaiting a full write-up.
 - Deep dives live in [Docs/Features](../Features/); pages link out rather
   than duplicate them.
-
-—
-*Verified against dev @ 6b6c35a4b — 2026-08-06 (TASK-2851: the legacy Media
-Library screen is retired — "Media & Content: Open Media Library" now
-deep-links into Library's Media row instead of a separate screen)*

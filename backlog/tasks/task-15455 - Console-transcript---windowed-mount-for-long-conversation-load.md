@@ -176,3 +176,6 @@ fixed-point test proves they do so without churning).
 - Added the reorder/window lesson to `backlog/docs/lessons-testing-evidence.md` after the broader regression pass caught a boundary-preservation defect that focused tests missed.
 - Modified: `tldw_chatbook/Widgets/Console/console_transcript.py`, `Tests/UI/test_console_transcript_windowing.py`, this task, and the testing-evidence lessons document.
 - ADR required: no. The existing Console transcript-region and leaf-widget ownership remain unchanged.
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/console.md`: Not re-checked live: shipped tests plus isolated 400/500-message mounted probes only.

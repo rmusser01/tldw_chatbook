@@ -50,4 +50,8 @@ Six call sites route through it: the import stepper, the Add-from-files chooser 
 **Consequence worth knowing.** The Session Git header's back cue lost 10 cells, which moved that panel's `-stack-actions` threshold from between 40 and 70 columns to between 32 and 34. `test_action_controls_fit_from_visible_label_cells_and_recompute` re-picks the width (and now pins BOTH sides of the threshold, where it crossed it once); its fit assertion moves to a width the panel can actually serve, since `#file-notes-git-bulk-toggle` is 35 cells wide whatever the stack class does. Fit at the narrowest supported width stays pinned by `test_focused_controls_keep_complete_labels_and_fit[(40, 20)]`.
 
 **Files.** `Library/library_shell_state.py`, `Widgets/Library/library_notes_canvas.py`, `library_notes_add_from_files_canvas.py`, `library_notes_sync_roots_canvas.py`, `library_file_notes_git_panel.py`, `library_file_notes_workspace.py`, `Tests/UI/test_library_notes_w4_import_keyboard.py`, `Tests/UI/test_library_file_notes_workspace.py`, `Tests/UI/test_library_file_notes_git.py`, `Tests/Widgets/Library/test_library_notes_canvas.py`, `Docs/User_Guide/library/notes.md`, `Docs/User_Guide/library/file-notes.md`.
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/library/file-notes.md`: Captures `wave4-caps/import-kbd/import-21-back-cue-files` and `import-25-files-60x24`.
+- `Docs/User_Guide/library/notes.md`: The lasting-sync chooser's and the sync-roots list's own `‹ Notes` buttons are pinned in `Tests/UI/test_library_notes_w4_import_keyboard.py`, not walked. Captures `wave4-caps/import-kbd/import-10` … `import-26`.
 <!-- SECTION:NOTES:END -->

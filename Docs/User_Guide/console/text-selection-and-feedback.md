@@ -285,7 +285,3 @@ Inside the menu itself:
   selects its marker text, not the diff hunks.
 - **Side-chat replies can't be recovered** after the modal closes. Copy
   anything you want to keep before dismissing it.
-
-—
-*Verified against feat/console-note-management @ ea76a0807 — 2026-08-18
-(shipped tests + live tmux verification of the create/edit/delete loop)*

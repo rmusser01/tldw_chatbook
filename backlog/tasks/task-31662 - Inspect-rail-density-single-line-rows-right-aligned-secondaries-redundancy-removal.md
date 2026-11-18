@@ -145,4 +145,7 @@ and the four test files
 `Tests/UI/test_console_environment_section.py`,
 `Tests/UI/test_console_environment_wiring.py`,
 `Tests/Chat/test_console_environment_state.py`).
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/console/context-and-rag.md`: Code-level pass plus a live-geometry probe at 80x24 and 200x50; not re-driven by hand in tmux.
 <!-- SECTION:NOTES:END -->

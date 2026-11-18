@@ -69,4 +69,7 @@ failure rather than a judgement call. No rescan was introduced — the strip's
 
 Files: `Tests/UI/test_library_notes_w4_data_truth.py` (new),
 `Docs/User_Guide/library/notes.md`.
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/library/notes.md`: Captures `wave4-caps/data-truth/data-20-strip-short-note-441`, `data-21-strip-long-note-235x52`, `data-22-strip-100x30` (the not-reproduced investigation).
 <!-- SECTION:NOTES:END -->

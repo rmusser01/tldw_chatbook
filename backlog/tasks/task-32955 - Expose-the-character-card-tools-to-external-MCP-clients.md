@@ -49,6 +49,9 @@ External MCP clients can now read character cards, and ADR-183's write tools get
 - Docs: ADR-183 dated amendment; `Docs/User_Guide/mcp.md` new "Character reads and the long-field guard" section + stamp; `Docs/Design/MCP.md` config keys; config template line.
 - Files: Agents/local_tool_provider.py, MCP/local_server_tools.py, MCP/server.py, MCP/tools.py, Tools/character_tool_service.py, config.py; Tests/MCP/test_character_external_mcp.py (new), Tests/test_config_mcp_defaults.py, Tests/MCP/test_mcp_documentation_contract.py (pinned sentence updated), Tests/MCP/test_mcp_unified_stdio.py (its compose harness pins the new gate off like expose_local_tools, and its provider fake accepts the new keyword options). `MCPTools.character_read_guard` is a class-level default so `MCPTools.__new__` harnesses keep working.
 - Known, pre-existing and left by design: an in-process `update_character` reached through the Console's MCP bridge with an explicit tool-level Allow has no approval card and no guard (ADR-183's explicit-grant model).
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/mcp.md`: Docs pass against code and tests, not a live screen.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

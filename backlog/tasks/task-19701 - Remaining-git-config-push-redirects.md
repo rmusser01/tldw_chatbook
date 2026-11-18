@@ -109,3 +109,6 @@ mechanical sweep instead.
 `tldw_chatbook/UI/Screens/change_review_screen.py`,
 `Docs/User_Guide/console/agent-runs-and-tools.md`,
 `Tests/UI/test_change_review_push_ui.py`.
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/console/agent-runs-and-tools.md`: Not driven live; verified against real repositories in tests configured with `remote.<name>.pushurl` and `url.<other>.pushInsteadOf`, plus a control with no redirect.

@@ -411,8 +411,8 @@ what happens to a meeting once it's queued.
   2", … as each new voice is heard, and typing a name into a row's rename
   box relabels that speaker everywhere — the legend, the transcript shown so
   far, and the name map saved into `meeting.json` for the finished
-  recording. This live path has automated pilot-test coverage only; it has
-  not been exercised in a live session on this page's verification host.
+  recording. This live path is covered by automated pilot tests only; it
+  has not yet been tried in a real recording session.
 - **The name that stands in for you is fixed when the meeting starts.** It
   is your configured chat display name when you have set one (otherwise
   "You"), and it is stamped onto the recording at Start — so changing that
@@ -464,10 +464,10 @@ what happens to a meeting once it's queued.
 - **Windows loopback capture is unverified.** The design calls for
   `sounddevice` to enumerate a `[Loopback]` WASAPI device automatically;
   this has not been confirmed on a real Windows machine.
-- **Call mode (native system-audio tap) is unverified end-to-end on this
-  host.** The live verification for this page ran without the macOS System
-  Audio Recording grant, so only room mode (mic-only) was confirmed to
-  produce a working recording, footer, and Library handoff. To verify call
+- **Call mode (native system-audio tap) is not yet confirmed end to end.**
+  Only room mode (mic-only) has been confirmed to produce a working
+  recording, footer, and Library handoff; call mode also needs the macOS
+  System Audio Recording grant. To verify call
   mode yourself: grant System Audio Recording to your terminal app once
   (macOS prompts on first use), run
   `TLDW_RUN_AUDIOTAP_HELPER_TEST=1 .venv/bin/python -m pytest Tests/Audio/test_audiotap_helper_macos.py -p no:cacheprovider`,
@@ -481,91 +481,5 @@ what happens to a meeting once it's queued.
   transcription dependencies (e.g. `faster-whisper`); the meeting's own
   files and metadata are unaffected either way.
 - **Pause/Resume, the device pickers' remembered choice, and the level
-  meters are covered by automated pilot tests, not by this page's live
-  session** — the mic level stayed at 0% throughout live verification (no
-  audio input reached the terminal running the app), so those three
-  behaviors were exercised only in the test suite, not watched moving on a
-  real screen.
-
-—
-*Verified against dev @ 15254e860 + feat/meeting-onnx-diarizer @ 3b82d4763 —
-2026-09-07. That branch added the torch-free ONNX (sherpa-onnx) live diarizer
-(TASK-31827): the "Speaker-label engines and their models" section and the
-three new `[meetings]` keys (`diarizer_backend`'s four values, `onnx_embedder`,
-`onnx_models_dir`) were verified by reading `tldw_chatbook/Audio/meeting_owner.py`
-(`DIARIZER_BACKENDS`, `ENGINE_MODULES`, `AUTO_ORDER`, the three field
-validators), `tldw_chatbook/Audio/diarizer_engine_onnx.py` (the manifest's file
-names, sizes, hashes and licences, the download allowlist and 10-minute budget,
-`onnx_models_dir` semantics) and
-`tldw_chatbook/UI/Screens/meetings_screen.py` (`_live_diarization_copy`,
-`_tick_diarizer_status`, `_onnx_download_mb`; the final fix wave re-read the
-last of those for the split "off (models unavailable)" / "off (backend
-unavailable)" rows) — not by a live session: no
-meeting has been recorded on this host with `live_diarization = true`, and no
-model download has been watched on the rail. The engine-comparison paragraph
-and the `voice_match_threshold` starting values are quoted from the measured
-bake-off report in `Docs/STT_Evaluation/task-31827/`, whose numbers come from
-one Apple M-series machine (the x86 runner half was never dispatched). Earlier
-stamp: feat/meeting-voiceprint @ 74b771396 (its
-final fix wave plus the Qodo review round, which added the transfer-path and
-import-record refusals documented above) —
-2026-09-07. That branch added self-voiceprint enrollment and matching
-(TASK-31826): the "Remember my voice" section and the four `voice_*`
-config keys above document `Enroll my voice`, the "Voice match: …" rail
-line, the matched-speaker marker and override, the post-Stop learning
-offer, Delete/Export/Import, the keyring/key-file encryption modes, and
-the privacy and threshold notes — verified by reading
-`tldw_chatbook/Audio/meeting_owner.py` and
-`tldw_chatbook/UI/Screens/meetings_screen.py` directly (copy strings,
-widget ids, and config defaults), and by the pilot/unit coverage in
-`Tests/UI/test_meetings_screen.py` and `Tests/Audio/test_voiceprint_store.py`,
-not by a live session — this host has never granted the app a real
-microphone enrollment. Two things this section says honestly rather than
-aspirationally: there is no Settings › Meetings page yet (every control is
-on the Meetings rail), and the "best similarity" calibration number is not
-shown on screen (only the opt-in `Tests/Audio/test_voiceprint_real.py`
-prints one, on a real Mac with `say`). The final fix wave corrected five
-statements on this page that did not match the code — the learning offer's
-trigger and its enrollment precondition, the "Voice match:" line's
-position, the Delete/Export/Import row, Merge's model check (enforced on
-accept, not by hiding the button), and what opening the screen does to the
-key — and added the `live speaker labels off` reason, which is what the
-SHIPPED default (`live_diarization = false`) now reports instead of "Voice
-match: on". Earlier stamp: feat/meeting-followups @ 97a823256 + the PR #2471 Qodo fix
-wave — 2026-09-06. That wave added the three sentences above about the
-start-stamped display name, the retryable failed rename, and control
-characters / Markdown punctuation in a typed name; all three are covered by
-pilot/unit tests
-(`Tests/UI/test_meetings_screen.py::test_a_display_name_change_mid_meeting_never_splits_the_live_rows`,
-`Tests/UI/test_library_media_speaker_rename.py::test_a_failed_rename_restores_meeting_json_so_a_retry_can_succeed`
-and its Markdown twin, plus the two name-sanitization cases in the same
-file), not by a live session. Earlier stamp: feat/meeting-followups @
-e060f8d27 + the final-review fix wave — 2026-09-06. That wave made the "either shape the app itself writes"
-sentence above true (the rename used to refuse every `post_transcribe =
-false` recording, which this page had implied it accepted); it is covered by
-`Tests/UI/test_library_media_speaker_rename.py::
-test_rename_works_on_the_markdown_transcript_and_keeps_its_shape`, not by a
-live session. Earlier stamp: feat/meeting-diarization @ 14bbf2a7f + the PR
-#2456 fix wave — 2026-09-06. The rows added in that wave (the "Live speaker labels"
-status line, the footer's "Speaker labels unavailable" / "Speaker merge to
-resolve" copy, and the Library rename's refusal rules) are covered by pilot
-tests in `Tests/UI/test_meetings_screen.py` and
-`Tests/UI/test_library_media_speaker_rename.py`; they were NOT re-verified
-in a live session (this host still has no System Audio Recording grant).
-Earlier stamp: e26193495 — 2026-09-05.
-The "System source lost" rail copy above was verified by pilot test
-(`Tests/UI/test_meetings_screen.py::test_lost_tap_updates_system_status`),
-not in a live session — this host has no System Audio Recording grant, so
-no real tap loss was observed. Everything else on this page carries the
-2026-09-04 live verification described in the Quirks section. The Speakers
-legend and rename box (task 7) and the after-the-fact Library rename (task
-8) are covered only by pilot/unit tests —
-`test_legend_row_mounts_and_rename_input_updates_ui` and the `_apply_rename`
-unit cases in `Tests/UI/test_meetings_screen.py`, plus
-`Tests/UI/test_library_media_speaker_rename.py` — not by a live session with
-`live_diarization` turned on. The Library reader's "Rename speakers" section
-(TASK-31745) closed the reachability gap this page used to document, and is
-itself covered only by pilot tests
-(`Tests/UI/test_library_media_viewer_speaker_rename.py`): the section, one
-submitted rename, and the refusal notice were exercised in the test suite,
-not watched in a running app.*
+  meters are covered by automated pilot tests only** — they have not yet
+  been watched working with real audio input on a real screen.

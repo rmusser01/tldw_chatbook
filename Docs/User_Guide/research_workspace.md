@@ -184,11 +184,3 @@ Grounded Chat exposes a canonical message owner.
 - [Console](console.md) remains the live agent and tool surface.
 - [ADR-322](../../backlog/decisions/322-research-workspace-authority-and-screen-boundaries.md)
   records the authority, canonical-owner, overlay, and unlink boundaries.
-
-—
-*Verified against `fix/research-runs-collapsed-layout` — 2026-09-05
-(TASK-31795: the Runs screen previously rendered collapsed to one
-squashed row; it now lays out toolbar, create-run row, run list and
-detail panel vertically — verified live in tmux plus production-CSS
-geometry tests). Previous stamp: `fix/task-23024` — 2026-08-27; the full
-pytest suite was not run.*
