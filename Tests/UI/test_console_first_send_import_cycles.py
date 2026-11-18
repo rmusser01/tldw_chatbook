@@ -122,10 +122,10 @@ def warm_up_modules(tmp_path_factory, request) -> dict:
     assert result.returncode == 0, result.stderr[-4000:]
     line = next(x for x in result.stdout.splitlines() if x.startswith("WARMUP_JSON:"))
     result = json.loads(line[len("WARMUP_JSON:") :])
-    assert "textual_serve" in result["listed"]
-    assert result["optional_missing"] in ([], ["textual_serve"])
-    if request.param == "optional-missing":
-        assert result["optional_missing"] == ["textual_serve"]
+    # TASK-41533: no send imports the web extra, so the list no longer names it,
+    # and an install without it (optional-missing) still warms every module.
+    assert "textual_serve" not in result["listed"]
+    assert result["optional_missing"] == []
     return result
 
 

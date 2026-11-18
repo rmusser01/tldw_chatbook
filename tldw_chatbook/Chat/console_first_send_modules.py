@@ -131,7 +131,8 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
     "tldw_chatbook.UI.Console_Modules.response_rules",
     # Not app_served: TldwCli.on_mount imports it (_start_served_canvas_control).
     # Guardian wiring also completes before the deferred warm-up is scheduled.
-    "textual_serve",
+    # TASK-41533: not textual_serve either. It was listed only as the served relay
+    # publisher's dependency step, and no send imports it.
     "tldw_chatbook.Agents.local_tool_provider",
     "tldw_chatbook.Chat.console_run_start_tools",
     "tldw_chatbook.MCP.console_tool_preparation",

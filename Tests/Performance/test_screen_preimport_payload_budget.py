@@ -218,18 +218,29 @@ MAX_SINGLE_ROUTE_ADDED_LOC = 135_111
 #: 2026-10-31). Its ``Notes.agent_lessons`` import moved into the one function
 #: that uses it, so it adds one module, not two. The review service a first
 #: send also imported stays out: an ordinary turn no longer loads it.
-#: 2026-11-18 (TASK-41533), still 94, not a raise. Two changes went over it.
-#: ``RAG_Search.scope_evidence`` (TASK-36947.3) stays listed because a first
-#: Automatic send's evidence capture imports it on the UI loop.
-#: TASK-41319 took ``Chat.console_ordinary_tree`` and the
-#: ``Agents.ordinary_tree`` and ``Agents.execution_capacity`` modules it
-#: imports off the boot path, so the listed ``console_agent_reply`` now pulls
-#: in all three. Four modules were shed to pay for them. app_served (resident
-#: at UI-ready) and served_relay_publisher (served mode only) are unlisted,
-#: plus its ``Web_Server`` package. ``native_authority`` imports
-#: ``Canvas.compilation`` for annotations only, and ``console_ordinary_tree``
-#: imports ``Workspaces.worktree_activity`` where it uses it. The app already
-#: holds both of those from boot.
+#: 2026-11-18 (TASK-41533): this census reads 94 again, with no raise, but
+#: the live warm-up is larger than at the last pin. Two changes went over it.
+#: ``RAG_Search.scope_evidence`` (TASK-36947.3) stays listed, because a first
+#: Automatic send's evidence capture imports it on the UI loop. TASK-41319
+#: took ``Chat.console_ordinary_tree`` and the ``Agents.ordinary_tree`` and
+#: ``Agents.execution_capacity`` modules it imports off the pre-ready boot
+#: path, so the listed ``console_agent_reply`` now loads all three after
+#: ready. The census counted those four new modules plus
+#: ``Workspaces.worktree_activity``, which console_ordinary_tree imports.
+#: Five modules leave it:
+#: - two are real sheds: served_relay_publisher and its ``Web_Server``
+#:   package. They are served mode only, and a native warm-up no longer
+#:   loads them.
+#: - three only left this census: app_served (now unlisted),
+#:   ``Canvas.compilation`` (an annotation-only import in native_authority)
+#:   and ``Workspaces.worktree_activity`` (imported where
+#:   console_ordinary_tree uses it). A live app holds all three at UI-ready
+#:   anyway, so moving them changes nothing at run time.
+#: Live, the native warm-up loads two modules more than at the last pin
+#: (91 against 89, review r16cs-rev1), and about 3,600 more lines: the four
+#: kept modules add about 4,000 and the two real sheds remove about 380.
+#: Boot plus warm-up together is one module lower, because the
+#: ordinary-tree trio left the pre-ready path.
 MAX_FIRST_SEND_WARMUP_ADDED_MODULES = 94
 
 _CENSUS_SCRIPT = """
