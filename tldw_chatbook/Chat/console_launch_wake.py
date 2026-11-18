@@ -9,6 +9,7 @@ Claims with uncertain outcomes remain saved for review, never replayed.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 from contextlib import closing
 from pathlib import Path
@@ -58,7 +59,10 @@ def pending_conversations_at_launch(app: Any) -> tuple[str, ...]:
     if not autowake_enabled():
         return ()
     db = getattr(app, "chachanotes_db", None)
-    db_path = getattr(db, "db_path", None)
+    return _read_pending_launch_conversations(getattr(db, "db_path", None))
+
+
+def _read_pending_launch_conversations(db_path: str | Path | None) -> tuple[str, ...]:
     if not db_path or str(db_path) == ":memory:" or str(db_path).startswith("file:"):
         return ()
     try:
@@ -273,8 +277,23 @@ async def deliver_launch_wakes(app: Any, marked: Sequence[str] = ()) -> int:
     Returns:
         How many conversations were hydrated for delivery.
     """
-    pending = pending_conversations_at_launch(app)
-    if not pending:
+    if getattr(app, "_exit", False) or not autowake_enabled():
+        return 0
+    from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import await_finite_read
+
+    db = getattr(app, "chachanotes_db", None)
+    db_path = getattr(db, "db_path", None)
+    pending = await await_finite_read(
+        asyncio.to_thread(_read_pending_launch_conversations, db_path)
+    )
+    if (
+        not pending
+        or getattr(app, "_exit", False)
+        or getattr(app, "_shutting_down", False)
+        or getattr(app, "chachanotes_db", None) is not db
+        or getattr(db, "db_path", None) != db_path
+        or not autowake_enabled()
+    ):
         return 0
     controller = _ensure_launch_runtime(app)
     if controller is None:

@@ -4930,14 +4930,10 @@ class TldwCli(
             from tldw_chatbook.Chat.console_launch_wake import (
                 LAUNCH_WAKE_TASK_NAME,
                 deliver_launch_wakes,
-                marked_conversations_at_launch,
             )
 
-            marked = marked_conversations_at_launch(self)
-            if not marked:
-                return
             self._create_deferred_startup_task(
-                deliver_launch_wakes(self, marked),
+                deliver_launch_wakes(self),
                 name=LAUNCH_WAKE_TASK_NAME,
             )
         except Exception:  # noqa: BLE001 -- a launch never dies on this

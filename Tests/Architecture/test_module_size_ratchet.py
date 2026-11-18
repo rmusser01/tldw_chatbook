@@ -157,7 +157,7 @@ _BUDGETS: dict[str, int] = {
     # TldwCli.__init__ installs the stock Select exit gate.
     # 2026-11-18, TASK-41642 review (owner rule: raise by the change's own lines):
     # +4, TldwCli.__init__ registers the policy state provider it builds.
-    "tldw_chatbook/app.py": 5711,
+    "tldw_chatbook/app.py": 5707,
     # TASK-34406.5: unchanged startup/footer wiring, born governed.
     "tldw_chatbook/app_startup.py": 176,
     # TASK-34406.7: app-owned served control and relay bodies, born governed.
