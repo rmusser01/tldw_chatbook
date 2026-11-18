@@ -43,10 +43,10 @@ class ActorPackRecoveryNotice(Horizontal):
         padding: 0 1;
         border: round $warning;
     }
-    ActorPackRecoveryNotice > Static {
+    ActorPackRecoveryNotice > Static.actor-pack-recovery-text {
         width: 1fr;
     }
-    ActorPackRecoveryNotice > Button {
+    ActorPackRecoveryNotice > Button#personas-actor-pack-recovery-clear {
         width: auto;
     }
     """
@@ -56,7 +56,7 @@ class ActorPackRecoveryNotice(Horizontal):
         self.coordinator = coordinator
 
     def compose(self):
-        yield Static(NOTICE_TEXT, markup=False)
+        yield Static(NOTICE_TEXT, markup=False, classes="actor-pack-recovery-text")
         yield Button(CLEAR_LABEL, id=CLEAR_BUTTON_ID)
 
     @on(Button.Pressed, f"#{CLEAR_BUTTON_ID}")

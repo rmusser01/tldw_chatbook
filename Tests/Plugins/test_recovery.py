@@ -1522,6 +1522,80 @@ async def test_plugin_service_retries_after_a_backup_released_the_lock(tmp_path)
         await service.aclose()
 
 
+@platform_support.managed_runtime
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hold", ["cleanup", "worker_exit"])
+async def test_busy_startup_waits_for_cleanup_before_publishing_its_retry(
+    tmp_path, monkeypatch, hold
+):
+    """A failed owner's cleanup must finish before its busy result permits retry."""
+    import asyncio
+    from threading import Event
+
+    import portalocker
+
+    from tldw_chatbook.Plugins.authority_store import FilePluginMarkerStore
+    from tldw_chatbook.Plugins.runtime_owner import PluginRuntimeOwner
+    from tldw_chatbook.Plugins.service import PluginService
+
+    root = tmp_path / "profile" / "plugins"
+    root.mkdir(parents=True, mode=0o700)
+    handle = await asyncio.to_thread(open, root / "runtime.lock", "a+b")
+    portalocker.lock(handle, portalocker.LOCK_EX | portalocker.LOCK_NB)
+    service = PluginService(
+        tmp_path / "profile",
+        workspace_lookup=lambda _: None,
+        marker_store_factory=lambda _: FilePluginMarkerStore(tmp_path / "marker"),
+        accept_reduced_protection=True,
+    )
+    loop = asyncio.get_running_loop()
+    cleanup_entered, release_cleanup = asyncio.Event(), Event()
+    original_close = PluginRuntimeOwner.close
+    original_worker, first_ready = service._worker, service._ready
+
+    def hold_boundary():
+        loop.call_soon_threadsafe(cleanup_entered.set)
+        assert release_cleanup.wait(10), "controlled owner cleanup was not released"
+
+    def held_close(owner):
+        if hold == "cleanup" and owner.root == root and not cleanup_entered.is_set():
+            hold_boundary()
+        original_close(owner)
+
+    def held_worker(*args):
+        original_worker(*args)
+        if hold == "worker_exit" and service._ready is first_ready:
+            hold_boundary()
+
+    monkeypatch.setattr(PluginRuntimeOwner, "close", held_close)
+    monkeypatch.setattr(service, "_worker", held_worker)
+    first = asyncio.create_task(service.authority_status())
+    first_thread = None
+    try:
+        async with asyncio.timeout(10):
+            await cleanup_entered.wait()
+            first_thread = service._thread
+            if hold == "cleanup":
+                assert not first.done(), (
+                    "busy was published before its worker cleaned up"
+                )
+            else:
+                assert await first == "plugin_owner_busy"
+            portalocker.unlock(handle)
+            handle.close()
+            if hold == "cleanup":
+                release_cleanup.set()
+            assert await first == "plugin_owner_busy"
+            assert await service.authority_status() == "needs_setup"
+    finally:
+        release_cleanup.set()
+        handle.close()
+        await first
+        await service.aclose()
+        if first_thread is not None:
+            await asyncio.to_thread(first_thread.join)
+
+
 @pytest.mark.parametrize(
     ("phase", "posture", "approved"),
     [
