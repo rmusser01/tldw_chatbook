@@ -195,9 +195,18 @@ def configured_llama_cpp_url(app_config: Optional[Mapping[str, Any]]) -> Optiona
         The normalised root URL, or ``None`` if no ``llama_cpp`` endpoint
         is configured or the endpoint contract refuses it.
     """
+    return _llama_cpp_endpoint(app_config)[0]
+
+
+def _llama_cpp_endpoint(
+    app_config: Optional[Mapping[str, Any]],
+) -> tuple[Optional[str], str]:
+    """``configured_llama_cpp_url``'s root, or ``None`` and why there is none."""
     url = _llama_cpp_settings(app_config).get("api_url")
     if not isinstance(url, str) or not url.strip():
-        return None
+        return None, (
+            "No llama.cpp endpoint is configured: set [api_settings.llama_cpp] api_url."
+        )
     from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
         endpoint_refusal,
     )
@@ -215,9 +224,9 @@ def configured_llama_cpp_url(app_config: Optional[Mapping[str, Any]]) -> Optiona
         if parsed.scheme and parsed.netloc
         else url
     )
-    if endpoint_refusal("llama_cpp", sent):
-        return None
-    return normalized or None
+    if refusal := endpoint_refusal("llama_cpp", sent):
+        return None, f"The configured llama.cpp endpoint is refused: {refusal}"
+    return normalized, ""
 
 
 def configured_llama_cpp_model_id(app_config: Optional[Mapping[str, Any]]) -> str:
@@ -503,7 +512,11 @@ class SampleBenchResult:
 def _default_client_factory(
     app_config: Optional[Mapping[str, Any]],
 ) -> Callable[[Target], CaptureClientLike]:
-    url = configured_llama_cpp_url(app_config) or "http://localhost:8080"
+    # TASK-41524: no fallback address. A missing or refused URL sends nothing;
+    # the reason reaches the bench's error toast.
+    url, why = _llama_cpp_endpoint(app_config)
+    if url is None:
+        raise RuntimeError(why)
     api_key = _configured_llama_cpp_api_key(app_config)
 
     def _factory(_target: Target) -> CaptureClientLike:
@@ -593,7 +606,9 @@ async def create_and_run_sample_bench(
         RuntimeError: If the evaluation service is unavailable, or no
             target could be resolved (callers should have already checked
             ``provider_is_configured`` and hidden the offer in that case;
-            this is a defensive re-check, not the primary gate).
+            this is a defensive re-check, not the primary gate). Also, with
+            no ``client_factory``, when the llama.cpp endpoint is missing or
+            refused (TASK-41524), before anything is written or sent.
         ValueError: Via ``storage.model_steering``, if the resolved target
             row's ``config`` is corrupt (both ``prefix`` and
             ``system_prompt`` set, or a non-mapping ``config``).
@@ -620,6 +635,8 @@ async def create_and_run_sample_bench(
     if db is None:
         raise RuntimeError("The evaluation service is unavailable.")
 
+    # TASK-41524: resolved first, so an unusable endpoint writes nothing.
+    factory = client_factory or _default_client_factory(app_config)
     # create=True: this IS the click path, the one place a real target row
     # may be persisted (see resolve_sample_target's own `create` docs --
     # the rail's render-time gate must never reach this).
@@ -659,7 +676,6 @@ async def create_and_run_sample_bench(
     snippets = [
         Snippet(id=s["id"], text=s["text"], group=s["group"]) for s in snippet_dicts
     ]
-    factory = client_factory or _default_client_factory(app_config)
     runner = WordBenchRunner(db, factory)
     try:
         outcome = await runner.run(
@@ -827,7 +843,8 @@ async def run_existing_bench(
             targets configured (task-1482: a draft bench created via the
             rail's "+ New bench" starts with ``target_ids=()``), any of
             its targets no longer resolve to a live ``eval_models`` row,
-            its dataset is missing or has no snippets, a resolved target's
+            its dataset is missing or has no snippets, the llama.cpp
+            endpoint is missing or refused (no ``client_factory``), a resolved target's
             stored steering is corrupt (task-1611: ``eval_models.config``
             sets both ``prefix`` and ``system_prompt`` -- see
             ``storage.model_steering``), or ``WordBenchRunner.run`` rejects

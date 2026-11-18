@@ -404,6 +404,12 @@ save that leaves the Endpoint as shown (a new model, key or env var) keeps the
 saved Endpoint as it was, so the older key is still read. Nothing rewrites the
 file for this.
 
+Custom 2's key works as Custom's does: the key or env var saved for it, or no
+key at all, so a server that needs none also answers Dreams and import analysis
+(they used to stop with "API Key required"). The older
+`[API] custom_openai2_api_key` is still read, but only while Custom 2 has no
+saved key choice.
+
 The vLLM, TabbyAPI, Aphrodite, Custom and Custom 2 saved lists start empty and
 fill through **Discover models**. A config file written by an older version
 may still hold their sample IDs (`vllm-model-z`, `tabby-model`,
