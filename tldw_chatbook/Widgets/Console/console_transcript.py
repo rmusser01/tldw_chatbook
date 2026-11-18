@@ -2887,7 +2887,7 @@ class ConsoleTranscript(VerticalScroll):
         self._original_attempt_previews: dict[str, str] = {}
         self._citation_counts: dict[str, int] = {}
         self._library_activity_counts: dict[str, int] = {}
-        self._unproven_cleanup_rows: dict[str, bool] = {}
+        self._unproven_cleanup_rows: dict[str, tuple[bool, str]] = {}
         self._library_outcome_lines: dict[str, str] = {}  # TASK-33621.51
         # task-17169: screen-owned review-note previews keyed by native
         # message id -- a message with entries gains an inline marker row.
@@ -4562,8 +4562,8 @@ class ConsoleTranscript(VerticalScroll):
             and count > 0
         }
 
-    def set_unproven_cleanup_rows(self, rows: Mapping[str, bool]) -> None:
-        """Replace rows explaining an unproven cleanup; True once released."""
+    def set_unproven_cleanup_rows(self, rows: Mapping[str, tuple[bool, str]]) -> None:
+        """Replace unproven-cleanup rows: (released, explanation) by message."""
         self._unproven_cleanup_rows = dict(rows)
 
     def set_library_outcome_lines(self, lines: Mapping[str, str]) -> None:
@@ -6765,12 +6765,12 @@ class ConsoleTranscript(VerticalScroll):
                     )
                 )
             if message.id in self._unproven_cleanup_rows:  # TASK-40716
-                released = self._unproven_cleanup_rows[message.id]
+                state = self._unproven_cleanup_rows[message.id]
                 rows.append(
                     _TranscriptRow(
                         key=f"cleanup-release:{message.id}",
                         kind="cleanup-release",
-                        signature=("cleanup-release", message.id, released),
+                        signature=("cleanup-release", message.id, state),
                         message=message,
                     )
                 )
@@ -7413,7 +7413,7 @@ class ConsoleTranscript(VerticalScroll):
         if row.kind == "cleanup-release" and row.message is not None:
             from .console_cleanup_release import cleanup_release_widget
 
-            return cleanup_release_widget(row.message.id, row.signature[-1])
+            return cleanup_release_widget(row.message.id, *row.signature[-1])
         if row.kind == "image" and row.image_spec is not None:
             return self._image_row_widget(row.image_spec)
         if row.kind == "generation-card" and row.generation_card_spec is not None:

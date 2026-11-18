@@ -727,7 +727,17 @@ async def test_unknown_required_settlement_retains_original_scopes(
             retention = call.operation.retention
             assert retention is not None and retention.label == "Undo"
             assert call.owner._cleanup_unproven
-            assert retention.abandon()
+            # TASK-41307: Undo has no transcript row; the held-slots list
+            # releases it.
+            from tldw_chatbook.Chat.console_unproven_cleanup import (
+                held_tool_slots,
+                release_held_tool_slot,
+            )
+
+            chat = SimpleNamespace(run_terminal_rows={}, _hooks_v2_runtime=h.runtime)
+            key = call.owner.execution_id
+            assert held_tool_slots(chat) == {key: ("Undo", False)}
+            assert release_held_tool_slot(chat, key)
             assert h.runtime.execution_capacity.snapshot().tool_workers == 0
             assert claim_held() and observed["state"].live
             assert (

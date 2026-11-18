@@ -10,7 +10,7 @@ import threading
 from time import monotonic
 from typing import Any
 import uuid
-from contextlib import nullcontext
+from contextlib import nullcontext, suppress
 
 from ...Agents.agent_models import STEP_TOOL_CALL, STEP_TOOL_RESULT
 from ...Agents.run_log import (
@@ -461,7 +461,18 @@ class ConsoleRawCliController:
 
         try:
             run_on_custody_thread(execute_custody, lambda: custody.operation)
-        except CleanupUnprovenRefused:
+        except CleanupUnprovenRefused as refused:
+            controller = getattr(custody.runtime, "_chat_controller", None)
+            if controller is not None and refused.retention is not None:
+                from ...Chat.console_unproven_cleanup import offer_release
+
+                # TASK-41307: Release sits under the command's own marker.
+                marker = self._marker_id(request.invocation_id)
+                with suppress(RuntimeError):  # the app already stopped
+                    self._marshal_to_ui(
+                        offer_release, controller, marker, refused.retention
+                    )
+                    self._marshal_to_ui(self._schedule_projection, session_id)
             return
         except RuntimeError:
             if started.is_set():  # the worker already refused and finished

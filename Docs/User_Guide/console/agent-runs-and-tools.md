@@ -278,13 +278,20 @@ reservation. When that read's cleanup is unproven, the reference or the
 instructions are left out, and the turn stops at its first tool call (for an
 `@git` reference, *the cleanup of native Git could not be proven*), or before the
 run starts when the turn needs a tool slot to set up its MCP tools. A turn that
-stops before its run starts has no run to release, so its slot stays counted
-until you restart the app. Otherwise, while the worker slots stay counted against
-the app-wide tool limit, the run's last reply shows **Release tool slot**, also
-after you close and reopen the conversation.
-Releasing frees every slot that run still holds for other runs; the workspace and
-storage stay held until you restart the app. When you quit, the app does not wait
-for such a tool, and everything else still shuts down normally.
+stops before its run starts shows the same *Agent stopped: …* explanation in
+place of "Response recovery failed", with **Release tool slot** under its reply.
+
+While the worker slots stay counted against the app-wide tool limit, the run's
+last reply shows **Release tool slot**, also after you close and reopen the
+conversation. A Raw CLI command whose **Cleanup** reads *Unproven* shows it
+under its row too. Every held slot is also listed under **Held tool slots: N**
+on the status line above the composer, including work that has no row of its
+own: Undo, Change Review work outside an agent turn, an `@git` reference read
+outside an agent turn, and sub-agents. The segment shows only while a slot is held; select it to open the
+list, which names what held each slot and offers **Release tool slot** for it.
+Releasing frees only the tool slot for other work; the workspace, storage and
+reservation stay held until you restart the app. When you quit, the app does not
+wait for such a tool, and everything else still shuts down normally.
 
 While a model call is generating or thinking, this line may also show its
 current output count. `17 provider output tok` means the provider supplied an

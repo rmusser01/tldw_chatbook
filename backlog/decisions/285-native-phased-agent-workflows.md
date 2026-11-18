@@ -1345,6 +1345,22 @@ This supersedes the sentences above that let unproven cleanup "hold disposal ind
 - A goal iteration that ends on it is uncertain, so it needs recovery.
 - The Release row follows the run's retained records, not how the run ended, and releases every slot the run still holds. A closed and reopened conversation finds it again by the card's persisted id.
 
+## Release outside a run's card amendment (TASK-41307, 2026-11-17)
+
+This extends the TASK-40716 decision that the abandon action sits on the run's terminal card. The card keeps it; it is no longer the only place.
+
+**Owner decision, 2026-11-17 ([TASK-41307](../tasks/task-41307%20-%20Unproven-cleanup-records-outside-an-agent-runs-reply-have-no-Release-button-so-their-tool-slot-stays-held-until-restart.md)).**
+- One Console-wide "Held tool slots" list releases every retained record. It sits behind a status-line segment that shows only while an unreleased record exists, and it includes run records that also have a card, so it shows every held slot. Sub-agent records are released only there.
+- A turn that stops before its run exists shows the cleanup-unproven explanation naming the tool instead of the "Response recovery failed" prompt, with Release directly under it.
+- A Raw CLI command's "Cleanup: Unproven" row carries Release too.
+- Release still returns only the tool-worker slot. The resource, its storage leases and any activity claim stay held until restart.
+
+**Implementation note (not an owner decision).**
+- A record is keyed by its run, else by its owner's execution. Undo, Change Review jobs with their own owner, an @git reference outside an ordinary turn and a pre-run stop are never bound to a run; a Change Review snapshot job that borrows an ordinary turn's owner carries that turn's run id. A transcript row can carry several keys, so a retried reply keeps its pre-run record's Release.
+- The list reads the runtime's capacity, not the agent bridge's, which is allocated only once an agent turn runs; a session that only ran Raw CLI or Undo still lists its records.
+- `CleanupUnprovenRefused` carries its retention, so the accepted-turn failure handler and the Raw CLI command can point Release at it. A pre-run stop keeps the accepted turn's dispatch recovery; only its copy changes, and it is set just before that recovery is restored, so an early return leaves none behind.
+- The segment refreshes on the Console's sync, after a card's Release and when the list closes. A Change Review job retained in the background between syncs shows at the next one.
+
 ## Late opaque widening for undeclarable turn effects (TASK-40715), 2026-11-13
 
 Owner decision, 2026-11-13. Every ordinary Console agent turn was OPAQUE up front because `spawn_subagent` (`max_subagents` 2, not configurable) and, with a skills service, `install_skill` and `run_skill_script` were reachable. An opaque claim conflicts with every other claim in the runtime, so while one chat's agent reply ran, Send in any other chat, character chats included, was refused "Workspace activity is busy".

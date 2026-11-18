@@ -125,6 +125,13 @@ class ConsoleEmergencyStopChip:
         """Posted when the Clear segment is activated from keyboard or mouse."""
 
 
+class ConsoleHeldSlotsChip:
+    """Tool slots held by unproven cleanups (TASK-41307): opens the list."""
+
+    class OpenRequested(Message):
+        """Posted when the held-slots segment is activated."""
+
+
 class ConsoleRunChip:
     """Active-run segment: activation opens the Inspector rail."""
 
@@ -216,6 +223,7 @@ class ConsoleStatusText(Static):
     #: the chip widgets used to post, so screen handlers are untouched.
     SEGMENT_MESSAGES: dict[str, Callable[[], Message]] = {
         "estop-clear": ConsoleEmergencyStopChip.ClearRequested,
+        "held-slots": ConsoleHeldSlotsChip.OpenRequested,
         "temporary": ConsoleTemporaryChip.SaveRequested,
         "run": ConsoleRunChip.OpenRequested,
         "provider": ConsoleModelChip.OpenRequested,
@@ -557,6 +565,7 @@ class ConsoleStatusChips(Horizontal):
         # settled yet); the live rate rides the run segment instead.
         self._rate_chip_state: tuple[bool, str, str] = (False, "", "")
         self._config_unreadable = False  # TASK-39145
+        self._held_slots = 0  # TASK-41307
         # ◀ ▶ mount-layout race budget (see _apply_arrow_state).
         self._arrow_retries = self.ARROW_RETRY_LIMIT
         self.remove_class(*(name for name in self.classes if name.startswith("h-")))
@@ -682,6 +691,13 @@ class ConsoleStatusChips(Horizontal):
                 label=CONSOLE_CONFIG_UNREADABLE_STRIP_LABEL,
                 visible=self._config_unreadable,
                 actionable=False,
+                alert=True,
+            ),
+            # TASK-41307: shown only while an unproven cleanup holds a slot.
+            StatusSegment(
+                name="held-slots",
+                label=f"Held tool slots: {self._held_slots}",
+                visible=self._held_slots > 0,
                 alert=True,
             ),
             self._temporary_segment(),
@@ -1124,6 +1140,13 @@ class ConsoleStatusChips(Horizontal):
         if shown == self._config_unreadable:
             return
         self._config_unreadable = shown
+        self._refresh_text()
+
+    def sync_held_slots(self, count: int) -> None:
+        """Show how many tool slots unproven cleanups hold (TASK-41307)."""
+        if count == self._held_slots:
+            return
+        self._held_slots = count
         self._refresh_text()
 
     def sync_state(self, state: ConsoleControlState) -> None:

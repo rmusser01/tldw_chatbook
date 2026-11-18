@@ -3688,7 +3688,7 @@ class ConsoleChatController:
             0.001, float(library_initialization_timeout)
         )
         self._library_search_tasks: dict[str, asyncio.Task] = {}
-        self.run_terminal_rows: dict[str, str] = {}  # TASK-40716: row id -> run id
+        self.run_terminal_rows: dict[str, set[str]] = {}  # row id -> run keys (TASK-40716)
         self._preparation_outcomes: dict[str, ConsolePreparationOutcome] = {}
         self._prepared_send_continuations: dict[str, _PreparedSendContinuation] = {}
         # TASK-34350: sends held at the compaction threshold (Ask), and the
@@ -5946,12 +5946,12 @@ class ConsoleChatController:
     ) -> None:
         """Publish one rollback-preserved owner before any queue can advance."""
 
+        kept = self._preflight_block_copies.pop(assistant_message_id, None)
         self.store.mark_dispatch_recovery_needed(
             session_id,
             assistant_message_id,
             generation_token=generation_token,
         )
-        kept = self._preflight_block_copies.pop(assistant_message_id, None)
         self._set_run_state(
             ConsoleRunState.blocked(kept)  # TASK-33621.3: the block's own cause.
             if kept is not None
@@ -13223,6 +13223,8 @@ class ConsoleChatController:
                 provider_started=not before_dispatch,
             )
         except BaseException as exc:
+            from .console_unproven_cleanup import explain_pre_run_stop  # TASK-41307
+
             if not isinstance(exc, asyncio.CancelledError):
                 logger.error(
                     "Console accepted-turn settlement failed | exception_type={}",
@@ -13235,6 +13237,7 @@ class ConsoleChatController:
                     )
                 native_owner.caller_cancelled |= isinstance(exc, asyncio.CancelledError)
                 self.store.publish_durable_recovery_owner(session_id, commit)
+                explain_pre_run_stop(self, commit.assistant_message_id, exc)
                 self._restore_dispatch_recovery_after_settlement_failure(
                     session_id, commit.assistant_message_id
                 )
@@ -13435,6 +13438,7 @@ class ConsoleChatController:
                             continuation.citation_repair_session is not None
                         ),
                     )
+                explain_pre_run_stop(self, commit.assistant_message_id, exc)
                 self._restore_dispatch_recovery_after_settlement_failure(
                     session_id,
                     commit.assistant_message_id,
@@ -27215,7 +27219,7 @@ class ConsoleChatController:
         """
         persisted = getattr(completed, "persisted_message_id", None)
         if run_id and completed is not None:  # its card, for Release (TASK-40716)
-            self.run_terminal_rows[persisted or completed.id] = run_id
+            self.run_terminal_rows.setdefault(persisted or completed.id, set()).add(run_id)
         if not run_id or persisted is None or self._agent_bridge is None:
             return
         try:

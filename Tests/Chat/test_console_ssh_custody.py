@@ -40,6 +40,11 @@ pytestmark = [
 ]
 
 
+_SSH_STOP = (
+    "Agent stopped: the cleanup of a remote SSH read could not be proven, so "
+    "its workspace and storage stay held until you restart the app."
+)
+
 @pytest.fixture
 async def ssh_console(mcp_case, hook_file, monkeypatch, tmp_path, request):
     from Tests.Agents.test_agent_service import fence
@@ -1264,10 +1269,10 @@ for line in sys.stdin.buffer:
     assert card.role.value == "assistant" and card.status == "failed"
     stopped = f"cleanup of {native.name} could not be proven"
     assert any(m.role.value == "system" and stopped in m.content for m in messages)
-    assert unproven_cleanup_rows(controller, messages) == {row_id: False}
+    assert unproven_cleanup_rows(controller, messages) == {row_id: (False, "")}
     assert release_unproven_tool_slot(controller, row_id)
     assert not release_unproven_tool_slot(controller, row_id)
-    assert unproven_cleanup_rows(controller, messages) == {row_id: True}
+    assert unproven_cleanup_rows(controller, messages) == {row_id: (True, "")}
     assert retention.abandoned
     assert h.case.runtime.execution_capacity.snapshot().tool_workers == 0
     assert storage.live and worker.is_alive()
@@ -1351,6 +1356,14 @@ async def test_unproven_startup_instruction_read_holds_a_daemon_worker(
             "daemon": True,
             "storage_live": True,
             "run_ended": True,
+            # TASK-41307: the turn stopped before its run names the cleanup
+            # instead of "Response recovery failed", and its reply carries
+            # Release, which frees only the slot.
+            "stop_copy": _SSH_STOP,
+            "row": [False, _SSH_STOP],
+            "released": True,
+            "slot_freed": True,
+            "storage_live_after_release": True,
         }
         return
 
@@ -1408,10 +1421,27 @@ for line in sys.stdin.buffer:
     assert worker.daemon and worker.is_alive()
     # The leases and the agent_runs source stay held with the request.
     assert storage.live and ("db.agent_runs", h.database.db_path) in storage.sources
+    from tldw_chatbook.Chat.console_unproven_cleanup import (
+        release_unproven_tool_slot,
+        unproven_cleanup_rows,
+    )
+
+    controller, session_id = h.rig.controller, h.rig.session.id
+    reply = task.result().assistant_message_id
+    rows = unproven_cleanup_rows(
+        controller, h.rig.store.messages_for_session(session_id)
+    )
+    capacity = native.operation.owner.capacity
+    slots = capacity.snapshot().tool_workers
     receipt = {
         "daemon": worker.daemon,
         "storage_live": storage.live,
         "run_ended": task.done(),
+        "stop_copy": controller.run_state_for(session_id).visible_copy,
+        "row": rows.get(reply),
+        "released": release_unproven_tool_slot(controller, reply),
+        "slot_freed": capacity.snapshot().tool_workers == slots - 1,
+        "storage_live_after_release": storage.live,
     }
     await asyncio.to_thread(
         Path(os.environ["TASK8_SSH_RECEIPT"]).write_text, json.dumps(receipt)
