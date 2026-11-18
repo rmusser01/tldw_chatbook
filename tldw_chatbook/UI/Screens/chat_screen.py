@@ -15147,12 +15147,20 @@ class ChatScreen(BaseAppScreen):
                 raise error
             from ..Console_Modules.execution_state import selected_client
 
-            selected = selected_client(self)
-            selected.require_view(self, self._console_process_visit)
-            with self._console_derivation_scope():
-                pending_launch = self._consume_pending_console_launch()
-                control_state = self._build_console_control_state(pending_launch)
-                yield from self._compose_console_content(pending_launch, control_state)
+            try:
+                selected = selected_client(self)
+                selected.require_view(self, self._console_process_visit)
+                with self._console_derivation_scope():
+                    pending_launch = self._consume_pending_console_launch()
+                    control_state = self._build_console_control_state(pending_launch)
+                    yield from self._compose_console_content(pending_launch, control_state)
+            except Exception:
+                # BaseAppScreen retains partial widgets and its original error
+                # panel. They are not a complete Console display attachment.
+                self._console_process_content_failed = True
+                raise
+            else:
+                self._console_process_content_failed = False
             return
         from ...Chat.console_parent_settings import (
             consume_initial_console_compose,
@@ -15772,8 +15780,10 @@ class ChatScreen(BaseAppScreen):
         """Initialize the native Console screen."""
         # No super().on_mount(): the dispatcher already invokes
         # BaseAppScreen.on_mount separately for this Mount event.
-        if getattr(self, "_console_process_prepare_failed", False):
-            # The error panel has no attached Console visit or mounted controls.
+        if (getattr(self, "_console_process_prepare_failed", False)
+            or getattr(self, "_console_process_content_failed", False)):
+            # Failed content may retain an attached visit, but not all controls.
+            # Suspend/unmount must still detach that actual visit normally.
             return
 
         self.app_instance._console_h3_image_edit_screen = self
@@ -15829,7 +15839,8 @@ class ChatScreen(BaseAppScreen):
     def _start_console_attach_reconciliation(self) -> None:
         """Keep native-read awaits outside Textual's screen message pump."""
         if (
-            self._console_attach_reconciled
+            getattr(self, "_console_process_content_failed", False)
+            or self._console_attach_reconciled
             or self._console_attach_reconcile_running
             or _console_screen_is_torn_down(self)
         ):
@@ -15848,6 +15859,8 @@ class ChatScreen(BaseAppScreen):
 
     async def _reconcile_console_after_attach(self) -> None:
         """Complete each retryable attach phase exactly once."""
+        if getattr(self, "_console_process_content_failed", False):
+            return
         if getattr(self.app_instance, "console_execution_client", None) is not None:
             from ..Console_Modules.execution_state import reconcile_selected_view
 
@@ -22547,6 +22560,9 @@ class ChatScreen(BaseAppScreen):
         Guarded on the width BAND so a resize drag does not rebuild the
         (store-reading) effective rail state on every event.
         """
+        if getattr(self, "_console_process_content_failed", False):
+            self._console_pending_process_resize = None
+            return
         band = console_rail_width_band(event.size.width)
         if band == self._last_console_workspace_width_band:
             self._console_pending_process_resize = None
@@ -23851,7 +23867,8 @@ class ChatScreen(BaseAppScreen):
     def on_screen_resume(self) -> None:
         """Called when returning to this screen."""
         if getattr(self.app_instance, "console_execution_client", None) is not None:
-            if getattr(self, "_console_process_prepare_failed", False):
+            if (getattr(self, "_console_process_prepare_failed", False)
+                or getattr(self, "_console_process_content_failed", False)):
                 return
             from ..Console_Modules.execution_state import resume_selected_view
 

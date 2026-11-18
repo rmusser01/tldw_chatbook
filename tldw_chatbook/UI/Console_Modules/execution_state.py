@@ -256,6 +256,8 @@ def defer_selected_resize(screen: ChatScreen, event) -> bool:
 
 async def refresh_selected_view(screen: ChatScreen, *, checkpoint: str | None = None) -> bool:
     """Join the named projection and apply its original mounted surfaces."""
+    if getattr(screen, "_console_process_content_failed", False):
+        return False
     from .execution_projection import apply_console_process_projection
     from .execution_sessions import apply_console_process_sessions
 
@@ -268,6 +270,8 @@ async def refresh_selected_view(screen: ChatScreen, *, checkpoint: str | None = 
         row.id, row.incarnation_id, _checkpoint=checkpoint,
     )
     client.require_view(screen, visit)
+    if getattr(screen, "_console_process_content_failed", False):
+        return False
     if selected_client(screen) is not client:
         raise RuntimeError("Console refreshed publication changed")
     screen._console_process_projection_view = client.projection_view
@@ -334,6 +338,8 @@ def resume_selected_view(screen: ChatScreen) -> None:
 
 async def reconcile_selected_view(screen: ChatScreen) -> None:
     """Join the real remote visit and publish its original mounted values."""
+    if getattr(screen, "_console_process_content_failed", False):
+        return
     client = selected_client(screen)
     if (client is None or screen._console_attach_reconcile_running
         or getattr(screen, "_console_process_draft_switch", None) is not None):
@@ -374,6 +380,8 @@ async def reconcile_selected_view(screen: ChatScreen) -> None:
 
 def refresh_selected_when_due(screen: ChatScreen) -> None:
     """Request the original readiness refresh after its published expiry."""
+    if getattr(screen, "_console_process_content_failed", False):
+        return
     from .execution_decisions import is_owned_project_modal
 
     owner = screen.app_instance.console_execution_client
