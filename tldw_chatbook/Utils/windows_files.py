@@ -613,9 +613,9 @@ class _Native:
                     type(proof) is not _AdmissionMetadataHandle
                     or proof.native is not self
                     or proof.owner is not _metadata_record.owner
-                    or proof.owner is None
-                    or proof not in proof.owner
-                    or _metadata_record not in proof.owner
+                    or type(proof.owner) is not dict
+                    or proof.owner.get(id(proof)) is not proof
+                    or proof.owner.get(id(_metadata_record)) is not _metadata_record
                     or proof.handle != parent
                     or proof.path != _metadata_record.path.parent
                     or name != _metadata_record.path.name
@@ -870,13 +870,16 @@ class WindowsOS:
         native = _native()
         parents = {node.parent for node in nodes if node.parent != node}
         handles, identities, observations = {}, {}, {}
-        opened, failed = [], []
+        # Keep strong references in birth order for reverse cleanup. A reused
+        # Win32 handle value never identifies an earlier record.
+        opened: dict[int, _AdmissionMetadataHandle] = {}
+        failed = []
 
         def named_handle(node):
             record = _AdmissionMetadataHandle(native, node)
             record.owner = opened
             record.parent = None if node.parent == node else handles[node.parent]
-            opened.append(record)
+            opened[id(record)] = record
             if node.parent == node:
                 native.open_handle(
                     "\\??\\" + node.drive + "\\",
@@ -895,7 +898,7 @@ class WindowsOS:
 
         def close_handle(record):
             # Remove custody before calling: false/raising close is never retried.
-            opened.remove(record)
+            del opened[id(record)]
             if record.handle is None:
                 return
             try:
@@ -954,7 +957,7 @@ class WindowsOS:
                 observations[node] = observed
             return {path: observations[path] for path in selected}
         finally:
-            for record in reversed(tuple(opened)):
+            for record in reversed(tuple(opened.values())):
                 close_handle(record)
             if failed:
                 raise _AdmissionMetadataCloseError(failed)

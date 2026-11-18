@@ -79,6 +79,28 @@ def test_metadata_tree_qualifies_only_roots_after_equivalent_fresh_observation(
     assert len(volumes) == 2, {"volume_queries": len(volumes), "opens": len(births)}
 
 
+def test_wide_tree_checks_custody_without_comparing_unrelated_births(tmp_path, monkeypatch):
+    leaves = []
+    for index in range(32):
+        directory = tmp_path / str(index)
+        directory.mkdir()
+        leaf = directory / "leaf"
+        leaf.write_bytes(b"ok")
+        leaves.append(leaf)
+
+    comparisons = 0
+
+    def equal(left, right):
+        nonlocal comparisons
+        comparisons += 1
+        return left is right
+
+    monkeypatch.setattr(windows_files._AdmissionMetadataHandle, "__eq__", equal)
+    observed = windows_files.WindowsOS().stat_many_for_admission(leaves)
+    assert all(observed[leaf][0].st_size == 2 for leaf in leaves)
+    assert comparisons == 0
+
+
 @pytest.mark.parametrize(
     "fault",
     [
@@ -147,7 +169,7 @@ def test_child_proof_refuses_invalid_lineage_and_retires_exact_birth(
             if fault == "foreign":
                 record.parent = copy.copy(parent)  # Same numeric handle is not custody.
             elif fault == "closed":
-                parent.owner.remove(parent)
+                del parent.owner[id(parent)]
                 assert original_close(parent.handle)
                 current[parent.handle]["live"] = False
                 current[parent.handle]["closes"] += 1

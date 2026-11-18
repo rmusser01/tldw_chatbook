@@ -4,6 +4,18 @@ TASK-40608 measures from Send to the persisted reply, subtracting only the origi
 
 ## Where the time goes
 
+On the separate Windows 10 diagnostic `g57s` (`5a8b730cfa`), README
+verified 24.094 s after Send. About 2.17 s after edit Send, the backend
+reported that the sixth preparation read failed its retirement check. Six
+reads and zero ordinary-turn trees had been registered. The terminal receipt
+failed, later display admissions refused, and the edit made no HTTP request.
+The sink identifies the read ordinal. Its exact native resource is still
+unknown. The first 9,502 bytes of the diagnostic sink had SHA-256
+`851718f6dc47c3afef508a63995a57e50edb4f86bd070ac47fe4e3795a447839`.
+This diagnostic began after the separate `qa1c3` Send had already failed.
+That fixture was still polling during `g57s`. Neither failed edit supplies
+a qualifying time.
+
 The latest completed candidate in batch `qa`, `qa1c2` on frozen `e4fa0ea67d`, provides these raw intervals on the original Send clock. Each arrow subtracts its two adjacent recorded timestamps; intervals containing approvals include those waits. The application-time gate uses the fixture’s separately recorded disclosure and approval waits. Exact `fs_edit` invocation and approval stages from the instrumented run are [below](#completed-instrumented-windows-journeys-g47d).
 
 ```mermaid
@@ -815,6 +827,15 @@ a later step fails. The 29 run-log appends each checked a directory and a
 segment. Counts alone cannot justify removing either check.
 
 ## Source checks during both completed Windows turns
+
+The native metadata collector also performed a linear membership search for
+each parent and child handle, then another search on close. In a Windows 10
+fixture with 32 sibling directories and one file per directory, the original
+collector compared 11,834 unrelated birth records. Its operation-local
+identity index reduces that count to zero while it still opens the names,
+reads their descriptors, checks their identities and closes their handles.
+This count concerns wide metadata observations. The three-file journey still
+requires its own wall-clock measurement.
 
 On `737e2a1ba8`, diagnostic `g56s` passed the original assertions and shutdown at 28.6737 s adjusted for README and 32.6502 s for edit. Both the UI and backend remained confined to the loopback fixture. The profiling run is separate from batch `qa`. The receipt SHA-256 is `9f00609574a0e7de069fe5da4ed3d545a07de34165dfce33e17839e5e84ec82e`. [Reproducible observer sources and method](original-journey/DIAGNOSTICS.md)
 

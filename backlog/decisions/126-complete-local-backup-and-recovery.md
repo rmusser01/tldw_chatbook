@@ -1958,6 +1958,13 @@ identity checks, fresh security descriptors and ChangeTime, missing-path
 behavior, full control/registry observations and exact uncertain-close custody.
 No handle, filesystem verdict or proof survives the metadata operation.
 
+Index live birth records by their Python object identity inside this one
+observation. Each entry holds the original record strongly. Both the parent
+and the relative child must match their own entries by identity. Removing
+custody before attempting close and visiting remaining births in reverse
+insertion order preserves the original close and refusal behavior. This
+avoids scanning all pinned siblings for each relative open and each close.
+
 All ordinary opens, borrowed `dir_fd` paths, bootstrap/control readers and
 custom callers retain full qualification. The Task17 requirement for those
 relative control-file opens is unchanged. No public `skip_ntfs` switch, volume
