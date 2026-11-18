@@ -26,7 +26,7 @@ from tldw_chatbook.config import HookConfigSnapshot
 from tldw_chatbook.MCP.permission_process import read_message, write_message
 
 
-def _approval(arguments=None):
+def _approval(arguments=None, *, effects=("reads_local",)):
     call = MCPPendingCall(
         llm_name="read_file",
         server_key="local:docs",
@@ -45,7 +45,7 @@ def _approval(arguments=None):
         reason="ask",
         options=("approve_once", "deny"),
         call_id="call",
-        effects=("reads_local",),
+        effects=effects,
         full_command="original command",
         warning="Original warning",
         scope_notice="Original scope",
@@ -103,6 +103,30 @@ def test_actual_approval_preserves_calls_details_and_finishing_omissions():
     assert completed_head.payload["phase"] == "finishing"
     assert "view" not in completed_head.payload
     assert "presentation_revision" not in completed_head.payload
+
+
+def test_local_tool_effects_use_plain_text_only_on_the_approval_wire():
+    from enum import StrEnum
+
+    from tldw_chatbook.Agents.local_tool_provider import LocalApprovalEffect
+
+    effects = tuple(LocalApprovalEffect)
+    original = _approval(effects=effects)
+    encoded = encode_pending_decision(original)
+    sent = encoded["payload"]["calls"][0]["effects"]
+    assert all(type(item) is str for item in sent)
+    assert sent == [effect.value for effect in effects]
+    assert original.payload["calls"][0]["effects"][0] is effects[0]
+    assert decode_pending_decision(encoded).payload["calls"][0]["effects"] == sent
+
+    class OtherEffect(StrEnum):
+        READ = "private_read"
+
+    with pytest.raises(ConsoleProtocolError):
+        encode_pending_decision(_approval(effects=(OtherEffect.READ,)))
+    sent[0] = effects[0]
+    with pytest.raises(ConsoleProtocolError):
+        decode_pending_decision(encoded)
 
 
 def test_skill_heads_preserve_argv_and_absent_run_identity():

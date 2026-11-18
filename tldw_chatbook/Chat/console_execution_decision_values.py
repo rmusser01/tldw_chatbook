@@ -52,6 +52,15 @@ def _call_arguments(value, decode):
     return dict(result) if decode else result
 
 
+def _effect(value, decode):
+    if not decode and type(value) is not str:
+        from ..Agents.local_tool_provider import LocalApprovalEffect
+
+        if type(value) is LocalApprovalEffect:
+            value = value.value
+    return _text(value, decode)
+
+
 _CALL = {
     "llm_name": _text,
     "server_key": _text,
@@ -60,7 +69,7 @@ _CALL = {
     "arguments": _call_arguments,
     "reason": _text,
     "options": _list(_text),
-    "effects": _list(_text),
+    "effects": _list(_effect),
     "execution_policy": _enum("bounded_abandonable", "definitive_after_start"),
     "path_precheck_failed": _boolean,
     "call_id": _text,
