@@ -1132,6 +1132,14 @@ class NavigationMixin:
                     self._notify_navigation_failure(screen_name)
                     return False
 
+                if (
+                    screen_reused and current_tab_value == TAB_CHAT
+                    and getattr(self, "console_execution_client", None) is not None
+                ):
+                    from .UI.Console_Modules.execution_state import wait_selected_navigation_resume
+
+                    await wait_selected_navigation_resume(new_screen)
+
                 try:
                     # Keep current_tab aligned to canonical tab ids even when routing uses aliases.
                     self.current_tab = current_tab_value

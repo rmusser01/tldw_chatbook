@@ -648,6 +648,52 @@ _REFRESH_METHODS = tuple(
 ) + _GUIDANCE_METHODS
 
 
+async def wait_selected_navigation_resume(screen: ChatScreen) -> None:
+    """Join the queued ScreenResume before navigation invokes Chat readers.
+
+    Textual's switch awaitable joins mount/removal, not ScreenResume. Its
+    actual screen pump owns the visible publication; this barrier does not
+    issue another read or block the App's input pump.
+    """
+    import asyncio
+
+    _require_sources()
+    app = screen.app_instance
+    client = app.console_execution_client
+    if type(screen) is not ChatScreen or type(client) is not ConsoleExecutionClient:
+        raise TypeError("Original Console navigation owner is required")
+    pump = screen._task
+    if pump is None or pump is asyncio.current_task():
+        raise RuntimeError("Console navigation must join its independent screen pump")
+    ready = asyncio.get_running_loop().create_future()
+
+    def completed() -> None:
+        if ready.done():
+            return
+        try:
+            if app.console_execution_client is not client or selected_client(screen) is not client:
+                raise RuntimeError("Console navigation publication owner changed")
+            if _awaiting_resume_publication(screen):
+                raise RuntimeError("Console resume publication is still pending")
+        except Exception as error:
+            ready.set_exception(error)
+        else:
+            ready.set_result(None)
+
+    if not screen.call_later(completed):
+        raise RuntimeError("Console resume message pump is unavailable")
+    try:
+        await asyncio.wait((ready, pump), return_when=asyncio.FIRST_COMPLETED)
+        if not ready.done():
+            raise RuntimeError("Console resume message pump ended before publication")
+        ready.result()
+        if app.console_execution_client is not client or selected_client(screen) is not client:
+            raise RuntimeError("Console navigation publication owner changed")
+    finally:
+        if not ready.done():
+            ready.cancel()
+
+
 def resume_selected_view(screen: ChatScreen) -> Awaitable[None] | None:
     """Publish the resumed source before synchronous screen readers run."""
     _require_sources()

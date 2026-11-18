@@ -575,3 +575,33 @@ has `tool-{foreground,approval}-backend-10264.jsonl` and the matching UI-1692
 streams. The existing numeric analyzer generated the local
 `g40-diagnostic-numeric.json`; no fixture, native workload, new tracked archive
 or qualifying release was changed for this analysis.
+
+### Edit approvals and the Settings return on `e761c372a4`
+
+In the clean `q71c1` failure, navigation had transferred the stack to Chat.
+The unread acknowledgement worker then entered the strict store getter before
+Chat's resume message published revision 2. The original fixture independently
+reached the same refusal in the controller getter.
+
+Diagnostic `g43e` on the same revision passed the original README checks at
+31.1341 s adjusted. The edit reached six provider requests and the original
+Once decisions on `fs_read`, `fs_edit` and `git_diff`. The three measured
+approval waits were 0.7468, 0.6504 and 0.7915 s. An error applying a display
+read interrupted verification. The run has no completed edit time. The
+following intervals use the original edit clock.
+
+```mermaid
+flowchart LR
+    S["Edit Send"] -->|"12.789 s"| H["First provider request"]
+    H -->|"13.067 s, includes read approval"| A["Edit approval observed"]
+    A -->|"0.650 s measured wait"| C["Once clicked"]
+    C -->|"2.769 s"| N["Next provider request"]
+    N -->|"2.373 s"| D["Diff approval observed"]
+    D -->|"0.792 s measured wait"| O["Once clicked"]
+    O -->|"2.576 s"| R["Sixth provider request"]
+```
+
+Click to next provider request includes tool execution, persistence and
+subsequent model dispatch. This observer did not time the candidate's
+`fs_edit` worker itself. Receipt directory:
+`original-journey-e761c3fast/replay-runs/g43e`.
