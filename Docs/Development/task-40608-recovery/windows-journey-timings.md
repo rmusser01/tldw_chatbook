@@ -193,6 +193,7 @@ Batch `q5` started its first clean baseline on Windows 10 at 07:59 UTC on Novemb
 
 | Batch | Pair | README baseline / candidate | Approved edit baseline / candidate | State |
 |---|---|---|---|---|
+| `q8` | 1–3 | — / — | — / — | Started baseline `q81b1` at 09:58 UTC November 18 after both journeys passed in the separate instrumented run below. Frozen candidate `33470fe57d`; batch configuration SHA-256 `176e09ef967e1c4bbd5d74f2ccf5af15c36f7d40282d9184d9596eef5cde8b35`. |
 | `q7` | 1 | 259.5920 s / 24.0326 s | 386.9812 s / — | Baseline `q71b1` passed both original journeys. On `e761c372a4`, candidate `q71c1` passed the README assertions, then returned from Settings with source revision 2 while the visible projection still held revision 1. The controller getter refused it. The edit never reached Send. |
 | `q7` | 2–3 | — / — | — / — | The driver stopped at the first failed candidate. No complete pair or median. Configuration SHA-256 `ecf4fbe02dff4a8615d550a34d57650e2161c552bd664036bc5379682f5e4d96`. The preceding q6 configuration was prepared before the edit-worker fix and never launched. |
 | `q5` | 1 | 284.7760 s / — | 374.3431 s / — | Baseline `q51b1` passed both journeys. Candidate `q51c1` timed out after 300 s waiting for the workspace name field. Shutdown also failed to confirm retirement. Neither Send ran. Batch stopped with no completed pair. |
@@ -605,3 +606,28 @@ Click to next provider request includes tool execution, persistence and
 subsequent model dispatch. This observer did not time the candidate's
 `fs_edit` worker itself. Receipt directory:
 `original-journey-e761c3fast/replay-runs/g43e`.
+
+### Both original journeys completed on `33470fe57d`
+
+Diagnostic `g45f` completed the original README and edit journeys and shut
+down successfully on Windows. The README verification code, read-only tree,
+explicit Settings write grant, ordered Once decisions, sole expected
+`main.py` diff and negative, ordinary and over-cap cases passed. Its extra
+failure-location observer excludes it from the three clean pairs.
+
+| Journey | Send → first HTTP | Send → completed reply | Measured user waits | Adjusted | Send → verified | Parent admissions |
+|---|---:|---:|---:|---:|---:|---:|
+| README | 12.9510 s | 30.1438 s | 0.6088 s disclosure + 1.3375 s approvals | **28.1975 s** | 30.8106 s | 114 |
+| Approved edit | 10.7735 s | 37.7805 s | 2.2500 s approvals | **35.5305 s** | 38.0844 s | 68 |
+
+Both the worker fix and the return-to-Chat fix were present. During this run
+one display read detected an obsolete readiness context. Its normal recovery
+completed. The observer recorded no uncaught UI exception. Original receipts
+are in `original-journey-33470fsink/replay-runs/g45f`.
+
+In diagnostic `g44`, the five README model calls took 4.096 s. The five HTTP
+request methods took 0.106 s combined and the loopback handlers 0.0206 s.
+The loop's checked preparation and settlement used 20 storage admissions.
+The provider workers used 15. These are nested costs inside the model calls.
+The original test reached the fifth response and then failed in a display
+read before verifying the reply. Its README and edit have no completion times.
