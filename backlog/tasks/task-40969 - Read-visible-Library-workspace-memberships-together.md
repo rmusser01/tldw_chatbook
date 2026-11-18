@@ -45,6 +45,8 @@ The Library Workspace projection groups exact visible item pairs through the exi
 An initial trace spent 676 ms on 41 membership calls inside a 701 ms reconciliation. Three alternating macOS PTY pairs used the sealed 10,000-chat profile and kept both 13-second observation windows. Every candidate used one grouped membership call before the populated frame. Cold median fell from 2,496 to 1,823 ms (27%), with savings of 525, 788 and 1,066 ms in the pairs. Warm median was 155 to 151 ms. The worst cold loop gap fell from 1,248 to 640 ms, and the count of gaps above 50 ms was 23 to 26. All six quit normally with zero owned SQLite descriptors and zero profile guard violations. See the [paired results](../../Docs/QA/console-library-responsiveness/README.md#library-pty-results).
 
 All 98 targeted Workspace tests passed, and both import budgets and the two Ruff gates passed. The ordinary mounted Library modules produced the same 17 passes and identical 91 pre-mount source-selection refusals on the baseline and candidate. Bootstrap-profile controls passed 23 cases. The remaining landing-sync-count and conversation-focus assertions both reproduced on the exact baseline. Reports retain all outcomes. The scoped task closes on the grouped-read verification and paired timing evidence.
+
+The diagnostic inventory review found one added warning in the grouped-read fallback. Its payload is limited to a fixed message and the exception class name. The inventory increment covers that single call under the existing persistent sinks.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
