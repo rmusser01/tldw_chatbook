@@ -203,8 +203,10 @@ review is not a completed rollback; retain the existing copy and operation recor
 Files and databases the restore created where the profile had none are removed
 again by later rollback (a database with its `-wal` and `-shm` files). The review
 refuses instead, and leaves the file, when such a file was replaced after the
-restore, when it sits beside a configuration file that another profile's
-configuration now shares, or when it lives outside every profile.
+restore or sits beside a configuration file that another profile's configuration
+now shares. Two kinds of created data are not removed yet, so the review refuses
+when a restore created them: a Personal Context database, and Saved chatbook
+archives the restore added to an existing chatbooks folder.
 
 ## Manage recovered media
 

@@ -1,10 +1,10 @@
 ---
 id: TASK-41521
 title: "Other single-file data owners have the same created-file rollback gap TASK-41113 fixed for personas"
-status: In Progress
+status: Done
 assignee: ['@claude']
 created_date: 2026-11-17 05:27
-updated_date: 2026-11-18 05:44
+updated_date: 2026-11-18 06:11
 labels:
 - follow-up
 - backup
@@ -27,7 +27,7 @@ Found by the actor stream (round 15). TASK-41113 fixed the later-rollback refusa
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 Every backup-enabled single-file owner is listed in the notes with whether a restore can create its file
-- [ ] #2 Each owner that can is covered by a rollback test that fails before the fix
+- [x] #2 Each owner that can is covered by a rollback test that fails before the fix, except those tracked in TASK-41705, TASK-41706 and TASK-41707
 - [x] #3 The mid-session quarantine summary updates immediately, or the notes record why it stays
 <!-- AC:END -->
 
@@ -41,7 +41,7 @@ Found by the actor stream (round 15). TASK-41113 fixed the later-rollback refusa
 
 ## Implementation Notes
 
-**Summary.** A later rollback now retires what a cross-profile restore created for every backup-enabled single-file owner a restore can create, except `personal_context.repository` and Saved chatbook archives added to an existing `chatbooks/` folder (see "Not met" below). Round 16 first admitted eight `_Definition`-style files beside the persona store (TASK-41113's proof unchanged). Phase 2 (review r16rs-rev1) generalized the proof: an owner-to-adapter-class map replaces the chained type check, a created file is re-read through its owner's own `discover` filtered by path (so `.bak`, `.1` and dated copies keep their installed IDs; MCP `fresh` copies, written only when the target already has the store, were not run), the archive root must be synthetic, a live database is observed by identity, size and time, the TTS profile store retires with its reference-audio sharer, and SQLite sidecars retire with their database. The coordinator's cached recovery summary now names an intent quarantined mid-session (AC#3).
+**Summary.** A later rollback now retires what a cross-profile restore created for every backup-enabled single-file owner a restore can create, except the shapes tracked in TASK-41705 (the Personal Context repository), TASK-41706 (Saved chatbook archives added to an existing `chatbooks/` folder) and TASK-41707 (MCP `fresh` copies, never run); AC#2 was narrowed to that in review r16rs-rev2. Round 16 first admitted eight `_Definition`-style files beside the persona store (TASK-41113's proof unchanged). Phase 2 (review r16rs-rev1) generalized the proof: an owner-to-adapter-class map replaces the chained type check; the archive root must be synthetic; a raw file is re-read through its owner's own `discover` filtered by path (so `.bak`, `.1` and dated copies keep their installed IDs); a database is never opened by the proof, takes the reviewed inventory's own row and is observed by device and inode only; the TTS profile store retires with its reference-audio sharer; and SQLite sidecars retire with their database, after the new safety copy has saved what the WAL held. The coordinator's cached recovery summary now names an intent quarantined mid-session (AC#3).
 
 **AC#1: the backup-enabled single-file owners.** Enumerated from `owner_registry.install_adapters()` with `data_groups.group_for_owner` (owners with no group are not backup-enabled), keeping the owners whose capture is one regular file (with, at most, rotation, backup or SQLite sidecars beside it). "Creatable" means a cross-profile replace restore into a profile without the file publishes it with no previous file (`previous is None`), which sends it through `later_rollback._created_destination_target`; a same-profile restore keeps the target's own logical id, and `_known_absences` already retires it (read from the code, not run here). "Run" means a probe or test restored a source holding the file into a populated target without it and printed the created artifacts.
 
@@ -58,7 +58,7 @@ Found by the actor stream (round 15). TASK-41113 fixed the later-rollback refusa
 | `ui.state`, `ui.emoji_recents` | `_Definition` | config folder | yes | retired by `_created_config_file_targets` (unchanged) | `test_config_file_retirement.py` |
 | `runtime.source_state` | `_SourceState` | config folder `runtime_policy.json` | yes | as above | `test_config_file_retirement.py` |
 | `config` | `_Config` | the profile's `config.toml` | no: a replace restore writes over the target's own selector | n/a | - |
-| `tamagotchi.config` | `_ConfiguredPets` | `~/.config/tldw_chatbook/tamagotchi_pets.json`, outside every profile | no, run: the restore itself refuses to publish into that folder (`replacement_destination_parent_required`), whether the folder is absent or holds a dated pet copy and was backed up first | refused by name (`local_snapshot_created_file_shared_outside_profile`, the coordinator's call); unreachable through today's restore | none possible end to end |
+| `tamagotchi.config` | `_ConfiguredPets` | `~/.config/tldw_chatbook/tamagotchi_pets.json`, outside every profile | no, run: the restore itself refuses to publish into that folder (`replacement_destination_parent_required`), whether the folder is absent or holds a dated pet copy and was backed up first | refused by the generic rule (`local_snapshot_absence_unclassified`; the named refusal added in phase 2 was dropped in review r16rs-rev2 as unreachable) | none possible end to end |
 | `db.chachanotes.primary`, `db.workspaces` | SQLite | data folder | no, run: a target without them is refused before the restore (`target_unverified`; their dependents' rows go unavailable) | n/a | - |
 | `db.prompts.primary`, `db.agent_runs`, `notes.file_notes`, `tts.profile_store` (+ sharer `tts.references`) | SQLite | data folder | yes, run (deleted from the populated target first) | retired, sidecars and sharer with them | `[databases]` |
 | `db.dreams`, `db.guardian`, `kanban.local`, `db.subscriptions`, `db.scheduled_tasks`, `notifications.client`, `runtime.event_state`, `runtime.sync_state` | SQLite | data folder | yes, run | retired | `[databases]` |
@@ -87,10 +87,11 @@ Red/green (load 55-80, `-n 2` unless noted):
 
 **Files.** `tldw_chatbook/Backup_Recovery/later_rollback.py`, `tldw_chatbook/Backup_Recovery/publication.py`, `tldw_chatbook/Actor_Packs/persona_coordinator.py`, `Tests/Backup_Recovery/test_created_persona_subtree_rollback.py`, `Tests/Backup_Recovery/test_created_owner_rollback.py` (new), `Tests/Actor_Packs/test_persona_actor_pack_coordinator.py`, `.github/workflows/derived-artifacts.yml`, `Docs/Backup-and-Recovery.md`.
 
-**Not met: AC#2 for two shapes, so the task stays In Progress.**
-- `personal_context.repository`: a restore can create it, but a source fixture needs the encrypted profile and its key material (keyring), which this harness does not build; not attempted.
-- Saved chatbook archives added to an existing `chatbooks/` folder: a replace restore publishes the incoming archive files inside the target's existing root (and retires the target's own). Retiring them needs a nested-file proof of the folders they were published into, like `_created_persona_subtree` does for nested pack folders, and that proof is persona-specific (it checks the ChaChaNotes core and the persona config). A created `chatbooks/` root is covered.
-- `tamagotchi.config` has no end-to-end test: today's restore refuses to write its folder, so the named refusal cannot be reached (see the table).
+**AC#2 split (review r16rs-rev2).** The shapes not covered here are tracked:
+- TASK-41705: `personal_context.repository`. A restore can create it, but a source fixture needs the encrypted profile and its key material (keyring), which this harness does not build; not attempted.
+- TASK-41706: Saved chatbook archives added to an existing `chatbooks/` folder. A replace restore publishes the incoming archive files inside the target's existing root (and retires the target's own). Retiring them needs a nested-file proof of the folders they were published into, like `_created_persona_subtree` does for nested pack folders, and that proof is persona-specific (it checks the ChaChaNotes core and the persona config). A created `chatbooks/` root is covered.
+- TASK-41707: MCP `fresh` copies, which a restore writes only when the target already holds the store; never run.
+`tamagotchi.config` has no end-to-end test: today's restore refuses to write its folder (see the table).
 
 ### Review r16rs-rev1, fix round 1
 
@@ -106,10 +107,10 @@ Red/green (load 55-80, `-n 2` unless noted):
 - The re-read of a raw file is the owner's own `discover` (config loaded from the profile's config file, under `_preview_reads` outside a held session), filtered by path: `mcp_permissions.json.bak`, `mcp_execution_log.jsonl.1`, `config.toml.bak` and `config_backup_<date>.toml` keep their installed IDs, and `rag_pipelines.toml` keeps `rag.definitions:pipelines`. A database is not opened by the proof: opening it rewrites its `-shm`, and the reviewed plan's fingerprint hashes the `-shm` it retires, so execution refused with `target_changed` once sidecars existed. Its row is the reviewed inventory's own (discovered and validated when the target was previewed), and it is observed by device and inode, since its WAL and writers may still change its bytes; the safety copy keeps them. `_stage_read_sources` adds the profile's config to the held capture scope for the raw re-read, and accepts a database row, which carries no file metadata.
 - Raw files keep their digest, capped at the owner's `_RAW_RECOVERY_LIMITS` (the history file's 16 MiB limit refused the shared cap).
 - `_CREATED_FILE_SHARERS` (`tts.profile_store` -> `tts.references`): the sharer's row on the same file, in the inventory's shared group, is kept, and `_known_absences` retires it with the database; the re-read row takes the inventory's group. `publication.py` now lets two owners' rows on one shared database file in the same shared group retire as one (it refused that pair with `duplicate_retirement_target`; the existing sidecar alias rule already did this for `-wal`/`-shm`).
-- `_CREATED_SHARED_FILE_OWNERS` (`tamagotchi.config`): named refusal `local_snapshot_created_file_shared_outside_profile` (the coordinator's call). No test reaches it: the restore refuses to write the pet folder first (table).
+- `_CREATED_SHARED_FILE_OWNERS` (`tamagotchi.config`): named refusal `local_snapshot_created_file_shared_outside_profile` (the coordinator's call). No test reaches it: the restore refuses to write the pet folder first (table). Dropped in fix round 2.
 - `chatbooks.archives` joins `_CREATED_TREE_ROOT_OWNERS`.
 
-**Docs.** `Docs/Backup-and-Recovery.md`'s later-rollback section says files and databases the restore created are removed again, and when the review refuses instead (a file replaced after the restore, a file beside a now-shared config, a file outside every profile).
+**Docs.** `Docs/Backup-and-Recovery.md`'s later-rollback section says files and databases the restore created are removed again, and when the review refuses instead (a file replaced after the restore, a file beside a now-shared config; since fix round 2 also the shapes tracked in TASK-41705 and TASK-41706).
 
 **Tests.** New `Tests/Backup_Recovery/test_created_owner_rollback.py`, one orchestrating child per profile like the persona scenario, five cases: `[databases]`, `[library]`, `[projects]`, `[tools]` (each restore creates its files in a populated target, some after deleting a database from it; the later rollback must leave none, and no `-wal`/`-shm`), and `[shared-config-folder]` (refusal). In `[databases]` a writer opens the created kanban database in WAL mode after the restore and exits without a checkpoint, so its `-wal` and `-shm` files exist before the rollback and must go with it. Added to the Backup_Recovery owner suites lane after the persona rollback file.
 
@@ -124,4 +125,9 @@ Red/green (load 55-80, `-n 2` unless noted):
 ### Review r16rs-rev2, fix round 2
 
 - **Critical 1: the coordinator file leaked a storage lease under the recovered-suites flags.** `test_ensure_recovered_is_single_flight_across_threads` ran `ensure_recovered` on six bare threads; each opened its own ChaChaNotes handle, which outlived the test (`left 1 new live storage lease(s) open: SQLite .../actors.db on thread Thread-1`, 1 error in 3 of 3 lane-flag runs, and once more here before the fix). The product caller already scopes that handle: `app_service_wiring.ensure_actor_pack_recovery` runs recovery inside `operation_owned_connection(self.chachanotes_db)`. The test's threads now do the same, so the leak was the test's, not the product's. Under `-p no:xdist --storage-lease-guard --timeout=180`: 19 passed, 3 of 3 runs (13-15 s, load 12-16).
+- **Important 1: a retired created database's post-restore writes reach the new safety copy.** In `[databases]`, the writer now opens the created kanban database in WAL mode with `wal_autocheckpoint=0`, adds a board, commits and exits without a checkpoint, so the board is only in the `-wal` (asserted non-empty). After the later rollback the test opens the new safety copy (`list_recovery_copies`, `archive_reader.acquire` with the new password, `verify_sealed`), reads the captured kanban database and finds the board, as `test_later_created_destinations.py` does for created edits. Green: 1 passed (92 s serial, load 12-16). Red with `_KanbanAdapter.capture` temporarily copying only the main file: `AssertionError: ('kanban.local', [])`.
+- **Minor 1.** The Summary no longer says a database is observed by identity, size and time: it is never opened by the proof and is observed by device and inode.
+- **Minor 2.** `Docs/Backup-and-Recovery.md` names the shapes a later rollback still refuses: a Personal Context database, and Saved chatbook archives added to an existing chatbooks folder. The "outside every profile" clause went with Minor 3.
+- **Minor 3 (coordinator's call).** The `tamagotchi.config` special case is gone; the generic rule refuses it (`local_snapshot_absence_unclassified`), and the restore already refuses to write its folder. The owner table says so.
+- **AC#2 split.** AC#2 now excludes TASK-41705, TASK-41706 and TASK-41707, filed here (status To Do, labels follow-up and backup, depending on this task); with that, every creatable owner is covered and AC#2 is ticked.
 

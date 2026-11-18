@@ -731,9 +731,6 @@ _CREATED_OWNER_CLASSES = {
 }
 # Owners whose rows share a created owner's database file (TASK-41521).
 _CREATED_FILE_SHARERS = {"tts.profile_store": frozenset({"tts.references"})}
-# Files a restore may write outside every profile, shared by all of them. A
-# later rollback names them and never manages them (TASK-41521, coordinator).
-_CREATED_SHARED_FILE_OWNERS = frozenset({"tamagotchi.config"})
 
 
 def _created_owner_class(owner_id):
@@ -1571,8 +1568,6 @@ def _created_destination_target(
     mapped_roots, observations, active_ancestors = {}, [], {}
     for artifact in artifacts:
         item = saved.get(artifact.logical_id)
-        if item is not None and item.owner in _CREATED_SHARED_FILE_OWNERS:
-            raise ValueError("local_snapshot_created_file_shared_outside_profile")
         active_persona = (
             item is not None
             and item.owner in _NESTED_CREATED_OWNERS
