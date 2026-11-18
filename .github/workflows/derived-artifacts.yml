@@ -1566,6 +1566,8 @@ jobs:
       # legacy-ledger node (in-memory DB) follow TASK-39149's.
       # Round 15: TASK-41112's Actor Pack export file (sandboxed, ~83 s serial
       # at load 104) joins the sandboxed block, before the bootstrap ones.
+      # Round 16: TASK-41521's persona coordinator file (sandboxed, 34 s serial
+      # at load 32) follows it.
       # Round 15: TASK-41133's label-list, must-mask and must-keep table,
       # bracket, next-field, code-span, cache, re-mask-on-import and timing
       # nodes (pure, two CPU-time ratios) join the Trace export nodes, and
@@ -1611,6 +1613,7 @@ jobs:
             Tests/Chat/test_subscription_background_readiness.py \
             Tests/Wizards/test_first_run_subscription_readiness.py \
             Tests/Actor_Packs/test_actor_pack_export.py \
+            Tests/Actor_Packs/test_persona_actor_pack_coordinator.py \
             Tests/Prompt_Management/test_prompt_improvement_service.py \
             Tests/RAG_Search/test_keyword_leg_chacha.py \
             Tests/RAG_Search/test_keyword_leg_db_resolution.py \
