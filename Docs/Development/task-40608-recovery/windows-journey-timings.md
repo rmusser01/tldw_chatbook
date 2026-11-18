@@ -70,6 +70,19 @@ An external sampler measured actual UI and backend process CPU counters against 
 
 The sampler itself used **14.891 CPU-s over 70.751 s**. That load limits comparisons with unobserved runs. Use these counters to locate work in both processes and keep the original sequential pairs as the acceptance evidence. Raw numeric counter SHA-256: `4a487abc8f9abe4cd9aa99a58b71ef51f3ba070e84f8113a4ec8c3897cb5e78c`.
 
+### What scales with the number of widgets
+
+One activity update reconciles the headers of all retained activities. The previous renderer called Textual's layout-requesting `Static.update` twice per header. With eight mounted activities, a final status change and an externally restyled first label produced 16 updates. Comparing each freshly derived label/status with the installed styled content reduced that to **two updates**. The original class, focus, layout and timer checks still ran. All 67 activity-widget tests passed on Windows.
+
+The original test also does work proportional to **mounted widgets × polling rounds**. Each `Pilot.pause(0.05)` calls Textual's screen barrier, which queues one callback per mounted widget. In the older `g60` README interval, nine of 14 sampled UI dispatch lookups were idle-handler lookups. That sampling does not establish how much time the barrier adds. Both measurements below keep the original fixture and its barrier intact.
+
+| Guard-only Windows 10 run | README adjusted | Approved edit adjusted |
+|---|---:|---:|
+| Preceding product `4c2860349a` | 20.3278 s | 22.5537 s |
+| Header change `5fd0c8cd5e` | 21.4514 s | 23.9275 s |
+
+The one sequential comparison recorded **5.53% and 6.09% longer** turns. All four turns passed their original checks, including the two/three Once approvals and shutdown. The eight-header fixture establishes fewer redundant layout requests. This timed comparison supplies no journey speedup and cannot attribute the difference to layout alone. The earlier three-pair comparison still supplies the acceptance figures. [Both original-receipt hashes, phase splits and parent admission counts](original-journey/g72-windows10-activity-headers.json)
+
 ## Where the time goes
 
 On the separate Windows 10 diagnostic `g57s` (`5a8b730cfa`), README

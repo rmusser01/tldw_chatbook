@@ -218,6 +218,8 @@ five seconds. AC5 remains open. [Original paired measurements and work counts](.
 
 On the selected process route, a refused pre-ACK display read could leave its received turn waiting for acknowledgement. The UI now sends the original CancelTurn only for the exact still-unacknowledged plan after a positively retired display refusal. It waits for the cancellation and original turn to retire before reporting a kept draft. Twelve focused Windows 10 tests passed, including changed selection, lost channel, rejected cancellation and native pre-ACK retirement. This corrects a possible stalled turn. Its effect on successful-journey timing is unmeasured. [Send ownership decision](../decisions/230-console-send-preparation-and-io-ownership.md)
 
+With eight mounted activity headers and two changed cells, layout-requesting updates fell from 16 to two. All 67 related Windows tests passed. The separate stock/header comparison took 20.328/21.451 seconds for README and 22.554/23.928 seconds for edit. Both runs retained all original checks. This change has a component-level benefit and supplies no end-to-end speedup. [Measurements](../../Docs/Development/task-40608-recovery/original-journey/g72-windows10-activity-headers.json)
+
 <!-- SECTION:NOTES:END -->
 
 Measured follow-up under the same [ADR-126 bounded configuration-read amendment](../decisions/126-complete-local-backup-and-recovery.md#task-40608--bounded-sensitive-database-path-configuration-reads): qualify the original sensitive container-reader cohort, then group its admissions without changing readers, overrides or refusal checks. The measured 0.218-second component is separate from the unresolved planning delay; final three-pair acceptance remains open.

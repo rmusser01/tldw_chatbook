@@ -1,0 +1,104 @@
+{
+  "experiment": "Activity-header rendering, sequential guard-only Windows 10 replays",
+  "acceptance_pair": false,
+  "windows_build": 19045,
+  "changed_product_sources": [
+    "tldw_chatbook/Widgets/Console/console_assistant_turn.py"
+  ],
+  "arms": {
+    "before": {
+      "commit": "4c2860349ab84b8540fae0c97a5e6506eb2dc494",
+      "label": "g72s",
+      "turns": {
+        "readme": {
+          "application_s": 20.327825,
+          "adjusted_phases_s": [
+            9.114245,
+            9.375352,
+            1.838228
+          ],
+          "loopback_handler_s": 0.016154999999983488,
+          "parent_acquisitions": 87,
+          "parent_reuse": 87,
+          "original_requests": 5,
+          "ordered_approvals": [
+            "fs_list",
+            "fs_read"
+          ]
+        },
+        "edit": {
+          "application_s": 22.553734,
+          "adjusted_phases_s": [
+            5.729171,
+            14.581823,
+            2.24274
+          ],
+          "loopback_handler_s": 0.059114000000022315,
+          "parent_acquisitions": 49,
+          "parent_reuse": 49,
+          "original_requests": 6,
+          "ordered_approvals": [
+            "fs_read",
+            "fs_edit",
+            "git_diff"
+          ]
+        }
+      },
+      "original_qa_sha256": "448015c99604ce96754436c7dc4f784daed6241bed99062cb8d6ab6e66cbe850",
+      "guard_sha256": "ac8722fd2121b213073dbf9a75d2679d196eae35593dfb613556b946ba7a5369",
+      "original_receipt_sha256": "a2f9d809284aa980fb4c46fa118efc61d03bc789b0275135bca51ca7c3ff490c",
+      "timings_sha256": "34700dd476bc610b94e95c8627105a5f713ac11e3139ba4be259262c9c3f0eeb",
+      "progress_sha256": "eb45c233dc5aa3099c0a0749b4642571dfef8a06b41b2236dc969216e01d3277",
+      "original_journeys_and_guards_passed": true
+    },
+    "after": {
+      "commit": "5fd0c8cd5ef01789aa5ba935a242e27a204da618",
+      "label": "g72f",
+      "turns": {
+        "readme": {
+          "application_s": 21.451385,
+          "adjusted_phases_s": [
+            9.241917,
+            9.635443,
+            2.574025
+          ],
+          "loopback_handler_s": 0.017915000000002124,
+          "parent_acquisitions": 97,
+          "parent_reuse": 97,
+          "original_requests": 5,
+          "ordered_approvals": [
+            "fs_list",
+            "fs_read"
+          ]
+        },
+        "edit": {
+          "application_s": 23.927541,
+          "adjusted_phases_s": [
+            6.777858,
+            14.955611,
+            2.194072
+          ],
+          "loopback_handler_s": 0.11676499999998668,
+          "parent_acquisitions": 51,
+          "parent_reuse": 51,
+          "original_requests": 6,
+          "ordered_approvals": [
+            "fs_read",
+            "fs_edit",
+            "git_diff"
+          ]
+        }
+      },
+      "original_qa_sha256": "448015c99604ce96754436c7dc4f784daed6241bed99062cb8d6ab6e66cbe850",
+      "guard_sha256": "ac8722fd2121b213073dbf9a75d2679d196eae35593dfb613556b946ba7a5369",
+      "original_receipt_sha256": "db07fbbe67461a5c48001455b74f31c8ac4a13b865af6c0acf52c14c8a79f78f",
+      "timings_sha256": "6dba92b5137572c2d0850d25642fe6e70f7f270d9b11e5b41a595ad049a9f55d",
+      "progress_sha256": "7b35d327c1935b0d46cfaf27c3788a1caf593404596483015c7b10b8695a7da3",
+      "original_journeys_and_guards_passed": true
+    }
+  },
+  "application_time_change_pct": {
+    "readme": 5.527,
+    "edit": 6.091
+  }
+}
