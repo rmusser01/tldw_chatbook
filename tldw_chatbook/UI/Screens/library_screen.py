@@ -13043,7 +13043,14 @@ class LibraryScreen(BaseAppScreen):
         list_media = getattr(media_service, "list_media_items", None)
         list_conversations = getattr(conversation_service, "list_conversations", None)
         count_notes = getattr(notes_service, "count_notes", None)
-        count_notes_available = callable(count_notes)
+        from tldw_chatbook.Notes.notes_scope_service import library_notes_snapshot_reader
+
+        native_notes = library_notes_snapshot_reader(
+            list_notes, count_notes, getattr(self.app_instance, "chachanotes_db", None)
+        )
+        if native_notes is not None:
+            list_notes = native_notes
+            count_notes = None
         count_decks = getattr(study_service, "count_decks", None)
         count_due_flashcards = getattr(study_service, "count_due_flashcards", None)
         count_quizzes = getattr(quiz_service, "count_quizzes", None)
@@ -13119,7 +13126,7 @@ class LibraryScreen(BaseAppScreen):
         # grows -- see ``_notes_true_count_or_none``/``_study_count_or_none``
         # for the per-count degrade-to-None contract.
         optional_calls: list[tuple[str, Any]] = []
-        if count_notes_available:
+        if callable(count_notes):
             optional_calls.append(
                 (
                     "notes_true_count",

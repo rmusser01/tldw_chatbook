@@ -42,6 +42,13 @@ Library search input and rail rows in place while the counts arrive. A queued
 or running recompose or its focus follow-up keeps ownership of the rail's
 children.
 
+The desktop Library snapshot reads the local Notes page and exact total on
+one finite worker connection. The stock route reuses the matching initialized
+profile database until a per-user owner exists. Both queries retain the
+local Notes list policy check, and worker completion retires connections
+opened by that worker. A count failure leaves the page available with an
+unknown total. In-memory and custom services use their configured callbacks.
+
 The Workspace panel reads memberships for the visible source snapshot by exact
 `(item_type, item_id)` pairs through the existing workspace registry connection
 (ADR-353). It projects every source in display order using the same workspace

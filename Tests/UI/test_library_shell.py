@@ -18995,6 +18995,97 @@ async def test_library_shell_notes_rail_badge_degrades_without_count_seam():
         assert "(2+)" in rail_label
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "outcome", ["ready", "count-failed", "denied", "other-profile"]
+)
+async def test_native_library_notes_snapshot_reuses_one_worker_connection(
+    tmp_path, monkeypatch, outcome
+):
+    from tldw_chatbook.Backup_Recovery import storage_admission
+    from tldw_chatbook.DB import ChaChaNotes_DB
+    from tldw_chatbook.Notes.Notes_Library import NotesInteropService
+    from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
+
+    profile_db = CharactersRAGDB(tmp_path / "library.db", "profile")
+    profile_db.add_note("First", "First complete body")
+    profile_db.add_note("Second", "Second complete body")
+    removed = profile_db.add_note("Deleted", "Deleted body")
+    assert profile_db.soft_delete_note(removed, 1)
+    expected_page = tuple(profile_db.list_notes(limit=1))
+    profile_db.close_connection()
+    local_notes = NotesInteropService(tmp_path, "library", profile_db)
+    actions = []
+    loop_thread = threading.get_ident()
+
+    def require_allowed(*, action_id):
+        actions.append(action_id)
+        if outcome == "denied":
+            raise PolicyDeniedError(
+                action_id=action_id,
+                reason_code="local_policy",
+                user_message="Local Notes access is disabled.",
+                effective_source="local",
+                authority_owner="profile",
+            )
+
+    app = _build_test_app()
+    if outcome == "other-profile":
+        other_db = CharactersRAGDB(tmp_path / "other.db", "other")
+        other_db.add_note("Other profile", "Different source")
+        other_db.close_connection()
+        app.chachanotes_db = other_db
+    else:
+        app.chachanotes_db = profile_db
+    app.notes_scope_service = NotesScopeService(
+        local_notes_service=local_notes,
+        server_service=None,
+        policy_enforcer=SimpleNamespace(require_allowed=require_allowed),
+    )
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    monkeypatch.setitem(library_screen_module.LIBRARY_SOURCE_PAGE_SIZES, "notes", 1)
+    opens = []
+    original_open = ChaChaNotes_DB.connect_private_sqlite
+
+    def observe_open(owner, path, **kwargs):
+        if Path(path) == profile_db.db_path:
+            opens.append(threading.get_ident())
+        return original_open(owner, path, **kwargs)
+
+    monkeypatch.setattr(ChaChaNotes_DB, "connect_private_sqlite", observe_open)
+    if outcome == "count-failed":
+        monkeypatch.setattr(
+            profile_db, "count_notes", Mock(side_effect=OSError("count unavailable"))
+        )
+    try:
+        records, counts, total_known, error, recovery, _ = (
+            await LibraryScreen(app)._list_local_source_snapshot()
+        )
+        assert actions and set(actions) == {"notes.list.local"}
+        assert loop_thread not in opens
+        if outcome == "denied":
+            assert recovery is not None
+            assert recovery.why == "Local Notes access is disabled."
+            assert error == recovery.visible_copy
+            assert not opens and not records["notes"]
+        else:
+            assert error is None
+            assert records["notes"] == expected_page
+            assert counts["notes"] == (1 if outcome == "count-failed" else 2)
+            assert total_known["notes"] is (outcome != "count-failed")
+            assert len(opens) == (2 if outcome == "other-profile" else 1)
+            assert bool(local_notes._db_instances) is (outcome == "other-profile")
+        with storage_admission._lock:
+            assert not any(
+                lease.resource_path == profile_db.db_path
+                for lease in storage_admission._live_leases
+            )
+    finally:
+        local_notes.close_all_user_connections()
+        profile_db.close_connection()
+
+
 class _FakePromptScopeService:
     """Minimal prompt-scope fake exposing only the ``count_prompts`` seam
     under test -- same spirit as ``_FakeStudyScopeService``/
