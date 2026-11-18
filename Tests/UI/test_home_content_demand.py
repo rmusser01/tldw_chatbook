@@ -45,6 +45,7 @@ def _owner(held=None):
     previous = HomeContentSnapshot(note_count=11)
     owner = SimpleNamespace(
         is_mounted=True,
+        is_attached=True,
         app=app,
         app_instance=app,
         _home_content_snapshot=previous,

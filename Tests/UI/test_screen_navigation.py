@@ -6061,11 +6061,15 @@ async def test_late_completions_after_the_exit_fence_skip_the_empty_stack():
     Home and Library are reused, so a suspended screen's workers and
     refreshes outlive the switch away. Shutdown sets the app's ``_exit``
     fence first (``TldwCli._shutdown``, ``App.exit``), and Textual's
-    ``_close_all`` then empties the screen stack. Two readers raised
-    ``ScreenStackError: No screens on stack`` there: Home's triage refresh
-    completion, and Library's footer eligibility, which ``LibraryScreen.refresh``
-    reaches when a pruned child refreshes its parent. A late Home completion
-    must also paint nothing.
+    ``_close_all`` then empties the screen stack. These readers raised
+    ``ScreenStackError: No screens on stack`` there:
+    - Home's content snapshot worker, at the builder's first check, at its
+      check after the seam-call awaits, and in each seam call;
+    - Home's triage refresh sink, which must also paint nothing;
+    - Library's footer eligibility, which ``LibraryScreen.refresh`` reaches
+      when a pruned child refreshes its parent.
+    Each runs in the window without yielding, and the window is closed
+    again before anything else can run.
     """
     from textual.app import ScreenStackError
 
@@ -6076,6 +6080,65 @@ async def test_late_completions_after_the_exit_fence_skip_the_empty_stack():
         await app.handle_screen_navigation(NavigateToScreen("home"))
         home = app.screen
         assert type(home).__name__ == "HomeScreen"
+
+        stack = app._screen_stack
+        saved: list = []
+        errors: list = []
+
+        def enter_window() -> None:
+            if app._exit:
+                return
+            saved[:] = stack
+            app._exit = True
+            stack.clear()
+
+        def leave_window() -> None:
+            if app._exit:
+                stack.extend(saved)
+                app._exit = False
+
+        def step(name, coroutine) -> None:
+            enter_window()
+            try:
+                coroutine.send(None)
+            except StopIteration:
+                pass
+            except ScreenStackError as exc:
+                errors.append((name, exc))
+            finally:
+                leave_window()
+                coroutine.close()
+
+        step("home builder start", home._build_home_content_snapshot())
+        step("home seam call", home._home_content_seam_call(lambda: 1))
+
+        # The builder's second read runs after its awaits, so this probe
+        # enters the window from inside its own (non-yielding) seam calls.
+        probe = None
+        probe_seam_calls: list[str] = []
+
+        async def seam_entering_window(callable_obj, **kwargs):
+            if asyncio.current_task() is probe:
+                probe_seam_calls.append("seam")
+                enter_window()
+            return None
+
+        async def build_after_awaits() -> None:
+            try:
+                await home._build_home_content_snapshot()
+            except ScreenStackError as exc:
+                errors.append(("home builder after awaits", exc))
+            finally:
+                leave_window()
+
+        home._home_content_seam_call = seam_entering_window
+        try:
+            probe = asyncio.create_task(build_after_awaits())
+            await probe
+        finally:
+            del home._home_content_seam_call
+        assert probe_seam_calls, "the builder never reached its seam calls"
+
         await app.handle_screen_navigation(NavigateToScreen("library"))
         library = app.screen
         assert type(library).__name__ == "LibraryScreen"
@@ -6083,11 +6146,7 @@ async def test_late_completions_after_the_exit_fence_skip_the_empty_stack():
         home._sync_home_triage = lambda: paints.append("paint")
         pending = home._home_pending_refresh_sync
 
-        stack = app._screen_stack
-        saved = list(stack)
-        errors = []
-        app._exit = True
-        stack.clear()
+        enter_window()
         try:
             for name, late_call in (
                 ("home triage", home._sync_home_triage_after_refresh),
@@ -6098,8 +6157,7 @@ async def test_late_completions_after_the_exit_fence_skip_the_empty_stack():
                 except ScreenStackError as exc:
                     errors.append((name, exc))
         finally:
-            stack.extend(saved)
-            app._exit = False
+            leave_window()
         assert errors == [], f"a late completion read the emptied stack: {errors!r}"
         assert paints == []
         assert home._home_pending_refresh_sync is pending
