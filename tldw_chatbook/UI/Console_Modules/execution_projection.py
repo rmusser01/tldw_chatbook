@@ -50,6 +50,8 @@ _TRANSCRIPT_METHODS = tuple(
         "refresh_messages",
         "_transcript_rows",
         "_flat_transcript_rows",
+        "_row_content_is_mounted",
+        "_message_body_is_mounted",
         "sync_jump_indicator",
     )
 )
@@ -211,7 +213,14 @@ async def apply_console_process_projection(
         client, visit, projection.source_revision, projection.session_id,
         projection.incarnation_id, transcript, show_thinking, row_signature,
     )
-    if getattr(screen, "_console_process_transcript_rendered", None) != rendered_key:
+    if (
+        getattr(screen, "_console_process_transcript_rendered", None) != rendered_key
+        or any(
+            (widget := transcript._row_widgets.get(key)) is None
+            or not transcript._row_content_is_mounted(widget)
+            for key, _signature in row_signature
+        )
+    ):
         screen._console_process_transcript_rendered = None
         await transcript.refresh_messages()
     _require_sources()
@@ -243,8 +252,7 @@ async def apply_console_process_projection(
         or set(transcript._row_widgets) != {key for key, _signature in row_signature}
         or any(
             transcript._row_signatures.get(key) != signature
-            or transcript._row_widgets[key].parent is not transcript
-            or not transcript._row_widgets[key].is_attached
+            or not transcript._row_content_is_mounted(transcript._row_widgets[key])
             for key, signature in row_signature
         )
     ):

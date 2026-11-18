@@ -4702,7 +4702,7 @@ class ConsoleTranscript(VerticalScroll):
                 if owner.parent is not self or not owner.is_attached:
                     continue
                 answer = owner.answer_widget
-                if answer.parent is not owner or not answer.is_attached:
+                if answer.parent is not owner or not self._message_body_is_mounted(answer):
                     continue
                 if message.video_metadata is not None:
                     if _mounted_card(owner, ConsoleVideoCard, message.id):
@@ -4715,7 +4715,7 @@ class ConsoleTranscript(VerticalScroll):
                 continue
 
             row = self._row_widgets.get(f"message:{message.id}")
-            if row is not None and row.parent is self and row.is_attached:
+            if row is not None and row.parent is self and self._message_body_is_mounted(row):
                 mounted.add(message.id)
         return frozenset(mounted)
 
@@ -7110,6 +7110,39 @@ class ConsoleTranscript(VerticalScroll):
             and self._can_mutate_widget(widget.adjunct_stack, parent=widget)
         )
 
+    def _message_body_is_mounted(self, widget: Widget) -> bool:
+        """Require the composed body, not only its attached message wrapper."""
+        if not self._can_mutate_widget(widget):
+            return False
+        if isinstance(widget, ConsoleMarkdownMessage):
+            return any(
+                isinstance(child, Markdown) and self._can_mutate_widget(child, parent=widget)
+                for child in widget.children
+            ) and any(
+                child.has_class("console-markdown-footer")
+                and self._can_mutate_widget(child, parent=widget)
+                for child in widget.children
+            )
+        if isinstance(widget, ConsoleTranscriptMessage):
+            return any(
+                child.has_class("console-transcript-message-body")
+                and self._can_mutate_widget(child, parent=widget)
+                for child in widget.children
+            )
+        return True  # Specialized media/file cards keep their original checks.
+
+    def _row_content_is_mounted(self, widget: Widget) -> bool:
+        """Check original row ownership and its ordinary message content."""
+        if not self._can_mutate_widget(widget, parent=self):
+            return False
+        if isinstance(widget, ConsoleAssistantTurnWidget):
+            return (
+                self._can_sync_assistant_turn(widget)
+                and widget.answer_widget.parent is widget
+                and self._message_body_is_mounted(widget.answer_widget)
+            )
+        return self._message_body_is_mounted(widget)
+
     async def _reconcile_rows(self, rows: list[_TranscriptRow]) -> None:
         if not self._can_mutate_widget(self):
             return
@@ -7121,13 +7154,24 @@ class ConsoleTranscript(VerticalScroll):
         for stale_key in [
             key for key in self._row_widgets if key not in desired_key_set
         ]:
-            removals.append(self._row_widgets.pop(stale_key))
+            stale_widget = self._row_widgets.pop(stale_key)
+            if stale_widget.parent is self:
+                removals.append(stale_widget)
             self._row_signatures.pop(stale_key, None)
             self._row_build_counts.pop(stale_key, None)
 
         replacements: dict[str, Widget] = {}
         for row in rows:
             widget = self._row_widgets.get(row.key)
+            if widget is not None and not self._row_content_is_mounted(widget):
+                # A cancelled mount may have populated the maps before any DOM
+                # attachment. A missing body can likewise leave a live wrapper.
+                # Neither is a reusable rendered row, even with equal values.
+                self._row_widgets.pop(row.key, None)
+                self._row_signatures.pop(row.key, None)
+                if widget.parent is self:
+                    removals.append(widget)
+                widget = None
             if widget is None or self._row_signatures.get(row.key) == row.signature:
                 continue
             if row.kind == "assistant-turn" and isinstance(

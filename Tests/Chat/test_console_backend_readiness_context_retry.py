@@ -20,6 +20,8 @@ from Tests.private_profile import private_profile_test
         "agent_once", "agent_continuous", "persisted", "settings",
         "bridge", "binding", "settings_unrevisioned", "agent_uncertain",
         "persisted_hidden", "persisted_bridge", "persisted_uncertain",
+        "visible_hidden", "visible_hidden_uncertain", "visible_hidden_history",
+        "visible_hidden_source", "visible_hidden_bridge",
     ]
 )
 async def test_readiness_context_retry_requires_original_settlement(request, change):
@@ -30,6 +32,7 @@ async def test_readiness_context_retry_requires_original_settlement(request, cha
         ConsoleBackendReadiness,
         ConsoleBackendReadinessChanged,
     )
+    from tldw_chatbook.Chat.console_backend_view_lifecycle import ConsoleBackendViewSuperseded
     from tldw_chatbook.Chat.console_control_dispatch import ConsoleLocalControls
     from tldw_chatbook.Chat.console_domain_display import ConsoleDomainDisplayOwner
     from tldw_chatbook.Chat.console_execution_backend import ConsoleExecutionBackend
@@ -85,6 +88,10 @@ async def test_readiness_context_retry_requires_original_settlement(request, cha
         effect = frame.f_locals.get("effect")
         if effect is not None and effect.owner is backend.presentation.readiness:
             effects.append(effect)
+            if change == "visible_hidden_history":
+                # Change only the observed history after cleanup; a displaced
+                # view must not conceal this independent publication failure.
+                backend.domain.sources.prompt_history._revision += 1
         if effect is not None and effect.kind == "transcript_marker_read":
             marker_effects.append(effect)
         if (
@@ -152,6 +159,15 @@ async def test_readiness_context_retry_requires_original_settlement(request, cha
                     backend.presentation.view_lifecycle.admit(
                         "readiness-visit", 1, "hidden"
                     )
+                elif change.startswith("visible_hidden"):
+                    backend.presentation.view_lifecycle.admit(
+                        "readiness-visit", 1, "hidden"
+                    )
+                    if change == "visible_hidden_source":
+                        backend.domain.sources = replace(original_sources)
+                    elif change == "visible_hidden_bridge":
+                        successor = copy.copy(original_bridge)
+                        backend.runtime._agent_bridge = backend.controller._agent_bridge = successor
             except BaseException as error:
                 errors.append(error)
             finally:
@@ -165,7 +181,7 @@ async def test_readiness_context_retry_requires_original_settlement(request, cha
     def negative_observation(frame):
         observation = frame.f_locals["self"]
         if (
-            change in {"uncertain", "agent_uncertain"}
+            change in {"uncertain", "agent_uncertain", "visible_hidden_uncertain"}
             and observation.read.creator is backend.presentation.readiness
         ):
             # Preserve the original negative receipt path; never substitute a
@@ -189,6 +205,11 @@ async def test_readiness_context_retry_requires_original_settlement(request, cha
             ),
         )
         readiness = backend.presentation.readiness
+        if change.startswith("visible_hidden"):
+            lifecycle = backend.presentation.view_lifecycle
+            visible = lifecycle.admit("readiness-visit", 1, "mount")
+            await lifecycle.prepare(visible)
+            assert lifecycle.capture_display_checkpoint() is visible
         if change in {"agent_once", "agent_continuous", "agent_uncertain", "binding"} or change.startswith("persisted"):
             database = profile.storage.chachanotes
             conversation_id = await run_owned_db_call(
@@ -270,6 +291,11 @@ async def test_readiness_context_retry_requires_original_settlement(request, cha
                 assert len(marker_effects) == (1 if change == "persisted_uncertain" else 0)
                 if change != "persisted_uncertain":
                     assert publication_changed
+            elif change == "visible_hidden":
+                with pytest.raises(ConsoleBackendViewSuperseded):
+                    await asyncio.shield(receipt.applied)
+                assert len(reads) == 1
+                assert readiness.at == initial_at and readiness._context_facts is None
             elif change in {"continuous", "agent_continuous"}:
                 with pytest.raises(ConsoleBackendReadinessChanged) as caught:
                     await asyncio.shield(receipt.applied)
@@ -280,9 +306,10 @@ async def test_readiness_context_retry_requires_original_settlement(request, cha
                 with pytest.raises(Exception) as caught:
                     await asyncio.shield(receipt.applied)
                 assert type(caught.value) is not ConsoleBackendReadinessChanged
+                assert type(caught.value) is not ConsoleBackendViewSuperseded
                 assert len(reads) == 1
                 assert readiness.at == initial_at and readiness._context_facts is None
-            if change in {"uncertain", "agent_uncertain", "persisted_uncertain"}:
+            if change in {"uncertain", "agent_uncertain", "persisted_uncertain", "visible_hidden_uncertain"}:
                 assert await asyncio.shield(receipt.retired) is False
                 assert (marker_effects if change == "persisted_uncertain" else effects)[-1].completed.result() is False
                 assert not backend.controls._intake_open
@@ -299,7 +326,7 @@ async def test_readiness_context_retry_requires_original_settlement(request, cha
             backend.controller._agent_bridge = original_bridge
         # A deliberately uncertain original effect must remain negative; close
         # still performs its original physical cleanup and must not certify it.
-        if change in {"uncertain", "agent_uncertain", "persisted_uncertain"} and effects and effects[-1].completed.done():
+        if change in {"uncertain", "agent_uncertain", "persisted_uncertain", "visible_hidden_uncertain"} and effects and effects[-1].completed.done():
             with pytest.raises(RuntimeError):
                 await backend.aclose()
         else:

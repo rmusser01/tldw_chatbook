@@ -848,10 +848,20 @@ class ConsoleBackendReadiness:
             or effect.completed.result() is not True or effect.physically_retired is not True
             or any(item.read.creator is not self or not item.confirmed() for item in observations)
             or history_key != self._history_key()
-            or presentation.view_lifecycle is not lifecycle or lifecycle._current is not current
-            or presentation.parent_attachment != attachment
+            or presentation.view_lifecycle is not lifecycle
             or backend.store.active_session_id != active
-            or presentation.capture_display_reuse_checkpoint(
+        ):
+            raise RuntimeError("Console readiness retry source or retirement changed")
+        if lifecycle._current is not current or presentation.parent_attachment != attachment:
+            # The original read has positively retired under the same sources,
+            # history and active slot. Only its authentic former visible token
+            # can establish displacement; absent/replaced tokens still refuse.
+            if checkpoint is None or checkpoint is not current:
+                raise RuntimeError("Console readiness visibility proof changed")
+            presentation.require_view_checkpoint(checkpoint)
+            raise RuntimeError("Console readiness visibility proof changed")
+        if (
+            presentation.capture_display_reuse_checkpoint(
                 backend.runtime._execution_service._display_owner
             ) is not checkpoint
             or (checkpoint is not None and not presentation.display_reuse_checkpoint_current(

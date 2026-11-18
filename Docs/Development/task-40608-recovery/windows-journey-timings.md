@@ -38,6 +38,8 @@ On the earlier `g25` run, Send to first request took **14.267 s**. The interval 
 | `g29` | Mount the original transcript rows on `50e868df9f` | 15.667 s | 0.412 s | 1.177 s | 17.256 s | README passed its original checks, including paint, persisted answer, run ownership and unchanged files. The reply took 39.681 s raw and 37.316 s adjusted. The Settings round-trip for write access failed before edit Send. |
 | `g30` | Refresh the resumed Chat through the checked read, and use the existing permission owner for the virtual CLI kill-switch lookup on `aab319544e` | — | — | — | — | Workspace setup stopped before Send. The configuration cache changed identity during the readiness read. The original source check refused the new identity. This run provides no timing for either fix. |
 | `g31` | Same product, with parent and backend configuration writers observed on `f9c9e964cc` | 10.938 s | 0.461 s | 1.324 s | 12.723 s | README passed at 30.589 s raw and 28.367 s adjusted. The manual unread reminder read the store before the resumed Chat received its current display. The edit did not reach Send. |
+| `g32f` | Foreground and corrected approval v3 observers on frozen `997b3339ff` | 10.530 s | — | — | — | Project disclosure painted; no click or provider request. ReadProjection failed at application in `require_retired_context_change:861`. No completed journey or tool-approval measurement. |
+| `g33p` | Separate readiness predicate diagnostic on the same `997b3339ff` product | 11.847 s | 0.420 s | 1.397 s | 13.663 s | README passed all original checks at 30.786 s raw and 29.241 s adjusted. Returning from Settings failed at `_require_selected_publication:75`, before edit Send. The readiness verifier failure from `g32f` did not recur. |
 
 The 2.318 s difference in time to first request between `g21` and `g25` is an observation across two diagnostic runs. Several code and instrumentation changes separate them.
 
@@ -248,10 +250,59 @@ All values below come from one approval observer clock and exact fixture call. P
 
 The original outer approval-request→click values were 22.3223, 18.8538, 30.3026, 24.2924 and 24.0081 s respectively. These begin earlier than `request_mcp_approvals`, which follows policy work. The pilot's first `approval_observed` mark precedes the new card batch in four of five calls; it therefore cannot be substituted for that card's ready or painted time. `approval_request_return` and `local_review_return` occur **after** the click, not before initial presentation.
 
-There were **50 observed compositor-return frames, zero original `painted_approval` events, zero original-label probes, and zero strengthened qualified frames**. Review found a diagnostic false-negative: v2 looked for `__dict__['_parent']`, while pinned Textual keeps its `MessagePump.__parent` weakref in the name-mangled `__dict__['_MessagePump__parent']`. Both ancestry flags were consequently false for every frame. At all five clicks, other captured facts reported a mounted, enabled, ready button, full clip containment and prior region cells. These independent facts do **not** retrospectively prove matching-label paint. The measured policy/publication/ready/click timings remain usable; **request→qualified paint remains unmeasured**. A corrected probe is a separate unrun revision, never a rewrite of this result.
+There were **50 observed compositor-return frames, zero original `painted_approval` events, zero original-label probes, and zero strengthened qualified frames**. Review found a diagnostic false-negative: v2 looked for `__dict__['_parent']`, while pinned Textual keeps its `MessagePump.__parent` weakref in the name-mangled `__dict__['_MessagePump__parent']`. Both ancestry flags were consequently false for every frame. At all five clicks, other captured facts reported a mounted, enabled, ready button, full clip containment and prior region cells. These independent facts do **not** retrospectively prove matching-label paint. The measured policy/publication/ready/click timings remain usable; **request→qualified paint remains unmeasured**. The corrected v3 probe is a separate revision, never a rewrite of this result; its later partial candidate run is recorded below.
 
 The existing v2 records do locate an earlier, weaker observation: the first update intersecting the recorded button rectangle after controls were ready, with its other active/enabled/full-clip flags true. The readiness→region-cell intervals were **0.0409, 0.0424, 0.0640, 0.0567 and 0.0309 s** in the table's order (card generations 20, 22, 29, 31 and 33). All were before the recorded click. These are actual recorded region-cell updates, not reconstructed ancestry or exact-label paint; v2's false ancestry flags remain unchanged.
 
 Both observer summaries closed with zero errors, source refusals, unfinished invocations/admissions and truncation; 535 selected foreground admissions were observed. These summaries prove observer bookkeeping completion, not native resource retirement. The original fixture reached shutdown then complete, preserved its answer/file/diff/Git/permission/network assertions, and the guarded runner recorded process exit 0. This local baseline has no selected-process `Retired` frames or per-resource retirement certificate; none is inferred from Python returns or an empty observer registry.
 
-Receipts: snapshot `original-journey-win10-before-foreground-20261117-a1`, run `foreground-b1-20261117`, `timings.json`, `progress.jsonl`, `native-9e45221f/{receipt,costs}.json`, and both `lab-observer/tool-{foreground,approval}-ui-17720.jsonl` streams. The tracked [numeric analysis](original-journey/analyze_diagnostics.py) reproduces the per-call stacks and boundary splits from these originals; its local `diagnostic-numeric-v3.json` output is an analysis revision over **probe v2**. No full per-tool candidate diagnostic has run yet. Observation overhead, different host conditions and the paint-probe defect prevent treating this diagnostic as a new qualifying pair or a measured candidate speedup.
+Receipts: snapshot `original-journey-win10-before-foreground-20261117-a1`, run `foreground-b1-20261117`, `timings.json`, `progress.jsonl`, `native-9e45221f/{receipt,costs}.json`, and both `lab-observer/tool-{foreground,approval}-ui-17720.jsonl` streams. The tracked [numeric analysis](original-journey/analyze_diagnostics.py) reproduces the per-call stacks and boundary splits from these originals; its local `diagnostic-numeric-v3.json` output is an analysis revision over **probe v2**. No full per-tool candidate diagnostic has completed. Observation overhead, different host conditions and the paint-probe defect prevent treating this diagnostic as a new qualifying pair or a measured candidate speedup.
+
+## Partial candidate diagnostics on `997b3339ff`
+
+`g32f` and `g33p` use the frozen product `997b3339ffd37fab54dc28054ed4987fb933e478`
+and unchanged original QA hash
+`448015c99604ce96754436c7dc4f784daed6241bed99062cb8d6ab6e66cbe850`.
+Both are nonqualifying diagnostic runs, distinct from clean pair candidate
+`q31c1`. Different stopping points must not be combined into a completed pair.
+
+| Run | Original total | README endpoint | Last named failure | Edit |
+|---|---:|---|---|---|
+| `g32f` | 85.625 s, failed | Disclosure observed at +9.5917 s and painted at +10.5304 s; no click or HTTP request | Original backend `RuntimeError` at `console_backend_readiness.require_retired_context_change:861`, reported as ReadProjection `command_failed (applied)` | Not started |
+| `g33p` | 120.968 s, failed | Reply seen at +30.7859 s; 29.2408 s adjusted; original evidence checks passed at +31.2873 s | Settings return reached `_require_selected_publication:75` through the decision timer, attach reconcile and progress timer | Not started |
+
+In `g33p`, the original five provider requests and two approval clicks completed.
+Measured waits were 0.4196 s for disclosure and 1.1255 s for approvals; the
+loopback handlers totaled 0.0211 s. The latest README parent counters recorded
+104 acquisitions and 104 reuse hits. `g32f` recorded 12 and 12. These are parent
+counts from the original trace, **not total backend storage work**.
+
+`g32f` is the first partial native execution of the corrected approval **v3**
+probe. UI and backend streams report revision 3; all four foreground/approval
+summaries closed with zero errors, source refusals, unfinished work and
+truncation. The backend foreground observer saw two step-write invocations and
+two storage admissions. Neither process recorded an interactive approval stage,
+and no filesystem executor call occurred. Consequently this run tests observer
+installation but does not verify the repaired ancestry proof, emitted approval
+region cells, fixed-label paint or per-tool costs. The original project-modal
+paint event is a different measurement. V3 baseline execution and a complete
+candidate per-tool trace remain outstanding.
+
+`g33p` used a separate predicate observer, not the foreground/approval v3 probe.
+It recorded 5,780 `require_sources`, 5,780 `selection_is_current` and 10
+`require_retired_context_change` calls with zero predicate failures and no
+truncation. Its observed backend `ConsoleBackendReadinessChanged` was the typed
+display-context change, not `g32f`'s generic verifier refusal. This does not
+identify the failed predicate in `g32f`. The clean `q31c1` meanwhile found the
+final assistant row but timed out on its original painted-code assertion; its
+concurrent applied ReadProjection failure has no precise backend cause in that
+clean receipt. Those three boundaries remain distinct.
+
+Source receipts are `original-journey-997b33fg/replay-runs/g32f` and
+`original-journey-997b33pred/replay-runs/g33p`: original `timings.json`,
+`progress.jsonl`, `native-d5808301/receipt.json` and
+`native-2d64c291/receipt.json`, body-free `first-exception-*.jsonl`, and
+`lab-observer/{backend-failure,source-predicates}-*.jsonl`. `g32f` additionally
+has four `tool-{foreground,approval}-{ui,backend}-*.jsonl` streams. Both runners
+exited 1. A failed original receipt or a clean observer summary does not establish
+positive native retirement. Neither run meets the five-second acceptance target.

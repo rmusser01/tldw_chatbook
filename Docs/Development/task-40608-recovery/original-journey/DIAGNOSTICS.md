@@ -1,8 +1,9 @@
 # Foreground and approval tracing recovery
 
 `windows-foreground-approval-v2.zip` preserves the executed diagnostic;
-`windows-foreground-approval-v3-997b33.zip` contains the separately corrected, **unrun**
-approval probe. Both are portable, source-only **nonqualifying** bundles. Each
+`windows-foreground-approval-v3-997b33.zip` contains the separately corrected
+approval probe, partially exercised by candidate `g32f`. Both are portable,
+source-only **nonqualifying** bundles. Each
 adjacent `.sha256` file pins its complete archive. They contain foreground
 monitors, the respective approval monitors, installers, source-only
 verification, a diagnostic summary helper, and the exact baseline/candidate
@@ -15,12 +16,47 @@ approval **v2** probe, including its known ancestry false-negative: it reads
 `_parent` directly, whereas pinned Textual stores a weakref in
 `_MessagePump__parent`. That run recorded no original-label probe or qualified
 approval paint. Preserve the diagnostic result; do not use v2 to claim paint
-latency. The separately identified v3 correction still needs a native run.
+latency. The separately identified v3 correction still needs a native run that
+reaches an interactive tool approval; its baseline variant remains unrun.
 The immutable v2 archive's candidate pins refer to `aab319544eb295d5b6ef78daab1bd8674743a839`.
 The latest v3 candidate pins refer specifically to the product under q3:
 `997b3339ffd37fab54dc28054ed4987fb933e478`. **Its full per-tool diagnostic has not
-run.** A later configuration fix or candidate is not covered.
-The archive records no candidate timing result or executed overlay revision.
+completed.** A later configuration fix or candidate is not covered. The immutable
+archive describes source status at packaging time; the subsequent execution
+record below does not change its source pins or claim a qualifying result.
+
+## Native execution status
+
+On the frozen `997b3339ff` product, `g32f` installed the foreground and approval
+v3 observers in both processes. It painted the original project disclosure at
+Send +10.5304 s, then failed before the click or first provider request.
+`ReadProjection` failed at application in
+`ConsoleBackendReadiness.require_retired_context_change:861`; the original
+backend exception was `RuntimeError`. This location alone does not identify
+which checked predicate changed. The failed original total was 85.625 s and
+the runner exited 1. Neither journey has a completed timing in this run.
+
+All four observer summaries closed with zero errors, source refusals, unfinished
+work and truncation. Both approval streams recorded revision 3 but **zero approval
+stages**. The backend foreground observer recorded two step-write invocations
+and two storage admissions, with no filesystem executor invocation. This proves
+installation and bounded bookkeeping, not corrected ancestry or approval-paint
+timing. There is no full candidate per-call comparison or v3 baseline result.
+
+The separate `g33p` predicate diagnostic used the same product and original QA,
+without these foreground/approval observers. README passed its original checks:
+30.7859 s raw, 29.2408 s after the original measured waits, evidence verified at
+Send +31.2873 s. Returning from Settings then failed at
+`_require_selected_publication:75` through the decision timer, attach reconcile
+and progress timer. The edit never reached Send; the failed original total was
+120.968 s. Its predicate observer closed with zero failures in 5,780
+`require_sources`, 5,780 `selection_is_current` and 10
+`require_retired_context_change` calls. It did not reproduce `g32f`'s readiness
+verifier failure and does not supply approval-paint evidence.
+
+See the [timing tracker](../windows-journey-timings.md) for source receipt names
+and the distinct clean `q31c1` final-code-paint failure. Failed journey receipts
+and completed observer bookkeeping are not physical-retirement certificates.
 
 Compatibility was checked without importing product code: all original monitored
 callables resolve; their bytecode, constants, names, closure and argument
@@ -54,7 +90,7 @@ python -I -S verify_bundle.py
 
 This checks every archived member hash and compiles Python syntax without
 importing product code. The archive's `bundle-manifest.json` records its members,
-input provenance and unrun candidate status.
+input provenance and execution status when packaged.
 
 Prerequisites remain the original frozen `before` overlay, the exact candidate
 product overlay, reviewed installed dependencies, and fresh unused guarded
@@ -138,5 +174,6 @@ journeys. `build_diagnostic_archive.py` is the source-only packaging recipe;
 all machine-specific input locations are explicit CLI arguments and never enter
 the archive. It refuses changed monitored definitions rather than inventing
 compatibility. Use `--approval-revision 3` when packaging the v3 source; its
-manifest explicitly records no baseline or candidate native run for that probe.
+manifest records the source-only state at packaging time. Preserve that record;
+append later native outcomes above rather than rebuilding historical archives.
 The original source/environment prerequisites still apply.
