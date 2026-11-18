@@ -192,6 +192,21 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: 1040); measured.
 MAX_TLDW_MODULES_AT_UI_READY = 1040
 
+#: Modules a thread other than the UI loop imports during boot, so whether
+#: they are resident at ``_ui_ready`` depends on thread timing. They count on
+#: every run, resident or not, so the census gives one number (TASK-41512).
+#: Each maps to its reason.
+TIMING_DEPENDENT_AT_READY = {
+    # TASK-41512: the Console's character context reads its recent groups on
+    # an executor thread (character_context._load_recent_sync builds a
+    # CharacterConversationNavigation, whose __init__ imports it). Measured
+    # 2026-11-18: resident in 5 of 18 warm boots, imported 0.13 s after
+    # ready in a traced one. The 1037 -> 1038 raise above already counted it.
+    "tldw_chatbook.DB.character_conversation_search": (
+        "imported by the character context's recent-groups read on an executor thread"
+    ),
+}
+
 #: Families that must not be resident anywhere in the first-paint window.
 #: The two package prefixes are TASK-21731's; the exact module names are the
 #: trajectory family TASK-22213 took off the Chat leg.
@@ -574,7 +589,12 @@ def _boot_and_census(tmp_path: Path) -> list[str]:
     ]
     assert payloads, f"census sentinel missing from stdout:\n{result.stdout[-2000:]}"
     assert json.loads(payloads[-1])["count"] == len(mods)
-    return mods
+    return with_timing_dependent_modules(mods)
+
+
+def with_timing_dependent_modules(mods: list[str]) -> list[str]:
+    """Add ``TIMING_DEPENDENT_AT_READY`` to a flag-time census, sorted."""
+    return sorted(set(mods) | TIMING_DEPENDENT_AT_READY.keys())
 
 
 @pytest.mark.integration
@@ -673,6 +693,21 @@ def test_flag_time_snapshot_is_per_instance_state_on_the_class():
     first._ui_ready = True
     assert first._ui_ready is True and second._ui_ready is False
     assert sink, "first instance's flip filled the sink"
+
+
+def test_a_timing_dependent_module_counts_the_same_whether_or_not_it_loaded():
+    """TASK-41512: a boot whose executor thread won the race to ``_ui_ready``
+    and one whose thread lost give the same count, and each pinned module
+    still exists and says why it is pinned."""
+    assert TIMING_DEPENDENT_AT_READY
+    core = ["tldw_chatbook.app", "tldw_chatbook.UI.Screens.chat_screen"]
+    lost = with_timing_dependent_modules(core)
+    won = with_timing_dependent_modules(core + list(TIMING_DEPENDENT_AT_READY))
+    assert lost == won
+    assert len(lost) == len(core) + len(TIMING_DEPENDENT_AT_READY)
+    for name, reason in TIMING_DEPENDENT_AT_READY.items():
+        assert reason.strip(), name
+        assert (REPO_ROOT / (name.replace(".", "/") + ".py")).is_file(), name
 
 
 def test_census_script_embeds_the_unit_tested_helper():

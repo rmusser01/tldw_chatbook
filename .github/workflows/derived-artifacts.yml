@@ -480,7 +480,6 @@ jobs:
             Tests/Chat/test_provider_evidence_hardening.py \
             Tests/Chat/test_first_run_connection_evidence.py \
             Tests/ProductionApp/test_provider_selection_ownership.py \
-            Tests/Backup_Recovery/test_skills_recovery_controls.py \
             Tests/LLM_Calls/test_summarization_credential_source.py \
             Tests/Chat/test_legacy_api_key_credential_source.py \
             Tests/LLM_Calls/test_dispatch_local_argument_routing.py \
@@ -1656,7 +1655,11 @@ jobs:
       # Round 15: TASK-41112's Actor Pack export file (sandboxed, ~83 s serial
       # at load 104) joins the sandboxed block, before the bootstrap ones.
       # Round 16: TASK-41521's persona coordinator file (sandboxed, 13-15 s
-      # under this step's flags at load 12-16) follows it.
+      # under this step's flags at load 12-16) follows it. TASK-41516 moves
+      # the Library Skills recovery controls file here from pr-fast-lane
+      # (sandboxed, 14 tests, 79 s under this step's flags at load 14-18; its
+      # TASK-41123 node is 21 s in CI) and lanes test_fleet_wake_retry.py
+      # (3 private-profile tests, 18 s) after the three fleet-wake nodes.
       # Round 15: TASK-41133's label-list, must-mask and must-keep table,
       # bracket, next-field, code-span, cache, re-mask-on-import and timing
       # nodes (pure, two CPU-time ratios) join the Trace export nodes, and
@@ -1709,6 +1712,7 @@ jobs:
             Tests/Wizards/test_first_run_subscription_readiness.py \
             Tests/Actor_Packs/test_actor_pack_export.py \
             Tests/Actor_Packs/test_persona_actor_pack_coordinator.py \
+            Tests/Backup_Recovery/test_skills_recovery_controls.py \
             Tests/Prompt_Management/test_prompt_improvement_service.py \
             Tests/RAG_Search/test_keyword_leg_chacha.py \
             Tests/RAG_Search/test_keyword_leg_db_resolution.py \
@@ -1720,6 +1724,7 @@ jobs:
             Tests/Chat/test_console_fleet_wake.py::test_a_wake_takes_no_mixin_anchor_from_an_earlier_unsaved_user_row \
             Tests/Chat/test_console_fleet_wake.py::test_a_failed_wake_reply_is_saved_as_failed \
             Tests/Chat/test_console_fleet_wake.py::test_a_wake_reply_is_the_durable_active_leaf \
+            Tests/Chat/test_fleet_wake_retry.py \
             Tests/Chat/test_console_goal_dispatch.py \
             Tests/Chat/test_console_goal_recovery.py \
             Tests/Chat/test_console_rewind_summarize.py \
