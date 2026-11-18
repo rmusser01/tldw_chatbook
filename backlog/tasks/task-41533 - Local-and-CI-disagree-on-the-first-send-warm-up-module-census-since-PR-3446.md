@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-17 05:39
-updated_date: 2026-11-18 14:49
+updated_date: 2026-11-18 19:27
 labels:
 - follow-up
 - tests
@@ -53,50 +53,71 @@ Reported by the coordinator at the filing review (round 15). Since PR #3446 (mer
 
 **How urgent.** Perf Guard has failed on every dev push since 2026-11-16 12:42 UTC and on every PR that touches the package. Since it is not required, nothing blocks a merge. Its red also hides the next breach: #3592's +1 on app import merged unseen.
 
-**Warm-up census: 99 -> 94 at this base.** No raise. Each new module, the commit that added it, and how it is paid for:
-- `RAG_Search.scope_evidence`: bf9182a4f6 (TASK-36947.3, #3471) listed it. It stays listed, because a first Automatic send's evidence capture imports it on the UI loop. Unlisted, `test_an_automatic_library_send_loads_only_the_two_library_modules_lazily` names it as a third cold UI-thread load (checked). The budget comment now records this (AC#3). Open PR #3571 moves this import off the UI loop and unlists it; it will free one slot when it lands.
-- `Chat.console_ordinary_tree`, `Agents.ordinary_tree` and `Agents.execution_capacity`: d2ea67fadc (TASK-41319, #3583) removed `console_chat_store`'s module-level import of `console_ordinary_tree`. App + chat therefore no longer loads these three, and the listed `console_agent_reply` now pulls them in. They cannot be deferred without a behaviour change: the agent reply awaits `run_ordinary_preparation` on the UI loop, which calls `execution_capacity.current_ordinary_tree`, so a deferred import would land on the first agent send's loop. They are paid for by sheds.
-- `Workspaces.worktree_activity`: the same commit. It is deferred. `console_ordinary_tree` now imports it inside `_capture_maximum`, its only user. The live app already holds it at UI-ready, so the deferral costs nothing.
-- What leaves the census to pay for those five (review r16cs-rev1, fix round 1). Only two of these remove work the user's warm-up actually does:
-  - Real sheds (2): `served_relay_publisher` and its `Web_Server` package are unlisted. They are served mode only, and the app imports them when it is built (`app.py` line 1137, `app_served.py` line 71). A native send never imports them, and a native warm-up no longer loads them. #3533 makes the same one-line removal. The `textual_serve` step, which was listed only as their dependency step, is unlisted too. It is third-party, so the tldw census does not count it, but a native warm-up no longer imports it.
-  - Census-only (3): `app_served` is unlisted, `Canvas.compilation` moves under `TYPE_CHECKING` in `Canvas/native_authority.py` (annotations only), and `Workspaces.worktree_activity` is imported in `_capture_maximum`. A live app holds all three at UI-ready, so these changes only shrink the app + chat census.
+**Rebased 2026-11-18 onto ffdf0c5472, after #3627 (TASK-41800).** The coordinator authorized the rebase. Dev's #3627 landed the same kind of fix as this task:
+- 13e7d08740 defers `chachanotes_sql_steps`;
+- e5f0484644 makes five census-only sheds from the warm-up.
 
-**The live delta (review r16cs-rev2, fix round 2).** The census reads 94 again. Live, the native warm-up loads one module more than the last in-budget trees.
-- Method: probe `scratchpad/fu/r16cs/live_warmup_probe.py`. It warm-boots the app headless to `_ui_ready` the way the UI-ready census does, waits 3 s for the post-ready timers, runs the screen-route walk (where the real warm-up starts), then imports the list in order. It counts new `tldw_chatbook` modules and new third-party top-level packages. The reviewer reproduced 78 at this head.
-- Baseline: the last in-budget trees, a94c4aec67 (#3446 before its rebase, CI run 43331816906) and 5d1fc43130 (dev before #3446, CI run 43861223546), read 77 settled; this head reads 78 (3 runs). The +1 is the collision of the two last-slot claims. 5d1fc43130 lists `scope_evidence` but not `agent_lesson_promotion`, a94c4aec67 the reverse, and this head lists both. It ends when #3571 unlists `scope_evidence`. Otherwise the two trees differ from this head as follows:
-  - the trio adds 3;
-  - `served_relay_publisher` and `Web_Server` (this branch's real sheds) remove 2;
-  - `MCP.console_snapshot`, resident at UI-ready since TASK-41308, removes 1.
-- Lines, for information only: at today's file sizes, about +1,530 against 5d1fc43130 and +2,250 against a94c4aec67.
-- The round-1 note compared this head with 1fabd2a7ff, which was itself over budget (its census reads 95, the same collision). That made the delta look like 0. The round-1 review's +2 (91 against 89) mixed trees: it applied this head's UI-ready set to the pin's census.
-- Counted right at `_ui_ready` with no settle, the count moves with timing: this head read 93 and 80 in two runs. Only the settled count compares across trees.
-- Third-party: `textual_serve` is no longer imported.
-- Boot and warm-up: the trio moved from before ready to after it, and `console_snapshot` moved the other way.
-- Owner ruling 2026-11-18, "Accept until #3571". The +1 live first-send module (the `scope_evidence`/`agent_lesson_promotion` collision) is accepted until PR #3571 unlists `scope_evidence`; re-measure when #3571 merges. Recorded in ADR-097's exception ledger (row 2026-11-18, first-send warm-up).
+Where this branch did the same thing, dev's code was kept and this branch's version dropped: the `chachanotes_sql_steps` deferral and its module-size row raise, the `app_served` unlisting, the `Canvas.compilation` `TYPE_CHECKING` move, and the `worktree_activity` deferral. This branch keeps:
+- the real served-mode sheds (`served_relay_publisher`, `Web_Server`, and the third-party `textual_serve` step);
+- the snapshots;
+- the cause analysis, the accounting, and the owner ruling with its ADR-097 ledger row.
 
-**More real sheds were looked for and not found.** The search covered modules the live warm-up loads after a 3 s settle that are neither resident at UI-ready nor in the live first-send record (`LIVE_FIRST_SEND_IMPORTS` / `LIVE_LIBRARY_FIRST_SEND_IMPORTS`):
-- the trio and `console_agent_reply`: agent sends need them on the UI loop (above);
+All the numbers below are measured on the rebased tree.
+
+**Warm-up census: 99 -> 92.** No raise; the limit stays 94. The new modules, and the commit that added each:
+- `RAG_Search.scope_evidence`: bf9182a4f6 (TASK-36947.3, #3471) listed it. It stays listed, because a first Automatic send's evidence capture imports it on the UI loop. Unlisted, `test_an_automatic_library_send_loads_only_the_two_library_modules_lazily` names it as a third cold UI-thread load (checked). The budget comment records this (AC#3). Open PR #3571 moves this import off the UI loop and unlists it.
+- `Chat.console_ordinary_tree`, `Agents.ordinary_tree`, `Agents.execution_capacity` and `Workspaces.worktree_activity`: d2ea67fadc (TASK-41319, #3583) removed `console_chat_store`'s module-level import of `console_ordinary_tree`, so the listed `console_agent_reply` now pulls them in. The first three cannot be deferred without a behaviour change: the agent reply awaits `run_ordinary_preparation` on the UI loop, which calls `execution_capacity.current_ordinary_tree`.
+
+How the census came back down:
+- **#3627 (e5f0484644), census-only, 99 -> 94.** It removed `app_served`, `Canvas.compilation`, `Canvas.profiles`, `Canvas.runtime_assets` and `Workspaces.worktree_activity`. A booted Console already holds all five, so the live warm-up does not change.
+- **This branch, real sheds, 94 -> 92.** `served_relay_publisher` and its `Web_Server` package are unlisted. They are served mode only, and the app imports them when it is built (`app.py` line 1137, `app_served.py` line 71). A native send never imports them, and a native warm-up no longer loads them. #3533 makes the same one-line removal. The `textual_serve` step, listed only as their dependency, goes too. It is third-party, so the census does not count it, but a native warm-up no longer imports it.
+- **The limit stays 94** (headroom 2). ADR-097's tightening convention lowers a limit only when a reduction exceeds the guard's standard slack, and pre-import payload's slack is 20 modules.
+
+**The live delta.** Method: probe `scratchpad/fu/r16cs/live_warmup_probe.py`. It warm-boots the app headless to `_ui_ready` the way the UI-ready census does, waits 3 s for the post-ready timers, runs the screen-route walk (where the real warm-up starts), then imports the list in order. It counts new `tldw_chatbook` modules and new third-party top-level packages.
+- **Counts:**
+  - this rebased head: 78 (2 runs);
+  - ffdf0c5472, which is dev with #3627 but without this branch: 80 (2 runs);
+  - the last in-budget trees, a94c4aec67 (#3446 before its rebase, CI run 43331816906) and 5d1fc43130 (dev before #3446, CI run 43861223546): 77 each.
+- **The +1 against the in-budget trees still exists after #3627.** It is the collision of the two last-slot claims: 5d1fc43130 lists `scope_evidence` but not `agent_lesson_promotion`, a94c4aec67 the reverse, and this head lists both. It ends when #3571 unlists `scope_evidence`.
+- **Otherwise the in-budget trees differ from this head by:**
+  - the trio, +3;
+  - this branch's served-mode sheds, -2;
+  - `MCP.console_snapshot`, -1. TASK-41308 made it resident at UI-ready.
+- **Lines** (for information only, at today's file sizes): about +1,530 against 5d1fc43130 and +2,250 against a94c4aec67.
+- **Earlier comparisons:**
+  - The round-1 note compared this head with 1fabd2a7ff, which was itself over budget (its census reads 95, the same collision).
+  - The round-1 review's +2 (91 against 89) mixed trees: it applied this head's UI-ready set to the pin's census.
+  - Counted right at `_ui_ready` with no settle, the count moves with timing: one tree read 93 and 80 in two runs. Only the settled count compares across trees.
+- **Owner ruling 2026-11-18, "Accept until #3571".** The +1 live first-send module (the `scope_evidence`/`agent_lesson_promotion` collision) is accepted until PR #3571 unlists `scope_evidence`; re-measure when #3571 merges. It is recorded in ADR-097's exception ledger (row 2026-11-18, first-send warm-up). That row now describes the state after #3627.
+
+**More real sheds were looked for and not found** (fix round 1). The search covered modules the live warm-up loads after a 3 s settle that are neither resident at UI-ready nor in the live first-send record (`LIVE_FIRST_SEND_IMPORTS` / `LIVE_LIBRARY_FIRST_SEND_IMPORTS`):
+- the trio and `console_agent_reply`: agent sends need them on the UI loop;
 - `scope_evidence`: needed by Automatic sends;
-- `Chat.console_send_start`: TASK-36610, opened at acceptance;
-- `Chat.console_settings_persistence`: unlisting it keeps the harness and Automatic send tests green, but the store's `reconcile_durable_turn_settings` and the settings-persistence drain import it, so a durable chat's send can need it;
+- `Chat.console_send_start`: TASK-36610 opens it at acceptance;
+- `Chat.console_settings_persistence`: the store's `reconcile_durable_turn_settings` and the settings-persistence drain import it;
 - the `hooks_v2` and `response_rules` package modules: parents of listed modules;
-- seven `Tools.*` modules (`local_tool_impls`, `patch_tool_impls`, `workspace_tool_executor` and its protocol, wire, root-pin and watchdog modules), pulled in by `Agents.local_tool_provider`. The provider builds a `WorkspaceToolExecutor` when it is constructed, and `Tests/Agents/test_local_tool_provider.py` patches `local_tool_provider.WorkspaceToolExecutor`.
+- seven `Tools.*` modules pulled in by `Agents.local_tool_provider`: the provider builds a `WorkspaceToolExecutor` when it is constructed, and `Tests/Agents/test_local_tool_provider.py` patches it.
 
-None of these can leave without a behaviour change. That leaves one live module (the collision) until #3571; the owner accepted it until #3571 ("Owner ruling" above). The line growth is informational.
+None of these can leave without a behaviour change. That leaves the one live module (the collision) that the owner accepted until #3571. The line growth is informational.
 
-**App-import census: 688 -> 687 (limit `< 688`).** No raise. The snapshot showed +4/-3:
-- `DB.chachanotes_sql_steps`: 3911d7df50 (TASK-41310 A, #3592) made `ChaChaNotes_DB` import it at module level. This is the +1 that took dev from 687 (CI 43917600520 at 5e3c8b2bd4: 687/688, drift +3/-3) to 688. It is deferred: the two upgrade steps that use it (v85->v86 and v86->v87) import it where they run. The module-size row for `ChaChaNotes_DB.py` rises by that fix's own line, 22544 -> 22545, with a dated comment, as the owner's size-ratchet rule for fixes asks.
-- `Agents` and `Agents.agent_models`: 064d5cb014 added `console_chat_models`' re-export of `ConsoleSubmissionOrigin` (app.py -> console_raw_cli -> console_chat_models). `app_services`: 79a46b3b4e added `console_runtime`'s module-level import of `tldw_chatbook.console_app_services`, and af3e54510f renamed that module to `tldw_chatbook.app_services`. Both commits are older than the snapshot's last pin (592425f087), which was regenerated before a rebase onto them. These three are already paid for, and have been counted inside the 687 since at least 5d1fc43130, by three modules that left the import path: `Character_Chat.local_chat_dictionary_service`, `Chat.console_preparation_reads` and `DB.private_sqlite_files`. The snapshot is refreshed, so the drift now reads zero.
+**App-import census: 687/688 (limit `< 688`).** No raise.
+- **`DB.chachanotes_sql_steps`**: 3911d7df50 (TASK-41310 A, #3592) made `ChaChaNotes_DB` import it at module level. That took dev from 687 to 688. Dev's 13e7d08740 (#3627) defers it to the two upgrade steps. This branch's identical deferral and its size-row raise were dropped in the rebase; dev's version keeps the file at its 22544-line row.
+- **`Agents` and `Agents.agent_models`**: 064d5cb014 added `console_chat_models`' re-export of `ConsoleSubmissionOrigin` (app.py -> console_raw_cli -> console_chat_models).
+- **`app_services`**: 79a46b3b4e added `console_runtime`'s module-level import of `tldw_chatbook.console_app_services`, and af3e54510f renamed that module to `tldw_chatbook.app_services`.
+- Both of those commits are older than the snapshot's last pin (592425f087), which was regenerated before a rebase onto them. These three modules are paid for by three that left the import path: `Character_Chat.local_chat_dictionary_service`, `Chat.console_preparation_reads` and `DB.private_sqlite_files`.
+- This branch refreshes the snapshot, so the drift reads zero.
 
-**Evidence.**
-- Red at this base: `assert 99 <= 94` and `assert 688 < 688`.
-- Green after, 3 of 3 serial runs: `first-send-warmup: 94/94`, `boot-import-weight: 687/688`. The refreshed `first_send_warmup.json` matches the census's module set and listed entries exactly.
-- No other boot budget moved: the preimport route walk stays 558/558, and the UI-ready census reads 1039/1040. That is one lower, because `chachanotes_sql_steps` is no longer resident on a warm boot.
-- Covering tests, `-n 4`, load 15-35:
-  - `test_console_first_send_preimport`, `test_console_first_send_import_cycles`, `test_console_first_send_review_imports`, `test_console_relay_approval_integration`, the boot budget files, `test_app_startup_delegation`, `test_console_approval_critical_gate`, `test_app_import_diet_closure` and the v87 migration test all passed. The only failures in that batch (132 passed, 8 failed) are the 8 cases of `test_first_send_warmup_gc_overlap`. That test calls `preimport_first_send_modules(app)`, but the function now also takes `on_complete`; the same 8 fail at the base. #3533 fixes that call.
-  - The ordinary-tree, SSH-custody, archive-recovery-dispatch, workflow-scheduling and Canvas files gave 523 passed, 70 failed. The base (67583dfa72), run with the same command, fails the same 70 nodes. The Canvas startup cases among them fail on the known local `RecoveryRequired: raw_source_selection_changed`.
-- `Tests/Architecture`, serial: 1471 passed, 5 failed, 5 skipped. All 5 also fail at the base: the app string-lookup census `[Widgets]`, the layer map (`config.py` -> `Chat.console_provider_endpoints`), the persistent diagnostic inventory, and the two timer-path inventory nodes. The module-size row for `ChaChaNotes_DB.py` passes at 22545.
-- UI-ready census after these changes: 1039/1040 on 3 of 3 runs.
+**Evidence (rebased tree).**
+- Before (ffdf0c5472, dev plus wave 2): the warm-up census reads 94/94.
+- After: the warm-up census reads 92/94. Its refreshed snapshot matches the census.
+- App import: 687/688, snapshot refreshed.
+- UI-ready census: 1039/1040.
+- Preimport route walk: 557/558.
+- Live warm-up: 78 (80 at ffdf0c5472).
+- 3 of 3 serial runs: `first-send-warmup: 92/94`, `boot-import-weight: 687/688`.
+- Boot budget step, serial: 33 passed, 1 failed. The failure is `test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet` (`assert 270 <= 268`), which also fails at ffdf0c5472; this branch touches no CSS. In a run at load ~97, `test_app_import_stays_well_under_pre_fix_baseline` failed once on wall time (11.4 s against 8.0 s); it passed on the rerun.
+- `Tests/CI` (`-n 4`): 1746 passed, 1 skipped.
+- The first-send tests (`test_console_first_send_preimport`, `test_console_first_send_import_cycles`, `test_console_first_send_review_imports`) with `test_boot_budget_ratchet_messages`: 72 passed.
 - `./scripts/preflight.sh` passes.
 
-**Files.** `tldw_chatbook/Chat/console_first_send_modules.py`, `tldw_chatbook/Chat/console_ordinary_tree.py`, `tldw_chatbook/Canvas/native_authority.py`, `tldw_chatbook/DB/ChaChaNotes_DB.py`, `Tests/Performance/test_screen_preimport_payload_budget.py` (budget comment), `Tests/Performance/boot_budget_snapshots/first_send_warmup.json`, `Tests/Performance/boot_budget_snapshots/boot_import_modules.txt`, `Tests/Architecture/test_module_size_ratchet.py`. The lesson is in `backlog/docs/lessons-testing-evidence.md` ("Local fails, CI passes" was never checked against CI's log for the same tree).
+**Files (this branch, after the rebase).** `tldw_chatbook/Chat/console_first_send_modules.py` (the served-mode sheds), `Tests/UI/test_console_first_send_import_cycles.py`, `Tests/Performance/test_screen_preimport_payload_budget.py` (budget comment), `Tests/Performance/boot_budget_snapshots/first_send_warmup.json`, `Tests/Performance/boot_budget_snapshots/boot_import_modules.txt`, `backlog/decisions/097-boot-budget-ratchets.md` (ledger row). The lesson is in `backlog/docs/lessons-testing-evidence.md` ("Local fails, CI passes" was never checked against CI's log for the same tree), already on the base.

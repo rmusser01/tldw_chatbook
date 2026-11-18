@@ -218,38 +218,38 @@ MAX_SINGLE_ROUTE_ADDED_LOC = 135_111
 #: 2026-10-31). Its ``Notes.agent_lessons`` import moved into the one function
 #: that uses it, so it adds one module, not two. The review service a first
 #: send also imported stays out: an ordinary turn no longer loads it.
-#: 2026-11-18 (TASK-41533): this census reads 94 again, with no raise, but
-#: the live warm-up is one module over the last in-budget trees (below).
-#: Two changes went over it.
-#: ``RAG_Search.scope_evidence`` (TASK-36947.3) stays listed, because a first
-#: Automatic send's evidence capture imports it on the UI loop. TASK-41319
-#: took ``Chat.console_ordinary_tree`` and the ``Agents.ordinary_tree`` and
-#: ``Agents.execution_capacity`` modules it imports off the pre-ready boot
-#: path, so the listed ``console_agent_reply`` now loads all three after
-#: ready. The census counted those four new modules plus
-#: ``Workspaces.worktree_activity``, which console_ordinary_tree imports.
-#: Five modules leave it:
-#: - two are real sheds: served_relay_publisher and its ``Web_Server``
-#:   package. They are served mode only, and a native warm-up no longer
-#:   loads them.
-#: - three only left this census: app_served (now unlisted),
-#:   ``Canvas.compilation`` (an annotation-only import in native_authority)
-#:   and ``Workspaces.worktree_activity`` (imported where
-#:   console_ordinary_tree uses it). A live app holds all three at UI-ready
-#:   anyway, so moving them changes nothing at run time.
+#: 2026-11-18 (TASK-41533, after #3627 / TASK-41800): this census reads 92,
+#: with no raise. Two changes took it to 99. ``RAG_Search.scope_evidence``
+#: (TASK-36947.3) is listed because a first Automatic send's evidence capture
+#: imports it on the UI loop. TASK-41319 took ``Chat.console_ordinary_tree``
+#: off the boot path, so the listed ``console_agent_reply`` now brings it in,
+#: with ``Agents.ordinary_tree``, ``Agents.execution_capacity`` and
+#: ``Workspaces.worktree_activity``. That is five new modules. They are paid
+#: for in two steps:
+#: - #3627 (TASK-41800, e5f0484644) removed five modules from the census
+#:   only, 99 -> 94: app_served, Canvas.compilation, Canvas.profiles,
+#:   Canvas.runtime_assets and Workspaces.worktree_activity. A booted Console
+#:   already holds all five, so the live warm-up does not change.
+#: - This branch removed two modules for real, 94 -> 92: served_relay_publisher
+#:   and its ``Web_Server`` package. They are served mode only, and a native
+#:   warm-up no longer loads them. It also unlisted textual_serve, a
+#:   third-party step that was listed only for them.
+#: The limit stays 94. ADR-097's tightening fires only past the standard
+#: slack, which for pre-import payload is 20 modules.
 #: Live, measured from a warm boot after a 3 s settle and the screen-route
-#: walk (where the real warm-up starts), the native warm-up loads 78 modules.
-#: The last in-budget trees, a94c4aec67 and 5d1fc43130, load 77, so this is
-#: one live module more. That module is the collision: those trees listed
-#: only one of scope_evidence and agent_lesson_promotion, and this one lists
-#: both. It goes away when #3571 unlists scope_evidence. The owner accepted
-#: it until then ("Accept until #3571", 2026-11-18). The ruling is recorded in
-#: TASK-41533 and in ADR-097's exception ledger. Otherwise, the trio's +3 is
-#: matched by the two served-mode sheds and by ``MCP.console_snapshot``,
-#: which TASK-41308 made resident at UI-ready. For information only: at
-#: today's file sizes that is about 1,500 to 2,300 more lines. Counted right
-#: at ``_ui_ready`` with no settle, the same tree read 80 and 93 in two
-#: runs, so that count is not comparable from one run to the next.
+#: walk (where the real warm-up starts), the native warm-up loads 78 modules
+#: (80 on dev without this branch). The last in-budget trees, a94c4aec67 and
+#: 5d1fc43130, load 77, so this is one live module more. That module is the
+#: collision: those trees listed only one of scope_evidence and
+#: agent_lesson_promotion, and this one lists both. It goes away when #3571
+#: unlists scope_evidence. The owner accepted it until then ("Accept until
+#: #3571", 2026-11-18). The ruling is recorded in TASK-41533 and in ADR-097's
+#: exception ledger. Otherwise, the TASK-41319 trio's +3 is matched by the two
+#: served-mode sheds and by ``MCP.console_snapshot``, which TASK-41308 made
+#: resident at UI-ready. For information only: at today's file sizes that is
+#: about 1,500 to 2,300 more lines. Counted right at ``_ui_ready`` with no
+#: settle, one tree read 80 and 93 in two runs, so that count is not
+#: comparable from one run to the next.
 MAX_FIRST_SEND_WARMUP_ADDED_MODULES = 94
 
 _CENSUS_SCRIPT = """
