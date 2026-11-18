@@ -1,7 +1,7 @@
 ---
 id: TASK-41314
 title: "Eight native workflow-planning nodes are red on dev: child timeouts, a wrong failure marker and workflow_not_settled"
-status: In Progress
+status: Done
 created_date: 2026-11-16 19:55
 labels:
 - follow-up
@@ -35,7 +35,7 @@ Filed from the 2026-11-13..16 burn-down. TASK-40718 (PR #3543) found the same 8 
 <!-- AC:BEGIN -->
 - [x] #1 Each of the 8 nodes is classified as test drift (naming the commit) or a product defect (fixed, with the test red first), and the classification is recorded in the task notes
 - [x] #2 All 8 nodes pass on dev at `-n 4`, or are retargeted with the reason recorded
-- [ ] #3 The file runs on a PR lane, or the task notes record why it should not
+- [x] #3 The file runs on a PR lane, or the task notes record why it should not
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -97,3 +97,5 @@ The recovery path is current behaviour, not a contract. Follow-up to file (shutd
 **AC #3 is not ticked.** Workflow files are not edited here. The lane is recorded in the hand-off.
 
 Files: `Tests/Chat/test_workflow_planning_native.py`, `Tests/Chat/workflow_planning_probe.py`.
+
+**AC #3 (lane PR, 2026-11-18).** The file runs in the new `pr-fast-lane-admission-4` job (owner decision 2026-11-18, "New job"); no existing lane had 8-19 min of room. Serially on dev 908e9840aa: 27 passed in 516 s at load 20-33 and in 1147 s at load ~90 (a first serial run during a brief disk-full spike had 3 failures, all passing on the rerun).

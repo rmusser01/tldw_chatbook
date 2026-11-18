@@ -1051,6 +1051,28 @@ ADMISSION_3_TARGETS = (
     "Tests/UI/test_theme_contrast.py::test_roleplay_items_search_placeholder_and_typed_text_clear_aa_on_every_theme",
 )
 
+#: Follow-ups burn-down lanes (owner decision 2026-11-18, "New job"): the
+#: bootstrap_profile files TASK-41307, TASK-41310 and TASK-41313..41316
+#: repaired or added, which ran on no PR lane (about 16.7 min serially).
+ADMISSION_4_TARGETS = (
+    # TASK-41313: run-log prompt, stats slice and survivor lifetimes, and the
+    # fleet budget boundary probes (97 s serially for the four at load 15).
+    "Tests/Agents/test_run_log_prompt_integration.py",
+    "Tests/Agents/test_run_log_stats_slice_runtime_tools.py",
+    "Tests/Agents/test_run_log_survivor_lifetime.py",
+    "Tests/Chat/test_fleet_budget_boundary_probes.py",
+    # TASK-41314: native workflow planning custody (27 tests, 8.6 min serially).
+    "Tests/Chat/test_workflow_planning_native.py",
+    # TASK-41315 / TASK-41316: a Console agent turn's original storage and MCP
+    # sources, and the first-send survivor (6.0 min serially for the two).
+    "Tests/Chat/test_console_agent_storage_sources.py",
+    "Tests/Chat/test_console_first_send_survivor_native.py",
+    # TASK-41310 / TASK-41307: trace capture after a native spawn_subagent, and
+    # pre-run cleanup on Stop (30 s serially for the two).
+    "Tests/Chat/test_console_spawn_subagent_trace_capture.py",
+    "Tests/Chat/test_console_pre_run_cleanup_stop.py",
+)
+
 #: The lasting-sync real-stack files (a real database, a real ``.md``, the
 #: production runtime). They are ``bootstrap_profile``, so they run in the
 #: admission-sensitive invocation, never in the sandboxed one above. Pinned as
@@ -1161,6 +1183,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
         "pr-fast-lane-admission",
         "pr-fast-lane-admission-2",
         "pr-fast-lane-admission-3",
+        "pr-fast-lane-admission-4",
         "ui-fast-lane",
         "plugins-recovery-ui",
         "console-p0-gate",
@@ -1198,6 +1221,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
         ("pr-fast-lane-admission", "Require successful PR fast lane (admission-sensitive)"),
         ("pr-fast-lane-admission-2", "Require successful PR fast lane (admission-sensitive 2)"),
         ("pr-fast-lane-admission-3", "Require successful PR fast lane (admission-sensitive 3)"),
+        ("pr-fast-lane-admission-4", "Require successful PR fast lane (admission-sensitive 4)"),
         ("plugins-recovery-ui", "Require successful managed plugin recovery UI"),
         ("dreams-boundary", "Require successful Dreams and Guardian boundary contracts"),
         ("dreams-tracking", "Require successful Dreams tracking tests"),
@@ -1216,6 +1240,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
         "pr-fast-lane-admission",
         "pr-fast-lane-admission-2",
         "pr-fast-lane-admission-3",
+        "pr-fast-lane-admission-4",
         "plugins-recovery-ui",
         "dreams-boundary",
         "dreams-tracking",
@@ -1281,6 +1306,12 @@ EXACT_STEPS = {
         "pr-fast-lane-admission-3",
         "Run admission-sensitive suites 3",
         ADMISSION_3_TARGETS,
+        300,
+    ),
+    "admission-sensitive 4": (
+        "pr-fast-lane-admission-4",
+        "Run admission-sensitive suites 4",
+        ADMISSION_4_TARGETS,
         300,
     ),
 }
@@ -1503,6 +1534,12 @@ def test_dedicated_nightly_owns_exact_schedule_and_full_tree_matrix() -> None:
             "PR Fast Lane (admission-sensitive 3)",
             "Run admission-sensitive suites 3",
         ),
+        # Follow-ups burn-down lanes (owner decision 2026-11-18): the fourth.
+        (
+            "pr-fast-lane-admission-4",
+            "PR Fast Lane (admission-sensitive 4)",
+            "Run admission-sensitive suites 4",
+        ),
     ],
 )
 def test_fast_lane_is_one_serial_minimal_python_312_job(
@@ -1627,6 +1664,7 @@ def test_console_p0_gate_runs_three_serial_minimal_python_312_profiles() -> None
             EXACT_STEPS["admission-sensitive"],
             EXACT_STEPS["admission-sensitive 2"],
             EXACT_STEPS["admission-sensitive 3"],
+            EXACT_STEPS["admission-sensitive 4"],
         )
         for target in _pytest_targets(
             _named_step(_workflow("derived-artifacts.yml")["jobs"][job], name)["run"]
@@ -1985,6 +2023,30 @@ def test_third_admission_target_set_is_exact() -> None:
         assert shared == []
 
 
+def test_fourth_admission_target_set_is_exact() -> None:
+    """Follow-ups burn-down lanes (owner decision 2026-11-18): the fourth
+    admission-sensitive job is pinned the same way and shares no target with
+    the other three or the sandboxed lane."""
+    _assert_exact_step(_workflow("derived-artifacts.yml"), "admission-sensitive 4")
+    assert ADMISSION_4_TARGETS
+    assert len(set(ADMISSION_4_TARGETS)) == len(ADMISSION_4_TARGETS)
+    for other in (
+        ADMISSION_TARGETS,
+        ADMISSION_2_TARGETS,
+        ADMISSION_3_TARGETS,
+        FAST_LANE_TARGETS,
+    ):
+        shared = [
+            (first, second)
+            for first in other
+            for second in ADMISSION_4_TARGETS
+            if first == second
+            or first.startswith(second + "::")
+            or second.startswith(first + "::")
+        ]
+        assert shared == []
+
+
 def test_admission_sensitive_step_gates_the_notes_sync_real_stack_files() -> None:
     """Keep the "no silent winner" and no-hold pins on every pull request.
 
@@ -2062,7 +2124,12 @@ def test_required_aggregation_contract_rejects_partial_failure_check() -> None:
 
 @pytest.mark.parametrize(
     "lane",
-    ["pr-fast-lane-admission", "pr-fast-lane-admission-2", "pr-fast-lane-admission-3"],
+    [
+        "pr-fast-lane-admission",
+        "pr-fast-lane-admission-2",
+        "pr-fast-lane-admission-3",
+        "pr-fast-lane-admission-4",
+    ],
 )
 def test_required_aggregation_contract_rejects_a_dropped_admission_lane(lane: str) -> None:
     """TASK-35575: the required check waits on each admission-sensitive job;
@@ -2091,6 +2158,9 @@ def test_required_aggregation_contract_rejects_a_dropped_admission_lane(lane: st
         ("pr-fast-lane-admission-3", None),
         ("pr-fast-lane-admission-3", "Run admission-sensitive suites 3"),
         ("derived-artifacts", "Require successful PR fast lane (admission-sensitive 3)"),
+        ("pr-fast-lane-admission-4", None),
+        ("pr-fast-lane-admission-4", "Run admission-sensitive suites 4"),
+        ("derived-artifacts", "Require successful PR fast lane (admission-sensitive 4)"),
         ("plugins-recovery-ui", None),
         ("plugins-recovery-ui", "Run managed plugin recovery UI journeys"),
         ("plugins-recovery-ui", "Require both managed plugin recovery journeys to execute"),

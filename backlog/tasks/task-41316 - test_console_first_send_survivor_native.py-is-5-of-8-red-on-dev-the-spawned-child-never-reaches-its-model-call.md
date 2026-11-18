@@ -1,7 +1,7 @@
 ---
 id: TASK-41316
 title: "test_console_first_send_survivor_native.py is 5 of 8 red on dev: the spawned child never reaches its model call"
-status: In Progress
+status: Done
 created_date: 2026-11-16 19:55
 labels:
 - follow-up
@@ -40,7 +40,7 @@ Lead, not confirmed: the gateway subclasses `Tests/Chat/test_console_skill_subst
 <!-- AC:BEGIN -->
 - [x] #1 The task notes name why the spawned child never reaches its model call, from a traceback or log of the child run
 - [x] #2 All 8 nodes pass on dev at `-n 4`, including the wrapped-config-writer node; any product defect found is fixed with a test that is red first
-- [ ] #3 The file runs on a PR lane, or the task notes record why it should not
+- [x] #3 The file runs on a PR lane, or the task notes record why it should not
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -95,3 +95,5 @@ Files: `Tests/console_provider_doubles.py`, `Tests/Chat/test_console_first_send_
 - `test_console_skill_substitution.py`: 39/39 on both. `test_console_ordinary_tree_widening.py`: 17/17 on both. `test_unproven_tool_cleanup_run.py`: 11/11 on both.
 - `test_console_ordinary_receipt_native.py`, `test_console_ssh_custody.py` and `test_native_v2_mcp_events.py`: every node that failed only on head passes alone on head. The leftovers time out or hang on base too: receipt `[queued]` fails alone on both, and passive-context `[disk]` hangs alone on both.
 - `Tests/Architecture` (serial): 6 failed / 1415 passed. Three of the failures also fail on base (`test_reviewed_diagnostic_changes_are_metadata_only` and two in `test_timer_path_static_update_inventory.py`). The other three, `test_task_15103_review_ledger_*`, hit the 300 s timeout while three Architecture runs shared the machine. Re-run alone with a longer timeout, all three pass on both head and base (about 148 s each).
+
+**AC #3 (lane PR, 2026-11-18).** The file runs in the new `pr-fast-lane-admission-4` job (owner decision 2026-11-18, "New job"), beside the storage-sources file. Serially on dev 908e9840aa: 8 passed in 147 s (a first run during a brief disk-full spike failed the wrapped-config-writer node; it passes on the rerun).

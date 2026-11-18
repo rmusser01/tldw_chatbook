@@ -12,6 +12,7 @@ TEST_JOBS = (
     "pr-fast-lane-admission",
     "pr-fast-lane-admission-2",
     "pr-fast-lane-admission-3",
+    "pr-fast-lane-admission-4",
     "ui-fast-lane",
     "console-p0-gate",
     "dreams-boundary",

@@ -1135,6 +1135,11 @@ MINIMUM_FILES = 2179
 # by parameter and append the repaired cold-home node. The floor is the
 # measured entry count.
 MINIMUM_FILES = 2243
+# Follow-ups burn-down lanes (2026-11-18, TASK-41307, TASK-41308, TASK-41313):
+# append the turn activity line, the unbound-MCP Send, the five Inspector
+# MCP-row nodes and the held tool slots files at the tail. The floor is the
+# measured entry count.
+MINIMUM_FILES = 2251
 
 
 def read_census(path: Path) -> list[str]:

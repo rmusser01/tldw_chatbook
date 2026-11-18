@@ -62,6 +62,7 @@ VERDICTS = {
     "pr-fast-lane-admission": "Require successful PR fast lane (admission-sensitive)",
     "pr-fast-lane-admission-2": "Require successful PR fast lane (admission-sensitive 2)",
     "pr-fast-lane-admission-3": "Require successful PR fast lane (admission-sensitive 3)",
+    "pr-fast-lane-admission-4": "Require successful PR fast lane (admission-sensitive 4)",
     "ui-fast-lane": "Require successful UI fast lane",
     "plugins-recovery-ui": "Require successful managed plugin recovery UI",
     "console-p0-gate": "Require successful Console P0 regression gate",
@@ -109,6 +110,9 @@ def test_workflow_has_one_fast_prerequisite_and_one_required_aggregator():
         # Roleplay frame B2b (owner decision 2026-10-31): B2b's mounted Roleplay
         # suites, split out of lane 2 when it hit its 35-min cap at 99%.
         "pr-fast-lane-admission-3",
+        # Follow-ups burn-down lanes (owner decision 2026-11-18): the
+        # bootstrap_profile files TASK-41307, 41310 and 41313..41316 laned.
+        "pr-fast-lane-admission-4",
         "ui-fast-lane",
         "plugins-recovery-ui",
         # TASK-33621.27: the Console review's P0 regression tests, moved out
@@ -466,6 +470,7 @@ def _pytest_step_targets() -> list[tuple[str, tuple[str, ...]]]:
         "pr-fast-lane-admission",
         "pr-fast-lane-admission-2",
         "pr-fast-lane-admission-3",
+        "pr-fast-lane-admission-4",
         "plugins-recovery-ui",
         "console-p0-gate",
         "dreams-boundary",
@@ -511,6 +516,7 @@ def test_every_pr_lane_pytest_step_has_disjoint_targets():
         "pr-fast-lane-admission-2: Run project-chat UAT",
         "pr-fast-lane-admission-2: Run admission-sensitive suites 2",
         "pr-fast-lane-admission-3: Run admission-sensitive suites 3",
+        "pr-fast-lane-admission-4: Run admission-sensitive suites 4",
         "plugins-recovery-ui: Run managed plugin recovery UI journeys",
         "console-p0-gate: Run the sandboxed Console P0 regression tests",
         "console-p0-gate: Run the restore Console P0 regression tests",
