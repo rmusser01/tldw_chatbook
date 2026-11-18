@@ -1,7 +1,7 @@
 ---
 id: TASK-41650
 title: "Show a spawned child's trace calls under the parent's turn in the trace view"
-status: In Progress
+status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-17 19:05
@@ -54,7 +54,7 @@ The Trace view (`y`) lists each spawned child's provider calls as nested **Child
 - **Tests.** `Tests/Chat/test_console_spawn_subagent_trace_capture.py::test_trace_view_lists_child_calls_under_the_spawning_turn`: real controller, store, bridge, gateway and trace runtime under Capture On. Two sibling children each make a tool round, the view is mounted at 200x60 (full-screen tier), and the test asserts that the spawning turn's block holds exactly the four child calls (none elsewhere, so the parent's two calls are not labelled), that each state is Complete, and that `a` lands on a child call. `Tests/Chat/test_trajectory_projection.py::test_child_calls_nest_under_their_turn_numbered_in_dispatch_order` covers numbering by dispatch time against the input order and skips a call with no turn.
 - **Evidence (2026-11-18, branch `fu2/traceui` on dev d0486978dd, machine load 60-95).** The new mounted-view test was red before the change (`assert [] == [...4 child rows]`) and green after. Mutations, each of which fails its test: no dispatch-order sort (projection test); reading every owner call instead of child segments (the view shows `sub-agent 3`); the builder not passing `child_calls` (no rows).
   - Covering files at `-n 4` (spawn capture, projection, trajectory screen/live/timeline/filters/export/import/responsive/capture, v87 child segments, staged-evidence export, semantic mutation inventory, resume active path): 477 passed, 30 failed. 26 failures are `test_console_resume_active_path.py`, and that file has the same 23 failures by id on head and on a detached dev d0486978dd (22 `RecoveryRequired: raw_source_selection_changed`, 1 assertion at :2500). The 4 `test_console_semantic_mutation_inventory.py` failures were load flakes: run alone, 136 passed.
-  - `Tests/Architecture`, serial: 1475 passed, 4 failed (persistent-diagnostic-inventory x2, timer-path inventory x2), also red on base (TASK-41310 saw the same). `./scripts/preflight.sh` passed.
+  - `Tests/Architecture`, serial: 1475 passed, 4 failed. Three are red on base too (`test_reviewed_diagnostic_changes_are_metadata_only` and both timer-path inventory tests; TASK-41310 saw the same). The fourth, `test_task_15103_review_ledger_canonical_schema_and_arithmetic`, passed when run alone on head and in the base run, so it is order- or load-dependent. `./scripts/preflight.sh` passed.
 - **Size.** `console_trace_repository.py` 4021 -> 4040 (+19), row raised with a dated note. `trajectory.py` (1924) and `review_selection.py` (1186) have no row.
 - **Files.** `tldw_chatbook/Chat/console_trace_repository.py`, `tldw_chatbook/Chat/trajectory.py`, `tldw_chatbook/UI/Console_Modules/review_selection.py`, `Tests/Chat/test_console_spawn_subagent_trace_capture.py`, `Tests/Chat/test_trajectory_projection.py`, `Tests/Architecture/test_module_size_ratchet.py`, `Docs/User_Guide/console/semantic-trace-capture.md`, `backlog/decisions/337-console-reference-backed-semantic-trace-ledger.md` (dated note).
 - **Left out (follow-ups).** (1) The child's AgentRunsDB run and its steps still render as a separate "Turn 2", keyed by the conversation id, because a sub-agent run has no `assistant_message_id`. (2) Child calls carry no token counts: the stored usage needs the native reader's private normalizer. (3) The Conversation Inspector's per-message reader still omits child calls.
