@@ -130,6 +130,7 @@ jobs:
                   'Tests/Plugins/test_plugin_end_to_end.py',
                   'Tests/Plugins/test_owned_hook_acceptance.py',
                   'Tests/Plugins/test_recovery.py',
+                  'Tests/Plugins/test_acquisition_diagnostics.py',
                   'Tests/Plugins/test_data_cleanup.py',
                   'Tests/Agents/test_hooks_v2_mcp_execution.py',
                   'Tests/Performance/test_app_startup_performance.py',
