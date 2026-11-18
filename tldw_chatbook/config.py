@@ -3800,7 +3800,7 @@ def _merge_user_config_over_shipped_defaults(
     """
     merged = deep_merge_dicts(DEFAULT_CONFIG_FROM_TOML, dict(user_config))
     if isinstance(api := user_config.get("API"), Mapping) and api.get("custom_openai2_api_ip"):
-        from tldw_chatbook.Chat.console_provider_endpoints import keep_legacy_custom_2_endpoint
+        from tldw_chatbook.Utils.legacy_custom_2_endpoint import keep_legacy_custom_2_endpoint
 
         keep_legacy_custom_2_endpoint(merged, api["custom_openai2_api_ip"], DEFAULT_CONFIG_FROM_TOML)
     user_chat_defaults = user_config.get("chat_defaults")

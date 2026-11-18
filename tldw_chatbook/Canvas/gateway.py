@@ -23,7 +23,7 @@ from dataclasses import dataclass, field, replace
 from importlib.resources import files
 from threading import RLock
 from types import MappingProxyType
-from typing import Any, Literal, Protocol, TypeAlias
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias
 from urllib.parse import quote, urlparse
 from uuid import uuid4
 
@@ -55,13 +55,12 @@ from .models import (
     CanvasRenderPlanV2,
     RenderNode,
 )
-from .profiles import (
-    ProfileSnapshot,
-    load_profile_snapshot,
-    resolve_profile,
-    runtime_assets_for,
-)
-from .runtime_assets import CanvasProfileRuntimeAssets
+# Resident once the Console is built (console_canvas_controller loads
+# Canvas.compilation), so module scope would only inflate the ADR-097
+# first-send census; the calls import them.
+if TYPE_CHECKING:
+    from .profiles import ProfileSnapshot
+    from .runtime_assets import CanvasProfileRuntimeAssets
 
 BridgeConfirmationStatus: TypeAlias = Literal["confirmed", "cancelled", "refused"]
 CanvasGatewayEventKind: TypeAlias = Literal[
@@ -1292,6 +1291,8 @@ class CanvasGateway:
             and profile_snapshot is not authority_snapshot
         ):
             raise ValueError("canvas_profile_snapshot_mismatch")
+        from .profiles import load_profile_snapshot
+
         self.profile_snapshot = (
             profile_snapshot or authority_snapshot or load_profile_snapshot()
         )
@@ -2880,6 +2881,8 @@ class CanvasGateway:
         )
 
     def _profile_assets(self, profile_id: str) -> CanvasProfileRuntimeAssets | None:
+        from .profiles import resolve_profile, runtime_assets_for
+
         resolved = resolve_profile(
             self.profile_snapshot,
             operation="load",

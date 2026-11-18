@@ -62,17 +62,18 @@ KEY_MISMATCH = "personal_context_key_mismatch"
 # version (table, id column, version column). A damaged current manifest never
 # reaches it (the key does not authenticate). Owner decisions 2026-11-16: a
 # damaged current scope is rebuilt, and a dropped agent access setting is Off.
-_DROPPABLE = {
-    "record": None,
-    "proposal": None,
-    "manifest": None,
-    "scope": None,
+# Pointers stay a literal mapping of tuples: the semantic mutation inventory
+# derives the dynamic SQL tables from it.
+_LOCAL_POINTERS = {
     "outbox": ("encrypted_outbox", "outbox_id", "envelope_version"),
     "undo": ("local_undo", "undo_id", "encrypted_undo_version"),
     "record_link": ("local_record_links", "record_id", "encrypted_link_version"),
     "scope_binding": ("local_scope_bindings", "scope_id", "encrypted_binding_version"),
     "runtime_policy": ("local_runtime_policy", "scope_id", "encrypted_policy_version"),
 }
+_DROPPABLE = frozenset(
+    ("record", "proposal", "manifest", "scope", *_LOCAL_POINTERS.keys())
+)
 # The review counts an older (not current) version of these kinds apart.
 _HISTORY = frozenset({"manifest", "scope", "scope_binding", "runtime_policy"})
 REBUILT_SCOPE_RECORDS = "rebuilt_scope_records"
@@ -470,13 +471,8 @@ class RepositoryKeyCustody:
         agent access setting). Readable history and notes that name no version
         stay."""
         for key in damaged:
-            if pointer := _DROPPABLE[key[0]]:
-                table, id_column, version_column = pointer
-                connection.execute(
-                    f"DELETE FROM {table} WHERE {id_column} = ? "  # nosec B608 - fixed names
-                    f"AND {version_column} = ?",
-                    key[1:],
-                )
+            if key[0] in _LOCAL_POINTERS:
+                self._remove_local_pointer(connection, key)
             for outbox_id, envelope_version in connection.execute(
                 "SELECT outbox_id, envelope_version FROM encrypted_outbox "
                 "WHERE object_type = ? AND object_id = ? AND version_id = ?",
@@ -494,6 +490,16 @@ class RepositoryKeyCustody:
                 "AND object_id = ? AND version_id = ?",
                 key,
             )
+
+    @staticmethod
+    def _remove_local_pointer(connection, key) -> None:
+        """Drop the local row naming a damaged version (``_LOCAL_POINTERS``)."""
+        table, id_column, version_column = _LOCAL_POINTERS[key[0]]
+        connection.execute(
+            f"DELETE FROM {table} WHERE {id_column} = ? "  # nosec B608 - fixed names
+            f"AND {version_column} = ?",
+            key[1:],
+        )
 
     @staticmethod
     def _scope_kinds(connection, damaged_ids, scopes) -> tuple[dict, list[str]]:
@@ -592,7 +598,7 @@ class RepositoryKeyCustody:
     def _local_body(self, connection, table, object_type, scope_id):
         """The current local body for a scope (already under the new key), or
         None when there is none."""
-        column = _DROPPABLE[object_type][2]
+        column = _LOCAL_POINTERS[object_type][2]
         row = connection.execute(
             f"SELECT o.* FROM {table} t JOIN encrypted_objects o "  # nosec B608 - fixed names
             f"ON o.object_type = ? AND o.object_id = t.scope_id "
@@ -606,7 +612,7 @@ class RepositoryKeyCustody:
         does, inside the caller's transaction."""
         from .repository import _uuid
 
-        table, _, column = _DROPPABLE[object_type]
+        table, _, column = _LOCAL_POINTERS[object_type]
         version_id = _uuid(f"{object_type}-version")
         self._insert_encrypted(
             connection,

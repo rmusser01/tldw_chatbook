@@ -85,9 +85,7 @@ class ActorPackRecoveryNotice(Horizontal):
                 markup=False,
             )
             return
-        if getattr(self.app, "actor_pack_recovery_error", None) == (
-            "actor_pack_recovery_blocked"
-        ):
+        if self.app.actor_pack_recovery_error == "actor_pack_recovery_blocked":
             self.app.actor_pack_recovery_error = None
         self.app.notify(_CLEARED, markup=False)
         self.remove()  # Not awaited: this worker belongs to the notice.
@@ -98,7 +96,7 @@ async def show_actor_pack_recovery_notice(screen: Widget) -> None:
     app's persona Actor Pack coordinator has a blocked intent."""
 
     app = getattr(screen, "app_instance", None) or screen.app
-    coordinator = getattr(app, "persona_actor_pack_coordinator", None)
+    coordinator = app.persona_actor_pack_coordinator  # Wired in TldwCli.__init__.
     if (
         coordinator is None
         or not getattr(coordinator, "blocked_intent_ids", ())

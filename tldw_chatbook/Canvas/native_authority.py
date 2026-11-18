@@ -8,10 +8,9 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from html.parser import HTMLParser
 from threading import RLock
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from .compilation import PreparedCanvasDocument
 from .compiler import compile_canvas_document
 from .gateway import (
     BridgeConfirmationRequest,
@@ -35,7 +34,12 @@ from .models import (
     CanvasRevisionInfo,
     CanvasScope,
 )
-from .profiles import ProfileSnapshot, resolve_profile
+# Resident once the Console is built (console_canvas_controller loads
+# Canvas.compilation), so module scope would only inflate the ADR-097
+# first-send census; the calls import them.
+if TYPE_CHECKING:
+    from .compilation import PreparedCanvasDocument
+    from .profiles import ProfileSnapshot
 
 
 class _TitleParser(HTMLParser):
@@ -735,6 +739,8 @@ class NativeConsoleCanvasAuthority:
         )
         read = self._read_exact(captured, scope.canvas_id, scope.revision_id)
         snapshot = self._canvas_controller.profile_snapshot
+        from .profiles import resolve_profile
+
         resolved = resolve_profile(
             snapshot,
             operation="load",

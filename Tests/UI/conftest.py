@@ -296,6 +296,11 @@ async def mock_app_instance(mock_app_config):
     app.app_config = mock_app_config
     app.current_chat_is_ephemeral = False
     app.loguru_logger = MagicMock()
+    # No interrupted persona Actor Pack import (TASK-41114). A bare MagicMock
+    # coordinator answers a truthy ``blocked_intent_ids``, so Personas would
+    # mount its recovery notice (4-5 rows) above the list on every mock-tier
+    # visit. A test that wants the notice assigns its own coordinator.
+    app.persona_actor_pack_coordinator.blocked_intent_ids = ()
 
     # Mock common methods
     app.notify = MagicMock()
