@@ -769,7 +769,7 @@ async def test_change_review_restart_required_root_names_the_restart_without_ret
         text = _visible_text(screen)
         assert (
             "Change history for 1 folder(s) waits for an app restart: an earlier "
-            "Git cleanup could not be proven, so its workspace stays held. Chat "
+            "cleanup could not be proven, so its workspace stays held. Chat "
             "and tools continue." in " ".join(text.split())
         )
         assert "preparation failed" not in text

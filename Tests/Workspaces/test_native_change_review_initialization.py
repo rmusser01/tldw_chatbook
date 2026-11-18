@@ -761,8 +761,8 @@ def test_source_replacement_while_readiness_waits_for_publication_lock(
 
 
 _RESTART_COPY = (
-    "Change history waits for an app restart: an earlier Git cleanup could "
-    "not be proven, so its workspace stays held. This turn continues without it."
+    "Change history waits for an app restart: an earlier cleanup could not "
+    "be proven, so its workspace stays held. This turn continues without it."
 )
 
 
@@ -868,3 +868,46 @@ def test_retained_cleanups_hold_later_roots_until_restart_and_say_so(
         )
         owner.finish_root()
         claim.settle(durable=True)
+
+
+def test_a_claim_held_without_a_retained_cleanup_stays_retryable(native_initializer):
+    """Only a retained cleanup's own claim means "restart" (TASK-41635 control).
+
+    A retained cleanup whose owner holds no claim sits beside an opaque claim
+    held by a live owner that retained nothing. The refused root reads "busy"
+    with a retry, and once that claim is released the retry reaches READY.
+    """
+    h = native_initializer
+    capacity, activity = h.runtime.execution_capacity, h.runtime.worktree_activity
+    bystander = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="")
+    retained = bystander.reserve_tool()
+    retention = retained.retain_unproven("Raw CLI")
+    holder = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="t")
+    claim = activity.try_acquire(owner=holder, footprint=WorktreeFootprint(opaque=True))
+    assert claim is not None
+    try:
+        h.registry.set_change_review_enabled("init-workspace", True)
+        h.service.admit_turn("init-workspace")
+        wait_until(
+            lambda: h.service.status("init-workspace").roots[0].state
+            is not RootReadinessState.PREPARING
+        )
+        root = h.service.status("init-workspace").roots[0]
+        assert (root.state, root.reason) == (
+            RootReadinessState.FAILED,
+            "Change history preparation is busy; retry from Settings.",
+        )
+
+        claim.settle(durable=True)
+        holder.finish_root()
+        assert h.service.retry_failed_roots("init-workspace") == 1
+        wait_until(
+            lambda: h.service.status("init-workspace").roots[0].state
+            is RootReadinessState.READY
+        )
+    finally:
+        retention.prove()
+        retained.finish()
+        bystander.finish_root()
+        claim.settle(durable=True)
+        holder.finish_root()

@@ -194,7 +194,7 @@ class WorkspaceChangeReviewPanel(Vertical):
                     self._row(
                         "restart",
                         f"Change history for {count} folder(s) waits for an app restart: "
-                        "an earlier Git cleanup could not be proven, so its workspace "
+                        "an earlier cleanup could not be proven, so its workspace "
                         "stays held. Chat and tools continue.",
                     )
                 if count := counts[RootReadinessState.READY]:

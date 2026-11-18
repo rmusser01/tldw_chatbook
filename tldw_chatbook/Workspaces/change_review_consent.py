@@ -192,8 +192,8 @@ class ChangeReviewConsentService:
     )
     _QUEUE_FULL_REASON = "Change history preparation is busy; retry from Settings."
     _RESTART_REASON = (
-        "Change history waits for an app restart: an earlier Git cleanup could "
-        "not be proven, so its workspace stays held. This turn continues without it."
+        "Change history waits for an app restart: an earlier cleanup could not "
+        "be proven, so its workspace stays held. This turn continues without it."
     )
 
     def __init__(

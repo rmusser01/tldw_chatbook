@@ -362,9 +362,10 @@ class _InitializationSource:
             footprint = WorktreeFootprint(opaque=True)
             with activity.prelaunch(footprint=footprint) as claim:
                 if claim is None:
-                    blockers = {id(o) for o in activity.conflicting_owners(footprint)}
                     for retention in capacity.retained():
-                        if id(retention.operation.owner) in blockers:
+                        if activity.holds_conflicting_claim(
+                            retention.operation.owner, footprint
+                        ):
                             # Its claim stays held until restart (TASK-41635).
                             raise CleanupUnprovenRefused(retention.label, retention)
                     raise CapacityRefused("initialization_activity_busy")
