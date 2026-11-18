@@ -395,7 +395,7 @@ def main():
                 ),
                 "media detail ready",
             )
-            source = screen._selected_media_handoff_payload()
+            source = screen._media_controller._selected_media_handoff_payload()
             assert source is not None and source.body_truncated
             assert source.source_id == str(fixture["id"])
             await press("#library-media-use-in-chat")

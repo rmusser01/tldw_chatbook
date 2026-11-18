@@ -1490,7 +1490,11 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: ``_library_source_total`` kwargs arrived (0); a comment at the
     #: ``resolve_ingest_analysis_provider`` import (+2): 32890 -> 32757 lines,
     #: 1324 -> 1295 methods (measured with ``_measure``).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32841, 1297),
+    #: Fix round 1 (review M1): 8 more media delegators nothing reached
+    #: through the screen, found once the census counted every kind of fake
+    #: attribute the same way, were pruned (-44, -8 methods): 32757 -> 32713
+    #: lines, 1295 -> 1287 methods (measured with ``_measure``).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32797, 1289),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

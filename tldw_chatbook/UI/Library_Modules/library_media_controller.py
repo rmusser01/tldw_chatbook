@@ -407,16 +407,16 @@ is empty):
    prior-extracted media controller instances task 1 kept off
    ``LibraryMediaState`` (``_library_media_browse_controller``,
    ``_library_media_trash_browse_controller`` -- 11 movers each, the
-   cluster's most-referenced names); (e) 1 named late-binding callable for
-   the exclusions above that a MOVER still calls internally (44 before
-   TASK-36952.3.1 moved seven of their bodies here, TASK-36952.3.2 two
+   cluster's most-referenced names); (e) none left: these were the named
+   late-binding callables for the exclusions above that a MOVER called
+   internally, each a ``lambda`` re-reading ``screen.<name>`` on every
+   invocation, at CALL time, which is exactly why every bypass fixture
+   named above kept working unmodified after the wave-7 move. There were
+   44; TASK-36952.3.1 moved seven of their bodies here, TASK-36952.3.2 two
    more, TASK-36952.3.3 seven more, TASK-36952.3.4 six more,
    TASK-36952.3.5 two more, TASK-36952.3.6 eight more and TASK-36952.3.7
-   eleven more; TASK-36952.3.8 moved the last, ``_sanitize_media_field``,
-   here as a staticmethod, so the group is empty) -- each a ``lambda``
-   re-reading ``screen.<name>`` on every invocation, at CALL time, which is
-   exactly why every bypass fixture named above kept working unmodified
-   after the wave-7 move.
+   eleven more, and TASK-36952.3.8 moved the last, ``_sanitize_media_field``,
+   here as a staticmethod.
 
 **The two bindings a ``self.<attr>`` walk cannot produce, and the precedent
 that already knew about them.** ``_library_canvas_projection_depth`` and
@@ -605,10 +605,10 @@ tokens resolve.
 ``@staticmethod``, so its group-(e) callable is gone and group (e) is empty.
 ``LibraryScreen`` keeps a static delegator at the old name, because it
 imports this module lazily: the Prompts, Skills and Notes clusters' bindings
-to the screen name are unchanged. The slice also pruned 30 screen
+to the screen name are unchanged. The slice also pruned 38 screen
 delegators that the earlier slices left with no caller through the screen
 (``_MEDIA_CLUSTER_SCREEN_DELEGATOR_PRUNED``), the two dead Trash statics
-among them. ``_toggle_library_media_reader_pane`` (class 7) stays on the
+among them (30 in its first commit, 8 more in its fix round). ``_toggle_library_media_reader_pane`` (class 7) stays on the
 screen: it is the parent task's one AC #1 exception, the multi-subsystem
 reader-pane dispatcher.
 
@@ -861,7 +861,7 @@ class LibraryMediaController:
     TASK-36952.3.6 moved 16 more and kept a delegator for 8;
     TASK-36952.3.7 moved 23 more and kept a delegator for 17.
     TASK-36952.3.8 moved ``_sanitize_media_field`` here behind a static
-    screen delegator and pruned 30 delegators nothing reached.
+    screen delegator and pruned 38 delegators nothing reached.
     """
 
     def __init__(

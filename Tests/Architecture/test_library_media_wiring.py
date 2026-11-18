@@ -630,14 +630,21 @@ _MEDIA_CLUSTER_STATICMETHOD_NAMES: frozenset[str] = frozenset(
     }
 )
 
-#: Filled in by this series' own cleanup task (task 3, media series 3/3):
-#: the moved names whose screen delegator has ZERO references outside its
-#: own body anywhere in the repo, across all four census spellings
-#: (attribute, quoted-string, bare-assignment, patch-target table). Empty
-#: at the controller PR, exactly as every prior series' own wiring test
-#: carried it between its task 2 and task 3.
+#: The moved names whose screen delegator nothing reaches through a screen
+#: or ``LibraryScreen``. Every remaining reference to such a name is the
+#: controller's own ``self.<name>``, a ``*_media_controller`` /
+#: ``LibraryMediaController`` receiver, a fake's own attribute (a
+#: ``SimpleNamespace(<name>=...)`` keyword, an attribute assigned on a fake,
+#: or a ``def`` on a fake class), a pin in this file, or prose. Census roots:
+#: ``tldw_chatbook/``, ``Tests/``, ``scripts/``, ``Helper_Scripts/`` and
+#: ``Docs/``. TASK-36952.3.1-3.8 pruned by this rule.
 #:
-#: **22 of the 140**, from an ``ast``-based census (never a call-shaped
+#: History: wave-7 task 3 (the media series' own cleanup, 3/3) applied the
+#: stricter rule of ZERO references outside the delegator's own body, across
+#: all four census spellings (attribute, quoted-string, bare-assignment,
+#: patch-target table); the set was empty at the controller PR, as every
+#: prior series' own wiring test carried it between its task 2 and task 3.
+#: That task pruned **22 of the 140**, from an ``ast``-based census (never a call-shaped
 #: regex -- a bare callable passed as an argument is an ``ast.Attribute``
 #: too, and the prompts series lost three names to exactly that blind spot)
 #: over ``tldw_chatbook/`` + every ``Tests/`` root + ``Docs/`` + ``scripts/``
@@ -740,7 +747,9 @@ _MEDIA_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
         # ``LibraryMediaController`` receiver, or a fake's own attribute
         # (receiver-aware ast census over tldw_chatbook/, Tests/, scripts/ and
         # Helper_Scripts/, plus the f-string sweep). Includes the two Trash
-        # statics the 3.4 review found dead.
+        # statics the 3.4 review found dead. Fix round 1 re-ran the census with
+        # Docs/ added and the fake rule applied consistently; it found the 8
+        # at the end of this block.
         "_adopt_library_media_row_owner",
         "_advance_library_media_content_match",
         "_advance_library_media_presentation_epoch",
@@ -771,6 +780,15 @@ _MEDIA_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
         "_set_library_media_content_mode",
         "_start_library_media_read_later_toggle",
         "_valid_library_media_trash_delete_ack",
+        # TASK-36952.3.8 fix round 1: 8 more by the same rule.
+        "_complete_library_media_mutation",
+        "_fetch_library_media_analysis_detail",
+        "_focus_library_media_items_pane",
+        "_library_media_mutation_summary",
+        "_notify_library_media_delete_warning",
+        "_request_library_media_filter",
+        "_required_library_media_backing_id",
+        "_sync_library_media_viewer_mutation_gate",
     }
 )
 
@@ -1114,9 +1132,14 @@ def test_the_canvas_owned_rows_are_movers_that_landed_on_the_canvas() -> None:
 
 @pytest.mark.unit
 def test_media_cluster_staticmethods_forward_to_the_controller_class() -> None:
-    """The 3 staticmethod names in the cluster forward to the CLASS.
+    """Each cluster staticmethod the screen still offers forwards to the CLASS.
 
-    A ``@staticmethod`` has no ``self`` to reach ``self._media_controller``
+    Five cluster names are staticmethods: two keep a screen delegator
+    (``_restore_library_media_scope``, ``_sanitize_media_field``) and three
+    were pruned (``_bounded_library_media_trash_title``,
+    ``_valid_library_media_trash_delete_ack``,
+    ``_validated_library_media_trash_restore_summary``), which must stay
+    absent. A ``@staticmethod`` has no ``self`` to reach ``self._media_controller``
     through, so its delegator names the module-level controller class
     directly -- the conversations exemplar's own corrected shape (recipe
     §11, "the static-method delegator pattern"), reused unchanged by every
@@ -1309,21 +1332,75 @@ def test_media_controller_takes_a_typed_host_instead_of_the_screen() -> None:
     )
 
 
+#: TASK-36952.3.8 (ruling R4): the host's members, pinned. Adding a member
+#: is the one way to widen what the controller may read off the screen, so
+#: it must change this set and pass the framework check below.
+_MEDIA_HOST_MEMBERS: frozenset[str] = frozenset(
+    {
+        "app",
+        "app_instance",
+        "call_after_refresh",
+        "call_next",
+        "check_action",
+        "focus_chain",
+        "focused",
+        "is_attached",
+        "is_mounted",
+        "is_running",
+        "notify",
+        "post_message",
+        "query",
+        "query_one",
+        "refresh",
+        "run_worker",
+        "set_focus",
+        "set_timer",
+        "size",
+    }
+)
+
+
 @pytest.mark.unit
 def test_library_screen_implements_the_media_host() -> None:
-    """Every ``LibraryMediaHost`` member resolves on ``LibraryScreen``.
+    """The host offers framework services only, and ``LibraryScreen`` has them.
 
-    ``app_instance`` is the one instance attribute (``BaseAppScreen.__init__``
-    sets it); the rest are Textual class attributes.
+    The member set is pinned (19). Every member but ``app_instance`` must
+    resolve on Textual's own ``Screen``, so a ``LibraryScreen`` attribute
+    (a shell field or helper) cannot be added to the Protocol and read
+    through the host. ``app_instance`` is the one exception: an instance
+    attribute that ``BaseAppScreen.__init__`` sets and ``LibraryScreen``
+    inherits.
     """
+    from textual.screen import Screen
+
+    from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
-    missing = sorted(
-        name
-        for name in _media_host_members() - {"app_instance"}
-        if not hasattr(LibraryScreen, name)
+    members = _media_host_members()
+    assert members == _MEDIA_HOST_MEMBERS, (
+        f"host members drifted: added {sorted(members - _MEDIA_HOST_MEMBERS)}, "
+        f"removed {sorted(_MEDIA_HOST_MEMBERS - members)}"
     )
-    assert not missing, f"LibraryScreen does not offer host member(s): {missing}"
+    not_framework = sorted(
+        name for name in members - {"app_instance"} if not hasattr(Screen, name)
+    )
+    assert not not_framework, (
+        f"host member(s) that are not Textual Screen services: {not_framework}"
+    )
+    assert issubclass(LibraryScreen, BaseAppScreen)
+    init = ast.parse(inspect.getsource(BaseAppScreen.__init__).lstrip()).body[0]
+    assigns_app_instance = any(
+        isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Attribute)
+            and target.attr == "app_instance"
+            and isinstance(target.value, ast.Name)
+            and target.value.id == "self"
+            for target in node.targets
+        )
+        for node in ast.walk(init)
+    )
+    assert assigns_app_instance, "BaseAppScreen.__init__ no longer sets app_instance"
 
 
 @pytest.mark.unit

@@ -16009,28 +16009,6 @@ class LibraryScreen(BaseAppScreen):
             work, on_failure=on_failure
         )
 
-    def _complete_library_media_mutation(
-        self,
-        *,
-        committed: bool = False,
-        remove_ids: tuple[str, ...] = (),
-        upsert_items: tuple[Mapping[str, Any], ...] = (),
-        focus_identity: str = "",
-    ) -> None:
-        return self._media_controller._complete_library_media_mutation(
-            committed=committed,
-            remove_ids=remove_ids,
-            upsert_items=upsert_items,
-            focus_identity=focus_identity,
-        )
-
-    def _library_media_mutation_summary(
-        self,
-        media_id: str,
-        record: Mapping[str, Any],
-    ) -> Mapping[str, Any]:
-        return self._media_controller._library_media_mutation_summary(media_id, record)
-
     @staticmethod
     def _restore_library_media_scope(state: Mapping[str, Any]) -> MediaBrowseScope:
         from ..Library_Modules.library_media_controller import (
@@ -16073,9 +16051,6 @@ class LibraryScreen(BaseAppScreen):
 
     def _stop_library_media_filter_timer(self) -> None:
         return self._media_controller._stop_library_media_filter_timer()
-
-    def _request_library_media_filter(self, query: str) -> None:
-        return self._media_controller._request_library_media_filter(query)
 
     def _build_library_media_trash_state(self) -> LibraryMediaTrashState:
         return self._media_controller._build_library_media_trash_state()
@@ -22036,9 +22011,6 @@ class LibraryScreen(BaseAppScreen):
         self, media_id: str
     ) -> tuple[str, int | str] | None:
         return self._media_controller._library_media_reader_identity(media_id)
-
-    def _required_library_media_backing_id(self, media_id: str) -> int:
-        return self._media_controller._required_library_media_backing_id(media_id)
 
     @on(Button.Pressed, "#library-notes-sort")
     def handle_library_notes_sort(self, event: Button.Pressed) -> None:
@@ -30591,9 +30563,6 @@ class LibraryScreen(BaseAppScreen):
             service.set_cursor(review_set.set_id, resolved)
         return review_set.set_id, landing.backing_media_id
 
-    def _focus_library_media_items_pane(self) -> None:
-        return self._media_controller._focus_library_media_items_pane()
-
     def _library_media_list_surface_active(self, *, require_focus: bool = True) -> bool:
         return self._media_controller._library_media_list_surface_active(
             require_focus=require_focus
@@ -30650,9 +30619,6 @@ class LibraryScreen(BaseAppScreen):
     @on(Button.Pressed, "#library-media-delete-confirm")
     def handle_library_media_delete_confirm(self, event: Button.Pressed) -> None:
         return self._media_controller.handle_library_media_delete_confirm(event)
-
-    def _notify_library_media_delete_warning(self, message: str) -> None:
-        return self._media_controller._notify_library_media_delete_warning(message)
 
     @on(Button.Pressed, "#library-media-highlight-add")
     def handle_library_media_highlight_add(self, event: Button.Pressed) -> None:
@@ -30757,9 +30723,6 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         return self._media_controller._after_library_media_viewer_sync(follow_up)
 
-    def _sync_library_media_viewer_mutation_gate(self) -> None:
-        return self._media_controller._sync_library_media_viewer_mutation_gate()
-
     def _mounted_library_media_viewer(self) -> LibraryMediaViewer | None:
         return self._media_controller._mounted_library_media_viewer()
 
@@ -30850,13 +30813,6 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         return self._media_controller._start_library_media_analyze(
             media_ids, overwrite=overwrite, on_item_done=on_item_done
-        )
-
-    async def _fetch_library_media_analysis_detail(
-        self, media_id: str, *, include_content: bool
-    ) -> Mapping[str, Any] | None:
-        return await self._media_controller._fetch_library_media_analysis_detail(
-            media_id, include_content=include_content
         )
 
     @on(Button.Pressed, "#library-media-open")
