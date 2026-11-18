@@ -731,12 +731,15 @@ async def test_trace_view_lists_child_calls_under_the_spawning_turn(
             (row.key.value, [str(cell).strip() for cell in table.get_row(row.key)])
             for row in table.ordered_rows
         ]
-        # `a` (next child agent) stops on a child call.
-        first = next(i for i, (_, cells) in enumerate(rows) if cells[1] == "Child call")
-        table.move_cursor(row=first - 1)
-        await pilot.press("a")
-        await pilot.pause()
-        landed = dict(rows)[screen._cursor_key()]
+        # `a` (next child agent) walks the child-agent rows and stops on a
+        # child call. (Rows interleave by time, so walk rather than aim.)
+        table.move_cursor(row=0)
+        for _ in rows:
+            await pilot.press("a")
+            await pilot.pause()
+            landed = dict(rows)[screen._cursor_key()]
+            if landed[1] == "Child call":
+                break
         agents = screen._filter_bar.options.agents
         records = screen._all_records()
 
