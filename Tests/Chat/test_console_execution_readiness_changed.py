@@ -176,7 +176,7 @@ async def test_retired_stale_display_keeps_the_original_pressed_composer(monkeyp
             id="session",
             incarnation_id="incarnation",
             settings_revision=7,
-            settings=ConsoleSessionSettings(),
+            settings=ConsoleSessionSettings(provider="openai"),
         )
         client.projection_view = SimpleNamespace(
             active_session_id=row.id,
