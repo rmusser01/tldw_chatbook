@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass, field
-from typing import Any, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn
 
 import html5lib
 import tinycss2
@@ -33,7 +33,11 @@ from .models import (
     RenderAsset,
     RenderNode,
 )
-from .profiles import ProfileSnapshot, resolve_profile, runtime_assets_for
+# Resident once the Console is built (console_canvas_controller loads
+# Canvas.compilation), so module scope would only inflate the ADR-097
+# first-send census; the calls import them.
+if TYPE_CHECKING:
+    from .profiles import ProfileSnapshot
 
 _HTML_NAMESPACE = "http://www.w3.org/1999/xhtml"
 _SVG_NAMESPACE = "http://www.w3.org/2000/svg"
@@ -711,6 +715,8 @@ def _compile_document(
     operation: str | None = None,
     parent_profile: str | None = None,
 ) -> CanvasCompiledPlan:
+    from .profiles import resolve_profile, runtime_assets_for
+
     active_limits = limits or CanvasLimits()
     try:
         validate_utf8_text(

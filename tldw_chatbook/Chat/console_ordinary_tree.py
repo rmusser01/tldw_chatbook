@@ -23,7 +23,6 @@ from tldw_chatbook.Agents.ordinary_tree import (
     encode_ordinary_receipt as _json,  # noqa: F401 - original receipt encoder import
 )
 from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
-from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint, WorktreeScope
 
 def _bootstrap_personal_service(app):
     from tldw_chatbook.Personal_Context.bootstrap import (
@@ -440,6 +439,9 @@ def _permission_payload(tree):
 
 def _capture_maximum(tree, *, hook_read=None):
     """Project stock declared effects; live composition may only narrow them."""
+    # Resident once the Console is built (its agent bridge loads it), so a
+    # module-scope import would only inflate the ADR-097 first-send census.
+    from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint, WorktreeScope
     from tldw_chatbook.Agents.persona_policy import (
         evaluate_tool_policy,
         parse_persona_policy_from_rules,

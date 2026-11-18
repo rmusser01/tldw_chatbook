@@ -354,8 +354,9 @@ async def test_candidate_native_shell_initializes_private_runtime_and_disables_t
                     for row in candidate_snapshot.profiles
                 ),
             )
+            # The gateway imports the loader at call time (ADR-097 census).
             monkeypatch.setattr(
-                "tldw_chatbook.Canvas.gateway.load_profile_snapshot", lambda: revoked
+                "tldw_chatbook.Canvas.profiles.load_profile_snapshot", lambda: revoked
             )
             await page.reload()
             # Whole-page refresh intentionally needs a fresh one-use opening;

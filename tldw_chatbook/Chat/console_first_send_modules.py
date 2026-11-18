@@ -129,7 +129,7 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
     "tldw_chatbook.Chat.response_rules.resolution",
     "tldw_chatbook.Chat.response_rules.chat_state",
     "tldw_chatbook.UI.Console_Modules.response_rules",
-    "tldw_chatbook.app_served",
+    # Not app_served: TldwCli.on_mount imports it (_start_served_canvas_control).
     "textual_serve",
     "tldw_chatbook.Web_Server.served_relay_publisher",
     "tldw_chatbook.Guardian.settings",
