@@ -918,7 +918,8 @@ _BUDGETS: dict[str, int] = {
     # of them on dev e78b62f0e7 the file measures 22552.
     # 2026-11-17, TASK-41310: 22552 -> 22544 (-8). The v86->v87 child trace
     # segment step and the v85->v86 step share DB/chachanotes_sql_steps.py.
-    "tldw_chatbook/DB/ChaChaNotes_DB.py": 22544,
+    # 2026-11-18, TASK-41564: reuse TASK-41533's upgrade-only imports (+3 including two formatter separators), per owner rule: the fix's own growth, dated.
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": 22547,
     # TASK-39147: the rebased report reader and workflow migrations cross 4000.
     # 2026-11-12, TASK-36948.1 (owner rule: a size ratchet raises the row with a dated
     # comment): +2, the store's @declare_store backup-participant declaration and import.

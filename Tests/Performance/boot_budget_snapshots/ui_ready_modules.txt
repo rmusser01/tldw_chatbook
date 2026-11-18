@@ -1,5 +1,5 @@
 # tldw_chatbook.* modules resident at _ui_ready (warm second boot).
-# 1039 modules; warm boots wobble +/-1 (see the guard's docstring). Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).
+# 1038 modules; warm boots wobble +/-1 (see the guard's docstring). Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).
 tldw_chatbook
 tldw_chatbook.ACP_Interop
 tldw_chatbook.ACP_Interop.runtime_process
@@ -24,14 +24,12 @@ tldw_chatbook.Agents.agent_service
 tldw_chatbook.Agents.agent_stream
 tldw_chatbook.Agents.approval_provenance
 tldw_chatbook.Agents.builtin_tool_gate
-tldw_chatbook.Agents.execution_capacity
 tldw_chatbook.Agents.fleet_coordinator
 tldw_chatbook.Agents.human_input_wait
 tldw_chatbook.Agents.library_rag_tool_provider
 tldw_chatbook.Agents.library_tool_provider
 tldw_chatbook.Agents.mcp_tool_provider
 tldw_chatbook.Agents.native_tools
-tldw_chatbook.Agents.ordinary_tree
 tldw_chatbook.Agents.plain_chat_tool_surface
 tldw_chatbook.Agents.project_instruction_resolver
 tldw_chatbook.Agents.project_instruction_runtime
@@ -193,7 +191,6 @@ tldw_chatbook.Chat.console_local_review_hook
 tldw_chatbook.Chat.console_memory_banner
 tldw_chatbook.Chat.console_message_actions
 tldw_chatbook.Chat.console_onboarding_state
-tldw_chatbook.Chat.console_ordinary_tree
 tldw_chatbook.Chat.console_paste_attach
 tldw_chatbook.Chat.console_prefill
 tldw_chatbook.Chat.console_preparation_reads
@@ -424,6 +421,7 @@ tldw_chatbook.MCP
 tldw_chatbook.MCP.activation
 tldw_chatbook.MCP.builtin_tool_policy
 tldw_chatbook.MCP.client
+tldw_chatbook.MCP.console_snapshot
 tldw_chatbook.MCP.execution_log
 tldw_chatbook.MCP.hub_tool_catalog
 tldw_chatbook.MCP.local_control_service
@@ -541,6 +539,7 @@ tldw_chatbook.Prompt_Studio_Interop.server_prompt_studio_service
 tldw_chatbook.Provider_Contract
 tldw_chatbook.Provider_Contract.provider_continuation
 tldw_chatbook.Provider_Contract.provider_endpoint_contract
+tldw_chatbook.Provider_Contract.provider_setup_facts
 tldw_chatbook.Provider_Contract.sampling_params
 tldw_chatbook.Provider_Contract.thinking_blocks
 tldw_chatbook.RAG_Admin

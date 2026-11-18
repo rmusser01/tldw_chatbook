@@ -147,7 +147,6 @@ from tldw_chatbook.Utils.fts5_match_forms import (
     quote_fts5_prefix,
 )
 from tldw_chatbook.DB.store_errors import StoreConflictError, StoreInputError, StoreSchemaError
-from tldw_chatbook.DB.chachanotes_sql_steps import run_sql_version_step
 #
 ########################################################################################################################
 #
@@ -8117,11 +8116,15 @@ DELETE FROM keywords
     def _migrate_from_v86_to_v87(self, conn: sqlite3.Connection) -> None:
         """Link a spawned child's own trace segment to its parent's owner."""
         self._require_migration_entry_version(conn, 86, "V86→V87")
+        from tldw_chatbook.DB.chachanotes_sql_steps import run_sql_version_step
+
         run_sql_version_step(self, conn, 86, Path(__file__).parent / "migrations" / "chachanotes_v86_to_v87_console_trace_child_segments.sql")
 
     def _migrate_from_v85_to_v86(self, conn: sqlite3.Connection) -> None:
         """Install conversation-owned operational prompt mix-in records."""
         self._require_migration_entry_version(conn, 85, "V85→V86")
+        from tldw_chatbook.DB.chachanotes_sql_steps import run_sql_version_step
+
         run_sql_version_step(self, conn, 85, Path(__file__).parent / "migrations" / "chachanotes_prompt_mixins.sql")
 
     def _migrate_from_v84_to_v85(self, conn: sqlite3.Connection) -> None:
