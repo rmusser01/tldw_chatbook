@@ -9,6 +9,7 @@ import hashlib
 import json
 import random
 import string
+import sys
 import time
 from dataclasses import FrozenInstanceError
 from pathlib import Path
@@ -2301,6 +2302,37 @@ def test_an_import_error_never_shows_a_credential_from_the_file(mutation, shown:
 
     assert shown in str(raised.value)
     assert _P8 not in str(raised.value)
+
+
+def _deeply_nested_v2_bundle(depth: int) -> dict:
+    """A resigned bundle whose first event payload holds ``depth`` nested lists
+    (validated, digested and masked on import), built through JSON text so
+    no recursive Python helper touches it."""
+    payload = _build(_snapshot())
+    payload["events"][0]["payload"]["deep"] = "@@"
+    payload["integrity"].pop("digest")
+    nested = "[" * depth + "]" * depth
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    payload["integrity"]["digest"] = hashlib.sha256(
+        canonical.replace('"@@"', nested).encode("utf-8")
+    ).hexdigest()
+    return json.loads(json.dumps(payload).replace('"@@"', nested))
+
+
+@pytest.mark.parametrize("shape", ["v2-event-payload", "v1-format"])
+def test_a_deeply_nested_file_fails_import_with_a_named_error(shape: str) -> None:
+    """TASK-41701: a file nested past the recursion limit where validation
+    reaches (a v2 event's payload; a v1 file's ``format``, which the error
+    quotes) fails with a named ``TrajectoryImportError``. A ``RecursionError``
+    escaped ``except TrajectoryImportError`` in the Trace screen's Import."""
+    depth = sys.getrecursionlimit() + 500
+    if shape == "v2-event-payload":
+        document = _deeply_nested_v2_bundle(depth)
+    else:
+        document = json.loads('{"format": ' + "[" * depth + "]" * depth + "}")
+
+    with pytest.raises(trajectory_import.TrajectoryImportError, match="nested too deeply"):
+        trajectory_import.load_imported_trace(document)
 
 
 def test_resigned_lineage_must_exactly_match_event_reference_fields() -> None:

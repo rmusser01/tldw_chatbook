@@ -1109,6 +1109,13 @@ def _import_operation(
     )
 
 
+def _nested_too_deeply(path: Path | None) -> TrajectoryImportError:
+    """The error for a document nested past what validation can walk
+    (TASK-41701), worded as ``_read_document`` words one json cannot parse."""
+    where = f"'{path}'" if path is not None else "Trace document"
+    return TrajectoryImportError(f"{where} is not a valid trajectory trace: nested too deeply")
+
+
 def load_imported_trace(source: Path | str | Mapping) -> ImportedTrace:
     """Load v1 or v2 collaboration data without persistence side effects."""
     path = None if isinstance(source, Mapping) else Path(str(source))
@@ -1121,6 +1128,8 @@ def load_imported_trace(source: Path | str | Mapping) -> ImportedTrace:
             if path is not None:
                 raise TrajectoryImportError(f"'{path}': {exc}") from exc
             raise
+        except RecursionError as exc:
+            raise _nested_too_deeply(path) from exc
         integrity = {
             "algorithm": "sha256",
             "digest": document["integrity"]["digest"],
@@ -1131,7 +1140,10 @@ def load_imported_trace(source: Path | str | Mapping) -> ImportedTrace:
         }
         privacy = dict(manifest["privacy_inventory"])
     else:
-        snapshot = _v1_snapshot(document, path)
+        try:
+            snapshot = _v1_snapshot(document, path)
+        except RecursionError as exc:
+            raise _nested_too_deeply(path) from exc
         event_count = sum(len(turn.records) for turn in snapshot.turns)
         manifest = {
             "schema_version": 1,
