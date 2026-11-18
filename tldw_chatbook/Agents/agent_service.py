@@ -2591,7 +2591,7 @@ class AgentService:
             | None
         ) = None,
         prepare_provider_continuation_request: bool = False,
-        continuation_owner_key: str | None = None,
+        child_continuation_owner_key: str | None = None,
         startup_instruction_candidate: StartupInstructionCandidate | None = None,
         confirm_project_instruction_dispatch: (
             Callable[[InstructionSnapshot], str] | None
@@ -2900,7 +2900,7 @@ class AgentService:
         self.prepare_provider_continuation_request = bool(
             prepare_provider_continuation_request
         )
-        self.continuation_owner_key = continuation_owner_key
+        self.child_continuation_owner_key = child_continuation_owner_key
         # Per-TURN fleet state, all owned by the primary run's thread (a
         # child never spawns -- contain_child_budget zeroes max_subagents,
         # PR3a-1 Task 5's replacement for clamp_child_budget), so no lock
@@ -6216,10 +6216,10 @@ class AgentService:
         if agent_kind != AGENT_KIND_PRIMARY:
             # TASK-41651: no assistant row owns a child's continuation, so it
             # stays in its run (never the host's persistence or trace custody),
-            # marked with chat_call's owner key.
+            # marked with the service's child owner key (the adapter reads it).
             continuation_durability = "ephemeral"
             continuation_owner_message_id = run_id
-            continuation_owner_key = self.continuation_owner_key
+            continuation_owner_key = self.child_continuation_owner_key
         context_callback_ref: dict[str, Callable[[tuple[str, ...]], None]] = {}
         context_steps_ref: dict[str, AgentStep] = {}
         call_model = self._make_call_model(

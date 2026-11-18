@@ -113,6 +113,7 @@ async def _spawn_turn(
     capture="capture_on",
     mixin=False,
     fenced_spawn=False,
+    parent_openai=False,
 ) -> SimpleNamespace:
     """Send one turn (Capture On unless ``capture`` says otherwise) whose model
     spawns a child; return the facts."""
@@ -285,7 +286,12 @@ async def _spawn_turn(
                     "type": "function",
                     "function": {
                         "name": "spawn_subagent",
-                        "arguments": json.dumps({"task": each}),
+                        "arguments": json.dumps(
+                            {
+                                "task": each,
+                                **({"agent": "worker"} if parent_openai else {}),
+                            }
+                        ),
                     },
                 }
                 for index, each in enumerate(tasks or (task,))
@@ -321,9 +327,19 @@ async def _spawn_turn(
         raise AssertionError("network prohibited")
 
     chat = CharactersRAGDB(str(tmp_path / "chat.db"), client_id="spawntrace")
+    app_config = {"custom_endpoints": {"spawntrace": ENDPOINT}}
+    if parent_openai:
+        # A parent on an endpoint without a continuation protocol (legacy
+        # OpenAI handler) whose child is routed to the custom endpoint.
+        app_config["api_settings"] = {
+            "openai": {
+                "api_key_env_var": "OPENAI_API_KEY",
+                "api_base_url": ENDPOINT["base_url"],
+            }
+        }
     gateway = ConsoleProviderGateway(
-        config_provider=lambda: {"custom_endpoints": {"spawntrace": ENDPOINT}},
-        environ={},
+        config_provider=lambda: app_config,
+        environ={"OPENAI_API_KEY": "test-spawntrace-key"} if parent_openai else {},
         trace_call_boundary_factory=ConsoleTraceBoundaryFactory(chat),
     )
     store = ConsoleChatStore(persistence=ChatPersistenceService(chat))
@@ -331,13 +347,24 @@ async def _spawn_turn(
     controller = ConsoleChatController(
         store=store,
         provider_gateway=gateway,
-        provider="custom-ep:spawntrace",
+        provider="openai" if parent_openai else "custom-ep:spawntrace",
         model=MODEL,
         agent_bridge=ConsoleAgentBridge(
             agent_runs_db=runs, store=store, provider_gateway=gateway
         ),
         agent_runtime_enabled=True,
     )
+    if parent_openai:
+        from tldw_chatbook.Agents.agent_models import AgentDefinition
+
+        runs.create_agent_definition(
+            AgentDefinition(
+                name="worker",
+                instructions="Do the task.",
+                provider="custom-ep:spawntrace",
+                model=MODEL,
+            )
+        )
     session = store.ensure_session()
     if mixin:
         prompts = await _enable_mixin(tmp_path, monkeypatch, store, controller, session)
@@ -581,3 +608,36 @@ async def test_a_spawned_child_never_gets_the_chats_mix_ins(
         assert users[0] == composed and MIXIN not in json.dumps(users[1:]), why
     child = [messages for kind, messages in facts.sent if kind == "subagent"]
     assert child and MIXIN not in json.dumps(child), why
+
+
+@pytest.mark.parametrize("capture", ["capture_on", "capture_off"])
+async def test_child_native_round_when_the_parent_endpoint_has_no_continuations(
+    tmp_path, monkeypatch, capture
+):
+    """TASK-41651: the parent's endpoint has no continuation protocol, so the
+    adapter has no owner key; a child routed to an endpoint that has one still
+    completes its native round."""
+    facts = await _spawn_turn(
+        tmp_path,
+        monkeypatch,
+        "Say child done.",
+        child_native=True,
+        capture=capture,
+        parent_openai=True,
+    )
+    why = str(vars(facts))
+    child_wire = [roles for kind, roles in facts.wire if kind == "subagent"]
+    assert child_wire == [
+        ["system", "user"],
+        ["system", "user", "assistant", "tool"],
+    ], why
+    assert ("subagent", "done") in facts.runs and facts.child_errors == [], why
+    assert facts.boundary_errors == [] and facts.refusals == [], why
+    assert [states for kind, states in facts.applied if kind == "subagent"] == [
+        [],
+        ["active"],
+    ], why
+    assert set(facts.persisted) <= {"primary"}, why
+    if capture == "capture_on":
+        child = [call[4:] for call in facts.owned_calls if not call[0]]
+        assert child == [("agent_first", "complete"), ("tool_loop", "complete")], why
