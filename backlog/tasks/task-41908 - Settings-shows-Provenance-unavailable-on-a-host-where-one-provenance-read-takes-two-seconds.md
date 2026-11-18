@@ -23,6 +23,6 @@ Found by TASK-41517 (round 16). The provenance lease deadline starts before the 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A slow but successful provenance read is shown, with the lease bounding staleness rather than read time
+- [ ] #1 A slow but successful provenance read is shown, with the lease still bounding the data's age from the read's start
 - [ ] #2 A test with a forced slow read is red before the fix
 <!-- AC:END -->

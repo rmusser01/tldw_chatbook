@@ -12,18 +12,20 @@ labels:
 priority: low
 references:
 - Tests/Performance/test_ui_ready_module_census.py
-- tldw_chatbook/Chat/console_first_send_modules.py
-dependencies: []
+- Tests/UI/test_console_first_send_preimport.py
+dependencies:
+- TASK-36231
 ---
 
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Found by TASK-41512 (round 16): the UI-ready census reads drift +3/-3 against its snapshot. TASK-41308 made `MCP.console_snapshot` resident at ready, but `LIVE_FIRST_SEND_IMPORTS` still lists it as lazy, so refreshing the snapshot fails `test_the_send_guard_counts_a_module_resident_at_ui_ready_as_warm`.
+Found by TASK-41512 (round 16): the UI-ready census reads drift +3/-3 against its snapshot. TASK-41308 made `MCP.console_snapshot` resident at ready, but `LIVE_FIRST_SEND_IMPORTS` (`Tests/UI/test_console_first_send_preimport.py` ~42-47) still lists it as lazy, so refreshing the snapshot fails `test_the_send_guard_counts_a_module_resident_at_ui_ready_as_warm`.
+ TASK-36231 owns re-pinning the snapshot and the membership-drift check; this task is only the `LIVE_FIRST_SEND_IMPORTS` entry. The production warm-up list `FIRST_SEND_MODULES` is out of scope.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 `MCP.console_snapshot` leaves the lazy list and the snapshot is refreshed with zero drift
+- [ ] #1 `MCP.console_snapshot` leaves `LIVE_FIRST_SEND_IMPORTS`, so a snapshot refresh under TASK-36231 no longer fails the send-guard test
 - [ ] #2 The send-guard test passes
 <!-- AC:END -->

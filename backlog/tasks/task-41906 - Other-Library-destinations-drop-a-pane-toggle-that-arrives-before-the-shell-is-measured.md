@@ -19,7 +19,7 @@ dependencies: []
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Found by TASK-41503 (round 16), not reproduced. TASK-41503 kept an early Collections toggle until the shell is measured (`_deferred_layout_priority`). The Media, Conversations, Notes, File Notes, Prompts and Skills layout syncs return the same way when the shell is not measured (library_screen.py ~6907, ~7421, ~7681; library_conversation_reader_controller.py ~845), so they probably drop an early toggle too.
+Found by TASK-41503 (round 16), not reproduced. TASK-41503 kept an early Collections toggle until the shell is measured (`_deferred_layout_priority`). The Media, Conversations, Notes, File Notes, Prompts and Skills layout syncs return the same way when the shell is not measured (library_screen.py ~6293 for Notes, library_media_controller.py ~10662, library_prompts_controller.py ~790, library_notes_controller.py ~2690 for File Notes, library_skills_controller.py ~783, library_conversation_reader_controller.py ~845), so they probably drop an early toggle too.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

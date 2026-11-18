@@ -1,6 +1,6 @@
 ---
 id: TASK-41909
-title: "Four Library and Schedules UI tests flake under load"
+title: "Four Library, Schedules and trace tests flake under load"
 status: To Do
 assignee: []
 created_date: 2026-11-18 20:31
@@ -11,6 +11,7 @@ labels:
 priority: low
 references:
 - Tests/UI/test_library_media_render_fixes.py
+- Tests/UI/test_library_rail_switch_keeps_reader_and_note.py
 - Tests/UI/test_schedules_workbench.py
 - Tests/Chat/test_console_trace_maintenance_parking.py
 dependencies: []
