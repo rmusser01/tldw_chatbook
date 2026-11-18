@@ -745,7 +745,12 @@ _BUDGETS: dict[str, int] = {
     # entry with New as its empty target: 7463 -> 7459.
     # 2026-11-17, TASK-41129 review r15lf-rev3: the targeted-sync restore
     # names its landing for the entry's descendant rule: 7459 -> 7462.
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7462,
+    # 2026-11-18, TASK-41600/41601/41504: the targeted-sync restore keeps a
+    # control the user focused that the repaint never replaced, and stands
+    # down in Folder files; Folder files lands Choose folder… or the search;
+    # View imported notes lands like Import once's exits: 7462 -> 7493
+    # (measured).
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7493,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

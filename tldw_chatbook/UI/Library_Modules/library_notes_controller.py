@@ -1834,13 +1834,16 @@ class LibraryNotesController:
         ):
             target = None
         if target is None:
-            selector = (
-                "#file-notes-search"
-                if authority == "files"
-                else (
+            if authority == "files":
+                # TASK-41601: with no folder linked the Files pane, search
+                # included, is hidden; Choose folder… is the page's way in.
+                workspace = self._library_file_notes_workspace
+                linked = workspace is not None and workspace.root is not None
+                selector = "#file-notes-search" if linked else "#file-notes-choose-root"
+            else:
+                selector = (
                     "#library-note-body" if self._library_notes_view == "editor" else ""
                 )
-            )
             if selector:
                 try:
                     candidate = self.query_one(selector, Widget)
@@ -2268,7 +2271,9 @@ class LibraryNotesController:
         return True
 
     def _restore_library_notes_after_targeted_sync(
-        self, identity: LibraryNotesFocusIdentity
+        self,
+        identity: LibraryNotesFocusIdentity,
+        focused_before: Widget | None = None,
     ) -> None:
         """Restore portable Notes focus + scroll after a canvas-scoped sync.
 
@@ -2283,6 +2288,7 @@ class LibraryNotesController:
 
         Args:
             identity: The portable identity captured before the sync.
+            focused_before: The widget focused when ``identity`` was taken.
 
         Returns:
             None.
@@ -2302,7 +2308,25 @@ class LibraryNotesController:
         # repainted by a Media -> Notes switch otherwise replayed an identity
         # captured with nothing focused, the filter, over the entry's first
         # row (TASK-41129 review r15lf-rev1).
-        if not getattr(self._screen, "_library_pending_list_entry_focus", False):
+        # TASK-41600: a reachable control the user clicked or Tabbed to (a
+        # pane grip, the source buttons) that the repaint never replaced keeps
+        # focus; it has no role, so replaying it moved focus to the filter.
+        # Textual's reset onto a grip is still restored, and so is a text
+        # field: the rail search box is TASK-34000.89's.
+        untouched = (
+            focused_before is not None
+            and focused_before is getattr(self._screen, "_library_input_focus", None)
+            and self.focused is focused_before
+            and focused_before in self.focus_chain
+            and not isinstance(focused_before, (Input, TextArea))
+        )
+        if not (
+            getattr(self._screen, "_library_pending_list_entry_focus", False)
+            or untouched
+            # TASK-41601: Folder files hides this canvas; its identity would
+            # land on a hidden Database control.
+            or self._file_notes_active()
+        ):
             self._restore_library_notes_focus_identity(identity)
             # Review r15lf-rev3: name this landing; an entry armed by the
             # sync's own ``then`` must not be revoked by its focus event.
@@ -5595,12 +5619,18 @@ class LibraryNotesController:
             database_shell.display = False
             database_shell.library.display = False
             workspace.display = True
-            self._restore_library_notes_authority_focus("files")
+            restored = self._restore_library_notes_authority_focus("files")
             self._sync_library_notes_source_controls()
             self.call_after_refresh(
                 self._sync_library_file_notes_reader_layout_from_shell
             )
             self.call_after_refresh(self._hide_library_adaptive_reader_rail_collapse)
+            if not restored:
+                # TASK-41601: a linked folder's Files pane shows only once the
+                # layout sync above has run, as on the compose path.
+                self.call_after_refresh(
+                    self._restore_library_notes_authority_focus, "files"
+                )
         # The production app can recompose Library after the initial mount-time
         # responsive callback. Measure again once the Files canvas owns its
         # final shell geometry so a compact terminal cannot retain stale wide
@@ -6545,10 +6575,11 @@ class LibraryNotesController:
         ponytail: it lands on the Notes list, not scrolled to the
         destination folder -- revealing one folder needs a tree-reveal seam
         the list does not have yet. Filed as the ceiling on task-32622.
+        Focus lands where Import once's Escape does (TASK-41504, TASK-41128).
         """
         event.stop()
         self._library_notes_view = "list"
-        _sync_library_canvas(self, "notes", then=self._focus_library_notes_filter_input)
+        _sync_library_canvas(self, "notes", then=self._land_on_library_notes_page)
     @on(LibraryNoteImportCanvas.RetryRequested)
     def handle_library_note_import_retry(
         self, event: LibraryNoteImportCanvas.RetryRequested

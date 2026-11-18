@@ -4034,6 +4034,9 @@ class LibraryScreen(BaseAppScreen):
         #: focus restore just landed on, so its queued focus event does not
         #: revoke an entry armed right after it.
         self._library_entry_restore_landing: Widget | None = None
+        #: TASK-41600: the control a click or Tab last put focus on, cleared
+        #: when focus moves elsewhere; a Notes canvas sync leaves it alone.
+        self._library_input_focus: Widget | None = None
         # task-2856 review (PR #1410, Qodo): the settle-window timer
         # ``_arm_library_list_entry_focus`` schedules used to be fire-and-
         # forget -- the ``Timer`` ``set_timer`` returns was never kept, so
@@ -5571,10 +5574,12 @@ class LibraryScreen(BaseAppScreen):
         )
 
     def _restore_library_notes_after_targeted_sync(
-        self, identity: LibraryNotesFocusIdentity
+        self,
+        identity: LibraryNotesFocusIdentity,
+        focused_before: Widget | None = None,
     ) -> None:
         return self._notes_controller._restore_library_notes_after_targeted_sync(
-            identity
+            identity, focused_before
         )
 
     def _library_notes_restore_guard_is_current(
@@ -7721,7 +7726,8 @@ class LibraryScreen(BaseAppScreen):
             # Textual focuses its target, so a waiting Notes entry's rules for
             # the app's own landings never see it.
             self._disarm_library_list_entry_focus()
-        return super().get_focusable_widget_at(x, y)
+        self._library_input_focus = super().get_focusable_widget_at(x, y)
+        return self._library_input_focus
 
     def on_mouse_down(self, event: events.MouseDown) -> None:
         """Let click-driven focus changes supersede resize memory."""
@@ -8617,13 +8623,13 @@ class LibraryScreen(BaseAppScreen):
         """
         self._mark_library_notes_user_interaction()
         self._withdraw_library_notes_pending_focus_handoffs()
-        self._move_library_screen_focus(1)
+        self._library_input_focus = self._move_library_screen_focus(1)
 
     def action_focus_previous(self) -> None:
         """Shift+Tab: the reverse of ``action_focus_next``."""
         self._mark_library_notes_user_interaction()
         self._withdraw_library_notes_pending_focus_handoffs()
-        self._move_library_screen_focus(-1)
+        self._library_input_focus = self._move_library_screen_focus(-1)
 
     #: task-32246: the Tab region INSIDE the open Notes work pane -- the
     #: note editor, and since task-32540 the Import once stepper, which is
@@ -10400,6 +10406,8 @@ class LibraryScreen(BaseAppScreen):
             if self._library_notes_programmatic_focus_target is focused:
                 self._library_notes_programmatic_focus_target = None
             return
+        if focused is not self._library_input_focus:
+            self._library_input_focus = None  # TASK-41600: not a click or Tab
         # task-31223: the footer's typing-context swap (drop keys a text
         # field will swallow) must follow focus, not just route changes.
         self._refresh_footer_typing_context(focused)
@@ -10608,6 +10616,16 @@ class LibraryScreen(BaseAppScreen):
             # Loading and ready results can both precede replacement of old rows.
             self._retry_library_list_entry_focus_while_armed()
             return
+        if row_class == "library-collections-item-row" and any(
+            worker.group == "library_collections_capture_entry"
+            and not worker.is_finished
+            for worker in self.workers
+        ):
+            # TASK-41504: wait out the capture loader. Its pane repaints
+            # replace whatever row or filter focus lands on before they end,
+            # and Textual's reset then parks focus on a pane grip.
+            self._retry_library_list_entry_focus_while_armed()
+            return
         # TASK-34000.26: a row a canvas recompose is already removing still
         # answers the query; a focus write onto it is accepted by Textual
         # 8.2.8 and leaves the keyboard dead after the detach (review S-10).
@@ -10657,6 +10675,7 @@ class LibraryScreen(BaseAppScreen):
                 "library-notes-row": self._library_pending_list_entry_empty_target,
                 # task-32228: same answer for an empty conversation list.
                 "library-conversation-row": "#library-conversations-filter",
+                "library-collections-item-row": "#library-collections-filter",
             }.get(row_class)
             if fallback_selector is not None:
                 try:
@@ -21153,6 +21172,12 @@ class LibraryScreen(BaseAppScreen):
         """Recompose a rail destination while source admission is held."""
         if self._prompts_state.mutation_in_flight:
             return
+        # TASK-41504: a switch that leaves focus off the rail (a code-driven
+        # press) enters Collections like the other lists, below; a rail click
+        # or Enter keeps focus on its row (TASK-40328).
+        from_rail = self.focused is not None and self.focused.has_class(
+            "library-rail-row"
+        )
         retained_reader_rows = {
             LIBRARY_ROW_BROWSE_MEDIA,
             LIBRARY_ROW_BROWSE_COLLECTIONS,
@@ -21602,6 +21627,12 @@ class LibraryScreen(BaseAppScreen):
             # and its footer (correctly) withheld the chip. The keys were never
             # missing; the state that makes them live was.
             LIBRARY_ROW_BROWSE_CONVERSATIONS,
+        ):
+            self._arm_library_list_entry_focus()
+        if (
+            self.is_mounted
+            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
+            and not from_rail
         ):
             self._arm_library_list_entry_focus()
         if self._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT:

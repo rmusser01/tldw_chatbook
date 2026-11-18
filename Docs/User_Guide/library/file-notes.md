@@ -24,7 +24,9 @@ Browse section (on a brand-new profile that section is not there yet — see
 "Getting there" in [Library notes](notes.md) for the three routes that are),
 then use the source strip at the top of the canvas: it reads
 **Library notes** | **Folder files**. Click **Folder files** — while the
-workspace loads you'll briefly see "Opening File Notes…". At wide sizes,
+workspace loads you'll briefly see "Opening File Notes…". Focus lands in the
+**Files** search box, or on **Choose folder…** while no folder is linked; a
+later return to Notes from the rail lands there too. At wide sizes,
 Library navigation and the Folder files tree have separate slim collapse
 grips. Each pane remembers its own choice; collapsing the tree does not also
 collapse Library navigation or the Library notes list. On compact
@@ -157,8 +159,9 @@ Every step has a keyboard route (task-32606):
 
 1. From the notes list, **Shift+Tab** back to the mode strip at the top of the
    screen until **Folder files** carries the focus underline, then **Enter**.
-2. **Tab** to **Choose folder…** (or **Change…** once a folder is linked) and
-   press **Enter**.
+2. With no folder linked, focus is already on **Choose folder…**; press
+   **Enter**. Once a folder is linked, focus starts in the **Files** search
+   box: **Shift+Tab** back to **Change…** and press **Enter**.
 3. The picker opens with the **Folder path** field focused and its value
    selected — type or paste the folder and it replaces what was there.
 4. **Enter** browses into the typed folder; **Tab** then **Enter** on

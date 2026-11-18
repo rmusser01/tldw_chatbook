@@ -989,6 +989,9 @@ def _sync_library_canvas(
                 if notes_focus_identity is not None
                 else screen._capture_library_notes_focus_identity()
             )
+            # TASK-41600: the control focused as this identity was taken, so
+            # the restore can tell a control the repaint never replaced.
+            focused_before = screen.focused if notes_focus_identity is None else None
 
             def _restore_then_explicit(
                 _identity: LibraryNotesFocusIdentity = identity,
@@ -1005,7 +1008,9 @@ def _sync_library_canvas(
                     and _explicit() is False
                 ):
                     return
-                screen._restore_library_notes_after_targeted_sync(_identity)
+                screen._restore_library_notes_after_targeted_sync(
+                    _identity, focused_before
+                )
                 if _explicit is not None and notes_focus_identity is None:
                     _explicit()
 

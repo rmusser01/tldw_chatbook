@@ -1517,7 +1517,13 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 38272 -> 38280 lines (+8) and 1379 -> 1380 methods (+1); the budget
     #: moves 38282 -> 38280 lines and 1379 -> 1380 methods.
     #: 2026-11-18, rebased onto dev 47a05413cb (dev's row 32783/1287 plus this commit's growth): measured 32791 lines, 1288 methods.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32791, 1288),
+    #: 2026-11-18, TASK-41504: a code-driven switch enters Collections through
+    #: the list entry channel, which waits out its capture loader; TASK-41600
+    #: records the control a click or Tab focused, and the targeted-sync
+    #: delegator forwards the pre-sync focus: 38280 -> 38311 lines, 1380
+    #: methods.
+    #: 2026-11-18, TASK-41504/41600/41601 rebased onto the round-16 stack on dev 908e9840aa (stack row plus this commit's growth): measured 32822 lines, 1288 methods.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32822, 1288),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

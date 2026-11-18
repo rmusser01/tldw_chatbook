@@ -37017,7 +37017,8 @@ async def test_background_recompose_restores_focus_on_a_route_without_a_list_row
     channel -- standing down for it left a background recompose inside the
     settle window with no restore at all, and the keyboard dead for good.
     Conversations was that route until 10711f19b9 (task-32228) gave it a
-    row class and an empty-list filter landing; Collections still is.
+    row class and an empty-list filter landing, and Collections until
+    TASK-41504; Search still is.
     """
     app = _build_test_app()
     _seed_conversations(app, [])
@@ -37027,14 +37028,14 @@ async def test_background_recompose_restores_focus_on_a_route_without_a_list_row
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
 
-        selector = f"#library-row-{LIBRARY_ROW_BROWSE_COLLECTIONS}"
+        selector = f"#library-row-{LIBRARY_ROW_BROWSE_SEARCH}"
         screen.query_one(selector).press()
-        await _wait_for_selector(screen, pilot, "#library-collections-reader-shell")
+        await _wait_for_selector(screen, pilot, "#library-search-rag-panel")
         # The press rebuilds the rail; focus the row it mounts selected.
         await _wait_for_condition(
             pilot,
             lambda: screen.query_one(selector).has_class("library-rail-row-selected"),
-            message="the rail never mounted the selected Collections row",
+            message="the rail never mounted the selected Search row",
         )
         rail_row = screen.query_one(selector)
         screen.set_focus(rail_row)
@@ -37054,7 +37055,7 @@ async def test_background_recompose_restores_focus_on_a_route_without_a_list_row
         focused = screen.focused
         assert focused is not None, (
             "a background recompose inside the armed window left the "
-            "Collections route with no focused widget"
+            "Search route with no focused widget"
         )
         assert focused.is_attached, focused
 
