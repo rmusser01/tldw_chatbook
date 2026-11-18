@@ -12952,7 +12952,8 @@ class ChatScreen(BaseAppScreen):
         section_updates: Mapping[str, bool] | None = None,
         notify_on_failure: bool = True,
         explicit_right_toggle: bool = True,
-    ) -> ConsoleRailState:
+        _reconcile: bool = True,
+    ) -> ConsoleRailState | None:
         """Persist requested Console rail preference changes and return new state."""
         if self._console_terminal_open:  # TASK-33625.3: an asked-for rail beats the yield
             self._terminal.reclaim_rails(left_open=left_open, right_open=right_open)
@@ -13040,6 +13041,10 @@ class ChatScreen(BaseAppScreen):
             # rebuilt below, or `_apply_fleet_inspector_rail_auto_open` would
             # re-force the rail the caller just collapsed.
             self._note_console_fleet_surface_toggle(bool(right_open))
+        if not _reconcile:
+            # The selected action retains its completed preference submission
+            # separately while a fresh checked display finishes reconciliation.
+            return None
         rail_state = self._current_console_rail_state()
         self._sync_console_rail_visibility_if_changed(rail_state)
         return rail_state
@@ -13064,9 +13069,24 @@ class ChatScreen(BaseAppScreen):
         self, section_id: str, *, next_open: bool | None = None,
     ) -> None:
         """Apply the original preference, widget, Agent and focus effects once."""
+        next_open = self._prepare_console_rail_section_toggle(section_id, next_open=next_open)
+        self._write_console_rail_section_toggle(section_id, next_open=next_open)
+        rail_state = self._current_console_rail_state()
+        self._finish_console_rail_section_toggle(section_id, next_open=next_open, rail_state=rail_state)
+
+    def _prepare_console_rail_section_toggle(
+        self, section_id: str, *, next_open: bool | None = None,
+    ) -> bool:
+        """Resolve the actual gesture before any preference or Agent effect."""
         rail_state = self._current_console_rail_state()
         if next_open is None:
             next_open = not getattr(rail_state, f"{section_id}_open")
+        return next_open
+
+    def _write_console_rail_section_toggle(
+        self, section_id: str, *, next_open: bool,
+    ) -> None:
+        """Submit the original preference once, retaining original Agent effects."""
         if section_id == "agent":
             # TASK-915: track manual collapse/reopen of the Agent section
             # relative to the fleet's own busy signal -- never the
@@ -13079,7 +13099,14 @@ class ChatScreen(BaseAppScreen):
         self._set_console_rail_preference(
             section_updates={section_id: next_open},
             notify_on_failure=False,
+            _reconcile=False,
         )
+
+    def _finish_console_rail_section_toggle(
+        self, section_id: str, *, next_open: bool, rail_state: ConsoleRailState,
+    ) -> None:
+        """Finish widget and focus effects after a current post-write derivation."""
+        self._sync_console_rail_visibility_if_changed(rail_state)
         try:
             left_rail = self.query_one("#console-left-rail", ConsoleLeftRail)
         except (NoMatches, QueryError):

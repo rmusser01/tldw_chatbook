@@ -16,19 +16,24 @@ def _surface(monkeypatch):
     state = SimpleNamespace(details_open=False, character_open=False, agent_open=True)
     effects = []
 
-    def preference(*, section_updates, notify_on_failure):
+    def preference(*, section_updates, notify_on_failure, _reconcile=True):
         assert notify_on_failure is False
+        assert _reconcile is False
         for section, opened in section_updates.items():
             effects.append(("preference", section, opened))
             setattr(state, f"{section}_open", opened)
 
     class RailSurface(SimpleNamespace):
         _apply_console_rail_section_toggle = ChatScreen._apply_console_rail_section_toggle
+        _prepare_console_rail_section_toggle = ChatScreen._prepare_console_rail_section_toggle
+        _write_console_rail_section_toggle = ChatScreen._write_console_rail_section_toggle
+        _finish_console_rail_section_toggle = ChatScreen._finish_console_rail_section_toggle
 
     screen = RailSurface(
         app_instance=SimpleNamespace(console_execution_client=client),
         _current_console_rail_state=lambda: state,
         _set_console_rail_preference=preference,
+        _sync_console_rail_visibility_if_changed=lambda _: None,
         query_one=lambda *_: SimpleNamespace(
             apply_section_open=lambda section, opened: effects.append(("widget", section, opened)),
         ),
@@ -100,3 +105,103 @@ def test_original_rail_effect_failure_is_not_replayed(monkeypatch):
     assert raised.value is error
     module.replay_selected_rail_toggles(screen, client, 3)
     assert effects == ["attempted"]
+
+
+def test_expiry_during_pre_effect_derivation_retains_the_actual_intent(monkeypatch):
+    from tldw_chatbook.UI.Console_Modules.execution_state import ConsoleDisplayExpired
+
+    module, screen_type, screen, client, _, effects, refreshes = _surface(monkeypatch)
+    client._readiness_deadline = 3.0
+    original = screen._current_console_rail_state
+
+    def expired():
+        raise ConsoleDisplayExpired("original display expired during derivation")
+
+    screen._current_console_rail_state = expired
+    screen_type._toggle_console_rail_section(screen, "details")
+    assert effects == []
+    assert refreshes == [screen]
+    assert len(screen._console_pending_process_rail_toggles) == 1
+    screen._current_console_rail_state = original
+    module.replay_selected_rail_toggles(screen, client, 3)
+    assert effects == [("preference", "details", True), ("widget", "details", True), ("allocation",)]
+    assert not screen._console_pending_process_rail_toggles
+
+
+def test_post_write_expiry_finishes_character_effects_without_resubmission(monkeypatch):
+    from tldw_chatbook.UI.Console_Modules.execution_state import ConsoleDisplayExpired
+
+    module, screen_type, screen, client, _, effects, refreshes = _surface(monkeypatch)
+    client._readiness_deadline = 3.0
+    original = screen._current_console_rail_state
+    calls = []
+
+    def current():
+        calls.append(None)
+        if len(calls) == 2:
+            raise ConsoleDisplayExpired("original post-write display expired")
+        return original()
+
+    screen._current_console_rail_state = current
+    screen_type._toggle_console_rail_section(screen, "character", next_open=True)
+    assert effects == [("preference", "character", True)]
+    assert refreshes == [screen]
+    module.replay_selected_rail_toggles(screen, client, 3)
+    assert effects == [
+        ("preference", "character", True), ("widget", "character", True),
+        ("allocation",), ("character",), ("focus",),
+    ]
+    assert len(calls) == 3  # Retry only the post-write derivation.
+    module.replay_selected_rail_toggles(screen, client, 3)
+    assert len(effects) == 5
+
+
+def test_post_write_refresh_keeps_following_toggles_in_fifo_order(monkeypatch):
+    from tldw_chatbook.UI.Console_Modules.execution_state import ConsoleDisplayExpired
+
+    module, screen_type, screen, client, _, effects, _ = _surface(monkeypatch)
+    client._readiness_deadline = 3.0
+    original = screen._current_console_rail_state
+
+    def current():
+        if effects:
+            raise ConsoleDisplayExpired("post-write display is still expired")
+        return original()
+
+    screen._current_console_rail_state = current
+    screen_type._toggle_console_rail_section(screen, "details")
+    screen_type._toggle_console_rail_section(screen, "details")
+    assert effects == [("preference", "details", True)]
+    screen._current_console_rail_state = original
+    module.replay_selected_rail_toggles(screen, client, 3)
+    assert effects == [
+        ("preference", "details", True), ("widget", "details", True), ("allocation",),
+        ("preference", "details", False), ("widget", "details", False), ("allocation",),
+    ]
+
+
+@pytest.mark.parametrize("changed", ["visit", "session"])
+def test_post_write_expiry_never_finishes_on_a_superseded_scope(monkeypatch, changed):
+    from tldw_chatbook.UI.Console_Modules.execution_state import ConsoleDisplayExpired
+
+    module, screen_type, screen, client, row, effects, _ = _surface(monkeypatch)
+    client._readiness_deadline = 3.0
+    original = screen._current_console_rail_state
+
+    def current():
+        if effects:
+            raise ConsoleDisplayExpired("original post-write display expired")
+        return original()
+
+    screen._current_console_rail_state = current
+    screen_type._toggle_console_rail_section(screen, "character", next_open=True)
+    assert effects == [("preference", "character", True)]
+    if changed == "visit":
+        client._visit += 1
+    else:
+        row.id, row.incarnation_id = "b", "b1"
+        client.projection_view.active_session_id = "b"
+    screen._current_console_rail_state = original
+    module.replay_selected_rail_toggles(screen, client, client._visit)
+    assert effects == [("preference", "character", True)]
+    assert not screen._console_pending_process_rail_toggles
