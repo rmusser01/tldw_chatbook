@@ -8367,7 +8367,6 @@ class LibraryScreen(BaseAppScreen):
                         focused.focus()
                 else:
                     focused = self._move_library_screen_focus(-1)
-            self._library_input_focus = focused  # TASK-41600
             self._advance_library_ordinary_emergency_user_interaction(focused)
         self._mark_library_notes_user_interaction()
         self._withdraw_library_notes_pending_focus_handoffs()

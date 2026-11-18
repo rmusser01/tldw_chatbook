@@ -895,43 +895,6 @@ async def test_a_click_while_a_notes_sync_repaints_keeps_its_target(monkeypatch)
         assert _focus_is(screen, "library-browse-library-grip"), screen.focused
 
 
-async def test_a_narrow_emergency_stage_tab_counts_as_the_users_focus() -> None:
-    """Review r16fo-rev1: below 64 columns the canvas-only emergency stage
-    handles Tab in ``on_key``, which never reached ``action_focus_next``,
-    so a Tab onto a pane grip was not recorded as the user's and a Notes
-    sync moved focus to the filter. The stage is set as
-    ``test_emergency_tab_from_a_note_field_still_reaches_on_key`` sets it."""
-    host, _hold, _release = _fake_notes_library()
-    async with host.run_test(size=(60, 24)) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
-        screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_notes_entry_focus_landing(screen, pilot)
-        await _wait(
-            pilot,
-            lambda: not screen._library_pending_list_entry_focus,
-            "the entry window to close",
-        )
-        screen._library_emergency_stage = "canvas-only"
-        screen._library_emergency_restore_receipt = (
-            screen._capture_library_emergency_restore_receipt(
-                screen.query_one("#library-rail"),
-                screen.query_one("#library-canvas"),
-            )
-        )
-        screen.set_focus(screen.query(".library-notes-row").last())
-        await pilot.pause()
-        await pilot.press("tab")  # past the last row, onto the Items grip
-        await _wait(
-            pilot,
-            lambda: _focus_is(screen, "library-browse-items-grip"),
-            lambda: f"Tab to land on the Items grip: {screen.focused!r}",
-        )
-        library_screen_module._sync_library_canvas(screen, "notes")
-        await pilot.pause(0.5)
-        assert _focus_is(screen, "library-browse-items-grip"), screen.focused
-
-
 async def test_a_notes_canvas_sync_still_restores_a_grip_the_user_did_not_choose() -> None:
     """TASK-41600: only a click or Tab keeps a grip through a Notes sync.
 
@@ -1056,4 +1019,43 @@ async def test_folder_files_focus_lands_on_a_visible_files_control(
         workspace = screen._notes_state.file_notes_workspace
     if workspace is not None:
         await workspace.shutdown()
+    replica.close()
+
+
+async def test_the_folder_files_layout_sync_reads_the_workspaces_real_width(
+    tmp_path,
+) -> None:
+    """TASK-41601, review r16fo-rev2: the deterministic pin for the width
+    refresh. The workspace learns its width from its own Resize, which can
+    arrive after the first layout sync; two width-0 Resizes left it
+    ``narrow``, and that sync opened the Files pane at 80 columns. Here the
+    stale flag is set by hand, so no timing is involved."""
+    replica = FileNotesReplica(":memory:")
+    host, _hold, _release = _fake_notes_library()
+    async with host.run_test(size=(80, 24)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        root = tmp_path / "vault"
+        root.mkdir()
+        (root / "note.md").write_text("note", encoding="utf-8")
+        screen._notes_state.file_notes_workspace_factory = lambda: (
+            LibraryFileNotesWorkspace(root=root, replica=replica)
+        )
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_notes_entry_focus_landing(screen, pilot)
+        await pilot.click("#library-notes-source-files")
+        await _wait(
+            pilot,
+            lambda: _focus_is(screen, "file-notes-choose-root"),
+            lambda: f"Folder files to settle: {screen.focused!r}",
+        )
+        workspace = screen._notes_state.file_notes_workspace
+        shell = workspace.query_one("#library-file-notes-reader-shell")
+        assert workspace.size.width >= 80 and not shell.items.display
+
+        workspace._narrow = True  # what two width-0 Resizes leave behind
+        screen._sync_library_file_notes_reader_layout_from_shell()
+        assert not workspace.narrow, "the sync kept the stale narrow flag"
+        assert not shell.items.display, "the sync opened the Files pane at 80 columns"
+    await workspace.shutdown()
     replica.close()

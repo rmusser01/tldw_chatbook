@@ -4,7 +4,7 @@ title: "Folder files mode leaves focus on the hidden Database Notes filter, and 
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-18 16:24'
+updated_date: '2026-11-18 18:15'
 created_date: 2026-11-17 19:40
 labels:
 - follow-up
@@ -96,3 +96,8 @@ A probe of Notes in Folder files mode found two things:
   - Without the width refresh, 4 of 4 runs ended on `library-file-notes-items-grip`.
 - **Docs.** `file-notes.md` now says where focus lands at both widths. Linking a folder from the keyboard now gives the measured route: about ten **Tab** presses from the search box to Change… at 120-235 columns. **Shift+Tab** takes 31 at 170 and 235, because it walks back through the Library rail, and 3 at 120.
 - **Size.** `library_notes_controller.py` 7462 -> 7492.
+
+**Fix round 2 (review r16fo-rev2, 2026-11-18).** A deterministic pin for the width refresh: `test_the_folder_files_layout_sync_reads_the_workspaces_real_width`. `[switch-linked-80x24]` passes at normal load even without the refresh, so it could not pin it alone.
+- **What it does.** At 80x24 with a folder linked, once Folder files has settled on Change…, it sets `workspace._narrow = True` (what two width-0 Resizes leave) and calls `_sync_library_file_notes_reader_layout_from_shell()`. It then asserts that `workspace.narrow` is False and the Files pane stays closed.
+- **Red evidence.** With the refresh line removed it fails: "the sync kept the stale narrow flag".
+- **Cost.** 2.5 s serial.

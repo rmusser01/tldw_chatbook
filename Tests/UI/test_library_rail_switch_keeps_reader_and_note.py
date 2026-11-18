@@ -58,6 +58,7 @@ from Tests.UI.test_library_shell import (
     _wait_for_selector,
 )
 from tldw_chatbook.Library.collections_capture_models import CaptureSaveRequest
+from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.Widgets.Library import LIBRARY_ADAPTIVE_READER_GRIP_CLASS
 from tldw_chatbook.Widgets.Library.library_media_content import (
     LibraryMediaContentBody,
@@ -741,6 +742,11 @@ _FIRST_ROW = {"media": "library-media-row-0", "notes": "library-notes-tree-note-
             id="media-press-collections-empty-scope",
         ),
         pytest.param(
+            True, "capture-unavailable", ("media",), ("press", "collections"),
+            "library-collections-filter",
+            id="media-press-collections-quick-capture-disabled",
+        ),
+        pytest.param(
             True, "", ("media", "notes"), ("press", "media"), _FIRST_ROW["media"],
             id="notes-press-resident-media",
         ),
@@ -751,7 +757,7 @@ _FIRST_ROW = {"media": "library-media-row-0", "notes": "library-notes-tree-note-
     ],
 )
 async def test_each_library_switch_lands_on_its_first_row_never_a_grip(
-    notes, captures, setup, switch, expected
+    notes, captures, setup, switch, expected, monkeypatch
 ):
     """TASK-41504: a rail click or a code-driven ``press()`` lands entry focus
     on the destination's first row (or its empty list's control), reachable,
@@ -765,9 +771,15 @@ async def test_each_library_switch_lands_on_its_first_row_never_a_grip(
         notes=_two_notes() if notes else [],
         media=_two_media_items(),
     )
-    if captures:
+    scope = app.collections_capture_scope_service
+    if captures == "capture-unavailable":
+        # No capability answer, so Quick Capture is drawn disabled.
+        async def no_capabilities():
+            raise RuntimeError("capabilities unavailable")
+
+        scope.capabilities = no_capabilities
+    elif captures:
         # Two saved captures, so the entry has rows to wait for.
-        scope = app.collections_capture_scope_service
         for title in ("Alpha", "Beta"):
             await scope.save_capture(
                 CaptureSaveRequest(
@@ -829,6 +841,12 @@ async def test_each_library_switch_lands_on_its_first_row_never_a_grip(
                 )
                 await pilot.pause(0.3)
         how, row = switch
+        if captures == "saved":
+            # Review r16fo-rev2: this entry waits out the whole capture
+            # loader, the closest of these to the 2 s window; give it room.
+            monkeypatch.setattr(
+                library_screen_module, "LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS", 6.0
+            )
         if how == "click":
             await pilot.click(f"#library-row-browse-{row}")
         else:

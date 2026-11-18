@@ -4,7 +4,7 @@ title: "A Notes canvas sync moves focus off a pane grip or the Library notes sou
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-18 16:24'
+updated_date: '2026-11-18 18:15'
 created_date: 2026-11-17 19:40
 labels:
 - follow-up
@@ -85,3 +85,8 @@ Reproduced on the base (`67583dfa72`): during a waiting Notes entry, Tab put foc
   - `test_a_click_while_a_notes_sync_repaints_keeps_its_target` does the click's focus half inside the sync, before its restore, the way Textual's MouseDown forwarding does it (`get_focusable_widget_at`, then `set_focus`). Red on `b0cd65a9b8`: the restore put focus back on `library-notes-tree-note-1`.
   - `test_a_narrow_emergency_stage_tab_counts_as_the_users_focus` (60x24) sets the canvas-only stage as `test_emergency_tab_from_a_note_field_still_reaches_on_key` does, Tabs onto `#library-browse-items-grip`, then runs a sync. Red on `b0cd65a9b8` and without the new line: the sync moved focus to `library-notes-filter`.
   - The stage has to be set by hand: at 60x24 and 50x20 the Notes route never enters it (a probe found the stage `None`).
+
+**Fix round 2 (review r16fo-rev2, 2026-11-18).** The emergency-Tab line from fix round 1 and its test (`test_a_narrow_emergency_stage_tab_counts_as_the_users_focus`) are removed.
+- Notes never enters the canvas-only stage: `_apply_library_emergency_geometry` needs `_library_ordinary_route_active()`, which excludes Notes and Create Note. A probe had already shown that stage stays `None` at 60x24 and 50x20.
+- `_library_input_focus` is read only by the Notes restore, so the line had no effect, and its test pinned a state no user can reach.
+- `library_screen.py` is now 38312 lines (1380 methods), and its ratchet row says so.

@@ -4,7 +4,7 @@ title: "Library focus lands on a pane grip or the rail row instead of the first 
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-18 16:24'
+updated_date: '2026-11-18 18:15'
 created_date: 2026-11-17 05:27
 labels:
 - follow-up
@@ -91,3 +91,10 @@ Found by the libfocus stream and its review (TASK-41128 to TASK-41130 area, roun
     - 50 of the 60 are in the base-failing list.
     - Re-run on head at load ~30, the other 10 passed 9 of 10. The one failure is `test_mounted_abandoned_receipt_reload_ignores_late_page_or_filter_result[False-browse]`, which fails 12 of 12 on base.
   - **Serial ratchets and wiring** (now including the Collections wiring test): 325 passed. Preflight passed; ruff gate passed.
+
+**Fix round 2 (review r16fo-rev2, 2026-11-18).**
+- **Disabled Quick Capture falls back to the filter, now pinned.** The new case `media-press-collections-quick-capture-disabled` makes the scope service's `capabilities()` raise, so Quick Capture is drawn disabled, and expects `library-collections-filter`.
+  - Red when the disabled check is dropped: focus None, because the entry kept aiming at a control outside the focus chain.
+  - Red the same way when the target is always Quick Capture.
+- **Margin for `media-press-collections-with-captures`.** Just before its switch, this case raises `LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS` to 6 s; no other case changes. Its serial call time goes from about 7.1 s to 10.8 s, about +3.7 s. The new disabled case adds 4.8 s.
+- **Runs.** Both test files whole, `-n 4`, 3 runs: 30 passed each time (load 11-33). Serial ratchets and wiring: 325 passed. Preflight and the ruff gate passed.
