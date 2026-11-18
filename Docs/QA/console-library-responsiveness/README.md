@@ -428,3 +428,78 @@ SQLite helper starts before the first usable composer, including
 Chat/Notes, scheduled tasks and Workspace storage. The startup samples
 identify the work present in those intervals and leave its necessity
 and individual contribution open.
+
+## Guarded SQLite helpers before the first usable composer
+
+Two caller traces on `ae511df60c` used the sealed 120×50 macOS PTY fixture
+and the shipped offline tokenizer. They measured 6.03 s and 8.37 s from
+launch to the first echoed key, with one-minute load moving from
+5.3 to 18.4 and from 18.4 to 29.7. Every observed helper used the transient
+SQLite preparation operation for an admitted native connection.
+
+| Store before the composer | Main-thread prepares per trace | Worker prepares per trace |
+| --- | ---: | ---: |
+| Chat/Notes | 1 | 14 / 13 |
+| Scheduled tasks | 4 | 4 |
+| Workspaces | 1 | 6 |
+| Agent runs | 1 | 5 |
+| Library collections | 1 | 2 |
+| Library ingest jobs | 1 | 1 |
+| Subscriptions | 1 | 1 |
+| Evals | 1 | 0 |
+| Prompts | 0 | 1 |
+| Media | 0 | 1 |
+| Total | 11 | 35 / 34 |
+
+Main-thread preparation occupied 385–567 ms, including 253–379 ms in
+the helper request/reply exchange. Parent-thread CPU inside preparation
+was 63–80 ms. Worker prepares overlapped with one another and with the
+main thread.
+
+Scheduling took 142–208 ms across its four main-thread prepares. Those
+calls checked the schema, reconciled stale automation runs, and read
+the automation-definition and reminder transfer recovery candidates.
+The worker side separately loaded the reminder and automation queues,
+recovered interrupted task runs, and pruned task history. Most Chat/Notes
+prepares came from finite workers doing Browser, attention, character
+scope or recovery reads. The three Quick Note reads were for delete
+receipts, create receipts, and blocked conflicts in that order.
+
+### Empty Quick Note recovery control
+
+The disposable candidate used one guarded owner-filtered read that
+includes blocked receipts. A zero total and empty page established
+the fast path on this fixture. A nonempty result would proceed to the
+original ordered recovery. The candidate used the same finite worker,
+native admission and connection retirement as the original reads.
+
+The six alternating PTY runs confirmed that both arms found zero
+receipts. All three candidates saved two real helper starts. The
+receipt-to-composer column starts at the first Quick Note receipt
+read on each arm. The startup helper count ends at the first usable
+composer.
+
+| Run order | One-minute load, start → end | Launch to first echo | Receipt read to composer | Main / total startup helpers | Quick Note helpers and wait | Cold Library | Warm Library |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 baseline | 50.8 → 43.0 | 11.53 s | 5.23 s | 11 / 48 | 3 (226 ms) | 2044 ms | 383 ms |
+| 1 candidate | 44.4 → 53.1 | 11.07 s | 5.29 s | 11 / 44 | 1 (107 ms) | 1455 ms | 63 ms |
+| 2 candidate | 53.9 → 53.3 | 18.72 s | 9.44 s | 11 / 44 | 1 (184 ms) | 1511 ms | 560 ms |
+| 2 baseline | 50.8 → 46.3 | 21.41 s | 9.19 s | 11 / 50 | 3 (562 ms) | 2058 ms | 340 ms |
+| 3 baseline | 46.2 → 45.9 | 13.54 s | 6.24 s | 11 / 48 | 3 (275 ms) | 1355 ms | 455 ms |
+| 3 candidate | 45.1 → 36.8 | 12.50 s | 5.93 s | 11 / 46 | 1 (72 ms) | 1421 ms | 197 ms |
+
+The candidate reached its first receipt read 345 ms, 2,928 ms, and
+597 ms earlier. From that read through the usable composer it took
+53 ms and 253 ms longer in the first two pairs and 312 ms less in the
+third. This established a reduction in worker activity on the empty
+profile and left the launch-to-input benefit unresolved. The candidate
+stayed in the disposable harness.
+
+Across the full first-input windows, gaps over 50 ms moved from 19
+to 16 and the worst gap moved from 330 to 307 ms. Cold Library gaps
+moved from 13 to 14, with worst gaps of 841 and 677 ms. Warm Library
+gaps moved from seven to five, with worst gaps of 399 and 477 ms. All
+eight traced processes kept all three 13-second windows, quit normally
+and left zero scoped SQLite descriptors. The profile and network guards
+recorded zero violations. The 148-entry private receipt manifest has
+SHA-256 `8d8d95de67aeefc78fc9cb125f96d8cfe8629db4b7f1f5350b80eb649e5b9019`.
