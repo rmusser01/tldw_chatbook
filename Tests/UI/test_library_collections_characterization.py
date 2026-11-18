@@ -681,8 +681,12 @@ async def test_quick_capture_refresh_hard_delete_cancel_and_legacy_recovery_clos
             screen, pilot, "#library-collections-hard-delete-cancel"
         )
         hard_delete_cancel_button.press()
-        await pilot.pause()
-        assert screen._collections_state.confirming_hard_delete is False
+        # The press bubbles to the screen; one pause need not outlast that.
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._collections_state.confirming_hard_delete is False,
+            message="Hard-delete cancel never closed its confirmation.",
+        )
         assert controller.state.loaded_detail is not None
         assert controller.state.loaded_detail.capture.identity == outcome.capture.identity
 
@@ -703,6 +707,9 @@ async def test_quick_capture_refresh_hard_delete_cancel_and_legacy_recovery_clos
             screen, pilot, "#library-collections-legacy-recovery-close"
         )
         legacy_close_button.press()
-        await pilot.pause()
-        assert screen._collections_state.legacy_recovery_open is False
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._collections_state.legacy_recovery_open is False,
+            message="Legacy recovery close never closed the disclosure.",
+        )
         assert screen._collections_state.legacy_recovery_lines == ()

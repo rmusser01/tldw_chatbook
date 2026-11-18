@@ -47,6 +47,7 @@ from ...Library.collections_capture_models import (
 from ...Library.library_shell_state import LIBRARY_ROW_BROWSE_COLLECTIONS
 from ...Third_Party.textual_fspicker import FileSave
 from ...Utils.adaptive_reader_state import (
+    AdaptiveReaderEffectiveLayout,
     list_holds_the_stage,
     resolve_adaptive_reader_layout,
 )
@@ -159,6 +160,7 @@ class LibraryCollectionsController:
         self._set_library_collections_capture_controller_fn = (
             set_library_collections_capture_controller
         )
+        self._pane_sync_lock = asyncio.Lock()
 
     # -- framework services: live-read properties, never snapshotted -----
 
@@ -243,14 +245,24 @@ class LibraryCollectionsController:
         if width <= 0 or not self._library_adaptive_reader_allocation_is_current(shell):
             return
         previous = self._library_collections_reader_layout
-        if (
-            previous.reader_width == 0
-            and previous.library_width == 0
-            and previous.items_width == 0
-        ):
+        if not (previous.reader_width or previous.library_width or previous.items_width):
             previous = None
+        layout = self._resolve_library_collections_reader_layout(
+            width, previous=previous, priority=priority
+        )
+        shell.sync_layout(layout)
+        self._library_collections_reader_layout = layout
+
+    def _resolve_library_collections_reader_layout(
+        self,
+        width: int,
+        *,
+        previous: AdaptiveReaderEffectiveLayout | None = None,
+        priority: Literal["library", "items"] | None = None,
+    ) -> AdaptiveReaderEffectiveLayout:
+        """Resolve the Collections reader layout for ``width`` shell cells."""
         capture_controller = self._library_collections_capture_controller
-        layout = resolve_adaptive_reader_layout(
+        return resolve_adaptive_reader_layout(
             width,
             self._library_collections_reader_preferences,
             LIBRARY_COLLECTIONS_READER_PROFILE,
@@ -264,26 +276,22 @@ class LibraryCollectionsController:
                 and capture_controller.state.selected_identity is not None
             ),
         )
-        screen = self._screen
-        retry = screen._library_collections_focus_retry
-        screen._library_collections_focus_retry = None
-        # r14ls-rev2/rev3: a first visit composes this shell with the width-0
-        # layout, so the route's restore found its rail row disabled and
-        # parked focus on a grip; retry that id now the rail is open -- only
-        # while focus is still on that very grip, never a user's own.
-        parked = (
-            previous is None
-            and retry is not None
-            and retry[1] in (shell.library_grip, shell.items_grip)
-            and screen.focused is retry[1]
-        )
-        shell.sync_layout(layout)
-        self._library_collections_reader_layout = layout
-        if parked:
-            chain = screen.focus_chain
-            targets = [target for target in screen.query(retry[0]) if target in chain]
-            if targets:
-                screen.set_focus(targets[0], scroll_visible=False)
+
+    def _seed_library_collections_reader_layout(self) -> AdaptiveReaderEffectiveLayout:
+        """TASK-41130: a first visit composes from the screen's measured width.
+
+        The width-0 placeholder closed and disabled the Library pane in the
+        first frame, so the route's focus restore could not land on the
+        Collections row. The shell's first layout sync still refines it.
+        """
+        layout = self._library_collections_reader_layout
+        width = self._screen.size.width
+        if width > 0 and not (
+            layout.reader_width or layout.library_width or layout.items_width
+        ):
+            layout = self._resolve_library_collections_reader_layout(width)
+            self._library_collections_reader_layout = layout
+        return layout
 
     def _mirror_library_collections_reader_preference(
         self,
@@ -422,7 +430,16 @@ class LibraryCollectionsController:
         return request
 
     def _refresh_library_collections_capture_reader(self) -> None:
-        """Recompose the destination-owned capture panes from controller state."""
+        """TASK-41126: repaint the panes in place once the current message is done."""
+        if (
+            self.is_mounted
+            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
+        ):
+            self._capture_reader_annotation_draft()
+            self._screen.call_next(self._sync_library_collections_capture_panes)
+
+    def _recompose_library_collections_screen(self) -> None:
+        """Recompose the whole screen: the fallback when no panes are mounted."""
         if (
             self.is_mounted
             and self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
@@ -442,14 +459,23 @@ class LibraryCollectionsController:
 
     async def _sync_library_collections_capture_panes(self) -> None:
         """TASK-40328: re-render the capture panes in place (whole screen without)."""
-        self._capture_reader_annotation_draft()
-        presentation = self._library_collections_capture_presentation()
-        if not await recompose_capture_panes(self._screen, presentation):
-            self._refresh_library_collections_capture_reader()
-        elif (rail := self._screen._active_library_rail()) is not None:
-            # The rail row and Details read the count this load produced; the
-            # retired whole-screen recompose used to repaint them (r14ls-rev1).
-            self._screen._sync_library_rail_state(rail)
+        # One sync at a time: the entry worker's and the actions' must never
+        # recompose one pane at once (TASK-41126).
+        async with self._pane_sync_lock:
+            self._capture_reader_annotation_draft()
+            if self._library_collections_quick_capture_open:
+                # The mounted fields, not their still-queued Changed events.
+                try:
+                    self._capture_library_collection_quick_capture_draft()
+                except (NoMatches, QueryError):
+                    pass
+            presentation = self._library_collections_capture_presentation()
+            if not await recompose_capture_panes(self._screen, presentation):
+                self._recompose_library_collections_screen()
+            elif (rail := self._screen._active_library_rail()) is not None:
+                # The rail row and Details read the count this load produced; the
+                # retired whole-screen recompose used to repaint them (r14ls-rev1).
+                self._screen._sync_library_rail_state(rail)
         self.call_after_refresh(
             self._sync_library_collections_reader_layout_from_shell
         )
@@ -667,11 +693,12 @@ class LibraryCollectionsController:
             or self._library_selected_row_id != LIBRARY_ROW_BROWSE_COLLECTIONS
         ):
             return
-        try:
-            rows = self.query_one("#library-collections-scopes")
-        except (NoMatches, QueryError):
-            return
-        await rows.show_page(self._library_collections_capture_presentation(), opener)
+        async with self._pane_sync_lock:  # serialized with the pane syncs
+            try:
+                rows = self.query_one("#library-collections-scopes")
+            except (NoMatches, QueryError):
+                return
+            await rows.show_page(self._library_collections_capture_presentation(), opener)
 
     @on(Input.Submitted, "#library-collections-filter")
     async def filter_library_collection_captures(
@@ -1044,6 +1071,11 @@ class LibraryCollectionsController:
     ) -> None:
         event.stop()
         request = self._library_collection_capture_filter_request(clear=True)
+        # A repaint keeps unsubmitted text (TASK-41126); Clear empties it.
+        for field in self._screen.query(
+            "#library-collections-filters-form Input, #library-collections-filter"
+        ):
+            field.value = ""
         if request is not None:
             await self._apply_library_collection_capture_request(request)
 
@@ -1442,6 +1474,10 @@ class LibraryCollectionsController:
             return
         self._library_collections_action_status = f"Linked Note {note_id}."
         self._library_collections_action_content = ""
+        # A landed link clears its ID; a repaint would keep it (TASK-41126).
+        for field in self._screen.query("#library-collections-linked-note-id"):
+            if field.value.strip() == note_id:
+                field.value = ""
         self._refresh_library_collections_capture_reader()
 
     @on(Button.Pressed, ".library-collections-linked-note-unlink")

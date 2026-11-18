@@ -1100,6 +1100,17 @@ MINIMUM_FILES = 2148
 # TASK-41102 review r15co-rev1 (2026-11-16): append the media, note and two
 # tray-width nodes at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 2155
+# TASK-41126 (2026-11-15): append the Collections actions in-place repaint
+# node at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2156
+MINIMUM_FILES = 2146
+# TASK-41304 (2026-11-16): append the two 80x24 annotation-draft journey nodes
+# at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2158
+MINIMUM_FILES = 2148
+# TASK-41126 review r15lc-rev2 (2026-11-16): append the unsubmitted-text
+# repaint node at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2159
 
 
 def read_census(path: Path) -> list[str]:

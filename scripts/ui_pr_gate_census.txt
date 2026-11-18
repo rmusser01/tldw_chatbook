@@ -3089,8 +3089,11 @@ Tests/UI/test_library_collection_reader_journeys.py::test_rail_press_recomposes_
 # mid-recompose is rebuilt by the next, identical one.
 Tests/UI/test_library_collection_reader_journeys.py::test_a_pane_repaint_cancelled_mid_recompose_is_rebuilt_by_the_next
 # TASK-40328 review r14ls-rev3 (2026-11-13): the Collections first-visit
-# focus retry never moves a user's own focus.
-Tests/UI/test_library_collection_reader_journeys.py::test_collections_focus_retry_never_moves_a_users_own_focus
+# focus retry never moves a user's own focus. TASK-41130 (2026-11-15) renames
+# it in place: the first frame is composed from the measured width, so the
+# retry is gone and this node pins that frame instead (32.0 s call / 51.9 s
+# serial at load 82-92).
+Tests/UI/test_library_collection_reader_journeys.py::test_collections_first_frame_opens_the_library_pane
 # TASK-40300 review r14ep-rev1 (2026-11-13, owner decision): a custom endpoint
 # refused at load is listed in Settings with its reason and Edit fixes it
 # (private profile, ~15 s serial).
@@ -3126,3 +3129,16 @@ Tests/UI/test_console_live_work_handoffs.py::test_a_cut_media_or_note_excerpt_is
 Tests/UI/test_console_live_work_handoffs.py::test_a_cut_media_or_note_excerpt_is_staged_as_partial[note]
 Tests/UI/test_console_live_work_handoffs.py::test_a_partial_tray_row_shows_partial_before_a_long_title[235x52]
 Tests/UI/test_console_live_work_handoffs.py::test_a_partial_tray_row_shows_partial_before_a_long_title[211x44]
+# TASK-41126 (2026-11-15): Collections actions (scope change, annotate,
+# capture, delete, legacy recovery export) repaint the reader panes with no
+# Library recompose; one launch, 40.5 s call / 65.6 s serial at load 84-86.
+Tests/UI/test_library_collection_reader_journeys.py::test_collections_actions_repaint_their_panes_without_a_library_recompose
+# TASK-41304 (2026-11-16): after a capture note saves at 80x24 the focused Save
+# stays painted on screen (it sat at y=26 of 24 rows on dev); 48.5 s + 50.8 s
+# call serial at load 96-100. Its 170x48 pair (60.8 s + 67.1 s) is left off.
+Tests/UI/test_library_collection_reader_journeys.py::test_annotation_drafts_survive_disclosures_modes_and_capture_return[textual-dark-size1]
+Tests/UI/test_library_collection_reader_journeys.py::test_annotation_drafts_survive_disclosures_modes_and_capture_return[textual-light-size1]
+# TASK-41126 review r15lc-rev2 (2026-11-16): typed, unsubmitted filter and
+# Linked-note text outlives an action's pane repaint; Clear and a landed link
+# still empty it. 7.5 s call / 14.3 s serial at load ~32.
+Tests/UI/test_library_collection_reader_journeys.py::test_unsubmitted_filter_and_link_text_survives_a_pane_repaint
