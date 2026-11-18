@@ -64,3 +64,9 @@ The three Console files are under `Tests/UI/`, not `Tests/Chat/` as the descript
 - The capture file (bootstrap_profile) runs whole in `console-p0-gate`'s admission-sensitive step, beside TASK-41508's trace files. The whole step serially, as CI runs it: 453 passed in 1464 s at load 15-27. `recovered-suites`, where its sibling stock-owned nodes run, measured 11.8-15.9 min of its 20 on CI.
 
 Files: `Tests/UI/test_console_staged_context.py`, `Tests/UI/test_polling_static_update_idempotence.py`, `Tests/UI/test_console_compaction_hold_cardless_sends.py`, `Tests/UI/test_console_compaction_hold_flow.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_response_rules_critical_gate.py`.
+
+**Review r16co-rev1 (fix round 1), Minor: the race was in the test.** `test_a_buddy_reply_over_the_ask_trigger_is_refused_before_commit` once kept its hold card up 10 s after Cancel at `-n 4`.
+- Reproduced with a temporary probe (removed): the node repeated 10 times at `-n 10`, load ~50, recording the card at the press. In 9 runs the card was shown with Cancel enabled. In the one failing run it read `display=False`, Cancel hidden and disabled, `recovery_state=None`: the test had pressed before any sync gave the card its state. `press()` on a disabled button does nothing, so the card then appeared and stayed. A user cannot press it in that state.
+- Earlier, 22 runs at load 45-67 had all passed.
+- Fix (test only): `_cancel_the_hold` waits, syncing, until the card is shown with Cancel enabled, then presses and settles. Both the Buddy and the sigil test use it.
+- After the fix, the node repeated 10 times at `-n 10` (load 21-29) passed 10 of 10, and the file passed in the covering run below.
