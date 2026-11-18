@@ -504,6 +504,27 @@ _MEDIA_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
     "handle_library_media_take_note",
     "handle_library_media_type_choice",
     "handle_library_media_type_filter_pressed",
+    # TASK-36952.3.4 (2026-11-15): the Trash view's state build, sync, focus,
+    # Back, restore and permanent delete -- 19 bodies.
+    "_build_library_media_trash_state",
+    "_exit_library_media_trash",
+    "_library_media_trash_action_disabled_reason",
+    "_library_media_trash_actions_live",
+    "_library_media_trash_focus_selectors",
+    "_library_media_trash_retry_visible",
+    "_permanently_delete_library_media_from_trash",
+    "_press_library_media_trash_action",
+    "_restore_library_media_from_trash",
+    "_sync_library_media_trash_state",
+    "_validated_library_media_trash_restore_summary",
+    "action_library_media_trash_delete",
+    "action_library_media_trash_restore",
+    "handle_library_media_trash_back",
+    "handle_library_media_trash_delete",
+    "handle_library_media_trash_delete_confirm",
+    "handle_library_media_trash_open",
+    "handle_library_media_trash_restore",
+    "handle_library_media_trash_row",
 )
 
 #: The names above that are ``@staticmethod`` on ``LibraryScreen``. Their
@@ -515,6 +536,8 @@ _MEDIA_CLUSTER_STATICMETHOD_NAMES: frozenset[str] = frozenset(
         "_bounded_library_media_trash_title",
         "_restore_library_media_scope",
         "_valid_library_media_trash_delete_ack",
+        # TASK-36952.3.4: moved with the Trash restore; its delegator is pruned.
+        "_validated_library_media_trash_restore_summary",
     }
 )
 
@@ -587,6 +610,15 @@ _MEDIA_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
         "_start_library_note_from_media_source",
         "_take_library_media_note",
         "_toggle_library_media_select_mode",
+        # TASK-36952.3.4: 8 of its 19 movers, by the same census.
+        "_exit_library_media_trash",
+        "_library_media_trash_action_disabled_reason",
+        "_library_media_trash_focus_selectors",
+        "_library_media_trash_retry_visible",
+        "_permanently_delete_library_media_from_trash",
+        "_press_library_media_trash_action",
+        "_restore_library_media_from_trash",
+        "_validated_library_media_trash_restore_summary",
     }
 )
 
@@ -760,12 +792,11 @@ _MEDIA_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     "_select_library_rail_row",
     # -- named late-binding callables for the excluded media methods a mover
     #    still calls (35; TASK-36952.3.1 moved 5 of them here: 30;
-    #    TASK-36952.3.2 moved 2 more: 28; TASK-36952.3.3 moved 6 more: 22)
+    #    TASK-36952.3.2 moved 2 more: 28; TASK-36952.3.3 moved 6 more: 22;
+    #    TASK-36952.3.4 moved 5 more: 17)
     "_arm_library_media_return_settlement",
-    "_build_library_media_trash_state",
     "_capture_library_media_loaded_progress",
     "_commit_library_media_return",
-    "_exit_library_media_trash",
     "_library_media_analysis_provider_reason",
     "_library_media_content_matches",
     "_library_media_content_signature",
@@ -773,8 +804,6 @@ _MEDIA_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     "_library_media_layout_signature",
     "_library_media_return_candidate",
     "_library_media_settlement_tree",
-    "_library_media_trash_focus_selectors",
-    "_library_media_trash_retry_visible",
     "_library_media_viewer_state_cached",
     "_reconcile_library_media_stage_presentation",
     "_refresh_library_media_detail",
@@ -782,7 +811,6 @@ _MEDIA_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     "_sanitize_media_field",
     "_save_library_media_analysis",
     "_sync_library_media_reader_layout_from_shell",
-    "_sync_library_media_trash_state",
 )
 
 
@@ -816,8 +844,9 @@ def test_media_cluster_method_names_are_genuinely_media_named() -> None:
     # delete, Undo, export and edit-save bodies.
     # 2026-11-15, TASK-36952.3.3: 190 -> 213, the 23 select-mode, browse,
     # type-filter and take-note bodies.
-    assert len(_MEDIA_CLUSTER_METHOD_NAMES) == 213, (
-        f"expected 213 moved names, got {len(_MEDIA_CLUSTER_METHOD_NAMES)}"
+    # 2026-11-15, TASK-36952.3.4: 213 -> 232, the 19 Trash bodies.
+    assert len(_MEDIA_CLUSTER_METHOD_NAMES) == 232, (
+        f"expected 232 moved names, got {len(_MEDIA_CLUSTER_METHOD_NAMES)}"
     )
     assert len(set(_MEDIA_CLUSTER_METHOD_NAMES)) == len(_MEDIA_CLUSTER_METHOD_NAMES), (
         "duplicate entries in _MEDIA_CLUSTER_METHOD_NAMES"
@@ -995,8 +1024,10 @@ def test_media_controller_binds_every_name_its_moved_bodies_use() -> None:
     # 2026-11-15, TASK-36952.3.3: 92 -> 93. Six pinned late-binding callbacks
     # became moved methods (-6); `check_action`, the `_notes_controller` and
     # `_notes_state` getters and four shell helpers were bound (+7).
-    assert len(_MEDIA_CONTROLLER_BOUND_NAMES) == 93, (
-        f"expected 93 bound names, got {len(_MEDIA_CONTROLLER_BOUND_NAMES)}"
+    # 2026-11-15, TASK-36952.3.4: 93 -> 88. Five pinned late-binding callbacks
+    # became moved methods (-5); nothing new was bound.
+    assert len(_MEDIA_CONTROLLER_BOUND_NAMES) == 88, (
+        f"expected 88 bound names, got {len(_MEDIA_CONTROLLER_BOUND_NAMES)}"
     )
     assert len(set(_MEDIA_CONTROLLER_BOUND_NAMES)) == len(
         _MEDIA_CONTROLLER_BOUND_NAMES
