@@ -988,7 +988,6 @@ async def test_a_refused_acknowledged_enter_repaints_its_refusal(
         _console_app,
         _reach_console,
     )
-    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
     from tldw_chatbook.Chat.console_display_state import ConsoleBlockedReason, CONSOLE_BLOCKER_ARCHIVE_INFLIGHT
 
     refusal = "Archive change in progress. Your draft is preserved."
@@ -996,8 +995,11 @@ async def test_a_refused_acknowledged_enter_repaints_its_refusal(
     async with app.run_test(size=(160, 45), notifications=True) as pilot:
         chat = await _reach_console(app, pilot, "explore_home")
         await until(lambda: chat._console_attach_reconciled and not chat._console_attach_reconcile_running)
+        # TASK-41643 (ADR-356 rule 4): the received route treats a replaced
+        # class method as stock (it computes the gate's answer itself), so the
+        # custom gate goes on this screen, which sends it the ordinary way.
         monkeypatch.setattr(
-            ChatScreen, "_console_send_gate", lambda _screen: ConsoleBlockedReason(refusal, code=CONSOLE_BLOCKER_ARCHIVE_INFLIGHT)
+            chat, "_console_send_gate", lambda: ConsoleBlockedReason(refusal, code=CONSOLE_BLOCKER_ARCHIVE_INFLIGHT)
         )
         composer = chat.query_one("#console-native-composer", ConsoleComposerBar)
         assert chat._hooks._permissions().snapshot().ready
