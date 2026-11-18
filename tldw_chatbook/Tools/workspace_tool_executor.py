@@ -159,6 +159,32 @@ def workspace_worker_environment(workspace_root: Path) -> dict[str, str]:
     return environment
 
 
+def _workspace_worker_argv() -> list[str]:
+    """Keep the fixed worker on this installation in a no-site backend."""
+    if not (sys.flags.isolated and sys.flags.no_site):
+        return [sys.executable, "-I", "-m", _FIXED_WORKER_MODULE]
+    # The selected Console backend uses the base interpreter with -I -S.
+    # Its explicit application import root is not inherited by grandchildren.
+    # This worker's tested closure is stdlib-only, so it needs only the same
+    # code-owned package root, never the backend's other imports or workspace.
+    from importlib.util import find_spec
+
+    package = Path(__file__).resolve().parent.parent
+    worker = package / "Tools" / "workspace_tool_worker.py"
+    spec = find_spec(_FIXED_WORKER_MODULE)
+    if spec is None or spec.origin is None or Path(spec.origin).resolve() != worker:
+        raise WorkspaceToolExecutionError("spawn_failed")
+    bootstrap = (
+        "import importlib.util,runpy,sys\n"
+        f"sys.path.insert(0, {str(package.parent)!r})\n"
+        f"spec=importlib.util.find_spec({_FIXED_WORKER_MODULE!r})\n"
+        f"if spec is None or spec.origin != {str(worker)!r}:\n"
+        "    raise RuntimeError('Fixed workspace worker installation changed')\n"
+        f"runpy.run_module({_FIXED_WORKER_MODULE!r},run_name='__main__')\n"
+    )
+    return [sys.executable, "-I", "-S", "-B", "-c", bootstrap]
+
+
 class WorkspaceToolExecutor:
     """Launch one contained helper for one workspace operation.
 
@@ -314,7 +340,7 @@ class WorkspaceToolExecutor:
         cleanup_supervisor: _CleanupSupervisor | None = None
         cleanup_attempted = False
         try:
-            argv = [sys.executable, "-I", "-m", _FIXED_WORKER_MODULE]
+            argv = _workspace_worker_argv()
             process = subprocess.Popen(
                 argv,
                 stdin=subprocess.PIPE,
