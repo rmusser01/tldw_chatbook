@@ -14,6 +14,7 @@ import textwrap
 import time
 import urllib.parse
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -2128,6 +2129,146 @@ def test_child_bootstrap_intent_exception_grants_no_other_access(tmp_path, opera
     )
     _assert_containment_attempt(module, result, scratch, category)
     assert marker.read_bytes() == b"outside scratch"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX canonical path contract")
+@pytest.mark.parametrize("system", ("linux", "darwin"))
+def test_child_own_mountinfo_has_no_related_or_write_authority(
+    tmp_path, monkeypatch, system
+):
+    module = _load_child()
+    module._SCRATCH = str(tmp_path)
+    module._READ_ROOTS = (str(tmp_path),)
+    monkeypatch.setattr(module, "sys", SimpleNamespace(platform=system))
+    own_proc = f"/proc/{os.getpid()}"
+
+    assert module._read_allowed(own_proc + "/mountinfo") is (system == "linux")
+    assert not module._write_allowed(own_proc + "/mountinfo")
+    for path in (
+        own_proc,
+        own_proc + "/status",
+        own_proc + "/mountinfo/child",
+        own_proc + "/fdinfo",
+        own_proc + "/fdinfo/not-a-descriptor",
+        own_proc + "/fdinfo/" + "9" * 64,
+        f"/proc/{os.getpid() + 1}/mountinfo",
+    ):
+        assert not module._read_allowed(path)
+        assert not module._read_event_allowed("os.scandir", path)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX descriptor contract")
+@pytest.mark.parametrize(
+    "case",
+    (
+        "scratch-directory",
+        "foreign-directory",
+        "scratch-file",
+        "untracked",
+        "closed",
+        "reused",
+        "non-linux",
+        "no-boundary",
+    ),
+)
+def test_child_fdinfo_requires_current_tracked_scratch_directory(
+    tmp_path, monkeypatch, case
+):
+    module = _load_child()
+    scratch = tmp_path / "scratch"
+    foreign = tmp_path / "foreign"
+    scratch.mkdir()
+    foreign.mkdir()
+    subject = scratch
+    if case == "foreign-directory":
+        subject = foreign
+    elif case == "scratch-file":
+        subject = scratch / "file"
+        subject.touch()
+    module._SCRATCH = "" if case == "no-boundary" else str(scratch)
+    module._READ_ROOTS = (str(scratch),)
+    monkeypatch.setattr(
+        module,
+        "sys",
+        SimpleNamespace(platform="darwin" if case == "non-linux" else "linux"),
+    )
+    descriptor = os.open(subject, os.O_RDONLY)
+    to_close = [descriptor]
+    try:
+        identity = module._fd_identity(descriptor)
+        assert identity is not None
+        if case != "untracked":
+            module._OPEN_FDS[descriptor] = (
+                str(subject),
+                subject.is_dir(),
+                False,
+                identity,
+            )
+        if case == "closed":
+            os.close(descriptor)
+            to_close.remove(descriptor)
+        elif case == "reused":
+            replacement = os.open(foreign, os.O_RDONLY)
+            to_close.append(replacement)
+            os.dup2(replacement, descriptor)
+        path = f"/proc/{os.getpid()}/fdinfo/{descriptor}"
+
+        assert module._read_allowed(path) is (case == "scratch-directory")
+        if case != "no-boundary":
+            assert not module._write_allowed(path)
+    finally:
+        for descriptor in to_close:
+            os.close(descriptor)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux kernel mount metadata")
+def test_child_reads_linux_mount_metadata_for_tracked_scratch_directory(tmp_path):
+    module = _load_runner()
+    body = """
+descriptor = os.open(os.environ['XDG_DATA_HOME'], os.O_RDONLY | os.O_DIRECTORY)
+try:
+    with open(f'/proc/self/fdinfo/{descriptor}') as handle:
+        assert 'mnt_id:' in handle.read()
+    with open('/proc/self/mountinfo') as handle:
+        assert ' - ' in handle.read()
+finally:
+    os.close(descriptor)
+"""
+    result, scratch, _ = _run_pytest_child(
+        module, tmp_path, body, must_not_continue=False
+    )
+
+    assert result.returncode == 0
+    assert result.error is None
+    assert (scratch / "attempts.jsonl").read_bytes() == b""
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux kernel mount metadata")
+@pytest.mark.parametrize(
+    "operation",
+    ("foreign-pid", "sibling", "enumerate", "closed", "file", "write"),
+)
+def test_child_linux_mount_metadata_grants_no_other_access(tmp_path, operation):
+    module = _load_runner()
+    body = {
+        "foreign-pid": "open(f'/proc/{os.getpid() + 1}/mountinfo').read()",
+        "sibling": "open('/proc/self/status').read()",
+        "enumerate": "os.listdir('/proc/self/fdinfo')",
+        "closed": "descriptor = os.open(os.environ['XDG_DATA_HOME'], os.O_RDONLY)\n"
+        "os.close(descriptor)\nopen(f'/proc/self/fdinfo/{descriptor}').read()",
+        "file": "descriptor = os.open(os.path.join(os.environ['TMPDIR'], 'file'), "
+        "os.O_CREAT | os.O_RDWR, 0o600)\n"
+        "open(f'/proc/self/fdinfo/{descriptor}').read()",
+        "write": "open('/proc/self/mountinfo', 'w')",
+    }[operation]
+    result, scratch, _ = _run_pytest_child(module, tmp_path, body)
+
+    _assert_containment_attempt(
+        module,
+        result,
+        scratch,
+        "filesystem_write_denied" if operation == "write" else "filesystem_read_denied",
+    )
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX descriptor contract")
