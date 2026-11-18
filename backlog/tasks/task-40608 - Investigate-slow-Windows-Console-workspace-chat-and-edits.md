@@ -55,6 +55,8 @@ The real Console UI, workspace binding, local tool workers, file permissions, an
 <!-- SECTION:PLAN:BEGIN -->
 See the [Windows admission reuse plan](../../Docs/superpowers/plans/2026-11-12-task-40608-windows-admission-reuse.md) and the [ADR-126 amendment](../decisions/126-complete-local-backup-and-recovery.md#task-40608--ordinary-windows-admission-reuse).
 
+For the activity-header rendering cost, measure label and status updates with eight mounted disclosures and one changed status. Compare freshly derived styled content with the installed content of each existing cell before asking Textual to lay it out again. Exercise changed styles, externally replaced content, focus and width as well as unchanged rows. Allow every existing approval, render-source and retirement check to run. This presentation-only change needs no additional ADR. Recheck the original Windows journeys after the focused test.
+
 The absolute usability target follows the [sub-five plan](../../Docs/superpowers/plans/2026-11-13-task-40608-sub-five.md), including explicit finite operation ownership and shared fresh evidence at meaningful validation boundaries. ADR required: yes; amend existing ADR126/231 rather than creating duplicate decisions. Preserve logical security guarantees, not redundant executions of equivalent checks.
 
 Task20 follows the [ADR-241 missing-index amendment](../decisions/241-workspace-project-context-and-folder-bound-index.md#missing-index-base-during-console-preparation-task-40608) and ADR126: Console preparation may withhold optional indexed search after a fresh checked missing-base observation, without creating an unused cache. Public status and existing/custom index paths retain their checks and behavior.

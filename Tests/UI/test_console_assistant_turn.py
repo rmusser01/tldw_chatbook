@@ -428,6 +428,63 @@ def _styled_turn_messages() -> tuple[ConsoleChatMessage, ConsoleChatMessage]:
     return assistant, activity
 
 
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_eight_activity_headers_update_only_changed_mounted_content(monkeypatch):
+    from dataclasses import replace
+
+    assistant, activity = _styled_turn_messages()
+    tools = [
+        replace(
+            activity, id=f"activity-{index}",
+            activity_presentation=replace(activity.activity_presentation, call_id=f"call-{index}"),
+        )
+        for index in range(8)
+    ]
+    app = StyledTranscriptHarness()
+    async with app.run_test(size=(100, 32)) as pilot:
+        transcript = app.transcript
+        transcript.set_messages([assistant, *tools])
+        await transcript.refresh_messages()
+        await pilot.pause()
+        headers = [transcript.query_one(f"#console-activity-header-{tool.id}", ConsoleActivityHeader)
+                   for tool in tools]
+        first, last = headers[0], headers[-1]
+        first.focus()
+        await pilot.pause()
+        original_region = first.region
+        original_width = last.status_widget.region.width
+        # Textual Content equality compares plain text only. An independent
+        # child update may leave the right text with the wrong styled spans.
+        original_label = first.label_widget.content
+        first.label_widget.update(original_label.stylize("bold"))
+        cells = {cell for header in headers for cell in (header.label_widget, header.status_widget)}
+        updates = []
+        original_update = Static.update
+
+        def record_update(widget, content="", *, layout=True):
+            if widget in cells:
+                updates.append((widget, layout))
+            return original_update(widget, content, layout=layout)
+
+        monkeypatch.setattr(Static, "update", record_update)
+        tools[-1] = replace(
+            tools[-1],
+            activity_presentation=replace(tools[-1].activity_presentation, status="failed", elapsed_seconds=123.4),
+        )
+        transcript.set_messages([assistant, *tools])
+        await transcript.refresh_messages()
+        await pilot.pause()
+
+        assert updates == [(first.label_widget, True), (last.status_widget, True)]
+        assert first.label_widget.content.plain == original_label.plain
+        assert first.label_widget.content.spans == original_label.spans
+        assert "Failed" in last.status_widget.content.plain
+        assert last.status_widget.has_class("console-activity-status-failed")
+        assert last.status_widget.region.width > original_width
+        assert app.focused is first and first.region == original_region
+
+
 @pytest.mark.parametrize(
     ("status", "line"),
     [
@@ -451,6 +508,7 @@ def test_refusal_marker_line_names_who_refused(status: str, line: str) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("terminal_size", [(120, 32), (42, 24)])
+@pytest.mark.bootstrap_profile
 async def test_assistant_turn_geometry_under_production_bundle(
     terminal_size: tuple[int, int],
 ) -> None:
@@ -500,6 +558,7 @@ async def test_assistant_turn_geometry_under_production_bundle(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_narrow_activity_label_ellipsizes_before_fixed_status() -> None:
     """The bounded status never yields its columns to a worst-case literal label."""
     app = StyledTranscriptHarness()
@@ -525,6 +584,7 @@ async def test_narrow_activity_label_ellipsizes_before_fixed_status() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+@pytest.mark.bootstrap_profile
 async def test_composite_retains_roleplay_and_failed_answer_backgrounds(
     theme: str,
 ) -> None:
@@ -629,6 +689,7 @@ async def test_activity_status_compositor_contrast(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_success_status_rest_contrast_in_every_shipped_theme() -> None:
     """Success remains readable against every shipped theme's resolved tokens."""
     app = AllThemesStyledTranscriptHarness()

@@ -50,6 +50,8 @@ On November 18, `g69d` and `g69t` ran sequentially on Windows 10 build 19045. Bo
 
 README improved by 0.073 s (0.37%) and edit regressed by 1.434 s (7.11%). The large synthetic warm-lease gain did not carry over to the original turns. Keep the stock settings. One matched diagnostic does not establish a scheduling effect across hosts. Parent admission counts exclude the backend. [Windows timer resolution and power trade-off](https://learn.microsoft.com/en-us/windows/win32/api/timeapi/nf-timeapi-timebeginperiod)
 
+The recorded interpreter setting is the outer backend setting. Both arms still executed the product's existing shorter-interval scopes during bounded reads.
+
 Later runs `g62`, `g63` and `g66` are individual diagnostics. Their clocks and application revisions are separate from the three paired candidates in the diagram.
 
 ### What the backend admission observer actually covered

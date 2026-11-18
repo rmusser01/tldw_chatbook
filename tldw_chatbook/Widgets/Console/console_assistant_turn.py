@@ -275,8 +275,23 @@ class ConsoleActivityHeader(Horizontal):
         self.raw_cli_presentation = raw_cli_presentation
         self.tool_presentation = tool_presentation
         self._sync_classes()
-        self.label_widget.update(self._label_content())
-        self.status_widget.update(self._status_content())
+        for widget, build_content in (
+            (self.label_widget, self._label_content),
+            (self.status_widget, self._status_content),
+        ):
+            content = build_content()
+            # Textual Content equality compares text alone. An identical
+            # installed visual also needs the same styling and terminal width.
+            if type(widget) is Static and type(content) is Content:
+                current = widget.content
+                if (
+                    type(current) is Content
+                    and current.plain == content.plain
+                    and current.spans == content.spans
+                    and current.cell_length == content.cell_length
+                ):
+                    continue
+            widget.update(content)
         self._sync_raw_cli_timer()
 
     def _activate(self) -> None:
