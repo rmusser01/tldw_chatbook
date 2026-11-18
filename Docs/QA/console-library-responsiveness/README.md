@@ -635,3 +635,73 @@ The module ratchets passed with the Console transcript pin lowered to 8,554
 lines. Ruff formatting passed on touched regions and diagnostics matched the
 frozen source. The 99-entry private receipt manifest has SHA-256
 `0c81c9969b77dcb494b1ca463bd2c53056fe08e339411f350f2d832e3d511d5d`.
+
+## File Notes rescans and Library keyword Search
+
+TASK-33286.1 and TASK-41803 compare the checkout with
+`1b0967c6005a043eb0ba3b322d0f095e2a02c5e1`. File Notes reads the root's
+search rowids once and checks the live replica bytes and searchable text
+against the disk read. Missing, stale, duplicate and changed rows still
+take the repair path. Native Library keyword Search uses the existing
+bounded Media page and omits the exact total that the Search panel discards.
+Counted callers still receive exact totals.
+
+Three alternating pairs used the same macOS 120×50 PTY harness and the
+same sealed 10,000-conversation fixture. Each run started with a fresh
+profile containing a pre-indexed 995-file folder and 20,000 Media rows.
+The Media-only keyword query matched 13,334 rows and returned the same
+15 ordered IDs in every arm. Setup selected the native route and settled
+focus before a real PTY Return. The visible endpoints were the first
+fixture filename after all 995 entries arrived and the first fixture
+Media title after the query settled. Each measured action retained its
+full 13-second window. The setup receipts retain four invalid attempts
+and one setup-only check covering focus, the async setup worker and the
+seeded FTS index.
+
+| Pair and arm in order | One-minute load, start → end | File Notes paint / scan (ms) | Search paint / DB call (ms) | Notes gaps over 50 ms / worst (ms) | Search gaps over 50 ms / worst (ms) | Search busy paint (ms) |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 1 baseline | 64.35 → 57.03 | 2954.9 / 1696.4 | 394.6 / 183.8 | 5 / 355.1 | 2 / 126.3 | 141.8 |
+| 1 candidate | 57.05 → 62.28 | 2262.2 / 988.6 | 307.8 / 73.6 | 5 / 378.6 | 1 / 112.9 | 89.1 |
+| 2 candidate | 62.81 → 70.69 | 2735.6 / 1295.7 | 340.2 / 169.2 | 5 / 442.0 | 3 / 135.3 | 149.2 |
+| 2 baseline | 69.99 → 70.21 | 2868.2 / 1594.1 | 358.8 / 111.8 | 6 / 386.7 | 3 / 110.8 | 70.7 |
+| 3 baseline | 67.26 → 60.46 | 2765.5 / 1555.4 | 241.4 / 86.2 | 6 / 322.8 | 2 / 96.8 | 63.3 |
+| 3 candidate | 58.98 → 58.07 | 2000.6 / 777.1 | 316.1 / 153.8 | 5 / 313.2 | 2 / 93.5 | 110.0 |
+
+File Notes painted sooner in all three pairs. Median activation fell
+from 2868.2 to 2262.2 ms (21%) and median scan time fell from 1594.1 to
+988.6 ms (38%). Library results painted sooner in two of three pairs.
+Median paint fell from 358.8 to 316.1 ms (12%). Median database-call wall
+time rose from 111.8 to 153.8 ms on the heavily loaded 18-CPU host. A
+separate nine-pair control used a private copy of the same indexed Media
+fixture. Omitting the count reduced median database CPU time from 30.1 to
+7.7 ms and approximate SQLite VM instructions from 126,000 to 4,000.
+The ordered page was equal in every control.
+
+Across both journeys the number of loop gaps over 50 ms fell from 24 to
+21 and the worst grew from 386.7 to 442.0 ms. Search busy paint exceeded
+100 ms in one baseline run and two candidates. The File Notes observer
+captured no tagged busy frame. All six runs quit normally and returned
+with zero open fixture database descriptors, network denials or
+protected-profile violations. The Terminal cell-size probe used its
+existing fallback on the owned PTY. Absolute timing qualification
+remains open.
+
+The unchanged-rescan and native-search regressions first failed on the
+frozen source and pass on the installed source. File Notes repairs
+same-size, same-mtime edits, corrupted bytes, a reappearing tombstone,
+and missing, stale or duplicate search entries. A separate disposable
+second connection inserted a duplicate after the first scan's rowid
+lookup. The scan repaired it and retired the replica normally.
+
+The ordinary Notes, recovery and Media selection passed 205 tests.
+The Library and mounted bootstrap selection passed 100 tests and
+reproduced two Console scope failures on the frozen source. The wider
+ordinary run shared 26 failing or erroring nodes with the frozen
+control. Its remaining candidate failure was the Media service size
+budget, which was corrected. Both touched size ratchets and the final
+three regression cases pass. Ruff added no diagnostics. The timed
+production modules match the installed source byte-for-byte except
+for AST-identical File Notes formatting.
+
+The 243-entry private receipt manifest has SHA-256
+`8ef10034748e8475cc1d14380317f1186d43d0ea48a0d19c3c4f24e36d8c0840`.
