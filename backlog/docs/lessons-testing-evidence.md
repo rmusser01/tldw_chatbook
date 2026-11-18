@@ -192,6 +192,38 @@ Three traps cost a run each while finding it:
 
 **What to do.** For every test that fails at base and also reads code your change moves or edits, compare the failure messages at base and head, not only pass or fail. A path-keyed guard is the likeliest case. Run it with `-vv -o truncation_limit_lines=0` on both trees and diff the lists.
 
+## Keep focus on the rail while releasing a delayed Library snapshot (TASK-40971, 2026-11-17)
+
+The saved Library landing showed the right counts after its rail rebuilt,
+but the user who had focused Search was sent to the shell's navigation
+overflow button. The mounted test held the existing snapshot until Search
+had focus, then let it complete. It checks both the settled count and the
+identity of the focused input. Check focus during background updates
+before treating a correct final frame as proof of continuity.
+
+After dev added in-place updates for graduated rails, the same test
+preserved Search but stranded its queued focus callback. Exercise both
+the stable update and a callback waiting for replacement controls.
+
+## Verify the return path when skipping Library evidence reads (TASK-40970, 2026-11-17)
+
+An early attempt to skip onboarding after saved graduation also skipped the
+landing refresh. A mounted test covered Library, let an import fail, then
+returned to Library. The source counts were current, but the landing never
+showed **Review**. The early return now follows the existing landing refresh.
+Test changes that arrive while a screen is covered, even when they leave
+the source snapshot unchanged.
+
+## Attribute Library paint delays below the reconcile callback (TASK-40969, 2026-11-17)
+
+The first populated Library frame waited on a 701 ms reconciliation. The
+native rail recompose overlapped that interval. Direct timings inside the
+callback found 41 workspace membership reads taking 676 ms on the UI
+thread, while the canvas update took under 1 ms. The grouped read reduced
+the visible-page lookup to one call. All three paired PTY runs painted the
+populated frame earlier. Time the database and presentation calls inside
+overlapping callbacks before deciding which work to remove.
+
 ## A process-wide `os.close` spy also counts another thread's closes, so a profile change moved a "pin count" (TASK-39114, 2026-11-10)
 
 **Incident.** `test_migration_immutable_failure_retains_complete_destination[True]` monkeypatched `os.close` and expected 6 closes after a failed view close, "Admission also owns two directory pins for a file-backed view." It failed `assert 4 == 6` on dev. A first-parent bisect over 905 commits (a `git archive` tree per step, one 4 s node) named 5a915a43e5, a test-only commit that moved `Tests/DB` to the bootstrap profile. Stacks recorded in the spy showed the two missing closes came from the `chatbook-storage-admission` hold thread (`admission._lock` and `native_files.pinned_directory`), which a per-test profile's admission happened to run in that window. The cleanup under test closed the same 4 descriptors under both profiles.

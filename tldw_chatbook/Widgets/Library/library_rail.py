@@ -691,8 +691,8 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
 
         Patches rows and Details in place while the tree's shape is
         unchanged (an EXPANDED or GRADUATED rail with the same lifecycle,
-        onboarding flag, preferences, query, sections and Details rows), and
-        recomposes the rail otherwise.
+        onboarding flag, preferences, query, sections and Details rows) and
+        no recompose or completion callback is pending.
 
         The search placeholder is not synced here: the screen's placeholder
         is the same on every route ("Search Library…"), so it is set once
@@ -735,6 +735,9 @@ class LibraryRail(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
         # lifecycle must be unchanged), so it patches too (r14ls-rev2).
         can_patch_in_place = (
             self.is_mounted
+            and not self._recompose_required
+            and not self.recompose_in_flight
+            and not self.has_pending_recompose_callback
             and self.lifecycle
             in (LibraryLifecycle.EXPANDED, LibraryLifecycle.GRADUATED)
             and lifecycle is self.lifecycle

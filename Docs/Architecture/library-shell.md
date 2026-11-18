@@ -30,6 +30,24 @@ are absent or still describe the older widget set. Settled canvases retain the
 in-place patch path. This keeps the current generation/route completion fence
 intact when onboarding refreshes the retained landing during snapshot rendering.
 
+Library visits with saved graduation keep the full rail and refresh the live
+source snapshot and landing attention. The onboarding refresh settles without
+starting the separate content-evidence worker. First-time visits and graduation
+awaiting a successful save still gather evidence through the existing
+generation-fenced worker and retain the persistence retry (ADR-076).
+
+A source count refresh can update the mounted full rail when its controls and
+diagnostics are stable, including on the graduated landing. This keeps the
+Library search input and rail rows in place while the counts arrive. A queued
+or running recompose or its focus follow-up keeps ownership of the rail's
+children.
+
+The Workspace panel reads memberships for the visible source snapshot by exact
+`(item_type, item_id)` pairs through the existing workspace registry connection
+(ADR-353). It projects every source in display order using the same workspace
+labels and Console handoff eligibility rules. If the grouped read fails, the
+projection retries individual sources through the existing recovery path.
+
 ## Notes-sync preparation
 
 Library construction reuses an already-built Notes-sync owner without invoking
