@@ -12,6 +12,48 @@ import pytest
 from Tests.private_profile import private_profile_test
 
 
+def _pilot_barrier_at_failure(error, pilot, current_pumps):
+    """Read the cancelled Pilot frame before teardown releases its original pumps."""
+    from functools import partial
+    from traceback import walk_tb
+
+    from textual.events import Callback
+
+    seen = set()
+    while error is not None and id(error) not in seen:
+        seen.add(id(error))
+        for frame, _line in walk_tb(error.__traceback__):
+            if frame.f_code is not pilot._wait_for_screen.__func__.__code__:
+                continue
+            state = frame.f_locals
+            children = state.get("children", ())
+            decrement = state.get("decrement_counter")
+            current = {id(pump) for pump in current_pumps}
+            detached = []
+            queued = []
+            for pump in children:
+                if id(pump) not in current:
+                    detached.append(type(pump).__name__)
+                messages = (*pump._message_queue._queue, pump._pending_message)
+                if any(
+                    isinstance(message, Callback)
+                    and isinstance(message.callback, partial)
+                    and message.callback.func is decrement
+                    for message in messages
+                ):
+                    queued.append((type(pump).__name__, id(pump) in current, pump._closed))
+            return {
+                "remaining": state.get("count"),
+                "original_pumps": len(children),
+                "detached_count": len(detached),
+                "detached_types": sorted(set(detached))[:16],
+                "queued_callback_count": len(queued),
+                "queued_examples": queued[:8],
+            }
+        error = error.__cause__ or error.__context__
+    return None
+
+
 @private_profile_test
 @pytest.mark.asyncio
 async def test_selected_process_home_to_chat_composes_original_surface(request):
@@ -171,6 +213,7 @@ async def test_selected_process_home_to_chat_composes_original_surface(request):
                             "projection_reads_pending": sum(not read.done() for read in client._projection_reads),
                             "frames": task_frames(task),
                             "pump_count": len(pumps),
+                            "original_pilot_barrier": _pilot_barrier_at_failure(error, pilot, pumps),
                             "nonidle_pump_count": nonidle_count,
                             "nonidle_pumps": nonidle_pumps,
                             "request_count": len(client._requests),

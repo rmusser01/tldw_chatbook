@@ -4,7 +4,7 @@ TASK-40608 measures from Send to the persisted reply, subtracting only the origi
 
 ## Where the time goes
 
-The latest diagnostic shown here is `g25` on `5d4739b317`. Each arrow gives elapsed wall time since the previous event, taken from the same original journey clock. The diagram ends where the evidence ends.
+The most recent run with an observed disclosure and first provider request was `g25` on `5d4739b317`. Each arrow uses the original journey clock.
 
 ```mermaid
 flowchart TD
@@ -27,8 +27,22 @@ Send to first request took **14.267 s**. The interval from Send to painted discl
 | `g23` | Shared modal and display visibility checkpoint | 15.167 s | 0.217 s | 2.409 s | 17.792 s | Tool approval clicked and fourth provider request received. |
 | `g24` | Isolated filesystem worker launch | — | — | — | — | Stopped during workspace setup, before Send. |
 | `g25` | Isolated worker with dependency roots in its regression test | 12.633 s | 0.311 s | 1.323 s | 14.267 s | First provider response. A decision refresh failed. Neither reply completed. |
+| `g26` | Modal dismissal waits for restored visibility, with backend disclosure instrumentation | — | — | — | — | The backend issued the disclosure. A passive readiness read refused a change in the active agent selection before the pilot observed the modal. |
 
 The 2.318 s difference in time to first request between `g21` and `g25` is an observation across two diagnostic runs. Several code and instrumentation changes separate them.
+
+The `g26` observer recorded the backend's path on `55d99ac500`. From its committed-draft checkpoint, memory preflight started at +2.060 s and took 0.195 s with one storage admission. Agent reply started at +2.760 s. Startup instruction lookup took 0.018 s. The last observed binding lookup before dispatch returned at +4.277 s. Another **12.930 s** elapsed before consent dispatch began. This interval crosses work outside the observed binding functions. Its cause is still open.
+
+```mermaid
+flowchart LR
+    D["Backend commits draft"] -->|"2.760 s"| A["Agent reply starts"]
+    A -->|"14.447 s"| C["Consent dispatch starts"]
+    C -->|"0.057 s"| P["Decision head scheduled"]
+    P -->|"0.007 s"| H["Hint flush returns"]
+    H -->|"1.046 s"| R["Checked head read returns"]
+```
+
+All six events above use the same backend clock. The observer recorded 18 source-pinned targets, zero errors or refusals, and zero unfinished calls. It supplies no parent modal-paint or provider-receipt time for this run. The source receipt is `g26/artifacts/lab-observer/agent-prefix-3032.jsonl` in the disposable Windows profile.
 
 ## Cost evidence
 
@@ -108,6 +122,8 @@ flowchart TD
 The main gap is the **46.625 s before workspace executor entry**. The entire executor took 7.580 s. The interval after request construction includes child launch, communication, and return handling. Subtracting the child's reported 0.172 s leaves approximately **0.307 s** in that interval and **56.194 s** outside the reported child time across the whole edit.
 
 A second receipt measured **44 calls to `_acquire_storage` on the `tool-fs_edit` thread, totaling 36.373 s** under the execution-start phase. Its longest call took 6.425 s. Across all 18 threads with acquisitions in that phase, 187 calls accumulated 248.868 thread-seconds. These calls overlap the wall-clock arrows above. The receipt aggregates by entry phase, function and thread, so it cannot place individual acquisitions before or inside the executor. The phase costs come from `native-7aec54d3/costs.json` alongside the `q21b1` progress receipt.
+
+For this edit, 29.599 s elapsed from requesting approval to the pilot detecting the mounted approval row, 7.078 s from detection to button press, and 0.768 s from press to the first recorded approval. The trace captured no paint event for that prompt and no edit stack sample within the 46.625 s before executor entry.
 
 For the baseline/candidate comparison, track the outer approval interval, the 46.625 s from tool start to executor entry, and the 7.100 s request-build interval separately. Match admission start/finish to the same tool call and thread to measure the part on the critical path. Preserve the original authorization, storage checks and positive completion checks.
 
