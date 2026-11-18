@@ -29,3 +29,7 @@ Both diagnostics moved in 6125fbc5b8 (2026-11-08, #3480). The test is one of the
 - [ ] #1 The reviewed list names each diagnostic's current owning file, with its metadata-only fields still checked
 - [ ] #2 The test passes on dev serially
 <!-- AC:END -->
+
+## Implementation Notes
+
+**2026-11-18 (round 16).** Still red at the round-16 wave-1 stack top (dev 97f8c58c0c plus wave 1): `test_persistent_diagnostic_inventory.py` 1 failed / 79 passed serially, on "agent_service.py: expected one diagnostic containing 'on_child_settled consumer raised', found 0". No new task was filed (a duplicate filed in round 16 was dropped in review).
