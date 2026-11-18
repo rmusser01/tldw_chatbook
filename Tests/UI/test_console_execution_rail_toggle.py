@@ -1,6 +1,6 @@
 """Selected user rail inputs retain order without replaying stale effects."""
 
-from types import MethodType, SimpleNamespace
+from types import SimpleNamespace
 
 import pytest
 
@@ -22,7 +22,10 @@ def _surface(monkeypatch):
             effects.append(("preference", section, opened))
             setattr(state, f"{section}_open", opened)
 
-    screen = SimpleNamespace(
+    class RailSurface(SimpleNamespace):
+        _apply_console_rail_section_toggle = ChatScreen._apply_console_rail_section_toggle
+
+    screen = RailSurface(
         app_instance=SimpleNamespace(console_execution_client=client),
         _current_console_rail_state=lambda: state,
         _set_console_rail_preference=preference,
@@ -35,7 +38,6 @@ def _surface(monkeypatch):
         _workspace=SimpleNamespace(restore_character_navigation_focus=lambda: effects.append(("focus",))),
         _agent=SimpleNamespace(_console_agent_fleet_summary_line=lambda: "active"),
     )
-    screen._apply_console_rail_section_toggle = MethodType(ChatScreen._apply_console_rail_section_toggle, screen)
     client.require_view = lambda actual, visit: (
         None if actual is screen and visit == client._visit else pytest.fail("stale view applied")
     )
