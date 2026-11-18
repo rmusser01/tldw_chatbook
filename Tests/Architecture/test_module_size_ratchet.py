@@ -952,7 +952,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-15, TASK-40716 rebased onto dev ecad404bd4 (owner rule: raise by
     # the change's own lines): 7677 -> 7686 (+9) -- the unproven-cleanup
     # retention and immediate return in the tool-call wait.
-    "tldw_chatbook/Agents/agent_service.py": 7686,
+    # 2026-11-17, TASK-41312 review: the consent decision moved to
+    # project_instruction_runtime.consent_decision; 7686 -> 7680.
+    "tldw_chatbook/Agents/agent_service.py": 7680,
     # 2026-10-31, PR #3259: explicit user size-limit waiver. Pin the
     # actual current-base N-32 file-body F6 integration at 9,541 lines.
     # TASK-36513, 2026-11-03 (size waiver per the burn-down brief: re-pin at
