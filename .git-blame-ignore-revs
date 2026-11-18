@@ -397,4 +397,4 @@ a96b35d5e886ec26b7deb5e882662d308f32375b
 # byte-for-byte as a staticmethod; the screen keeps a static delegator. Its
 # test edits are wiring and size pins only. The slice's second commit (the
 # typed host and the delegator prune) is not a move and is not listed.
-c44b50f511cae12683fdeadb39dd3cc29e3fbb83
+35c99312a17b0f64a5bf3c1e24ff85f412fd37e2
