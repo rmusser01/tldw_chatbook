@@ -82,8 +82,8 @@ ADR required: no (test-only fixes and cause records; no product change)
   - An empty staged tray counts "none" (77b773f7e6).
   - The control bar says "Context rail" (14273c1f17).
   - `_wait_for_production_chat_screen` waits 30 s, not 10 s. At load 70-90 the full app was still starting at 10 s and settled shortly after; 5 of the 7 timeouts then passed.
-  Seven reds remain as follow-ups:
-  - The tab strip lacks `console-session-tab-strip` and gets a 1-row margin, so the empty panel and header sit one row lower than pinned (3 nodes).
+  - Three layout tests read the tab strip's class, background and bottom margin from the strip. Since 260f5dbf7a (TASK-28028) these live on the strip's row, so the tests now read them from the row; the three nodes pass serially.
+  Four reds remain as follow-ups:
   - `Approvals: 0 pending` where 1 was staged.
   - An empty staged-tray body when sources are staged.
   - The composer cursor-glyph tests read before the focus paint (`shows_cursor`, `hides_cursor`, `cursor_blink`). Each has failed in one run and passed in another, so treat them as timing.

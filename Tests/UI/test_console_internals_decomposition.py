@@ -2758,10 +2758,13 @@ async def test_console_transcript_header_sits_at_top_of_center_panel():
             tab_strip.region.y
             == transcript_title.region.y + transcript_title.region.height
         )
+        # 260f5dbf7a (TASK-28028): the strip's row carries the
+        # `.console-session-tab-strip` class, its panel background and its
+        # bottom margin, so the flanking scroll hints share the panel.
         assert transcript.region.y == (
             tab_strip.region.y
             + tab_strip.region.height
-            + tab_strip.styles.margin.bottom
+            + tab_strip.parent.styles.margin.bottom
         )
 
 
@@ -2791,17 +2794,21 @@ async def test_console_transcript_header_and_tabs_have_distinct_visual_roles():
         transcript = console.query_one("#console-native-transcript")
 
         assert transcript_title.has_class("console-transcript-title")
-        assert tab_strip.has_class("console-session-tab-strip")
+        # 260f5dbf7a (TASK-28028): the strip's row carries the
+        # `.console-session-tab-strip` class, its panel background and its
+        # bottom margin, so the flanking scroll hints share the panel.
+        strip_row = tab_strip.parent
+        assert strip_row.has_class("console-session-tab-strip")
         assert transcript_title.region.height == 1
         assert tab_strip.region.height == 1
         assert transcript_title.styles.height.value == 1
         assert tab_strip.styles.height.value == 1
         assert tab_strip.region.y == transcript_title.region.y + 1
         assert transcript.region.y == (
-            tab_strip.region.y + 1 + tab_strip.styles.margin.bottom
+            tab_strip.region.y + 1 + strip_row.styles.margin.bottom
         )
         assert transcript_title.styles.color != active_tab.styles.color
-        assert active_tab.styles.background != tab_strip.styles.background
+        assert active_tab.styles.background != strip_row.styles.background
         assert active_tab.has_class("console-session-tab-active")
 
 
@@ -2857,10 +2864,13 @@ async def test_console_empty_transcript_uses_compact_ready_state():
         assert "No messages yet. Send a prompt or attach context." not in _visible_text(
             empty_panel
         )
+        # 260f5dbf7a (TASK-28028): the strip's row carries the
+        # `.console-session-tab-strip` class, its panel background and its
+        # bottom margin, so the flanking scroll hints share the panel.
         assert empty_panel.region.y == (
             tab_strip.region.y
             + tab_strip.region.height
-            + tab_strip.styles.margin.bottom
+            + tab_strip.parent.styles.margin.bottom
         )
 
 
