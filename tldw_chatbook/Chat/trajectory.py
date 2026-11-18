@@ -500,7 +500,8 @@ def derive_trajectory(
         agent_steps: Optional append-only agent-step rows.
         retrieval_runs: Optional safe retrieval-provenance run summaries.
         child_calls: Optional spawned-child trace calls; each joins the
-            turn that spawned it (TASK-41650).
+            turn that spawned it, and is dropped when that turn is not shown
+            (TASK-41650).
 
     Returns:
         The snapshot; ``turns`` is empty for an empty conversation.
@@ -640,11 +641,18 @@ def derive_trajectory(
     turns = _group_turns(events)
     turns = _insert_compaction_markers(turns, compaction_records, turn_msg_times)
     turns = _apply_variant_sets(turns, variant_sets)
+    shown_turn_ids = {turn.turn_id for turn in turns}
     extra_records = [
         *_records_from_agent_runs(agent_runs),
         *_records_from_agent_steps(agent_steps),
         *_records_from_retrieval_runs(retrieval_runs),
-        *_records_from_child_calls(child_calls),
+        # A child call of a turn not shown (deleted, edited away) is left
+        # out rather than opening a turn of its own.
+        *(
+            record
+            for record in _records_from_child_calls(child_calls)
+            if record.turn_id in shown_turn_ids
+        ),
         *(_record_from_sidecar_event(event) for event in diagnostic_events),
     ]
     records = [record for turn in turns for record in turn.records]
@@ -1361,9 +1369,11 @@ def _records_from_child_calls(calls: Iterable[Any]) -> list[TrajectoryRecord]:
                 event_id=f"trace-call:{call_id}",
                 label="Child call",
                 status=_optional_text(getattr(state, "value", state)),
+                # The chain is runtime state with no durable AgentRuns link,
+                # so it names the child (inspector) but is not its run: the
+                # Agent filter keeps one entry per real run.
                 actor_kind="subagent",
                 actor_id=run_id,
-                run_id=run_id,
                 observed_at=started_at,
                 sensitivity="diagnostic",
             )

@@ -737,6 +737,15 @@ async def test_trace_view_lists_child_calls_under_the_spawning_turn(
         await pilot.press("a")
         await pilot.pause()
         landed = dict(rows)[screen._cursor_key()]
+        agents = screen._filter_bar.options.agents
+        records = screen._all_records()
+
+    # The Agent filter lists each real run once (one primary, two children):
+    # a child call carries no run of its own, so no sub-agent appears again
+    # under its trace chain and its run and steps stay under one entry.
+    runs = sorted(r.run_id for r in records if r.kind == "agent_run")
+    assert len(runs) == 3 and agents == tuple(runs), (agents, runs)
+    assert {r.run_id for r in records if r.kind == "child_call"} == {None}
 
     headers = [i for i, (key, _) in enumerate(rows) if key.startswith("turn")]
     # One user turn, one turn header: the children's own agent runs join the

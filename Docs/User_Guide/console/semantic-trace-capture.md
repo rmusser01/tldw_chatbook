@@ -279,12 +279,15 @@ shows how the call ended, **In**, **Cache** and **Out** show that call's own
 token counts, and **Enter** opens its model, provider and timing in the
 inspector. The sub-agent's run (its **Agent run** row and steps) sits in the
 same turn, so starting sub-agents never adds turns to the Trace. **a** and
-**s** move to the next and previous child-agent row, and the **Agent** filter
-can narrow the Trace to one sub-agent's calls.
+**s** move to the next and previous child-agent row, including Child call rows.
+The **Agent** filter lists each run once; choosing a sub-agent there shows its
+**Agent run** row and steps, but not its Child call rows, which the trace does
+not tie to a run.
 
-An unfinished sub-agent call never holds up its parent's turn. A fork does not
-carry the source conversation's sub-agent calls, and the Conversation Inspector
-shows only the parent's own calls.
+An unfinished sub-agent call never holds up its parent's turn. Child calls of a
+turn that is no longer shown (deleted, or replaced by Edit & resend) are left
+out. A fork does not carry the source conversation's sub-agent calls, and the
+Conversation Inspector shows only the parent's own calls.
 
 ## Older captures
 

@@ -226,47 +226,51 @@ def _build_trajectory_snapshot(
             row_turn_id = getattr(trajectory_row, "turn_id", None)
         if row_message_id and row_turn_id:
             turn_by_message[str(row_message_id)] = str(row_turn_id)
-    turn_by_run: dict[str, str] = {}
+    raw_runs: list[Any] = []
     if agent_runs_db is not None:
         try:
-            raw_runs = (
-                raw_run
-                for agent_kind in ("primary", "subagent")
+            for agent_kind in ("primary", "subagent"):
                 for raw_run in agent_runs_db.list_runs(
-                    conversation_id,
-                    agent_kind=agent_kind,
-                )
-            )
-            for raw_run in raw_runs:
-                try:
-                    run = dict(raw_run) if isinstance(raw_run, Mapping) else {}
-                    run_id = str(run.get("id") or "")
-                    if not run_id:
-                        continue
-                    assistant_message_id = str(run.get("assistant_message_id") or "")
-                    if assistant_message_id in turn_by_message:
-                        run["turn_id"] = turn_by_message[assistant_message_id]
-                    elif str(run.get("parent_run_id") or "") in turn_by_run:
-                        # A sub-agent has no reply of its own: it joins the
-                        # turn of the run that spawned it (primaries come first).
-                        run["turn_id"] = turn_by_run[str(run["parent_run_id"])]
-                    if run.get("turn_id"):
-                        turn_by_run[run_id] = str(run["turn_id"])
-                    steps = list(run.get("steps", ()) or ())
-                    converted_steps = [
-                        {
-                            **step,
-                            "run_id": run_id,
-                            "conversation_id": conversation_id,
-                            "turn_id": run.get("turn_id"),
-                        }
-                        for step in steps
-                        if isinstance(step, Mapping)
-                    ]
-                    agent_runs.append(run)
-                    agent_steps.extend(converted_steps)
-                except Exception as error:  # noqa: BLE001
-                    capture_failed("agent", error)
+                    conversation_id, agent_kind=agent_kind
+                ):
+                    raw_runs.append(raw_run)
+        except Exception as error:  # noqa: BLE001
+            capture_failed("agent", error)
+    # Oldest first (list_runs is newest first), so a spawning run's turn is
+    # known before its sub-agents inherit it.
+    raw_runs.sort(
+        key=lambda raw: str(raw.get("created_at") or "")
+        if isinstance(raw, Mapping)
+        else ""
+    )
+    turn_by_run: dict[str, str] = {}
+    for raw_run in raw_runs:
+        try:
+            run = dict(raw_run) if isinstance(raw_run, Mapping) else {}
+            run_id = str(run.get("id") or "")
+            if not run_id:
+                continue
+            assistant_message_id = str(run.get("assistant_message_id") or "")
+            if assistant_message_id in turn_by_message:
+                run["turn_id"] = turn_by_message[assistant_message_id]
+            elif str(run.get("parent_run_id") or "") in turn_by_run:
+                # A sub-agent has no reply of its own: it joins its parent's turn.
+                run["turn_id"] = turn_by_run[str(run["parent_run_id"])]
+            if run.get("turn_id"):
+                turn_by_run[run_id] = str(run["turn_id"])
+            steps = list(run.get("steps", ()) or ())
+            converted_steps = [
+                {
+                    **step,
+                    "run_id": run_id,
+                    "conversation_id": conversation_id,
+                    "turn_id": run.get("turn_id"),
+                }
+                for step in steps
+                if isinstance(step, Mapping)
+            ]
+            agent_runs.append(run)
+            agent_steps.extend(converted_steps)
         except Exception as error:  # noqa: BLE001
             capture_failed("agent", error)
     citation_repository = getattr(persistence, "citation_repository", None)
