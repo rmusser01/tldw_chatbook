@@ -2008,9 +2008,18 @@ controls and improvement in both single-path and complete-operation comparisons;
 a regressing candidate stays off. The original six journey timings remain the
 sub-five-second acceptance gate.
 
-The draft comparison enables this path only in its component tests. The
-Windows CI runner measures the original and candidate paths in alternating
-order using the same file, native hold and confirmed warm evidence.
+**Outcome.** Keep the stock ordinary stat traversal. On the hosted Windows
+2022 runner a 13-component path opened 13 native handles, emitted all 13
+Unicode audit events and read the leaf's security descriptor. The
+prototype queried the volume once. Across six alternating comparisons on
+the same file and live hold, the median single stat grew from 0.315 to
+1.416 ms. The median confirmed acquisition and close grew from 7.740
+to 8.422 ms. Every candidate cohort was slower at both boundaries. The
+component run had 19 passing cases and one failure. The trailing-dot case
+expected a pre-open rejection and received a missing-file error.
+The draft commit `bf955b9f8c` preserves the disabled prototype and its
+tests. The separate reuse of parent Path objects during a metadata batch
+keeps its original component validation and named-open sequence.
 
 #### TASK-40608 — private admission observation owner (2026-11-14)
 

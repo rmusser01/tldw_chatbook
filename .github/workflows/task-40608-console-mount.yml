@@ -11,7 +11,6 @@ on:
       - 'Tests/Agents/test_agent_step_incremental_persistence.py'
       - 'Tests/Backup_Recovery/test_windows_metadata_prerequisites.py'
       - 'Tests/Backup_Recovery/test_windows_metadata_volume_proof.py'
-      - 'Tests/Backup_Recovery/test_windows_stat_volume_proof.py'
       - 'Tests/UI/test_console_resume_navigation_barrier.py'
       - 'Tests/UI/test_screen_navigation.py'
       - 'Tests/Tools/test_native_fs_read_physical_bounds.py'
@@ -47,9 +46,6 @@ jobs:
           $testRoot = python -c "from pathlib import Path; from Tests.Backup_Recovery.run_platform_product import _create_private_root; print(_create_private_root(Path()))"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $env:TEMP = $env:TMP = $testRoot
-          $env:TLDW_STAT_BENCHMARK = '1'
-          python -m Tests.windows_private_fixture_runner -q -s Tests/Backup_Recovery/test_windows_stat_volume_proof.py
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $checks = @(
             'Tests/Tools/test_native_fs_read_physical_bounds.py'
             'Tests/Tools/test_native_fs_read_metadata.py'
