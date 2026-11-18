@@ -77,7 +77,9 @@ class _CountingReadyResolutionGateway(_ReadyResolutionGateway):
         return await super().resolve_for_send(selection)
 
 
-class _UnavailableResolutionGateway:
+class _UnavailableResolutionGateway(_ReadyResolutionGateway):
+    # 3e618d7119: the mounted Console reads the gateway's cached context
+    # window while composing; only the send resolution is unavailable here.
     async def resolve_for_send(self, _selection):
         raise RuntimeError("provider unavailable")
 
