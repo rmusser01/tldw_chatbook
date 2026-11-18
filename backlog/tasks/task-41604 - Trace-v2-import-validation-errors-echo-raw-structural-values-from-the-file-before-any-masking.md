@@ -4,7 +4,7 @@ title: "Trace v2 import validation errors echo raw structural values from the fi
 status: Done
 assignee:
 - '@claude'
-updated_date: 2026-11-18 03:14
+updated_date: 2026-11-18 04:04
 created_date: 2026-11-17 19:44
 labels:
 - follow-up
@@ -64,7 +64,7 @@ Every value an import error quotes from the file is masked by the bundle's crede
 - **AC#2.** `TrajectoryScreen.action_open_trace` notifies with `markup=False`. `[/]` in the message raised `MarkupError` when the toast rendered; a masked value's own `[credential redacted]` would otherwise be read as a markup tag too.
 - **User Guide.** `console/semantic-trace-capture.md`: the **Import failed** notice masks quoted values and shows brackets as plain text.
 - **Tests.**
-  - `Tests/Chat/test_trace_v2_collaboration.py::test_an_import_error_never_shows_a_credential_from_the_file` (13 cases: version, profile, privacy_inventory key, duplicate event_id, usage key, field_provenance key and its state mismatch, dangling reference, decision field, duplicate decision, lineage relationship, v1 format, v1 version): the message holds the expected text with `[credential redacted]` and no part of the secret. Not on a PR lane (proposed follow-up).
+  - `Tests/Chat/test_trace_v2_collaboration.py::test_an_import_error_never_shows_a_credential_from_the_file` (13 cases: version, profile, privacy_inventory key, duplicate event_id, usage key, field_provenance key and its state mismatch, dangling reference, decision field, duplicate decision, lineage relationship, v1 format, v1 version): the message holds the expected text with `[credential redacted]` and no part of the secret. Laned in the recovered-suites step in fix round 1 (review r16tr-rev1, owner-authorized workflow edit).
   - `Tests/UI/test_trajectory_import_ui.py::test_import_failure_shows_file_values_masked_and_literally`: a file whose `format` is `[/] sk-...` shows `got '[/] [credential redacted]'` in the rendered toast. Appended to `scripts/ui_pr_gate_census.txt` (no trajectory import UI file was censused); `MINIMUM_FILES` 2244. Local serial time with the UI lane's flags: 3.0-6.4 s (load 66-77).
 - **Red evidence.** The 13 pure cases at base: 13 failed, each with the raw secret (`... got 'sk-Xk9m...'`), every one on its intended branch. The UI test with masking in place and markup on: `MarkupError: auto closing tag ('[/]') has nothing to close`.
 - **Runs** (run.sh, load 41-92): `Tests/UI/test_trajectory_import_ui.py`, `Tests/Chat/test_trace_v2_collaboration.py`, `test_trajectory_import.py`, `test_trajectory_import_bounds.py`, `test_trajectory_export.py` (`-n 4`): 736 passed. Census tests (`Tests/CI/test_ui_lane_shard_replay.py`, `test_derived_artifacts_workflow.py`, `test_ui_lane_shard_count_statements.py`, `test_ui_pr_gate_census_checker.py`): 209 passed. `scripts/check_markup_interpolation.py`: OK. `scripts/preflight.sh`: all checks passed. Size and identity ratchets (`Tests/Architecture/test_module_size_ratchet.py`, `test_screen_size_ratchet.py`, `test_chat_code_identity_ratchet.py`, `test_code_identity_ratchet.py`, serial): 270 passed.

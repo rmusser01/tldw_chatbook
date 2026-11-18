@@ -630,6 +630,12 @@ RECOVERED_SUITES_TARGETS = (
     "Tests/Chat/test_trace_v2_collaboration.py::test_adversarial_bundle_text_is_masked_in_bounded_time",
     "Tests/Chat/test_trace_v2_collaboration.py::test_escape_quoted_values_scan_in_linear_time",
     "Tests/Chat/test_trace_v2_collaboration.py::test_runs_after_a_value_scan_in_linear_time",
+    # Round 16: import errors quote file values masked (TASK-41604), a deeply
+    # nested file fails Import with a named error (TASK-41701), and the v1
+    # export masks its whole payload (TASK-41603; a temp DB, closed).
+    "Tests/Chat/test_trace_v2_collaboration.py::test_an_import_error_never_shows_a_credential_from_the_file",
+    "Tests/Chat/test_trace_v2_collaboration.py::test_a_deeply_nested_file_fails_import_with_a_named_error",
+    "Tests/Chat/test_trajectory_export.py::test_export_masks_credentials_in_message_content_and_the_title",
     "Tests/Chat/test_console_trace_legacy_migration.py::test_an_older_legacy_ledger_keeps_migrating_new_exchanges_under_the_current_version",
     # TASK-41134: the legacy trace maintenance loop's parking and projection
     # files, red on dev in no PR lane (their stand-in module lacked the loop's
