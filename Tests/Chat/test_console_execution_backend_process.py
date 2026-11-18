@@ -473,9 +473,7 @@ async def test_actual_process_projection_reference_and_original_pre_ack_cancel(
         # The UI freezes these values at the press, before ACK painting and
         # the UpdateInputs/ReadProjection waits. Keep the direct-submit case
         # below as well: a newly read input sidecar cannot cover that ordering.
-        retained_inputs = _detach(
-            current_inputs, "pressed_inputs", 0, set(), thaw=True
-        )
+        captured_inputs = _detach(current_inputs, "pressed_inputs", 0, set())
         # This is a new parent-authored identity, not a guessed backend revision.
         authored_token = [2, 1]
         next_update = client.submit(
@@ -528,6 +526,7 @@ async def test_actual_process_projection_reference_and_original_pre_ack_cancel(
             "skill_workspace_id": row.workspace_id,
         }
         if input_capture == "retained-press":
+            retained_inputs = _detach(captured_inputs, "pressed_inputs", 0, set(), thaw=True)
             retained_inputs["draft"] = _ACCEPTED_DRAFT
             retained_inputs["authored_token"] = authored_token
             # This read must not silently replace the press's settings,
@@ -537,9 +536,8 @@ async def test_actual_process_projection_reference_and_original_pre_ack_cancel(
                 if retained_inputs[name] != pressed[name]
             ]
             pressed = retained_inputs
-            selection = _detach(
-                client.send_selection, "selection", 0, set(), thaw=True
-            )
+            captured_selection = _detach(client.send_selection, "selection", 0, set())
+            selection = _detach(captured_selection, "selection", 0, set(), thaw=True)
         accepted_started = time.monotonic()
         accepted = client.submit(
             "ReceiveTurn",
