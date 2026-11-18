@@ -584,6 +584,11 @@ def _runtime_authority(
     files = {_REAL_OS_REALPATH(sys.executable), _REAL_OS_REALPATH(os.devnull)}
     if os.name == "posix":
         files.add(_REAL_OS_REALPATH("/proc/stat"))
+    if sys.platform == "linux":
+        files.update(
+            _REAL_OS_REALPATH(_PROCESS_PROC_ROOT + "/" + name)
+            for name in ("stat", "limits")
+        )
     locale = _REAL_OS_REALPATH(
         locale_root or os.path.join(sys.base_prefix, "share", "locale")
     )

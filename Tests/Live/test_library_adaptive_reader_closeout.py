@@ -2287,6 +2287,56 @@ def test_child_psutil_capability_probes_are_linux_stat_only(
         assert refused.value.args == (module.FILESYSTEM_READ_DENIED,)
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX canonical path contract")
+@pytest.mark.parametrize("system", ("linux", "darwin", "win32", "unknown"))
+@pytest.mark.parametrize("name", ("stat", "limits"))
+def test_runtime_authority_allows_only_linux_own_process_collector_files(
+    tmp_path, monkeypatch, system, name
+):
+    module = _load_child()
+    own_pid = os.getpid()
+    own_proc = f"/proc/{own_pid}"
+    path = own_proc + "/" + name
+    monkeypatch.setattr(
+        module,
+        "sys",
+        SimpleNamespace(
+            platform=system,
+            executable=sys.executable,
+            base_prefix=sys.base_prefix,
+            path=sys.path,
+        ),
+    )
+    assert not module._read_allowed(path)
+    # Authority belongs to the child captured at import, not a later PID lookup.
+    monkeypatch.setattr(module.os, "getpid", lambda: own_pid + 1)
+    module._SCRATCH = str(tmp_path / "scratch")
+    module._READ_ROOTS, module._READ_FILES = module._runtime_authority(
+        str(tmp_path / "checkout"),
+        module._SCRATCH,
+        configured_paths=(),
+        locale_root=str(tmp_path / "missing-locale"),
+        language="C",
+    )
+
+    assert module._read_allowed(path) is (system == "linux")
+    assert not module._write_allowed(path)
+    for denied in (
+        "/proc",
+        own_proc,
+        path + "/child",
+        path + "-other",
+        f"/proc/{own_pid + 1}/{name}",
+        *(
+            own_proc + "/" + leaf
+            for leaf in ("statm", "status", "smaps", "smaps_rollup", "io")
+        ),
+    ):
+        assert not module._read_allowed(denied)
+        assert not module._read_event_allowed("os.listdir", denied)
+        assert not module._read_event_allowed("os.scandir", denied)
+
+
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux psutil capability probes")
 def test_child_imports_psutil_after_containment_without_reading_probe_contents(
     tmp_path,
@@ -2302,6 +2352,73 @@ def test_child_imports_psutil_after_containment_without_reading_probe_contents(
     assert result.returncode == 0
     assert result.error is None
     assert (scratch / "attempts.jsonl").read_bytes() == b""
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux process collector files")
+def test_child_imports_prometheus_after_containment_with_real_process_metrics(tmp_path):
+    module = _load_runner()
+    body = """
+import sys
+assert 'prometheus_client' not in sys.modules
+assert 'PROMETHEUS_MULTIPROC_DIR' not in os.environ
+assert 'prometheus_multiproc_dir' not in os.environ
+from prometheus_client import REGISTRY
+samples = {
+    sample.name: sample.value
+    for metric in REGISTRY.collect()
+    for sample in metric.samples
+    if sample.name.startswith('process_')
+}
+for name in (
+    'process_virtual_memory_bytes', 'process_resident_memory_bytes',
+    'process_start_time_seconds', 'process_open_fds', 'process_max_fds',
+):
+    assert samples[name] > 0
+assert samples['process_cpu_seconds_total'] >= 0
+"""
+    result, scratch, _ = _run_pytest_child(
+        module, tmp_path, body, must_not_continue=False
+    )
+
+    assert result.returncode == 0
+    assert result.error is None
+    assert (scratch / "attempts.jsonl").read_bytes() == b""
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux process collector files")
+@pytest.mark.parametrize(
+    "operation",
+    (
+        "foreign-stat",
+        "foreign-limits",
+        "sibling",
+        "statm",
+        "enumerate",
+        "write-stat",
+        "write-limits",
+    ),
+)
+def test_child_process_collector_files_grant_no_other_access(tmp_path, operation):
+    module = _load_runner()
+    body = {
+        "foreign-stat": "open(f'/proc/{os.getppid()}/stat').read()",
+        "foreign-limits": "open(f'/proc/{os.getppid()}/limits').read()",
+        "sibling": "open('/proc/self/status').read()",
+        "statm": "open('/proc/self/statm').read()",
+        "enumerate": "os.listdir('/proc/self')",
+        "write-stat": "open('/proc/self/stat', 'w')",
+        "write-limits": "open('/proc/self/limits', 'w')",
+    }[operation]
+    result, scratch, _ = _run_pytest_child(module, tmp_path, body)
+
+    _assert_containment_attempt(
+        module,
+        result,
+        scratch,
+        "filesystem_write_denied"
+        if operation.startswith("write-")
+        else "filesystem_read_denied",
+    )
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux stat-only capability probes")

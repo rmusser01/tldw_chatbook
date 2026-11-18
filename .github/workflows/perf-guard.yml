@@ -1,5 +1,5 @@
 name: Perf Guard
-run-name: Light CI Linux stat-only repair probe (not qualification)
+run-name: Light CI process collector repair probe (not qualification)
 on:
   workflow_dispatch:
 permissions:
@@ -13,7 +13,7 @@ env:
   PYTHONUNBUFFERED: 1
 jobs:
   containment-diagnostic:
-    name: Linux stat-only repair and refusal controls
+    name: Linux process collector repair and refusal controls
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -44,6 +44,9 @@ jobs:
             Tests/Live/test_library_adaptive_reader_closeout.py::test_child_psutil_capability_probes_are_linux_stat_only \
             Tests/Live/test_library_adaptive_reader_closeout.py::test_child_imports_psutil_after_containment_without_reading_probe_contents \
             Tests/Live/test_library_adaptive_reader_closeout.py::test_child_psutil_stat_probes_grant_no_other_access \
+            Tests/Live/test_library_adaptive_reader_closeout.py::test_runtime_authority_allows_only_linux_own_process_collector_files \
+            Tests/Live/test_library_adaptive_reader_closeout.py::test_child_imports_prometheus_after_containment_with_real_process_metrics \
+            Tests/Live/test_library_adaptive_reader_closeout.py::test_child_process_collector_files_grant_no_other_access \
             Tests/Live/test_library_adaptive_reader_closeout.py::test_child_own_mountinfo_has_no_related_or_write_authority \
             Tests/Live/test_library_adaptive_reader_closeout.py::test_child_fdinfo_requires_current_tracked_scratch_directory \
             Tests/Live/test_library_adaptive_reader_closeout.py::test_child_reads_linux_mount_metadata_for_tracked_scratch_directory \
