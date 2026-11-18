@@ -51,12 +51,14 @@ async def test_selected_original_enter_reaches_provider_and_durable_terminal(
     def runtime_entry(frame):
         parent_runtime_entries.append(frame.f_locals["self"])
 
-    def submit_return(frame):
+    def submit_return(frame, values):
         if (
             frame.f_locals.get("self") is client
             and frame.f_locals.get("operation") == "ReceiveTurn"
         ):
-            received.append(frame.f_locals["receipt"])
+            # Observe the actual result even when submit delegates to its
+            # transport owner without storing a receipt in its own frame.
+            received.append(values[-1])
 
     def created(frame):
         caller = frame.f_back
@@ -109,6 +111,7 @@ async def test_selected_original_enter_reaches_provider_and_durable_terminal(
                         ConsoleExecutionClient.submit.__code__,
                         sys.monitoring.events.PY_RETURN,
                         submit_return,
+                        values=True,
                     ):
                         await pilot.press("enter")
                         async with asyncio.timeout(10):

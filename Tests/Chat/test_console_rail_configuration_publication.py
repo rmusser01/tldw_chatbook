@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -416,12 +417,15 @@ async def test_rail_save_refuses_preexisting_modal_before_any_command_or_write(o
 async def test_original_parent_rail_worker_publishes_to_same_contained_backend(request):
     """Exercise original writer, actual child replies and separate native proof."""
     import threading
+    from contextlib import ExitStack
 
     from Tests.Chat.console_execution_mount_wait import wait_for_selected_composer
     from Tests.Chat.test_console_control_trace import _observe
+    from Tests.Chat.test_console_execution_backend_process import _ObservedStderr
     from tldw_chatbook import config
     from tldw_chatbook.app import TldwCli
     from tldw_chatbook.Chat import console_execution_rail_preferences as rail
+    from tldw_chatbook.Chat.console_execution_process import ConsoleExecutionClient
     from tldw_chatbook.Chat.console_rail_state import (
         build_console_rail_preference_key, serialize_console_rail_stored_preferences,
     )
@@ -440,10 +444,34 @@ async def test_original_parent_rail_worker_publishes_to_same_contained_backend(r
     })
     app = TldwCli(console_execution="process")
     observed = []
+    stderr_tail = bytearray()
+
+    def observe_child(frame):
+        caller = frame.f_back
+        if (caller.f_code is ConsoleExecutionClient._launch.__code__
+            and caller.f_locals.get("self") is app.console_execution_client):
+            process = frame.f_locals["self"]
+            process.stderr = _ObservedStderr(process.stderr, stderr_tail)
+
+    def report_backend_failure_locations():
+        # The existing worker emits these safe frame locations to its original
+        # stderr sink. The diagnostic can finish draining after app shutdown.
+        for match in re.finditer(
+            rb"Console backend \w+ \w+ failed \(\w+\); frames=[\w: <>.-]+",
+            bytes(stderr_tail),
+        ):
+            print(match.group().decode("ascii"))
+
+    request.addfinalizer(report_backend_failure_locations)
 
     def writer_entered(frame):
         observed.append(frame.f_locals["scope"])
 
+    observers = ExitStack()
+    request.addfinalizer(observers.close)
+    observers.enter_context(_observe(
+        subprocess.Popen.__init__.__code__, sys.monitoring.events.PY_RETURN, observe_child,
+    ))
     async with app.run_test(size=(120, 40)):
         await app._initial_screen_setup_task
         await app._console_execution_start_task
