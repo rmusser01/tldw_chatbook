@@ -407,6 +407,34 @@ def test_include_payloads_opt_in_keeps_verbatim(db) -> None:
     assert tool_row["payload_json"] == _TOOL_PAYLOAD
 
 
+def test_export_masks_credentials_in_message_content_and_the_title(db) -> None:
+    """TASK-41603 AC#2: message content and the conversation title are masked
+    by the rules a shared Trace bundle uses (every must-mask row), and text
+    that only looks like a credential (every must-keep row) is kept."""
+    from Tests.Chat.test_trace_v2_collaboration import _MUST_KEEP, _MUST_MASK, _survives
+    from tldw_chatbook.Chat.trajectory_export import _credential_text
+
+    title, title_secret = _MUST_MASK["simple-token"]
+    conv = db.add_conversation({"title": title})
+    rows = [*_MUST_MASK.values(), *((text, None) for text in _MUST_KEEP.values())]
+    ids = {
+        db.add_message(
+            {"conversation_id": conv, "sender": "user", "content": text, "timestamp": _T0}
+        ): (text, secret)
+        for text, secret in rows
+    }
+
+    payload = build_trajectory_export(db, conv)
+
+    assert payload["conversation"]["title"] == _credential_text(title)[0]
+    assert title_secret not in payload["conversation"]["title"]
+    exported = {message["id"]: message["content"] for message in payload["messages"]}
+    assert exported.keys() == ids.keys()
+    for message_id, (text, secret) in ids.items():
+        assert exported[message_id] == _credential_text(text)[0], text
+        assert secret is None or not _survives(secret, text, exported[message_id]), text
+
+
 # ---------------------------------------------------------------------------
 # Legacy (no sidecar rows)
 # ---------------------------------------------------------------------------

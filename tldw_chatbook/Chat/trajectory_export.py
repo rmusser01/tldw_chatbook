@@ -1383,6 +1383,14 @@ def build_trajectory_export(
         exported_row["payload_json"] = payload_json
         rows_out.append(exported_row)
 
+    # TASK-41603: message content and the title are masked as a Trace v2
+    # bundle masks text; a v1 import masks the rest of the file.
+    messages_out = [
+        {key: _jsonable(message.get(key)) for key in _MESSAGE_KEYS}
+        for message in messages
+    ]
+    for message in messages_out:
+        message["content"] = _mask_credential_material(message["content"])[0]
     payload: dict = {
         "format": TRAJECTORY_EXPORT_FORMAT,
         "version": TRAJECTORY_EXPORT_VERSION,
@@ -1390,14 +1398,11 @@ def build_trajectory_export(
         "redacted": not include_payloads,
         "conversation": {
             "id": conversation.get("id"),
-            "title": _jsonable(conversation.get("title")),
+            "title": _mask_credential_material(_jsonable(conversation.get("title")))[0],
             "created_at": _jsonable(conversation.get("created_at")),
         },
         "active_leaf_message_id": db.get_conversation_active_leaf(conversation_id),
-        "messages": [
-            {key: _jsonable(message.get(key)) for key in _MESSAGE_KEYS}
-            for message in messages
-        ],
+        "messages": messages_out,
         "trajectory_rows": rows_out,
         "compaction_records": compaction_records,
     }

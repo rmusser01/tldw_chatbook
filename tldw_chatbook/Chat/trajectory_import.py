@@ -138,6 +138,17 @@ def _read_document(source: Path | str | Mapping) -> dict:
     return document
 
 
+def _json_object(value: Any) -> Any:
+    """``value`` parsed when it is JSON text holding an object, else as is."""
+    if not isinstance(value, str):
+        return value
+    try:
+        parsed = json.loads(value)
+    except (ValueError, RecursionError):
+        return value
+    return parsed if isinstance(parsed, dict) else value
+
+
 def _v1_snapshot(document: Mapping, path: Path | None) -> TrajectorySnapshot:
     """Validate and map the retained ADR-313 version-1 document."""
     try:
@@ -147,12 +158,20 @@ def _v1_snapshot(document: Mapping, path: Path | None) -> TrajectorySnapshot:
             raise TrajectoryImportError(f"'{path}': {exc}") from exc
         raise TrajectoryImportError(str(exc)) from exc
 
-    messages = payload["messages"]
-    usage_by_id = {
-        str(message["id"]): ProviderUsage.from_json(message.get("usage_json"))
-        for message in messages
-    }
     try:
+        # TASK-41603: a v1 file is masked by the rules a v2 import re-masks
+        # with (owner decision 2026-11-17, "Re-mask on import"): messages,
+        # title, and tool payloads, a payload's JSON object as v2 masks one.
+        payload["trajectory_rows"] = [
+            {**row, "payload_json": _json_object(row.get("payload_json"))}
+            for row in payload["trajectory_rows"]
+        ]
+        payload = _mask_credential_material(payload)[0]
+        messages = payload["messages"]
+        usage_by_id = {
+            str(message["id"]): ProviderUsage.from_json(message.get("usage_json"))
+            for message in messages
+        }
         return derive_trajectory(
             messages,
             usage_by_id,

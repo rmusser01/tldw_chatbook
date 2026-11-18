@@ -21,6 +21,7 @@ from tldw_chatbook.Chat.trajectory import (
     TrajectoryRecord,
     TrajectorySnapshot,
     TrajectoryTurn,
+    _preview,
 )
 
 FIXED_EXPORTED_AT = "2026-08-22T19:00:00+00:00"
@@ -1130,29 +1131,77 @@ def _imported_result(text: str) -> str:
     return imported.snapshot.turns[0].records[0].payload["result"]
 
 
+def _v1_imported(text: str) -> tuple[str, str, str]:
+    """Import a version-1 (``tldw-trajectory``) file holding ``text`` in a
+    message, the title and a tool payload (TASK-41603). Returns the message's
+    preview, the tool payload's text, and every string the import keeps."""
+    rows = [("message-1", "user", None), ("message-2", "assistant", None)]
+    rows.append(("message-2", "tool_result", json.dumps({"result": text})))
+    document = {
+        "format": trajectory_export.TRAJECTORY_EXPORT_FORMAT,
+        "version": trajectory_export.TRAJECTORY_EXPORT_VERSION,
+        "exported_at": FIXED_EXPORTED_AT,
+        "redacted": False,
+        "conversation": {"id": "conversation-1", "title": text},
+        "active_leaf_message_id": "message-2",
+        "messages": [
+            {
+                "id": f"message-{index}",
+                "sender": sender,
+                "content": content,
+                "timestamp": f"2026-08-14T12:00:0{index}",
+                "parent_message_id": "message-1" if index == 2 else None,
+                "usage_json": None,
+            }
+            for index, sender, content in ((1, "user", text), (2, "assistant", "done"))
+        ],
+        "trajectory_rows": [
+            {
+                "message_id": message_id,
+                "conversation_id": "conversation-1",
+                "turn_id": "turn-1",
+                "seq": seq,
+                "event_kind": kind,
+                "payload_json": payload_json,
+            }
+            for seq, (message_id, kind, payload_json) in enumerate(rows, start=1)
+        ],
+    }
+    imported = trajectory_import.load_imported_trace(document)
+    records = [record for turn in imported.snapshot.turns for record in turn.records]
+    message = next(record for record in records if record.kind == "user")
+    tool = next(record for record in records if record.kind == "tool_result")
+    return message.content_preview, tool.payload["result"], "\n".join(_strings(imported))
+
+
 @pytest.mark.parametrize("name", sorted(_MUST_MASK))
 def test_every_secret_in_the_must_mask_table_is_masked(name: str) -> None:
     """Review r15tr-rev3: masked whole in a shared bundle and a second pass
     changes nothing. An older bundle holding it imports, with the secret
-    masked (owner decision 2026-11-17, "Re-mask on import")."""
+    masked (owner decision 2026-11-17, "Re-mask on import"), and so does a
+    version-1 file holding it (TASK-41603)."""
     text, secret = _MUST_MASK[name]
 
     masked, changed = trajectory_export._credential_text(text)
     serialized, _payload = _export_bytes_with(text, "full_trace")
     imported = _imported_result(text)
+    v1_preview, v1_result, v1_kept = _v1_imported(text)
 
     assert changed and not _survives(secret, text, masked), masked
     assert trajectory_export._credential_text(masked) == (masked, False)
     assert secret.encode() not in serialized
     assert imported == masked and not _survives(secret, text, imported), imported
+    assert (v1_preview, v1_result) == (_preview(masked), masked), v1_result
+    assert text not in v1_kept
 
 
 @pytest.mark.parametrize("name", sorted(_MUST_KEEP))
 def test_every_look_alike_in_the_must_keep_table_is_kept_and_imports(name: str) -> None:
     """Review r15tr-rev3: kept unchanged in every profile, and an older bundle
-    holding it imports unchanged."""
+    holding it imports unchanged, as does a version-1 file (TASK-41603)."""
     text = _MUST_KEEP[name]
     assert trajectory_export._credential_text(text) == (text, False)
+    assert _v1_imported(text)[:2] == (_preview(text), text)
 
     for profile in ("safe_summary", "redacted_diagnostic", "full_trace"):
         snapshot = _snapshot(
