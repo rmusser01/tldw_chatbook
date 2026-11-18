@@ -47,6 +47,9 @@ _OPERATION_OWNERS = threading.local()
 _CONSOLE_SEED_READ: ContextVar[tuple[asyncio.Task[Any], object] | None] = ContextVar(
     "console_seed_read", default=None
 )
+_CONSOLE_WORLD_BOOK_READ: ContextVar[tuple[asyncio.Task[Any], object] | None] = ContextVar(
+    "console_world_book_read", default=None
+)
 
 
 @contextmanager
@@ -190,6 +193,20 @@ async def run_owned_db_call[**_CallParameters, _CallResult](
 
         return await observe_seed_owned_db_call(
             seed_read[1], database, operation, invoke, args, kwargs,
+        )
+    world_read = _CONSOLE_WORLD_BOOK_READ.get()
+    if world_read is not None:
+        from tldw_chatbook.Chat.console_dictionary_summary_read import (
+            _WORLD_INVOKE,
+            _definition_current,
+            observe_world_book_call,
+        )
+
+        if (observe_world_book_call is not _WORLD_INVOKE[0]
+            or not _definition_current(_WORLD_INVOKE)):
+            raise RuntimeError("World-book summary observation source changed")
+        return await observe_world_book_call(
+            world_read, database, operation, invoke, args, kwargs,
         )
     return await asyncio.to_thread(invoke)
 

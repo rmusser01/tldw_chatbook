@@ -4,6 +4,7 @@ import asyncio
 import copy
 import threading
 import weakref
+from contextvars import ContextVar
 
 from tldw_chatbook.Utils.platform_files import os
 
@@ -13,6 +14,9 @@ from . import storage_admission as storage
 from .async_file_participants import _Outcome
 
 _jobs = weakref.WeakSet()
+_CONSOLE_DICTIONARY_SUMMARY: ContextVar[tuple[asyncio.Task, object] | None] = ContextVar(
+    "console_dictionary_summary", default=None
+)
 _METHODS = frozenset(
     {
         "list_dictionaries",
@@ -219,7 +223,20 @@ class _DictionaryJob:
         self._loop = asyncio.get_running_loop()
         self._completion = self._loop.create_future()
         try:
-            future = self._loop.run_in_executor(None, self._work, payload)
+            selected = _CONSOLE_DICTIONARY_SUMMARY.get()
+            if selected is None:
+                future = self._loop.run_in_executor(None, self._work, payload)
+            else:
+                from tldw_chatbook.Chat.console_dictionary_summary_read import (
+                    _DICTIONARY_SUBMIT,
+                    _definition_current,
+                    submit_dictionary_summary,
+                )
+
+                if (submit_dictionary_summary is not _DICTIONARY_SUBMIT[0]
+                    or not _definition_current(_DICTIONARY_SUBMIT)):
+                    raise RuntimeError("Dictionary summary observation source changed")
+                future = submit_dictionary_summary(selected, self, payload)
             future.add_done_callback(self._executor_finished)
         except BaseException:
             with self._lock:
