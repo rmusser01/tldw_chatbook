@@ -318,6 +318,36 @@ def test_empty_snapshot_performs_no_native_open(monkeypatch):
     assert win.stat_many_for_admission(()) == {}
 
 
+def test_single_drive_root_retires_before_reverse_open(tmp_path, monkeypatch):
+    root = tmp_path.parents[-1]
+    native = windows_files._native()
+    original_open, original_close = native.open_handle, native.kernel.CloseHandle
+    events = []
+    live = set()
+
+    def opened(*args, **kwargs):
+        handle = original_open(*args, **kwargs)
+        if kwargs.get("_metadata_record") is not None:
+            events.append("open")
+            live.add(handle)
+        return handle
+
+    def closed(handle):
+        result = original_close(handle)
+        if handle in live and result:
+            events.append("close")
+            live.remove(handle)
+        return result
+
+    monkeypatch.setattr(native, "open_handle", opened)
+    monkeypatch.setattr(native.kernel, "CloseHandle", closed)
+    observed = WindowsOS().stat_many_for_admission((root, root))
+    assert list(observed) == [root]
+    assert observed[root] is not None
+    assert events == ["open", "close", "open", "close"]
+    assert not live
+
+
 def test_scalar_fresh_metadata_preserves_current_projection_and_exact_descriptor(
     tmp_path, monkeypatch
 ):

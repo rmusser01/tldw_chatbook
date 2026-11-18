@@ -1965,6 +1965,15 @@ custody before attempting close and visiting remaining births in reverse
 insertion order preserves the original close and refusal behavior. This
 avoids scanning all pinned siblings for each relative open and each close.
 
+Record each lexical path's parent when enumerating the complete ancestor set
+for one metadata observation. Both ordered passes can reuse that relationship.
+A selected drive root with no children still closes after the forward open
+and reopens during the reverse pass. Each relative native open still proves
+its own parent handle, and every original spelling and component check runs.
+In the eleven-node source fixture, parent-path projections fell from 74 to 31.
+This count measures Python work. The complete warm lease and its close are
+the boundaries for measuring native performance.
+
 All ordinary opens, borrowed `dir_fd` paths, bootstrap/control readers and
 custom callers retain full qualification. The Task17 requirement for those
 relative control-file opens is unchanged. No public `skip_ntfs` switch, volume

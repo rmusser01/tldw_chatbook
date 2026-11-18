@@ -11,6 +11,7 @@ on:
       - 'Tests/Agents/test_agent_step_incremental_persistence.py'
       - 'Tests/Backup_Recovery/test_windows_metadata_prerequisites.py'
       - 'Tests/Backup_Recovery/test_windows_metadata_volume_proof.py'
+      - 'Tests/Backup_Recovery/measure_windows_warm_admission.py'
       - 'Tests/UI/test_console_resume_navigation_barrier.py'
       - 'Tests/UI/test_screen_navigation.py'
       - 'Tests/Tools/test_native_fs_read_physical_bounds.py'
@@ -22,6 +23,89 @@ permissions:
   contents: read
 
 jobs:
+  warm-admission:
+    name: Compare complete warm lease acquisition and close
+    runs-on: windows-2022
+    timeout-minutes: 20
+    env:
+      BASELINE_SHA: 495b3249e919149ed662fa1055fe8ecc124ce2d6
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+      PYTHONUTF8: '1'
+    steps:
+      - name: Allow long paths in both checkouts
+        run: git config --global core.longpaths true
+      - uses: actions/checkout@v4
+        with:
+          path: baseline
+          ref: ${{ env.BASELINE_SHA }}
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          path: candidate
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.10'
+          cache: pip
+          cache-dependency-path: candidate/pyproject.toml
+      - name: Install the common test dependencies
+        run: python -m pip install -e ./candidate pytest pytest-asyncio pytest-timeout hypothesis pywin32 pydub
+      - name: Run six alternating pairs in independent processes
+        shell: python
+        run: |
+          import json
+          import os
+          from pathlib import Path
+          import shutil
+          from statistics import median
+          import subprocess
+          import sys
+          import xml.etree.ElementTree as ET
+
+          measure = Path("Tests/Backup_Recovery/measure_windows_warm_admission.py")
+          candidate = Path("candidate").resolve()
+          sys.path.insert(0, str(candidate))
+          from Tests.Backup_Recovery.run_platform_product import _create_private_root
+          from Tests.windows_private_fixture_runner import user_fixture_default_owner
+
+          revisions = {"baseline": os.environ["BASELINE_SHA"], "candidate": os.environ["GITHUB_SHA"]}
+          for arm, sha in revisions.items():
+              actual = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=arm, text=True).strip()
+              assert actual == sha, (arm, actual, sha)
+          # Only the common measurement node is supplied to the older checkout.
+          shutil.copyfile(candidate / measure, Path("baseline") / measure)
+          with user_fixture_default_owner():
+              private = _create_private_root(Path())
+          environment = dict(os.environ, TEMP=str(private), TMP=str(private))
+          results = {arm: [] for arm in revisions}
+          rows = ["| Pair | Order | Baseline ms | Candidate ms |", "| --- | --- | ---: | ---: |"]
+          for pair in range(1, 7):
+              order = ("baseline", "candidate") if pair % 2 else ("candidate", "baseline")
+              for arm in order:
+                  label = f"p{pair}{arm[0]}"
+                  report = private / f"{label}.xml"
+                  subprocess.run([
+                      sys.executable, "-m", "Tests.windows_private_fixture_runner",
+                      "-p", "pytest_asyncio.plugin", "-p", "pytest_timeout",
+                      "--basetemp", str(private / label), "--junitxml", str(report),
+                      str(measure) + "::test_counted_warm_acquire_and_close",
+                  ], cwd=arm, env=environment, check=True)
+                  [case] = ET.parse(report).findall(".//testcase")
+                  assert case.get("name") == "test_counted_warm_acquire_and_close"
+                  samples = json.loads(case.find("properties/property[@name='complete_warm_lease_ns']").get("value"))
+                  assert len(samples) == 21 and all(type(value) is int and value > 0 for value in samples)
+                  print(label, "complete acquire + close ns", samples, flush=True)
+                  results[arm].append(median(samples) / 1_000_000)
+              rows.append(f"| {pair} | {' / '.join(order)} | {results['baseline'][-1]:.3f} | {results['candidate'][-1]:.3f} |")
+          old, new = (median(results[arm]) for arm in ("baseline", "candidate"))
+          rows.extend(["", f"Median of six arm medians: {old:.3f} ms baseline, {new:.3f} ms candidate ({(new / old - 1):+.2%})."])
+          summary = (f"### Windows warm lease component\n\nBaseline `{revisions['baseline']}`, candidate `{revisions['candidate']}`. "
+                     "Each arm times 21 complete, confirmed, counted warm lease acquisitions and closes.\n\n" + "\n".join(rows))
+          print(summary)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as output:
+              print(summary, file=output)
+
   mount:
     runs-on: windows-2022
     timeout-minutes: 30
@@ -66,6 +150,7 @@ jobs:
             'Tests/UI/test_console_decision_navigation_retirement.py'
             'Tests/UI/test_console_selected_resize.py'
             'Tests/Backup_Recovery/test_windows_metadata_prerequisites.py::test_admission_refuses_inconsistent_spelling_before_native_read'
+            'Tests/Backup_Recovery/test_windows_metadata_prerequisites.py::test_single_drive_root_retires_before_reverse_open'
             'Tests/Backup_Recovery/test_windows_metadata_prerequisites.py::test_admission_checks_shared_spelling_once_per_input_and_reads_fresh_metadata'
             'Tests/Backup_Recovery/test_windows_metadata_volume_proof.py'
             'Tests/Backup_Recovery/test_warm_repository_admission.py'

@@ -855,11 +855,12 @@ class WindowsOS:
         retain their exact birth records and refuse the observation.
         """
         selected = tuple(Path(path) for path in paths)
-        components = set()
+        components = {}
         for node in selected:
             while node not in components:
-                components.add(node)
-                node = node.parent
+                parent = node.parent
+                components[node] = parent
+                node = parent
         nodes = sorted(
             components,
             key=lambda node: (len(node.parts), str(node)),
@@ -878,7 +879,7 @@ class WindowsOS:
         if not selected:
             return {}
         native = _native()
-        parents = {node.parent for node in nodes if node.parent != node}
+        parents = {parent for node, parent in components.items() if parent != node}
         handles, identities, observations = {}, {}, {}
         # Keep strong references in birth order for reverse cleanup. A reused
         # Win32 handle value never identifies an earlier record.
@@ -923,7 +924,7 @@ class WindowsOS:
 
         try:
             for node in nodes:
-                parent = node.parent
+                parent = components[node]
                 if parent != node and handles[parent] is None:
                     handles[node] = None
                     continue
@@ -940,7 +941,7 @@ class WindowsOS:
                     if failed:
                         raise _AdmissionMetadataCloseError(failed)
             for node in reversed(nodes):
-                parent = node.parent
+                parent = components[node]
                 if parent != node and handles[parent] is None:
                     observations[node] = None
                     continue
