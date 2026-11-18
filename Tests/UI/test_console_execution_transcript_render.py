@@ -31,6 +31,7 @@ async def test_selected_projection_reconciles_original_rows(request, monkeypatch
         decode_message_projection, encode_message_projection,
     )
     from tldw_chatbook.UI.Console_Modules import execution_projection as presenter
+    from tldw_chatbook.UI.Console_Modules.send_acknowledgement import acknowledgement_for
     from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
     class Host(ConsolidatedCSSApp):
@@ -43,7 +44,7 @@ async def test_selected_projection_reconciles_original_rows(request, monkeypatch
     client = ConsoleExecutionClient(app)
     user = ConsoleChatMessage(id="sent", role=ConsoleMessageRole.USER, content="Question")
     final = ConsoleChatMessage(
-        id="final", role=ConsoleMessageRole.ASSISTANT, content="Completed answer", status="completed",
+        id="final", role=ConsoleMessageRole.ASSISTANT, content="Completed answer", status="complete",
     )
 
     def publication(messages, revision):
@@ -118,3 +119,25 @@ async def test_selected_projection_reconciles_original_rows(request, monkeypatch
             assert len(refreshes) == before
             assert screen.query_one("#console-message-more-menu") is menu
             assert menu.is_attached
+
+            ack = acknowledgement_for(screen)
+            token = ack.begin("session", "Next question")
+            assert token is not None
+            ack.hold_row("session")
+            assert await presenter.apply_console_process_projection(screen, client, third, visit=1)
+            assert len(refreshes) == before and menu.is_attached
+            assert ack.show_row("session")
+            assert await presenter.apply_console_process_projection(screen, client, third, visit=1)
+            assert len(refreshes) == before + 1
+            pending_id = ack.pending_row_id("session")
+            assert transcript.query_one(f"#console-message-{pending_id}").is_attached
+
+            screen._console_chat_store = SimpleNamespace(messages_for_session=lambda _: third.messages)
+            with ack.dispatching(token):
+                assert ack.custody_callback("session") is not None
+                ack.mark_admitted("session")
+            echo = ConsoleChatMessage(id="next-echo", role=ConsoleMessageRole.USER, content="Next question")
+            fourth = client._projection = publication([user, final, echo], 4)
+            assert await presenter.apply_console_process_projection(screen, client, fourth, visit=1)
+            assert len(refreshes) == before + 1  # Original stand-in preserves the same rows.
+            assert transcript.query_one(f"#console-message-{pending_id}").is_attached
