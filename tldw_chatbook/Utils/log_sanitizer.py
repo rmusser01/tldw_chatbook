@@ -262,9 +262,16 @@ _DIAGNOSTIC_METADATA_SUFFIXES = (
 
 
 def _credential_label_text(label: str) -> bool:
-    """``_is_credential_label`` for a label the label pattern matched: a
-    cached credential label answers from ``_LABEL_FACTS``, any other label is
+    """Whether a shared bundle judges the value of a label ``_LABEL``
+    matched: a compound credential label (``_is_credential_label``), or one
+    the older simple-label rule covered (``token``, ``db.password``; TASK-41510).
+    Other single words (``Authorization``, ``cookie``) are not. A cached
+    credential label answers from ``_LABEL_FACTS``; any other label is
     checked directly and never cached (review r15tr-rev12)."""
+    if _SIMPLE_CREDENTIAL_LABEL.search(label):
+        return True
+    if label.isalnum():
+        return False
     facts = _LABEL_FACTS.get(label)
     return facts[2] if facts else _is_credential_label(label)
 
@@ -561,19 +568,25 @@ CREDENTIAL_VALUE_PATTERNS = (
 )
 
 
-#: A compound credential label (TASK-41133). Labels may repeat separators
-#: (pydantic's ``APP__X``) and may be quoted, or escape-quoted inside a JSON
-#: string (``\"client_secret\":``). ``==`` is a comparison, never a
-#: separator (review r15tr-rev8).
-_COMPOUND_LABEL = re.compile(
+#: A label: a word, ``api key``, or a compound name (TASK-41133), after any
+#: leading hyphens (``--client-secret=``, TASK-41510). Labels may repeat
+#: separators (pydantic's ``APP__X``) and may be quoted, or escape-quoted
+#: inside a JSON string (``\"client_secret\":``). ``==`` is a comparison,
+#: never a separator (review r15tr-rev8).
+_LABEL = re.compile(
     r"""
     (?<![A-Za-z0-9_.-])
     (?:\\?(?P<label_quote>["']))?
-    (?P<label>[A-Za-z0-9]+(?:[_.-]+[A-Za-z0-9]+)+)
+    (?P<label>(?i:api[ ]key)|-*[A-Za-z0-9]+(?:[_.-]+[A-Za-z0-9]+)*)
     (?(label_quote)\\?(?P=label_quote))
     [ \t]*(?::|=(?!=))[ \t]*
     """,
     re.VERBOSE,
+)
+#: The labels the export's older simple-label rule masked whole (TASK-41510):
+#: one of these words, alone or after a ``.`` or ``-``.
+_SIMPLE_CREDENTIAL_LABEL = re.compile(
+    r"(?:^|[.-])(?:api[ _-]?key|token|passwd|password|secret)\Z", re.IGNORECASE
 )
 #: A bare value runs to whitespace, a quote, or a ``&``/``;``/``,`` followed
 #: by whitespace, a quote, the end or another ``name=`` field. Any other
@@ -619,6 +632,9 @@ _PATH_KEY = re.compile(r"[a-z][a-z0-9_.-]*(?:/[a-z][a-z0-9_.-]*)+")
 _CODE_VALUE_END = re.compile(r"""[\s,;&)\]}"']|\.(?:\s|$)|$""")
 #: A YAML block scalar indicator; its value is the indented lines after it.
 _YAML_BLOCK = re.compile(r"[|>][-+]?[ \t]*(?:\r\n|\r|\n)")
+#: A value on the line below a bare ``label:``: indented, and not a nested
+#: ``name:``, a list item or a comment (``password:\n  hunter2``).
+_VALUE_BELOW = re.compile(r"(?:\r\n|\r|\n)[ \t]+(?![\s#-]|[A-Za-z0-9_.-]+[ \t]*:(?:\s|\Z))")
 _INDENTED_LINES = re.compile(r"(?:[ \t]+[^\r\n]*(?:\r\n|\r|\n|$))+")
 #: Longer values are masked whole, never examined (review r15tr-rev3).
 _MAX_EXAMINED_VALUE = 2048
@@ -1049,9 +1065,9 @@ def _inner_values_look_alike(span: str) -> bool:
     under its own label: a quoted literal or the word after it. The call is
     then kept whole and not scanned again, so nested calls stay linear
     (review r15tr-rev9)."""
-    for inner in _COMPOUND_LABEL.finditer(span, 1):
+    for inner in _LABEL.finditer(span, 1):
         name = inner.group("label")
-        if not _is_credential_label(name):
+        if not _credential_label_text(name):
             continue
         literal = _CODE_LITERAL.match(span, inner.end())
         if literal is not None and literal.group(1) is None:
@@ -1120,11 +1136,13 @@ def _field_end(text: str, start: int, end: int, line_end: int) -> int:
 
 
 def mask_credential_labels(text: str, marker: str = REDACTION_MARKER) -> str:
-    """Mask every value under a compound credential label but look-alikes.
+    """Mask every value under a credential label but look-alikes.
 
-    The labels are the ones diagnostics mask (``client_secret=``,
-    ``refresh_token:``, ``X-Auth-Token:``); PII labels such as ``user_name=``
-    are left alone. A value is masked whole unless it is on the look-alike
+    The labels are the compound ones diagnostics mask (``client_secret=``,
+    ``refresh_token:``, ``X-Auth-Token:``) and the simple ones the export's
+    older rule masked whole (``token=``, ``password:``, ``api key:``;
+    ``_credential_label_text``); PII labels such as ``user_name=`` are left
+    alone. A value is masked whole unless it is on the look-alike
     allowlist (``_kept_look_alike``). A value that is kept, or that sits under
     any other label, is scanned again, so a label nested in it (a URL, JSON
     text, a query string) is found too (TASK-41133).
@@ -1142,7 +1160,7 @@ def mask_credential_labels(text: str, marker: str = REDACTION_MARKER) -> str:
     # Labels seen in this text, for this call only: freed on return, so it
     # holds no text beyond the call that passed it in (review r15tr-rev12).
     seen: dict[str, bool] = {}
-    while (label := _COMPOUND_LABEL.search(text, position)) is not None:
+    while (label := _LABEL.search(text, position)) is not None:
         name = label.group("label")
         credential = seen.get(name)
         if credential is None:
@@ -1151,6 +1169,13 @@ def mask_credential_labels(text: str, marker: str = REDACTION_MARKER) -> str:
             if label.end() > line_end:  # one scan per line, not per label
                 line_end = _line_end(text, label.end())
             value_start = label.end()
+            if value_start == line_end and label.group().rstrip().endswith(":"):
+                # A YAML value on the next, indented line is this label's,
+                # as the older simple-label rule read it (TASK-41510).
+                below = _VALUE_BELOW.match(text, value_start)
+                if below is not None:
+                    value_start = below.end()
+                    line_end = _line_end(text, value_start)
             if text.startswith(_CODE_WORDS, value_start) and label.group().rstrip().endswith(":"):
                 if (
                     text.startswith(_STATEMENT_WORDS, value_start)
@@ -1251,17 +1276,12 @@ def mask_credential_labels(text: str, marker: str = REDACTION_MARKER) -> str:
     return "".join(parts)
 
 
-_QUERY_KEY_WORDS = re.compile(r"[a-z]+(?:[-_.][a-z]+)*")
-_QUERY_KEY_PATH = re.compile(r"[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)+")
-
-
 def mask_url_query_keys(text: str, marker: str = REDACTION_MARKER) -> str:
-    """Mask a URL's ``?key=``/``&key=`` value unless it is a look-alike.
-
-    The value is judged as a strict ``api_key`` value (reviews r15tr-rev4,
-    rev5), so ``?key=YOUR_API_KEY`` stays readable and a real key is masked;
-    lowercase words and a ``/``-separated path with no token-shaped word
-    (``?key=python``, ``?key=photos/2024/cat.jpg``) stay readable too.
+    """Mask a URL's ``?key=``/``&key=`` value whatever its shape, as logs
+    mask it (TASK-41510): ``?key=YOUR_API_KEY`` and ``?key=python`` too. A
+    trailing full stop or unbalanced closer stays visible; an empty value and
+    a marker this code emitted are left alone, so a second pass changes
+    nothing.
 
     Args:
         text: Text that may hold URLs.
@@ -1276,13 +1296,7 @@ def mask_url_query_keys(text: str, marker: str = REDACTION_MARKER) -> str:
         for key in _URL_QUERY_KEY.finditer(url.group()):
             start = url.start() + key.end(1)
             end = _trimmed_end(text, start, url.start() + key.end())
-            value = text[start:end]
-            if (
-                text.startswith(_EMITTED_MARKERS, start)
-                or _kept_look_alike(value, "api_key", quoted=False, prose_follows=False, strict=True)
-                or _QUERY_KEY_WORDS.fullmatch(value)
-                or (_QUERY_KEY_PATH.fullmatch(value) and not _LETTER_DIGIT_WORD.search(value))
-            ):
+            if start == end or text.startswith(_EMITTED_MARKERS, start):
                 continue
             parts.extend((text[position:start], marker))
             position = end

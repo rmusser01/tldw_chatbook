@@ -961,6 +961,31 @@ _MUST_MASK: dict[str, tuple[str, str]] = {
     "inner-label-word": ("client" + _L + "secret=build(2, access" + _L + "token=hunter2x)", "hunter2x"),
     "inner-label-after-call": ("client" + _L + "secret=build(g(x), db" + _L + "password=letmein99)", "letmein99"),
     "inner-label-quoted-strict": ("client" + _L + 'secret=build(2, db' + _L + 'password="changeme")', "changeme"),
+    # TASK-41510: a one-word label (and ``api key``) is judged as a compound
+    # one is, so its real values stay masked, quoted JSON keys included...
+    "simple-token": ("tok" + "en=" + _F + "abc123def456", _F + "abc123def456"),
+    "simple-password-json": ('{"pass' + 'word": "Tr0ub4dor&3xyz"}', "Tr0ub4dor&3xyz"),
+    "simple-secret-capitals": ("SEC" + "RET: " + _P8 + "abc", _P8 + "abc"),
+    "simple-api-key-words": ("my API " + "key: " + _P8 + "abc123", _P8 + "abc123"),
+    "simple-apikey": ("api" + "key=" + _P8 + "abc123", _P8 + "abc123"),
+    "simple-dotted-password": ("db.pass" + "word=hunter2x", "hunter2x"),
+    "simple-hyphen-token": ("page-tok" + "en: " + _P8 + "abc", _P8 + "abc"),
+    "simple-code-default": ("pass" + 'word = os.getenv("DB_PASSWORD", "postgres")', "postgres"),
+    "simple-inner-label": ("client" + _L + "secret=build(2, db.pass" + "word=hunter2x)", "hunter2x"),
+    "simple-yaml-next-line": ("pass" + "word:\n  hunter2x", "hunter2x"),
+    "simple-yaml-next-line-crlf": ("tok" + "en:\r\n  " + _P8 + "abc", _P8 + "abc"),
+    "compound-yaml-next-line": ("client" + _L + "secret:\n    " + _G, _G),
+    "simple-yaml-next-line-colon": ("tok" + "en:\n  123456789:AAH" + _F + "dqTcvCH1vGWJxfSeof", "AAH" + _F + "dqTcvCH1vGWJxfSeof"),
+    # ...and a URL's ?key= value is masked whatever its shape, as logs mask it.
+    "url-key-placeholder": (
+        "https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&callback=init",
+        "YOUR_API_KEY",
+    ),
+    "url-key-constant": ("https://x.example/api?key=API" + _L + "KEY", "API_KEY"),
+    "url-key-template": ("https://x.example/api?key={api" + _L + "key}", "{api_key}"),
+    "url-key-word": ("https://example.com/search?key=python", "python"),
+    "url-key-path": ("https://s3.example.com/bucket?key=photos/2024/cat.jpg", "photos/2024/cat.jpg"),
+    "url-key-short": ("https://x.example/api?key=qwz&v=2", "qwz"),
 }
 
 #: name -> text that must survive a shared bundle unchanged.
@@ -1020,13 +1045,6 @@ _MUST_KEEP: dict[str, str] = {
     "constant-name-password": "db" + _L + "password=DB_PASSWORD_2",
     "pascal-name": "client" + _L + "secret=ClientSecret2",
     "code-call": "client" + _L + "secret=getClientSecret2()",
-    # rev4 (probe8): a URL's ?key= value judged as an api_key value.
-    "url-key-placeholder": "https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&callback=init",
-    "url-key-constant": "https://x.example/api?key=API" + _L + "KEY",
-    "url-key-template": "https://x.example/api?key={api" + _L + "key}",
-    # rev5 (probe10): a ?key= value with no token-shaped word.
-    "url-key-word": "https://example.com/search?key=python",
-    "url-key-path": "https://s3.example.com/bucket?key=photos/2024/cat.jpg",
     # rev6 (probe12): <name> placeholders from READMEs, kept under any label
     "angle-word": "db" + _L + "password=<letmein>",
     "angle-camel": "db" + _L + "password=<MyPassword>",
@@ -1080,6 +1098,16 @@ _MUST_KEEP: dict[str, str] = {
     # rev9 (probe17): comparisons
     "comparison-none": "if access" + _L + "token == None:",
     "comparison-two-names": "ok = refresh" + _L + "token == expected_token",
+    # TASK-41510: code and prose under a one-word label, which the older
+    # simple-label rule masked whole.
+    "simple-code-call": "tok" + "en = oauth.fetch_token(url,)",
+    "simple-code-getpass": "pass" + "word = getpass.getpass()",
+    "simple-code-environ": "sec" + 'ret = os.environ["SECRET"]',
+    "simple-none": "tok" + "en = None",
+    "simple-prose": "tok" + "en: the token expired at 10:30, retry_after=60",
+    "simple-api-key-prose": "API " + "key: see the provider console",
+    "simple-annotation": "pass" + "word: str | None = None",
+    "simple-comparison": "if tok" + "en == expected_token: return",
 }
 
 
@@ -1179,8 +1207,18 @@ def test_a_masked_label_value_keeps_its_closing_bracket_and_full_stop(
             "db" + "_password: correct horse battery staple, user=bob",
             "db" + "_password: [credential redacted], user=bob",
         ),
+        # TASK-41510: a value on the indented line below a bare label is the
+        # label's; a nested name: line, a blank line and later lines are not.
+        (
+            "tok" + "en:\n  issuer: example\ndb.pass" + "word:\n  hunter2x\n  user: bob",
+            "tok" + "en:\n  issuer: example\ndb.pass" + "word:\n  [credential redacted]\n  user: bob",
+        ),
+        (
+            "pass" + "word:\n\nSee below.\n\nsec" + "ret: " + _P8,
+            "pass" + "word:\n\nSee below.\n\nsec" + "ret: [credential redacted]",
+        ),
     ],
-    ids=("function-word-token", "piped-fields", "comma-field"),
+    ids=("function-word-token", "piped-fields", "comma-field", "value-below", "heading-then-value"),
 )
 def test_a_masked_run_stops_before_the_next_field(text: str, expected: str) -> None:
     """Review r15tr-rev6: a value that runs on past its first word (a token
@@ -1270,6 +1308,10 @@ def test_masking_never_caches_value_text() -> None:
             f'"GOCSPX-{_P8}{index}_secret": "x"',
             # rev12: a plain-word secret in a label position
             '"letmein' + _L + 'now": "x"',
+            # TASK-41510: simple labels, and a one-word secret as a label
+            "pass" + f"word: summer202{index}word",
+            "API " + f"key: {_P8}{index}",
+            f"{_P8}{index}: active",
             "correct" + _L + "horse" + _L + "battery" + _L + "staple: abc",
         ):
             trajectory_export._credential_text(text)
@@ -1317,6 +1359,10 @@ _ADVERSARIAL_TEXTS = {
     "quoted-runs": ('"client' + '_secret": "' + "x" * 2047 + '" ') * 100,
     "nested-labels": ("a_b=" + "client" + "_secret=") * 15_000,
     "quoted-prose-1mb": ('"client' + '_secret": "a b" ') * 40_000,
+    # TASK-41510: one-word labels are labels too.
+    "chained-simple-labels": "a=" * 100_000,
+    "chained-simple-credential-labels-spaced": ("tok" + "en= ") * 30_000,
+    "api-words": "api " * 50_000 + "key",
 }
 
 
