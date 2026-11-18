@@ -274,3 +274,12 @@ This extends the TASK-40716 decision that the abandon action sits on the run's t
 - The list reads the runtime's capacity, not the agent bridge's, which is allocated only once an agent turn runs; a session that only ran Raw CLI or Undo still lists its records.
 - `CleanupUnprovenRefused` carries its retention, so the accepted-turn failure handler and the Raw CLI command can point Release at it. A pre-run stop keeps the accepted turn's dispatch recovery; only its copy changes, and it is set just before that recovery is restored, so an early return leaves none behind.
 - The segment refreshes on the Console's sync, after a card's Release and when the list closes. A Change Review job retained in the background between syncs shows at the next one.
+
+## Change Review initialization custody amendment (TASK-41635, 2026-11-18)
+
+Implementation note, not an owner decision. It extends the TASK-40716 note that custody runs on a daemon worker "so no joined pool thread ever holds" to Change Review filesystem initialization, which that list missed.
+
+- Initialization keeps its fixed two-thread pool. Each native job now runs on a daemon custody worker (`run_on_custody_thread`) while its pool thread waits. When the job's Git cleanup is retained as unproven, the pool thread marks that root failed and takes the next job; the custody worker keeps the original scopes until restart. Before, the pool thread itself held, so two retained cleanups stopped preparation for every later root, with nothing on screen saying why.
+- Threads stay bounded: the two pool threads, at most one live custody worker per pool thread, and one per retained cleanup. A retained cleanup already holds its tool slot until Release and its scopes until restart, so its thread adds no new kind of retention.
+- The retained root reads "Change history preparation failed", not "busy; retry from Settings": a retry cannot clear a retention.
+- What this does not change: a retained job that ran under its own owner still holds its opaque activity claim until restart (the TASK-40716 decision), and that claim refuses later admissions on its own.

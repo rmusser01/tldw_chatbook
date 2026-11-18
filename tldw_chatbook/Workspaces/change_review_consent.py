@@ -525,15 +525,25 @@ class ChangeReviewConsentService:
                 work = self._queue.get(timeout=0.05)
             except Empty:
                 continue
-            ticket = None
             try:
                 if work.source is not None:
+                    from tldw_chatbook.Agents.execution_capacity import (
+                        run_on_custody_thread,
+                    )
+
                     ticket = work.ticket or work.source.admit()
-                    with ticket.activate():
-                        try:
-                            self._run_work(work)
-                        finally:
-                            ticket.returned(worker=True, handoff=True)
+
+                    def custody(ticket=ticket, work=work):
+                        with ticket.activate():
+                            try:
+                                self._run_work(work)
+                            finally:
+                                ticket.returned(worker=True, handoff=True)
+
+                    # An unproven Git cleanup holds this daemon worker until
+                    # restart, never a pool thread, so it cannot stall other
+                    # roots' preparation (TASK-41635).
+                    run_on_custody_thread(custody, lambda: ticket.operation)
                 elif self._native_expected:
                     raise ValueError("native initialization source unavailable")
                 else:
@@ -542,9 +552,17 @@ class ChangeReviewConsentService:
                     ):
                         self._run_work(work)
             except Exception as error:  # noqa: BLE001 -- one failed job must not kill the bounded worker
-                from tldw_chatbook.Agents.execution_capacity import CapacityRefused
+                from tldw_chatbook.Agents.execution_capacity import (
+                    CapacityRefused,
+                    CleanupUnprovenRefused,
+                )
 
-                self._fail(work, busy=isinstance(error, CapacityRefused))
+                # A retained cleanup is held until restart; "retry" cannot clear it.
+                self._fail(
+                    work,
+                    busy=isinstance(error, CapacityRefused)
+                    and not isinstance(error, CleanupUnprovenRefused),
+                )
             finally:
                 self._queue.task_done()
 

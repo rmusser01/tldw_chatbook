@@ -378,8 +378,11 @@ def test_unavailable_cleanup_proof_retains_original_worker_in_isolated_process(
         assert retention is not None and retention.label == "native Git"
         custody = [t for t in threading.enumerate() if holds_unproven_custody(t)]
         assert len(custody) == 1 and custody[0].daemon
+        # TASK-41635: a custody worker holds, not a pool thread; the pool drains.
+        assert custody[0] not in host.service._workers
+        wait_until(lambda: host.service._queue.unfinished_tasks == 0)
         assert ticket.operation._stopping and ticket.owner.is_admitted
-        assert not ticket.retired.is_set() and host.service._queue.unfinished_tasks == 1
+        assert not ticket.retired.is_set()
 
         def held():
             with storage_admission._lock:
