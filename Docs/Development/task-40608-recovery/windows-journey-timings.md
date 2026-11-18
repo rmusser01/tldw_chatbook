@@ -213,7 +213,8 @@ Batch `q5` started its first clean baseline on Windows 10 at 07:59 UTC on Novemb
 | Batch | Pair | README baseline / candidate | Approved edit baseline / candidate | State |
 |---|---|---|---|---|
 | `qa` | 1 | 351.8018 s / 29.5092 s | 407.0190 s / 29.6705 s | Both sides passed the original assertions and shutdown. Candidate first HTTP arrived at 12.3762 s and 7.5064 s. Both journeys exceeded five seconds. |
-| `qa` | 2–3 | Pending | Pending | Candidate `e4fa0ea67d` includes the independent completed-history query and resize fix. Frozen configuration SHA-256 `334f106cb818be84841ad9e17bbc869d5efa4b8771b69197966942f3fcc31a6a`. |
+| `qa` | 2 | Pending / 28.5109 s | Pending / 35.9651 s | Candidate `qa1c2` passed every assertion and shutdown. This pair runs candidate first. |
+| `qa` | 3 | Pending | Pending | Candidate `e4fa0ea67d` includes the independent completed-history query and resize fix. Frozen configuration SHA-256 `334f106cb818be84841ad9e17bbc869d5efa4b8771b69197966942f3fcc31a6a`. |
 | `q9` | 1 | 294.9706 s / 23.2802 s | 416.4471 s / 30.0985 s | Both sides passed every original check and shutdown. Candidate first HTTP arrived at 10.4910 s and 7.9268 s (baseline 89.0301 s and 110.7063 s). Both miss five seconds. |
 | `q9` | 2, first attempt | — / 27.0388 s to persisted reply | — / — | Candidate `q91c2` painted the README answer. Verification of completed run history raised `ConsoleReadinessExpired` after the database returned the rows. The driver stopped before edit Send or the second baseline. |
 | `q9` | 2, resumed | — / — | — / — | On the identical frozen candidate, `q92c2` waited 300 s for the workspace name field. Textual reported an uncaught `ConsoleDisplayExpired` from the deferred rail resize callback. Neither Send ran. The ledger retained pair 1 and pairs 2–3 remain incomplete. |
@@ -234,6 +235,10 @@ On q91c2 the original history reader requested a full display projection for its
 The q92c2 original receipt SHA-256 is `7027813f75d3b7cdab7842af85a8b6fd4ebbb9c17dd5cf08dad3de36c67f98b7`. Its source hashes matched and the failed fixture took 381.031 s. That duration is setup and failure handling. It yields no journey latency.
 
 The original Windows receipts for `qa` pair 1 have SHA-256 `177456a85ea9d863a4e29ec7895e69f685b07aeba29762b4dd7591685a27211c` (`qa1b1`) and `6c851a3679d0ace09be35ca4af31c123ebcd59896bcf64a4b948cdc89d0a798e` (`qa1c1`). On the candidate, README and edit reached the persisted reply at 32.0439 and 32.0209 s raw. Verification finished at 32.4755 and 32.4198 s.
+
+On `qa1c2`, README and edit reached the first HTTP request at 13.3068 and 8.4202 s and the persisted reply at 30.0909 and 38.8634 s raw. The receipt SHA-256 is `421ecc6de93cd49dff8cf0fb1bb4dff66d49c749eff130372eed85f50dbff3fe`.
+
+Time *after the first request alone*, with the original approval waits subtracted, was 17.9282 s for README and 22.1641 s for edit on `qa1c1`. The corresponding intervals on `qa1c2` were 15.5851 and 27.5449 s. Even instantaneous preparation would leave all four measurements above five seconds. On `qa1c1` the five README and six edit loopback handlers totaled just 0.0262 and 0.0080 s respectively. The recurring work to investigate is the sequence of application checks, commits, approvals, tool operations and display updates between those requests and the persisted reply.
 
 On `737e2a1ba8`, a separate clean candidate screening run (`g55h`) passed both original journeys and shutdown using the independent run-history query. First HTTP, persisted reply, adjusted application time and final verification came at **10.7742 / 30.9795 / 28.4291 / 31.3856 s** for README and **8.4414 / 31.6519 / 29.2931 / 32.0084 s** for edit. The receipt SHA-256 is `5acc413f61f80e6d1ca3ce125e2b56c6f510f2e1d212dacbd699f0840059ea21`. This run had no matched baseline and does not contribute to the three-pair median.
 
