@@ -74,15 +74,23 @@ Re-checked on dev d0486978dd (2026-11-18, load 20-100 on 18 CPUs). Per node:
   - The ordinary-tree nodes are TASK-41028's (and TASK-41312's notes).
   - reference `activity`: a held opaque claim now refuses the whole Send ("Workspace activity is busy").
   - reference `zero_roots`: ordinary admission always calls `RuntimeCapacity.begin_execution`, which the test forbids.
+  - The two reference nodes have since been rewritten under the owner decision below.
 - `test_console_skill_trust_stock_owned.py[send_enter]`, `[send_button]`: "Cold Send did not reach original configuration SQL" since they landed (#3323, 4a38b3d2db), on every dev merge probed. With a 60 s SQL budget they hit the 10 s control deadline, so this is not timing. TASK-34563.35 (In Progress) owns this behaviour. These two nodes do not pin a code-identity refusal, so TASK-41319's D2 retarget does not apply.
 
 **Evidence.** Base `-n 4` run of all 10 listed files: 103 failed, 411 passed (83 of the failures are TASK-41653's sweep). Head: trigger census plus historical bootstrap 102 passed serially; trace provenance, configuration preparation and semantic inventory at `-n 4`: 203 passed, plus 1 load timeout that passed alone in 286 s. `./scripts/preflight.sh` passed. `Tests/Architecture` serially on head: 3 failed, 1476 passed. The 3 failures are `test_persistent_diagnostic_inventory.py::test_reviewed_diagnostic_changes_are_metadata_only` and two `test_timer_path_static_update_inventory.py` nodes, and the same 3 fail on base d0486978dd.
 
 **Root cause of the census drift.** The checklist in `tldw_chatbook/DB/migrations/README.md` named `VALID_TABLES` and the index census only. Its new steps 7 and 8 cover `expected_table_columns.py` and the trigger census, including how to compute a trigger digest from the migration's SQL.
 
+**Reference custody: owner decision (2026-11-18, option A, "Keep refusing the Send").** Both #3480 nodes were rewritten to pin the current behaviour, and each keeps the safety property it was after:
+- `test_unadmitted_reference_never_calls_custom_parser[activity]`: while another workspace activity holds the worktree, the Send is refused with "Workspace activity is busy; retry after it finishes." The refusal comes before any reference parsing (the custom parser is never called), execution owner, tool operation, provider call or persisted row. The `[no-roots]` param keeps its old assertions; the tool-operation check now applies to it too.
+- `test_zero_roots_has_no_native_operation_or_git_launch`: every ordinary turn takes its one execution owner, the design TASK-40715 built on, so the test now allows exactly one owner instead of forbidding all of them. Both references are refused ("no allowed workspace roots are configured"), with no tool operation reserved and no git launch. The sandbox is not created, and capacity drains.
+- Mutation checks (product restored after each):
+  - Calling the parser inside ordinary admission, before the refusal, fails both `unadmitted` params ("failed admission still invoked the effectful parser").
+  - Letting `_ReferenceRead.prepare` reserve an operation with zero roots fails `zero_roots` ("a reference reserved a native operation without roots").
+- `Tests/Chat/test_console_reference_custody.py` at `-n 4`: 39 passed.
+
 **Filing (coordinator).** These unowned nodes stay open, so the task stays In Progress:
 - ssh custody: `test_caller_snapshot_cannot_prove_mcp_footprint_is_bounded[True-ssh_console0]`, `test_changed_original_provider_callback_refuses_after_enqueue[handler]`, `test_original_local_virtual_source_and_roots_are_in_initial_maximum[False-ssh_console0]`.
-- reference custody: `test_unadmitted_reference_never_calls_custom_parser[activity]`, `test_zero_roots_has_no_native_operation_or_git_launch`.
 
-**Files.** `Tests/ChaChaNotesDB/test_trigger_census.py`, `Tests/Chat/test_console_trace_provenance.py`, `Tests/Chat/test_console_configuration_preparation.py`, `tldw_chatbook/DB/migrations/README.md`.
+**Files.** `Tests/ChaChaNotesDB/test_trigger_census.py`, `Tests/Chat/test_console_trace_provenance.py`, `Tests/Chat/test_console_configuration_preparation.py`, `Tests/Chat/test_console_reference_custody.py`, `tldw_chatbook/DB/migrations/README.md`.
 <!-- SECTION:NOTES:END -->
