@@ -13053,6 +13053,17 @@ class ChatScreen(BaseAppScreen):
         """Flip one left-rail section open state, then sync body and header."""
         if section_id not in CONSOLE_RAIL_SECTION_IDS:
             return
+        if getattr(getattr(self, "app_instance", None), "console_execution_client", None) is not None:
+            from ..Console_Modules.execution_rail import apply_selected_rail_toggle
+
+            apply_selected_rail_toggle(self, section_id, next_open=next_open)
+            return
+        self._apply_console_rail_section_toggle(section_id, next_open=next_open)
+
+    def _apply_console_rail_section_toggle(
+        self, section_id: str, *, next_open: bool | None = None,
+    ) -> None:
+        """Apply the original preference, widget, Agent and focus effects once."""
         rail_state = self._current_console_rail_state()
         if next_open is None:
             next_open = not getattr(rail_state, f"{section_id}_open")
@@ -21788,6 +21799,11 @@ class ChatScreen(BaseAppScreen):
             True after rendering; False when entry was deferred and a fresh
             coalesced replay owns the unfinished refresh.
         """
+        if getattr(getattr(self, "app_instance", None), "console_execution_client", None) is not None:
+            from ..Console_Modules.execution_state import sync_selected_controls
+
+            return sync_selected_controls(self)
+
         from ..Console_Modules.config_sync import run_console_presentation_sync
 
         def sync() -> None:
@@ -21801,6 +21817,11 @@ class ChatScreen(BaseAppScreen):
 
     def _sync_console_rail_and_controls(self) -> bool:
         """Share current config across the tick's synchronous projections."""
+        if getattr(getattr(self, "app_instance", None), "console_execution_client", None) is not None:
+            from ..Console_Modules.execution_state import sync_selected_controls
+
+            return sync_selected_controls(self)
+
         from ..Console_Modules.config_sync import run_console_presentation_sync
 
         def sync() -> None:
@@ -21944,6 +21965,15 @@ class ChatScreen(BaseAppScreen):
         workbench_state: Any | None = None,
     ) -> None:
         """Refresh visible Workbench primitives from current Console state."""
+        if getattr(getattr(self, "app_instance", None), "console_execution_client", None) is not None:
+            from ..Console_Modules.execution_state import selected_client
+
+            selected_client(self)
+            if workbench_state is None:
+                workbench_state = self._build_console_workbench_state(control_state)
+            self._apply_console_workbench_state(workbench_state)
+            return
+
         from tldw_chatbook.Chat.console_parent_settings import parent_settings_render
 
         with parent_settings_render(self):
@@ -21955,30 +21985,34 @@ class ChatScreen(BaseAppScreen):
                 return
             if workbench_state is None:
                 workbench_state = self._build_console_workbench_state(control_state)
-            try:
-                self.query_one(
-                    "#console-workbench-header", DestinationHeader
-                ).sync_state(workbench_state.header)
-            except QueryError:
-                pass
-            try:
-                self.query_one("#console-workbench-mode-strip", ModeStrip).sync_modes(
-                    workbench_state.modes
-                )
-            except QueryError:
-                pass
-            try:
-                self.query_one(
-                    "#console-workbench-command-strip", CommandStrip
-                ).sync_actions(workbench_state.actions)
-            except QueryError:
-                pass
-            try:
-                self.query_one(
-                    "#workbench-recovery-callout", RecoveryCallout
-                ).sync_state(workbench_state.recovery)
-            except QueryError:
-                pass
+            self._apply_console_workbench_state(workbench_state)
+
+    def _apply_console_workbench_state(self, workbench_state: Any) -> None:
+        """Apply the derived Workbench values to their mounted widgets."""
+        try:
+            self.query_one(
+                "#console-workbench-header", DestinationHeader
+            ).sync_state(workbench_state.header)
+        except QueryError:
+            pass
+        try:
+            self.query_one("#console-workbench-mode-strip", ModeStrip).sync_modes(
+                workbench_state.modes
+            )
+        except QueryError:
+            pass
+        try:
+            self.query_one(
+                "#console-workbench-command-strip", CommandStrip
+            ).sync_actions(workbench_state.actions)
+        except QueryError:
+            pass
+        try:
+            self.query_one(
+                "#workbench-recovery-callout", RecoveryCallout
+            ).sync_state(workbench_state.recovery)
+        except QueryError:
+            pass
 
     def _sync_console_workbench_actions_from_draft(self) -> None:
         """Refresh Workbench command readiness after composer draft changes.

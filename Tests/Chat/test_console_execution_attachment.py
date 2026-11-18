@@ -3,6 +3,50 @@
 import pytest
 
 
+@pytest.mark.parametrize("entry", ["_sync_console_control_bar", "_sync_console_rail_and_controls"])
+def test_coalesced_controls_use_current_selected_publication(monkeypatch, entry):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Console_Modules import execution_state
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    updates = []
+    client = SimpleNamespace(_readiness_deadline=12.0)
+    screen = SimpleNamespace(
+        app_instance=SimpleNamespace(console_execution_client=client),
+        is_attached=True, is_current=True, _pending_console_launch_context=None,
+        _console_derivation_scope=nullcontext,
+        _build_console_control_state=lambda launch: "control",
+        _build_console_workbench_state=lambda control: "workbench",
+        _push_console_control_state_if_changed=lambda c, w: updates.append((c, w)),
+        _sync_console_settings_summary=lambda: updates.append("settings"),
+        _sync_console_selected_recovery=lambda: updates.append("recovery"),
+    )
+    monkeypatch.setattr(execution_state, "selected_client", lambda receiver: client)
+    monkeypatch.setattr(execution_state, "_require_methods", lambda *args: None)
+    clock = [10.0]
+    monkeypatch.setattr(execution_state, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr(execution_state, "refresh_selected_when_due", lambda _: updates.append("refresh"))
+
+    sync = getattr(ChatScreen, entry)
+    assert sync(screen)
+    assert updates == [("control", "workbench"), "settings", "recovery"]
+    updates.clear()
+    clock[0] = 12.0
+    assert not sync(screen)
+    assert updates == ["refresh"]
+    updates.clear()
+    clock[0] = 10.0
+    screen._build_console_workbench_state = lambda _: clock.__setitem__(0, 13.0)
+    assert not sync(screen)
+    assert updates == ["refresh"]
+    updates.clear()
+    screen._console_sync_maintenance_paused = True
+    assert not sync(screen)
+    assert not updates
+
+
 @pytest.mark.asyncio
 async def test_due_refresh_is_accepted_by_textual_async_workers(monkeypatch):
     from types import SimpleNamespace

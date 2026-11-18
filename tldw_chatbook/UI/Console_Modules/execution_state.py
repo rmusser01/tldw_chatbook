@@ -70,6 +70,10 @@ def selected_client(screen: ChatScreen) -> ConsoleExecutionClient | None:
     return client
 
 
+class ConsoleDisplayExpired(RuntimeError):
+    """The current visit needs a new checked backend display publication."""
+
+
 def provider_model_display(
     screen: ChatScreen,
     client: ConsoleExecutionClient,
@@ -78,7 +82,7 @@ def provider_model_display(
     if selected_client(screen) is not client:
         raise RuntimeError("Console provider presentation owner changed")
     if time.monotonic() >= client._readiness_deadline:
-        raise RuntimeError("Console readiness presentation expired")
+        raise ConsoleDisplayExpired("Console readiness presentation expired")
     return client.provider_model_display
 
 
@@ -90,7 +94,7 @@ def settings_readiness(
     if selected_client(screen) is not client:
         raise RuntimeError("Console readiness presentation owner changed")
     if time.monotonic() >= client._readiness_deadline:
-        raise RuntimeError("Console readiness presentation expired")
+        raise ConsoleDisplayExpired("Console readiness presentation expired")
     effective, readiness = client.settings_readiness
     _require_methods(screen, _WARNING_METHOD)
     warning = screen._console_model_capability_warning(
@@ -175,7 +179,7 @@ def selected_context_summary(screen: ChatScreen) -> ConsoleContextSummaryProject
     if client is None:
         return None
     if time.monotonic() >= client._readiness_deadline:
-        raise RuntimeError("Console context presentation expired")
+        raise ConsoleDisplayExpired("Console context presentation expired")
     if type(client.context_summary) is not ConsoleContextSummaryProjection:
         raise RuntimeError("Console context presentation is unavailable")
     return client.context_summary
@@ -280,6 +284,9 @@ async def refresh_selected_view(screen: ChatScreen, *, checkpoint: str | None = 
     if is_owned_project_modal(client, screen, visit):
         await present_selected_decision(screen, client, visit)
         return True
+    from .execution_rail import replay_selected_rail_toggles
+
+    replay_selected_rail_toggles(screen, client, visit)
     pending_resize = getattr(screen, "_console_pending_process_resize", None)
     if pending_resize is not None:
         screen._console_pending_process_resize = None
@@ -293,17 +300,40 @@ async def refresh_selected_view(screen: ChatScreen, *, checkpoint: str | None = 
     client.require_view(screen, visit)
     if not apply_console_process_projection(screen, client, projection, visit=visit):
         return False
-    _require_methods(screen, _REFRESH_METHODS)
-    with screen._console_derivation_scope():
-        control = screen._build_console_control_state(screen._pending_console_launch_context)
-        screen._push_console_control_state_if_changed(
-            control, screen._build_console_workbench_state(control),
-        )
-        screen._sync_console_settings_summary()
-        screen._sync_console_selected_recovery()
+    if not sync_selected_controls(screen):
+        return False
     await present_selected_decision(screen, client, visit)
     client.require_view(screen, visit)
     return True
+
+
+def sync_selected_controls(screen: ChatScreen) -> bool:
+    """Render the attached visit's controls from its current checked display."""
+    client = selected_client(screen)
+    if client is None:
+        raise RuntimeError("Console control presentation owner changed")
+    if (
+        not screen.is_attached or not screen.is_current
+        or getattr(screen, "_console_sync_maintenance_paused", False)
+        or getattr(screen, "_console_process_content_failed", False)
+    ):
+        return False
+    if time.monotonic() < client._readiness_deadline:
+        _require_methods(screen, _REFRESH_METHODS)
+        try:
+            with screen._console_derivation_scope():
+                control = screen._build_console_control_state(screen._pending_console_launch_context)
+                workbench = screen._build_console_workbench_state(control)
+                if time.monotonic() >= client._readiness_deadline:
+                    raise ConsoleDisplayExpired("Console control presentation expired")
+                screen._push_console_control_state_if_changed(control, workbench)
+                screen._sync_console_settings_summary()
+                screen._sync_console_selected_recovery()
+            return True
+        except ConsoleDisplayExpired:
+            pass
+    refresh_selected_when_due(screen)
+    return False
 
 
 _RESIZE_METHOD = (("_adapt_console_workspace_to_width", _definition(ChatScreen._adapt_console_workspace_to_width)),)
@@ -313,6 +343,7 @@ _REFRESH_METHODS = tuple(
     for name in (
         "_console_derivation_scope", "_build_console_control_state",
         "_build_console_workbench_state", "_push_console_control_state_if_changed",
+        "_sync_console_workbench_state", "_apply_console_workbench_state",
         "_sync_console_settings_summary", "_sync_console_rail_system_line",
         "_sync_console_agent_section",
         "_sync_console_selected_recovery", "_console_settings_failure_display",
@@ -349,6 +380,12 @@ async def reconcile_selected_view(screen: ChatScreen) -> None:
     try:
         action = "mount" if getattr(screen, "_console_process_mounted_visit", None) != visit else None
         if not await refresh_selected_view(screen, checkpoint=action):
+            # The first mount has no periodic refresh yet. A snapshot may
+            # expire while Textual settles the newly mounted session widgets.
+            if (client._view is screen and client._visit == visit
+                and screen.is_current and screen._console_credential_poll_timer is None
+                and time.monotonic() >= client._readiness_deadline):
+                screen.set_timer(0.25, partial(refresh_selected_when_due, screen))
             return
         client.require_view(screen, visit)
         screen._console_process_mounted_visit = visit
