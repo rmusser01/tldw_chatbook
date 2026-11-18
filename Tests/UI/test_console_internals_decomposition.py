@@ -272,17 +272,24 @@ async def _wait_for_enabled_button(
     raise AssertionError(f"Timed out waiting for enabled button {selector}")
 
 
-async def _open_console_inspector(console, pilot) -> None:
-    """Open the persistent Inspector rail and wait for measurable layout."""
+async def _open_console_inspector(console, pilot, *, timeout: float = 15.0) -> None:
+    """Open the persistent Inspector rail and wait for measurable layout.
+
+    TASK-41632: the waits poll the visible condition and return as soon as it
+    holds, so the long deadline only bounds a real failure. A fixed 2 s timed
+    out at load 50-100 on tests that passed alone.
+    """
     right_rail = console.query_one("#console-right-rail")
     if getattr(right_rail, "display", False) and right_rail.region.width > 0:
         return
 
-    await _wait_for_selector(console, pilot, "#console-inspector-rail-open")
+    await _wait_for_selector(
+        console, pilot, "#console-inspector-rail-open", timeout=timeout
+    )
     console.query_one("#console-inspector-rail-open", Button).press()
     await pilot.pause()
 
-    deadline = time.monotonic() + 2.0
+    deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         right_rail = console.query_one("#console-right-rail")
         inspector_state = console.query_one("#console-run-inspector-state")
