@@ -977,6 +977,23 @@ _MUST_MASK: dict[str, tuple[str, str]] = {
     "simple-yaml-next-line-crlf": ("tok" + "en:\r\n  " + _P8 + "abc", _P8 + "abc"),
     "compound-yaml-next-line": ("client" + _L + "secret:\n    " + _G, _G),
     "simple-yaml-next-line-colon": ("tok" + "en:\n  123456789:AAH" + _F + "dqTcvCH1vGWJxfSeof", "AAH" + _F + "dqTcvCH1vGWJxfSeof"),
+    # review r16tr-rev1 (a): a label after a "." that does not end a name
+    "after-index-dot": ("users[0].pass" + 'word = "Tr0ub4dor&3"', "Tr0ub4dor&3"),
+    "after-call-dot": ("get_user().tok" + 'en = "' + _P8 + '"', _P8),
+    "after-optional-chain": ("this.cfg?.sec" + 'ret = "' + _G + '"', _G),
+    "after-quoted-index": ("row['x'].pass" + "word = 'hunter2xyz'", "hunter2xyz"),
+    "jsonpath-root": ("$.pass" + "word: hunter2xyz", "hunter2xyz"),
+    "indented-leading-dot": ("  .pass" + 'word = "hunter2xyz"', "hunter2xyz"),
+    "after-index-dot-compound": ("users[0].client" + _L + 'secret = "' + _G + '"', _G),
+    # (b): a value on the line after "="
+    "next-line-after-equals-js": ("const pass" + 'word =\n  "Tr0ub4dor&3xyz";', "Tr0ub4dor&3xyz"),
+    "next-line-after-equals": ("pass" + "word =\n    hunter2xyz", "hunter2xyz"),
+    "next-line-after-equals-env": ("PASS" + "WORD=\n  hunter2xyz", "hunter2xyz"),
+    # (c): unindented, or after a blank line
+    "next-line-unindented": ("pass" + "word:\nhunter2xyz", "hunter2xyz"),
+    "next-line-after-blank": ("user" + "name: bob\npass" + "word:\n\n  hunter2xyz", "hunter2xyz"),
+    "next-line-prose": ("my pass" + "word:\nhunter2xyz", "hunter2xyz"),
+    "next-line-indented-prose": ("Use this pass" + "word:\n    hunter2xyz", "hunter2xyz"),
     # ...and a URL's ?key= value is masked whatever its shape, as logs mask it.
     "url-key-placeholder": (
         "https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&callback=init",
@@ -1109,6 +1126,12 @@ _MUST_KEEP: dict[str, str] = {
     "simple-api-key-prose": "API " + "key: see the provider console",
     "simple-annotation": "pass" + "word: str | None = None",
     "simple-comparison": "if tok" + "en == expected_token: return",
+    # review r16tr-rev1: a name before the label, and a call naming the label
+    "dotted-name-code": "db.pass" + 'word = os.getenv("X")',
+    "attribute-none": "self.tok" + "en = None",
+    "call-names-label": "pass" + 'word = request.form.get("password")',
+    "call-names-label-getenv": "sec" + 'ret = os.getenv("secret")',
+    "index-names-label": "pass" + 'word = request.form["password"]',
 }
 
 
@@ -1263,16 +1286,44 @@ def test_a_masked_label_value_keeps_its_closing_bracket_and_full_stop(
             "tok" + "en:\n  issuer: example\ndb.pass" + "word:\n  [credential redacted]\n  user: bob",
         ),
         (
-            "pass" + "word:\n\nSee below.\n\nsec" + "ret: " + _P8,
-            "pass" + "word:\n\nSee below.\n\nsec" + "ret: [credential redacted]",
+            "user" + "name: bob\npass" + "word:\n\n  hunter2xyz\nhost: db",
+            "user" + "name: bob\npass" + "word:\n\n  [credential redacted]\nhost: db",
+        ),
+        # Review r16tr-rev1 Minor 3: a block a label line opens (code, a list
+        # item) or a nested quoted key is not the label's value. Each is kept
+        # and the field after it is masked. (Not _MUST_KEEP rows: a preview
+        # joins the lines, and on one line the code is masked as before.)
+        *(
+            (shape + "\ntok" + "en: " + _P8, shape + "\ntok" + "en: [credential redacted]")
+            for shape in (
+                "if tok" + "en:\n    return token",
+                "if not pass" + 'word:\n    raise ValueError("missing")',
+                "class Pass" + "word:\n    def __init__(self):",
+                "match sec" + 'ret:\n    case "a": pass',
+                "1. Generate a tok" + "en:\n   Go to Settings > Tokens",
+                "sec" + 'ret:\n  "name": x',
+            )
         ),
     ],
-    ids=("function-word-token", "piped-fields", "comma-field", "value-below", "heading-then-value"),
+    ids=(
+        "function-word-token",
+        "piped-fields",
+        "comma-field",
+        "value-below",
+        "value-after-blank",
+        "block-if",
+        "block-if-not",
+        "block-class",
+        "block-match",
+        "block-list-item",
+        "nested-quoted-key",
+    ),
 )
 def test_a_masked_run_stops_before_the_next_field(text: str, expected: str) -> None:
     """Review r15tr-rev6: a value that runs on past its first word (a token
     after a function word, an unquoted passphrase) stops before the next
-    field, and the separator before that field stays visible."""
+    field, and the separator before that field stays visible. A value below
+    its label stops at its line (TASK-41510)."""
     assert trajectory_export._credential_text(text) == (expected, True)
 
 
@@ -1410,6 +1461,9 @@ _ADVERSARIAL_TEXTS = {
     "quoted-prose-1mb": ('"client' + '_secret": "a b" ') * 40_000,
     # TASK-41510: one-word labels are labels too.
     "chained-simple-labels": "a=" * 100_000,
+    # review r16tr-rev1: one label per line, 150k lines (0.93 s; 5.6 s for
+    # the labels alone at 200k when each line end searched to the text's end).
+    "many-label-lines": ("tok" + "en: x9\n") * 150_000,
     "chained-simple-credential-labels-spaced": ("tok" + "en= ") * 30_000,
     "api-words": "api " * 50_000 + "key",
 }
@@ -1439,8 +1493,10 @@ def test_escape_quoted_values_scan_in_linear_time() -> None:
     [
         ("client" + "_secret: the ", "client" + "_secret: thx "),
         ("db" + "_password=a b c ", "db" + "_password=abc "),
+        # review r16tr-rev1: a label on each line costs what one line of them does
+        ("tok" + "en: x9\n", "tok" + "en: x9 "),
     ],
-    ids=("function-word-chain", "passphrase-chain"),
+    ids=("function-word-chain", "passphrase-chain", "label-lines"),
 )
 def test_runs_after_a_value_scan_in_linear_time(unit: str, plain_unit: str) -> None:
     """Review r15tr-rev6: each function word looked up to 2 KB ahead for a

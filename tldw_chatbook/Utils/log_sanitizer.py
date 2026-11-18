@@ -137,12 +137,15 @@ _STANDALONE_CREDENTIALS = (
 )
 
 
+_LINE_BREAK = re.compile(r"[\r\n]")
+
+
 def _line_end(text: str, start: int) -> int:
-    """Return the first CR/LF index at or after start, or len(text)."""
-    line_feed = text.find("\n", start)
-    carriage_return = text.find("\r", start)
-    endings = (index for index in (line_feed, carriage_return) if index != -1)
-    return min(endings, default=len(text))
+    """Return the first CR/LF index at or after start, or len(text). One
+    search: ``find("\\r")`` scanned to the end of text with no CR in it,
+    once per line (TASK-41510 review r16tr-rev1)."""
+    line_break = _LINE_BREAK.search(text, start)
+    return line_break.start() if line_break is not None else len(text)
 
 
 def _after_line_break(text: str, index: int) -> int:
@@ -569,13 +572,15 @@ CREDENTIAL_VALUE_PATTERNS = (
 
 
 #: A label: a word, ``api key``, or a compound name (TASK-41133), after any
-#: leading hyphens (``--client-secret=``, TASK-41510). Labels may repeat
-#: separators (pydantic's ``APP__X``) and may be quoted, or escape-quoted
-#: inside a JSON string (``\"client_secret\":``). ``==`` is a comparison,
-#: never a separator (review r15tr-rev8).
+#: leading hyphens (``--client-secret=``, TASK-41510). It may follow a ``.``
+#: that does not end a name (``users[0].password``, ``$.token``; review
+#: r16tr-rev1); ``db.password`` is one label. Labels may repeat separators
+#: (pydantic's ``APP__X``) and may be quoted, or escape-quoted inside a JSON
+#: string (``\"client_secret\":``). ``==`` is a comparison, never a separator
+#: (review r15tr-rev8).
 _LABEL = re.compile(
     r"""
-    (?<![A-Za-z0-9_.-])
+    (?<![A-Za-z0-9_-])(?<![A-Za-z0-9_.-]\.)
     (?:\\?(?P<label_quote>["']))?
     (?P<label>(?i:api[ ]key)|-*[A-Za-z0-9]+(?:[_.-]+[A-Za-z0-9]+)*)
     (?(label_quote)\\?(?P=label_quote))
@@ -584,7 +589,8 @@ _LABEL = re.compile(
     re.VERBOSE,
 )
 #: The labels the export's older simple-label rule masked whole (TASK-41510):
-#: one of these words, alone or after a ``.`` or ``-``.
+#: one of these words after any non-word character (its ``\b``). Within a
+#: label that is only a ``.`` or ``-`` (``db.password``, ``page-token``).
 _SIMPLE_CREDENTIAL_LABEL = re.compile(
     r"(?:^|[.-])(?:api[ _-]?key|token|passwd|password|secret)\Z", re.IGNORECASE
 )
@@ -632,9 +638,21 @@ _PATH_KEY = re.compile(r"[a-z][a-z0-9_.-]*(?:/[a-z][a-z0-9_.-]*)+")
 _CODE_VALUE_END = re.compile(r"""[\s,;&)\]}"']|\.(?:\s|$)|$""")
 #: A YAML block scalar indicator; its value is the indented lines after it.
 _YAML_BLOCK = re.compile(r"[|>][-+]?[ \t]*(?:\r\n|\r|\n)")
-#: A value on the line below a bare ``label:``: indented, and not a nested
-#: ``name:``, a list item or a comment (``password:\n  hunter2``).
-_VALUE_BELOW = re.compile(r"(?:\r\n|\r|\n)[ \t]+(?![\s#-]|[A-Za-z0-9_.-]+[ \t]*:(?:\s|\Z))")
+#: The value below a label that ends its line, past blank lines and
+#: indentation (``password:\n  hunter2``, ``password =\nhunter2``): not a
+#: nested ``name:`` or ``"name":``, a list item or a comment.
+_VALUE_BELOW = re.compile(
+    r"""(?:\r\n|\r|\n)(?:[ \t]*+(?:\r\n|\r|\n))*+[ \t]*+"""
+    r"""(?![\s#-]|[A-Za-z0-9_.-]+[ \t]*:(?:\s|\Z)|(?P<q>["'])[^"'\r\n]*(?P=q)[ \t]*:)"""
+)
+#: What may precede a YAML key on its line: indentation and one ``- ``.
+_KEY_PREFIX = re.compile(r"[ \t]*(?:-[ \t]+)?")
+#: A line that opens a block whose body follows: a code statement
+#: (``if token:``, ``class Password:``) or a list item (``1. Get a token:``).
+_BLOCK_OPENER = re.compile(
+    r"[ \t]*(?:(?:if|elif|else|while|for|with|match|case|class|def|async|try|except|finally)\b"
+    r"|\d+[.)][ \t]|[-*+][ \t])"
+)
 _INDENTED_LINES = re.compile(r"(?:[ \t]+[^\r\n]*(?:\r\n|\r|\n|$))+")
 #: Longer values are masked whole, never examined (review r15tr-rev3).
 _MAX_EXAMINED_VALUE = 2048
@@ -854,6 +872,8 @@ def _code_literals_look_alike(value: str, label: str, strict: bool) -> bool:
             (_ENV_NAME.fullmatch(literal) and not _random_letters(literal))
             or (_INDEX_KEY if opener == "[" else _COMPOUND_KEY).fullmatch(literal)
             or (_PATH_KEY.fullmatch(literal) and not _LETTER_DIGIT_WORD.search(literal))
+            # the label's own name (``request.form.get("password")``, r16tr-rev1)
+            or (_INDEX_KEY.fullmatch(literal) and _label_name(literal, label))
         ):
             continue
         if not _kept_look_alike(literal, label, quoted=True, prose_follows=False, strict=strict):
@@ -1135,6 +1155,27 @@ def _field_end(text: str, start: int, end: int, line_end: int) -> int:
     return start + len(text[start:stop].rstrip(" \t,;|"))
 
 
+def _owns_value_below(text: str, label: re.Match) -> bool:
+    """Whether the value below a label that ends its line is the label's.
+
+    After ``=`` it always is (``const password =\n  "..."``). After ``:`` it
+    is for a YAML key (only indentation or ``- `` before the label) and for
+    prose (``my password:\nhunter2``), not when the label's line opens a
+    code block or a list item (``if token:\n    return token``, ``1. Get a
+    token:\n   Go to Settings``). Reads the label's line back to its start,
+    once per line.
+    """
+    if label.group().rstrip().endswith("="):
+        return True
+    start = label.start()
+    newline = text.rfind("\n", 0, start)
+    line_start = max(newline, text.rfind("\r", newline + 1, start)) + 1
+    return (
+        _KEY_PREFIX.match(text, line_start).end() == start
+        or _BLOCK_OPENER.match(text, line_start, start) is None
+    )
+
+
 def mask_credential_labels(text: str, marker: str = REDACTION_MARKER) -> str:
     """Mask every value under a credential label but look-alikes.
 
@@ -1169,11 +1210,11 @@ def mask_credential_labels(text: str, marker: str = REDACTION_MARKER) -> str:
             if label.end() > line_end:  # one scan per line, not per label
                 line_end = _line_end(text, label.end())
             value_start = label.end()
-            if value_start == line_end and label.group().rstrip().endswith(":"):
-                # A YAML value on the next, indented line is this label's,
-                # as the older simple-label rule read it (TASK-41510).
+            if value_start == line_end:
+                # A value on a later line is this label's, as the older
+                # simple-label rule read it (TASK-41510, review r16tr-rev1).
                 below = _VALUE_BELOW.match(text, value_start)
-                if below is not None:
+                if below is not None and _owns_value_below(text, label):
                     value_start = below.end()
                     line_end = _line_end(text, value_start)
             if text.startswith(_CODE_WORDS, value_start) and label.group().rstrip().endswith(":"):
