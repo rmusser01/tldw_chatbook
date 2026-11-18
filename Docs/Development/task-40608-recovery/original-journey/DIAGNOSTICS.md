@@ -1,5 +1,11 @@
 # Foreground and approval tracing recovery
 
+## Failed backend commands and retirement
+
+The [failure observer](retirement-failure/observer.py) captures the backend's existing command and physical-retirement warnings. It records the operation, stage, source-verified code locations and the last failed retirement check. It writes each record immediately into the disposable profile so a crash can leave evidence before shutdown. The capture is capped at 32 failures and excludes exception text and frame locals.
+
+For a fresh diagnostic checkout, run `python -I -S -B verify.py FROZEN_REPLAY_DIRECTORY` from the [observer directory](retirement-failure/). Then run `python -I -S -B install.py --candidate-directory FROZEN_REPLAY_DIRECTORY --replay-tools REPLAY_TOOLS --check-only`; removing `--check-only` installs the observer into that checkout. The installer checks the [exact source hashes](retirement-failure/pins.json) and saves the original manifest and guard. The ordinary exhaustive runner still verifies the original journeys. Runs with this observer are diagnostic.
+
 `windows-foreground-approval-v2.zip` preserves the executed diagnostic;
 `windows-foreground-approval-v3-997b33.zip` contains the separately corrected
 approval probe, exercised by completed baseline `fgv3b1` and partial candidate `g32f`.
