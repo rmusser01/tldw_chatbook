@@ -51,13 +51,14 @@ projection retries individual sources through the existing recovery path.
 ## Notes-sync preparation
 
 Library construction reuses an already-built Notes-sync owner without invoking
-the app's lazy property. When needed, the first mounted refresh prepares the
-original safe reader through the finite Library service worker, then attaches
-the same app-owned runtime to the sync controller on the UI loop. Until then the
-sync view is preparing; construction failures retain their distinct failed
-status. Unmounting discards late presentation, while runtime lifecycle remains
-owned by the app. Direct Notes attention/location reads also prepare the owner
-through that finite-worker boundary. Synchronous listener access reads only an
+the app's lazy property. The preparing projection uses shared snapshot models
+that carry no dependency on the runtime or executor. When needed, the first
+mounted refresh calls the safe reader through the finite Library service worker,
+then attaches the same app-owned runtime to the sync controller on the UI loop.
+Construction failures retain their distinct failed status. Unmounting discards
+late presentation, while runtime lifecycle remains owned by the app. Direct Notes
+attention/location reads also prepare the owner through that finite-worker
+boundary. Synchronous listener access reads only an
 already-built owner; a failed preparation preserves known attention. The app's
 safe reader serializes failure publication as well as construction so concurrent
 initial readers share one outcome.
