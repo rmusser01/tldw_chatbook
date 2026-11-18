@@ -31,6 +31,7 @@ _STATUS_ROWS = (
     "state",
     "preparing",
     "failed",
+    "restart",
     "ready",
 )
 
@@ -189,6 +190,13 @@ class WorkspaceChangeReviewPanel(Vertical):
                         f"Change history preparation failed for {count} folder(s); chat and tools continue.",
                     )
                     can_retry = True
+                if count := counts[RootReadinessState.RESTART_REQUIRED]:
+                    self._row(
+                        "restart",
+                        f"Change history for {count} folder(s) waits for an app restart: "
+                        "an earlier Git cleanup could not be proven, so its workspace "
+                        "stays held. Chat and tools continue.",
+                    )
                 if count := counts[RootReadinessState.READY]:
                     self._row("ready", f"Change history ready for {count} folder(s).")
             toggle.label = (

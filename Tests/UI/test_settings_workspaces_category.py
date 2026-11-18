@@ -733,6 +733,51 @@ async def test_change_review_failed_root_offers_one_retry_without_paths(
 
 @pytest.mark.asyncio
 @private_profile_test
+async def test_change_review_restart_required_root_names_the_restart_without_retry(
+    request,
+) -> None:
+    """A root held by an unproven cleanup says what releases it (TASK-41635)."""
+    from textual.widgets import Button
+
+    app = _build_test_app()
+    registry = app.workspace_registry_service
+    registry.create_workspace(workspace_id="ws-held", name="Held WS")
+
+    class HeldService:
+        def status(self, _workspace_id):
+            return ChangeReviewStatus(
+                ChangeReviewCapability(ChangeReviewState.ENABLED),
+                ChangeReviewConsent(ChangeReviewState.ENABLED, "rev-1"),
+                (
+                    RootReadiness(
+                        alias="folder-safe-alias",
+                        state=RootReadinessState.RESTART_REQUIRED,
+                        reason="held",
+                    ),
+                ),
+            )
+
+    app.change_review_consent_service = HeldService()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = _active_destination_screen(host)
+        await _open_settings_category(pilot, "#settings-category-workspaces")
+        screen.query_one("#settings-workspace-row-ws-held", Button).press()
+        await _until(pilot, screen, lambda: "app restart" in _visible_text(screen))
+
+        text = _visible_text(screen)
+        assert (
+            "Change history for 1 folder(s) waits for an app restart: an earlier "
+            "Git cleanup could not be proven, so its workspace stays held. Chat "
+            "and tools continue." in " ".join(text.split())
+        )
+        assert "preparation failed" not in text
+        assert not screen.query_one("#settings-workspace-change-review-retry").display
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_change_review_preparing_is_explicitly_non_blocking(request) -> None:
     """Preparation copy never implies that chat is waiting for the scan."""
     from textual.widgets import Button

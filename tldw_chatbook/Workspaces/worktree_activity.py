@@ -460,6 +460,18 @@ class WorktreeActivity:
             self._members[claim_id] = member
         owner.on_drained(lambda proven: self.record_drain(claim_id, proven=proven))
 
+    def conflicting_owners(
+        self, footprint: WorktreeFootprint
+    ) -> tuple[ExecutionOwner, ...]:
+        """Return the owners of the held claims that conflict with ``footprint``."""
+        with self._lock:
+            return tuple(
+                member.owner
+                for state in self._claims.values()
+                if footprint._conflicts(state.footprint)
+                for member in state.members.values()
+            )
+
     def validate_claim(
         self,
         claim: WorktreeActivityClaim,
