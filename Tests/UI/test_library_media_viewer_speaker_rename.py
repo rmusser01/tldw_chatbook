@@ -256,7 +256,7 @@ def test_a_later_viewer_sync_keeps_the_new_name(
         screen._media_state.detail
     ).content
 
-    screen._handle_library_media_speaker_renamed(
+    screen._media_controller._handle_library_media_speaker_renamed(
         LibraryMediaViewer.SpeakerRenamed(media_id)
     )
 
@@ -279,7 +279,7 @@ def test_a_rename_for_another_item_leaves_the_loaded_detail_alone(
     detail = dict(tmp_media_db.get_media_by_id(media_id))
     screen._media_state.detail = detail
 
-    screen._handle_library_media_speaker_renamed(
+    screen._media_controller._handle_library_media_speaker_renamed(
         LibraryMediaViewer.SpeakerRenamed(media_id + 999)
     )
 

@@ -92,7 +92,11 @@ from tldw_chatbook.UI.Library_Modules.library_media_state import (
 #: ``analysis_draft`` beside ``editing_analysis`` (the two authoring forms'
 #: typed text; shims ``_library_media_edit_draft`` /
 #: ``_library_media_analysis_draft``).
-_EXPECTED_MEDIA_STATE_FIELD_COUNT = 86
+#: 2026-11-15, TASK-36952.3.6: 86 -> 88, ``rename_cache`` (was the screen's
+#: ``_library_media_rename_cache``) and ``review_done_map_cache`` (was the
+#: screen's lazily created ``_review_done_map_cache``; bare-underscore shim),
+#: each read only by a body that moved to the controller.
+_EXPECTED_MEDIA_STATE_FIELD_COUNT = 88
 
 #: The 2 WIRING attributes the state PR deliberately left on
 #: ``LibraryScreen`` (the ``_conversation_reader_controller``/``_library_
@@ -224,6 +228,9 @@ def test_media_state_shim_attr_maps_each_prefix_family_to_its_literal_name() -> 
     assert media_state_shim_attr("arrival_note") == "_library_media_arrival_note"
     # bare-underscore family -- the one field with no "media" prefix word
     assert media_state_shim_attr("selected_media_id") == "_selected_media_id"
+    # TASK-36952.3.6: a moved body reads this one as `getattr(self,
+    # "_review_done_map_cache", None)`, so a wrong mapping would default silently
+    assert media_state_shim_attr("review_done_map_cache") == "_review_done_map_cache"
 
 
 @pytest.mark.unit
@@ -545,6 +552,26 @@ _MEDIA_CLUSTER_METHOD_NAMES: tuple[str, ...] = (
     "handle_library_media_analyze_retry",
     "handle_library_media_analyze_selected",
     "handle_library_media_analyze_skip",
+    # TASK-36952.3.6 (2026-11-15): the Reader's detail load, reading-progress
+    # fetch, capture, write queue and restore, the memoised viewer state and
+    # match finder, the speaker-rename facts and handler, and the browse rows'
+    # review decoration -- 16 bodies.
+    "_cache_library_media_reading_progress",
+    "_capture_library_media_loaded_progress",
+    "_decorate_library_media_reviewed",
+    "_drain_library_media_progress_writes",
+    "_fetch_library_media_reading_progress",
+    "_handle_library_media_speaker_renamed",
+    "_library_media_can_rename_speakers",
+    "_library_media_content_matches",
+    "_library_media_progress_write_is_current",
+    "_library_media_selected_backing_id",
+    "_library_media_speaker_rename_facts",
+    "_library_media_viewer_state_cached",
+    "_queue_library_media_progress_write",
+    "_refresh_library_media_detail",
+    "_restore_library_media_loaded_progress",
+    "_write_library_media_loaded_progress",
 )
 
 #: The names above that are ``@staticmethod`` on ``LibraryScreen``. Their
@@ -649,6 +676,15 @@ _MEDIA_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
         "_notify_library_media_analysis_warning",
         "_reproject_library_media_analysis_row",
         "_save_library_media_analysis",
+        # TASK-36952.3.6: 8 of its 16 movers, by the same census.
+        "_cache_library_media_reading_progress",
+        "_fetch_library_media_reading_progress",
+        "_library_media_can_rename_speakers",
+        "_library_media_progress_write_is_current",
+        "_library_media_speaker_rename_facts",
+        "_library_media_viewer_state_cached",
+        "_queue_library_media_progress_write",
+        "_write_library_media_loaded_progress",
     }
 )
 
@@ -725,7 +761,7 @@ _MEDIA_CLUSTER_SCREEN_DELEGATOR_ABSENT: frozenset[str] = (
 #:
 #: Grouped exactly as the controller's own constructor groups them.
 _MEDIA_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
-    # -- framework services, live-read from the screen on every access (17)
+    # -- framework services, live-read from the screen on every access (18)
     "app",
     "app_instance",
     "call_after_refresh",
@@ -745,7 +781,10 @@ _MEDIA_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     "notify",
     # TASK-36952.3.3: `action_library_media_take_note`, a mover, calls it
     "check_action",
-    # -- shared shell state this cluster READS (getter-only accessors) (14)
+    # TASK-36952.3.6: `_refresh_library_media_detail` and
+    # `_queue_library_media_progress_write`, movers, read it
+    "is_attached",
+    # -- shared shell state this cluster READS (getter-only accessors) (15)
     "_library_canvas_projection_depth",
     "_library_compose_generation",
     "_library_list_entry_focus_deadline",
@@ -763,6 +802,8 @@ _MEDIA_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     # writes a field on the Notes state object
     "_notes_controller",
     "_notes_state",
+    # TASK-36952.3.6: `_refresh_library_media_detail` fences on it
+    "_library_snapshot_state_generation",
     # task-32350 (critique #10 review, finding 10): more screen names are
     # read by this controller and are deliberately NOT listed --
     # `_library_loaded`, `_library_lookup_error` and
@@ -775,16 +816,18 @@ _MEDIA_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     # this controller's reach. (task-32350 also named `_local_source_counts`,
     # which TASK-36952.3.2 bound above; that method still reads it through
     # `self._screen`.)
-    # -- shared shell state this cluster also WRITES (getter + setter) (5)
+    # -- shared shell state this cluster also WRITES (getter + setter) (6)
     "_library_canvas_resync_pending",
     "_library_list_entry_focus_timer",
     "_library_notes_programmatic_focus_target",
     "_library_notes_restoring_focus",
     "_library_selected_row_id",
+    # TASK-36952.3.6: `_refresh_library_media_detail` sets it
+    "_library_entry_reconcile_dirty",
     # -- the 2 prior-extracted media WIRING controller instances (2)
     "_library_media_browse_controller",
     "_library_media_trash_browse_controller",
-    # -- general Library-wide shell helpers, named constructor callables (34)
+    # -- general Library-wide shell helpers, named constructor callables (36)
     "_acknowledge_library_destination_change",
     "_active_review_set_banner",
     "_apply_library_open_item_surface",
@@ -822,23 +865,22 @@ _MEDIA_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     "_select_library_rail_row",
     # TASK-36952.3.5: the shell helper its movers call (33 -> 34)
     "_update_library_ingest_dynamic_regions",
+    # TASK-36952.3.6: shell helpers its movers call (34 -> 36)
+    "_review_set_service",
+    "_schedule_library_entry_reconcile",
     # -- named late-binding callables for the excluded media methods a mover
     #    still calls (35; TASK-36952.3.1 moved 5 of them here: 30;
     #    TASK-36952.3.2 moved 2 more: 28; TASK-36952.3.3 moved 6 more: 22;
-    #    TASK-36952.3.4 moved 5 more: 17; TASK-36952.3.5 moved 2 more: 15)
+    #    TASK-36952.3.4 moved 5 more: 17; TASK-36952.3.5 moved 2 more: 15;
+    #    TASK-36952.3.6 moved 5 more: 10)
     "_arm_library_media_return_settlement",
-    "_capture_library_media_loaded_progress",
     "_commit_library_media_return",
-    "_library_media_content_matches",
     "_library_media_content_signature",
     "_library_media_focus_target_matches_receipt",
     "_library_media_layout_signature",
     "_library_media_return_candidate",
     "_library_media_settlement_tree",
-    "_library_media_viewer_state_cached",
     "_reconcile_library_media_stage_presentation",
-    "_refresh_library_media_detail",
-    "_restore_library_media_loaded_progress",
     "_sanitize_media_field",
     "_sync_library_media_reader_layout_from_shell",
 )
@@ -877,8 +919,10 @@ def test_media_cluster_method_names_are_genuinely_media_named() -> None:
     # 2026-11-15, TASK-36952.3.4: 213 -> 232, the 19 Trash bodies.
     # 2026-11-15, TASK-36952.3.5: 232 -> 249, the 17 analysis and bulk
     # Analyze bodies.
-    assert len(_MEDIA_CLUSTER_METHOD_NAMES) == 249, (
-        f"expected 249 moved names, got {len(_MEDIA_CLUSTER_METHOD_NAMES)}"
+    # 2026-11-15, TASK-36952.3.6: 249 -> 265, the 16 detail, reading-progress,
+    # speaker-rename and review-decoration bodies.
+    assert len(_MEDIA_CLUSTER_METHOD_NAMES) == 265, (
+        f"expected 265 moved names, got {len(_MEDIA_CLUSTER_METHOD_NAMES)}"
     )
     assert len(set(_MEDIA_CLUSTER_METHOD_NAMES)) == len(_MEDIA_CLUSTER_METHOD_NAMES), (
         "duplicate entries in _MEDIA_CLUSTER_METHOD_NAMES"
@@ -1060,6 +1104,11 @@ def test_media_controller_binds_every_name_its_moved_bodies_use() -> None:
     # became moved methods (-5); nothing new was bound.
     # 2026-11-15, TASK-36952.3.5: 88 -> 87. Two pinned late-binding callbacks
     # became moved methods (-2); one shell helper was bound (+1).
+    # 2026-11-15, TASK-36952.3.6: 87 -> 87. Five pinned late-binding callbacks
+    # became moved methods (-5); `is_attached`, the
+    # `_library_snapshot_state_generation` getter, the
+    # `_library_entry_reconcile_dirty` getter and setter and two shell helpers
+    # were bound (+5).
     assert len(_MEDIA_CONTROLLER_BOUND_NAMES) == 87, (
         f"expected 87 bound names, got {len(_MEDIA_CONTROLLER_BOUND_NAMES)}"
     )

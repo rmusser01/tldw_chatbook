@@ -49,6 +49,14 @@ enumeration trap" lesson:
   found in ``_selected_skill_name`` and the prompts series in
   ``_selected_prompt_id``.
 
+**TASK-36952.3.6 (2026-11-15)** added two fields when the Reader's detail,
+progress and speaker-rename bodies moved to ``LibraryMediaController``: each
+had exactly one reader among those bodies and no other owner.
+``rename_cache`` (default prefix, ``_library_media_rename_cache``) was a
+``LibraryScreen.__init__`` assignment; ``review_done_map_cache`` (bare
+prefix, ``_review_done_map_cache``) was created lazily on the screen by
+``_decorate_library_media_reviewed``. The counts below are the state PR's.
+
 ``media_state_shim_attr()`` below is the single function BOTH the screen's
 shim-generator loop and this subsystem's wiring test call to resolve a field
 name to its original attribute name, rather than each independently
@@ -227,11 +235,14 @@ from .screen_support_types import (
     _LibraryMediaSuccessfulFocusOwnership,
 )
 
-#: The single field using the bare ``_`` prefix (no "media" word in the
-#: prefix position of the original attribute name). Media has no plural
-#: variant, so this is the only exception set -- see the module docstring's
-#: two-prefix note.
-MEDIA_UNPREFIXED_STATE_FIELDS: frozenset[str] = frozenset({"selected_media_id"})
+#: The fields using the bare ``_`` prefix (no "media" word in the prefix
+#: position of the original attribute name). Media has no plural variant, so
+#: this is the only exception set -- see the module docstring's two-prefix
+#: note. ``review_done_map_cache`` joined ``selected_media_id`` in
+#: TASK-36952.3.6 (its original attribute is ``_review_done_map_cache``).
+MEDIA_UNPREFIXED_STATE_FIELDS: frozenset[str] = frozenset(
+    {"selected_media_id", "review_done_map_cache"}
+)
 
 
 def media_state_shim_attr(field_name: str) -> str:
@@ -396,6 +407,14 @@ class LibraryMediaState:
     # dismissed review set -- rendered as an in-list undo receipt.
     review_dismiss_receipt: tuple[str, str, bool] | None = None
 
+    # task-31956: ``_decorate_library_media_reviewed``'s memo of the ACTIVE
+    # review set's done marks, ``(service revision, {backing_media_id:
+    # done} or None)``. TASK-36952.3.6 moved it off ``LibraryScreen``, where
+    # the decorator created it lazily; it keeps that flat name through the
+    # bare-underscore shim (``_review_done_map_cache``), so the moved body's
+    # ``getattr(self, "_review_done_map_cache", None)`` resolves here.
+    review_done_map_cache: tuple[int, dict[Any, bool] | None] | None = None
+
     # task-28007 AC#3/AC#4: the Select-mode bulk-Analyze run. One
     # in-flight flag (a second press is refused with a notice), the
     # receipt's own counts, the failed ids Retry re-runs, and the
@@ -412,6 +431,15 @@ class LibraryMediaState:
     analyze_failed_ids: tuple[str, ...] = ()
     analyze_choice: tuple[tuple[str, ...], tuple[str, ...]] | None = None
     analyze_reason_cache: str | None = None
+
+    # TASK-36952.3.6: moved off ``LibraryScreen.__init__`` with its one
+    # reader, ``_library_media_can_rename_speakers`` (shim
+    # ``_library_media_rename_cache``). Original comment:
+    # (fix I3) One-slot memo of "is the SELECTED item a renameable meeting
+    # recording": ``(media_id, answer)``. Same motivation as the reason
+    # cache above -- it is read on every media sync and costs a DB read
+    # plus a filesystem check, but can only change with the selection.
+    rename_cache: tuple[int, bool] | None = None
 
     # (fix round 1, I-3) Which surface an in-flight bulk-Analyze run
     # started from -- "media" (Select mode) or "import" (the Import

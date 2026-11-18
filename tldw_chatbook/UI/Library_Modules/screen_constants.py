@@ -618,3 +618,18 @@ _ANALYZE_ITEM_FAILED_REASON = "analysis did not persist"
 # analyze_outcome`` (``library_ingest_state.py``) reads this to paint
 # "already analyzed" instead of the generic "analyzed" receipt.
 _ANALYZE_AUTO_SKIP_REASON = "already analyzed"
+
+
+# --- relocated from ``library_screen.py`` by TASK-36952.3.6: the Reader's
+# --- reading-position restore budget, which the moved restore body reads
+# --- as a bare module global, moved verbatim (comment included).
+# --- ``library_screen.py`` imports it back, as it does every name here.
+
+#: TASK-34000.25: how many LAYOUT-SIGNAL continuations (``LibraryMediaContent
+#: Body.run_when_laid_out`` -- the Raw view's index build, the Markdown's last
+#: mounted batch, or the next refresh once something is laid out) the
+#: Reader's reading-position restore may chain while the body has laid out
+#: NOTHING yet (``max_scroll_y == 0``), before giving up on an item that
+#: never lays out. Separate from task-31968's eight-refresh budget for a
+#: body that is laid out but still growing.
+_MEDIA_PROGRESS_RESTORE_LAYOUT_SIGNALS = 48

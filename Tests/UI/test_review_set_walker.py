@@ -1426,7 +1426,7 @@ def test_browse_rows_carry_the_active_sets_reviewed_marks(tmp_path):
     service.mark_item_done(set_id, backing_media_id=10, done=True)
     fake = _walker_fake(service)
 
-    rows = LibraryScreen._decorate_library_media_reviewed(
+    rows = LibraryMediaController._decorate_library_media_reviewed(
         fake, (_row(10), _row(11), _row(12))
     )
 
@@ -1440,7 +1440,7 @@ def test_browse_rows_carry_no_marks_without_an_active_set(tmp_path):
     service.deactivate_active()
     fake = _walker_fake(service)
 
-    rows = LibraryScreen._decorate_library_media_reviewed(fake, (_row(10),))
+    rows = LibraryMediaController._decorate_library_media_reviewed(fake, (_row(10),))
 
     assert [row["reviewed"] for row in rows] == [None]
 
@@ -1451,12 +1451,12 @@ def test_marking_the_loaded_item_done_flips_its_browse_row(tmp_path):
     service.create_review_set("X", origin="browse", items=[(10, "A"), (11, "B")])
     fake = _walker_fake(service, loaded=10)
 
-    before = LibraryScreen._decorate_library_media_reviewed(fake, (_row(10),))
+    before = LibraryMediaController._decorate_library_media_reviewed(fake, (_row(10),))
     assert before[0]["reviewed"] is False
 
     fake._toggle_reviewed_unguarded(service)
 
-    after = LibraryScreen._decorate_library_media_reviewed(fake, (_row(10),))
+    after = LibraryMediaController._decorate_library_media_reviewed(fake, (_row(10),))
     assert after[0]["reviewed"] is True
 
 
@@ -1470,7 +1470,7 @@ def test_decoration_fails_open_on_a_storage_error(tmp_path):
     fake = _walker_fake(_service(tmp_path))
     fake._review_set_service = lambda: _Boom()
 
-    rows = LibraryScreen._decorate_library_media_reviewed(fake, (_row(10),))
+    rows = LibraryMediaController._decorate_library_media_reviewed(fake, (_row(10),))
 
     assert [row["reviewed"] for row in rows] == [None]
 

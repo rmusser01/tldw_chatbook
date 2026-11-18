@@ -373,3 +373,11 @@ a96b35d5e886ec26b7deb5e882662d308f32375b
 # byte-for-byte into LibraryMediaController with no token edit. Test edits
 # are receiver-only, AST-proven against the parent.
 9400251cce5a8fdca042a55130935951942802ab
+
+# TASK-36952.3.6, 2026-11-15 -- media body move slice 6 of 8. Sixteen
+# LibraryScreen bodies (the Reader's detail load, reading-progress fetch,
+# capture, write queue and restore, the memoised viewer state and match
+# finder, the speaker-rename facts and handler, and the review decoration)
+# moved byte-for-byte into LibraryMediaController with no token edit. Test
+# edits are receiver-only, AST-proven against the parent.
+13cb59ee120e097b4c6371a82d34064ddf0e0bea

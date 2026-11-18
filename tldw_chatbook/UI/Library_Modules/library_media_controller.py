@@ -371,42 +371,44 @@ moved bodies for every ``self.<attr>`` load/store AND every
 state fields and the movers themselves -- **90 names** -- and then adding
 **2 more the walk cannot see**, for **92**, every one pinned in
 ``test_media_controller_binds_every_name_its_moved_bodies_use``. That pin
-holds **87** since TASK-36952.3.5 (measured: 17 framework services, the 21
-state accessors of groups (b)/(b')/(c), 34 group-(a) helpers and 15 group-(e)
+holds **87** since TASK-36952.3.6 (measured: 18 framework services, the 23
+state accessors of groups (b)/(b')/(c), 36 group-(a) helpers and 10 group-(e)
 callables):
 
 1. **Framework services** (``app``, ``app_instance``, ``call_after_refresh``,
-   ``call_next``, ``focused``, ``is_mounted``, ``is_running``, ``notify``,
-   ``post_message``, ``query``, ``query_one``, ``refresh``, ``run_worker``,
-   ``set_focus``, ``set_timer``, ``size``; 16, ``notify`` added by
-   TASK-36952.3.1) are live-read from the screen via
+   ``call_next``, ``check_action``, ``focused``, ``is_attached``,
+   ``is_mounted``, ``is_running``, ``notify``, ``post_message``, ``query``,
+   ``query_one``, ``refresh``, ``run_worker``, ``set_focus``, ``set_timer``,
+   ``size``; 18: ``notify`` added by TASK-36952.3.1, ``check_action`` by
+   TASK-36952.3.3 and ``is_attached`` by TASK-36952.3.6) are live-read from the screen via
    ``@property`` on every access -- never snapshotted. ``focused`` is here
    for the reason the skills series established: six movers reach it, and an
    unbound ``getattr(self, "focused", None)`` returns its default silently,
    forever.
-2. **Everything else** is a NAMED constructor dependency: (a) 34 general
+2. **Everything else** is a NAMED constructor dependency: (a) 36 general
    Library-wide shell helpers a moved body calls with explicit arguments (24
    at wave 7; TASK-36952.3.1 added five, TASK-36952.3.3 four,
-   TASK-36952.3.5 one) --
+   TASK-36952.3.5 one, TASK-36952.3.6 two) --
    including the five review-set entry points the One Home Rule kept on the
    screen (``_active_review_set_banner``, ``_review_dismiss_receipt_name``,
    ``_review_selected_worker``, ``_review_set_picker_worker``,
-   ``_review_these_worker``, ``_walk_active_review_set``); (b) 14 shared
-   shell state accessors this cluster READS and never writes; (b') **5 it
+   ``_review_these_worker``, ``_walk_active_review_set``); (b) 15 shared
+   shell state accessors this cluster READS and never writes; (b') **6 it
    also WRITES** (``_library_selected_row_id``,
    ``_library_notes_programmatic_focus_target``,
    ``_library_notes_restoring_focus``, ``_library_list_entry_focus_timer``,
-   ``_library_canvas_resync_pending``) -- getter **and** setter, a shape the
+   ``_library_canvas_resync_pending``, and since TASK-36952.3.6
+   ``_library_entry_reconcile_dirty``) -- getter **and** setter, a shape the
    prompts series did not need (its census found zero stores to a
    non-own-state name) and this one does; (c) 2 wiring accessors for the
    prior-extracted media controller instances task 1 kept off
    ``LibraryMediaState`` (``_library_media_browse_controller``,
    ``_library_media_trash_browse_controller`` -- 11 movers each, the
-   cluster's most-referenced names); (e) 20 named late-binding callables for
+   cluster's most-referenced names); (e) 12 named late-binding callables for
    the exclusions above that a MOVER still calls internally (44 before
    TASK-36952.3.1 moved seven of their bodies here, TASK-36952.3.2 two
-   more, TASK-36952.3.3 seven more, TASK-36952.3.4 six more and
-   TASK-36952.3.5 two more; 15 are pinned) -- each a
+   more, TASK-36952.3.3 seven more, TASK-36952.3.4 six more,
+   TASK-36952.3.5 two more and TASK-36952.3.6 eight more; 10 are pinned) -- each a
    ``lambda`` re-reading ``screen.<name>`` on every invocation, at CALL time,
    which is exactly why every bypass fixture named above keeps working
    unmodified after this move.
@@ -541,6 +543,27 @@ hold for these names: class 4's module-globals collisions
 module, and class 2's instance patches of ``_analyze_one_library_media_item``,
 ``_library_media_unanalyzed_ids``, ``_notify_library_media_analysis_warning``
 and ``_start_library_media_analyze``, which now patch this controller.
+
+**TASK-36952.3.6 (2026-11-15), slice 6 of 8.** 16 more bodies moved here,
+byte-for-byte with their decorator and no token edit: the Reader's detail
+load with its reading-progress fetch and cache, the progress capture,
+coalesced write queue and restore, the memoised viewer state and match
+finder, the speaker-rename facts and handler, and the browse rows' review
+decoration. Their eight group-(e) callbacks are gone. Bound instead: the
+``is_attached`` framework service, the ``_library_snapshot_state_generation``
+getter, the ``_library_entry_reconcile_dirty`` getter and setter, and two
+shell helpers (``_review_set_service``,
+``_schedule_library_entry_reconcile``). The two screen attributes only these
+bodies used are now ``LibraryMediaState`` fields read through the shim loop
+(``_library_media_rename_cache``; ``_review_done_map_cache``, a
+bare-underscore name), and the restore budget they read moved to
+``screen_constants.py``. ``LibraryScreen`` keeps a delegator for 8 of the
+16. Three wave-7 exclusion classes no longer hold for these names: class 1's
+unbound fake calls, which now name this class; class 4's
+``build_library_media_viewer_state`` collision (and the
+``find_content_matches`` wrap the literal census missed), whose test
+wrappers now target this module; and class 5's ``_refresh_library_media_detail``
+class patches, which now patch this class.
 """
 from __future__ import annotations
 
@@ -548,7 +571,7 @@ import asyncio
 import dataclasses
 import time
 import webbrowser
-from collections.abc import Callable, Coroutine, Mapping
+from collections.abc import Callable, Coroutine, Mapping, Sequence
 from contextlib import suppress
 from functools import partial
 from typing import Any, Literal, TYPE_CHECKING
@@ -578,6 +601,8 @@ from ...Library.library_media_reader_state import (
     reader_action_target,
     set_mode,
     set_more_open,
+    settle_failure,
+    settle_success,
 )
 from ...Library.library_media_state import (
     MEDIA_SORT_CHOICES,
@@ -599,7 +624,9 @@ from ...Library.library_media_viewer_state import (
     MEDIA_EDIT_FORM_FIELDS,
     analysis_find_unavailable_reason,
     build_library_media_highlight_rows,
+    build_library_media_viewer_state,
     detail_analysis_text,
+    find_content_matches,
     media_analysis_dirty,
     media_edit_form_dirty,
 )
@@ -614,6 +641,10 @@ from ...Library.library_shell_state import (
     LIBRARY_ROW_CREATE_SKILL,
     LIBRARY_ROW_INGEST_MEDIA,
     library_disabled_action_label,
+)
+from ...Library.meeting_speaker_rename import (
+    _meeting_speaker_legend_rows,
+    can_rename_meeting_speakers,
 )
 from ...Utils.adaptive_reader_state import list_holds_the_stage
 from ...Widgets.Library import (
@@ -656,6 +687,7 @@ from .screen_constants import (
     _ANALYZE_ORIGIN_IMPORT,
     _ANALYZE_ORIGIN_MEDIA,
     _ANALYZE_SELECTED_WORKER_GROUP,
+    _MEDIA_PROGRESS_RESTORE_LAYOUT_SIGNALS,
     _MEDIA_VIEW_LIST,
     _MEDIA_VIEW_VIEWER,
     _TRASH_PERMANENT_DELETE_FAILURE_COPY,
@@ -668,6 +700,7 @@ from .screen_constants import (
     LIBRARY_PROMPT_DIRTY_ESCAPE_CHIP,
 )
 from .screen_support_types import (
+    LibraryEntryReconcileResult,
     _LibraryMediaReturnReceipt,
     _LibraryMediaReturnSettlement,
     _LibraryMediaSettlementOutcome,
@@ -691,7 +724,8 @@ class LibraryMediaController:
     TASK-36952.3.2 moved 24 more and kept a delegator for 17;
     TASK-36952.3.3 moved 23 more and kept a delegator for 16;
     TASK-36952.3.4 moved 19 more and kept a delegator for 11;
-    TASK-36952.3.5 moved 17 more and kept a delegator for 8.
+    TASK-36952.3.5 moved 17 more and kept a delegator for 8;
+    TASK-36952.3.6 moved 16 more and kept a delegator for 8.
     """
 
     def __init__(
@@ -710,15 +744,18 @@ class LibraryMediaController:
         library_pending_list_entry_focus_accessor,
         library_pending_list_entry_focus_anchor_accessor,
         library_pending_list_entry_media_return_accessor,
+        library_snapshot_state_generation_accessor,
         local_source_counts_accessor,
         local_source_records_accessor,
         notes_controller_accessor,
         notes_state_accessor,
         # -- shared shell state this cluster also WRITES (group (b'),
         #    getter + setter; the mechanical binding census found exactly
-        #    five such names).
+        #    five such names; TASK-36952.3.6 added a sixth).
         library_canvas_resync_pending_accessor,
         set_library_canvas_resync_pending,
+        library_entry_reconcile_dirty_accessor,
+        set_library_entry_reconcile_dirty,
         library_list_entry_focus_timer_accessor,
         set_library_list_entry_focus_timer,
         library_notes_programmatic_focus_target_accessor,
@@ -754,9 +791,11 @@ class LibraryMediaController:
         review_dismiss_receipt_name,
         review_selected_worker,
         review_set_picker_worker,
+        review_set_service,
         review_these_worker,
         run_library_service_call,
         safe_text,
+        schedule_library_entry_reconcile,
         select_library_rail_row,
         source_record_id,
         sync_library_conversation_reader_layout_from_shell,
@@ -769,21 +808,13 @@ class LibraryMediaController:
         # -- named late-binding callables for the media exclusions (group
         #    (e)) that a MOVER still calls internally.
         arm_library_media_return_settlement,
-        capture_library_media_loaded_progress,
         commit_library_media_return,
-        decorate_library_media_reviewed,
-        library_media_can_rename_speakers,
-        library_media_content_matches,
         library_media_content_signature,
         library_media_focus_target_matches_receipt,
         library_media_layout_signature,
         library_media_return_candidate,
-        library_media_selected_backing_id,
         library_media_settlement_tree,
-        library_media_viewer_state_cached,
         reconcile_library_media_stage_presentation,
-        refresh_library_media_detail,
-        restore_library_media_loaded_progress,
         restore_library_media_reader_width_on_open,
         sanitize_media_field,
         sync_library_media_reader_layout_from_shell,
@@ -802,10 +833,10 @@ class LibraryMediaController:
         the full per-parameter derivation.
 
         Args:
-            screen: The Library screen. Used ONLY for the seventeen framework
+            screen: The Library screen. Used ONLY for the eighteen framework
                 services below (``app``, ``app_instance``,
                 ``call_after_refresh``, ``call_next``, ``check_action``, ``focused``,
-                ``is_mounted``, ``is_running``, ``notify``, ``post_message``,
+                ``is_attached``, ``is_mounted``, ``is_running``, ``notify``, ``post_message``,
                 ``query``, ``query_one``, ``refresh``, ``run_worker``,
                 ``set_focus``, ``set_timer``, ``size``) -- this cluster owns
                 no DOM of its own.
@@ -825,12 +856,15 @@ class LibraryMediaController:
         self._library_pending_list_entry_focus_accessor = library_pending_list_entry_focus_accessor
         self._library_pending_list_entry_focus_anchor_accessor = library_pending_list_entry_focus_anchor_accessor
         self._library_pending_list_entry_media_return_accessor = library_pending_list_entry_media_return_accessor
+        self._library_snapshot_state_generation_accessor = library_snapshot_state_generation_accessor
         self._local_source_counts_accessor = local_source_counts_accessor
         self._local_source_records_accessor = local_source_records_accessor
         self._notes_controller_accessor = notes_controller_accessor
         self._notes_state_accessor = notes_state_accessor
         self._library_canvas_resync_pending_accessor = library_canvas_resync_pending_accessor
         self._set_library_canvas_resync_pending_fn = set_library_canvas_resync_pending
+        self._library_entry_reconcile_dirty_accessor = library_entry_reconcile_dirty_accessor
+        self._set_library_entry_reconcile_dirty_fn = set_library_entry_reconcile_dirty
         self._library_list_entry_focus_timer_accessor = library_list_entry_focus_timer_accessor
         self._set_library_list_entry_focus_timer_fn = set_library_list_entry_focus_timer
         self._library_notes_programmatic_focus_target_accessor = library_notes_programmatic_focus_target_accessor
@@ -863,9 +897,11 @@ class LibraryMediaController:
         self._review_dismiss_receipt_name_fn = review_dismiss_receipt_name
         self._review_selected_worker_fn = review_selected_worker
         self._review_set_picker_worker_fn = review_set_picker_worker
+        self._review_set_service_fn = review_set_service
         self._review_these_worker_fn = review_these_worker
         self._run_library_service_call_fn = run_library_service_call
         self._safe_text_fn = safe_text
+        self._schedule_library_entry_reconcile_fn = schedule_library_entry_reconcile
         self._select_library_rail_row_fn = select_library_rail_row
         self._source_record_id_fn = source_record_id
         self._sync_library_conversation_reader_layout_from_shell_fn = sync_library_conversation_reader_layout_from_shell
@@ -876,21 +912,13 @@ class LibraryMediaController:
         self._walk_active_review_set_fn = walk_active_review_set
         self.request_library_reader_layout_refresh_fn = request_library_reader_layout_refresh
         self._arm_library_media_return_settlement_fn = arm_library_media_return_settlement
-        self._capture_library_media_loaded_progress_fn = capture_library_media_loaded_progress
         self._commit_library_media_return_fn = commit_library_media_return
-        self._decorate_library_media_reviewed_fn = decorate_library_media_reviewed
-        self._library_media_can_rename_speakers_fn = library_media_can_rename_speakers
-        self._library_media_content_matches_fn = library_media_content_matches
         self._library_media_content_signature_fn = library_media_content_signature
         self._library_media_focus_target_matches_receipt_fn = library_media_focus_target_matches_receipt
         self._library_media_layout_signature_fn = library_media_layout_signature
         self._library_media_return_candidate_fn = library_media_return_candidate
-        self._library_media_selected_backing_id_fn = library_media_selected_backing_id
         self._library_media_settlement_tree_fn = library_media_settlement_tree
-        self._library_media_viewer_state_cached_fn = library_media_viewer_state_cached
         self._reconcile_library_media_stage_presentation_fn = reconcile_library_media_stage_presentation
-        self._refresh_library_media_detail_fn = refresh_library_media_detail
-        self._restore_library_media_loaded_progress_fn = restore_library_media_loaded_progress
         self._restore_library_media_reader_width_on_open_fn = restore_library_media_reader_width_on_open
         self._sanitize_media_field_fn = sanitize_media_field
         self._sync_library_media_reader_layout_from_shell_fn = sync_library_media_reader_layout_from_shell
@@ -921,6 +949,10 @@ class LibraryMediaController:
     @property
     def focused(self) -> Any:
         return self._screen.focused
+
+    @property
+    def is_attached(self) -> Any:
+        return self._screen.is_attached
 
     @property
     def is_mounted(self) -> Any:
@@ -1049,6 +1081,10 @@ class LibraryMediaController:
         return self._library_pending_list_entry_media_return_accessor()
 
     @property
+    def _library_snapshot_state_generation(self) -> Any:
+        return self._library_snapshot_state_generation_accessor()
+
+    @property
     def _local_source_counts(self) -> Any:
         return self._local_source_counts_accessor()
 
@@ -1101,6 +1137,14 @@ class LibraryMediaController:
     @_library_canvas_resync_pending.setter
     def _library_canvas_resync_pending(self, value: Any) -> None:
         self._set_library_canvas_resync_pending_fn(value)
+
+    @property
+    def _library_entry_reconcile_dirty(self) -> Any:
+        return self._library_entry_reconcile_dirty_accessor()
+
+    @_library_entry_reconcile_dirty.setter
+    def _library_entry_reconcile_dirty(self, value: Any) -> None:
+        self._set_library_entry_reconcile_dirty_fn(value)
 
     @property
     def _library_list_entry_focus_timer(self) -> Any:
@@ -1237,6 +1281,10 @@ class LibraryMediaController:
         return self._review_set_picker_worker_fn
 
     @property
+    def _review_set_service(self) -> Any:
+        return self._review_set_service_fn
+
+    @property
     def _review_these_worker(self) -> Any:
         return self._review_these_worker_fn
 
@@ -1247,6 +1295,10 @@ class LibraryMediaController:
     @property
     def _safe_text(self) -> Any:
         return self._safe_text_fn
+
+    @property
+    def _schedule_library_entry_reconcile(self) -> Any:
+        return self._schedule_library_entry_reconcile_fn
 
     @property
     def _select_library_rail_row(self) -> Any:
@@ -1297,24 +1349,8 @@ class LibraryMediaController:
         return self._arm_library_media_return_settlement_fn
 
     @property
-    def _capture_library_media_loaded_progress(self) -> Any:
-        return self._capture_library_media_loaded_progress_fn
-
-    @property
     def _commit_library_media_return(self) -> Any:
         return self._commit_library_media_return_fn
-
-    @property
-    def _decorate_library_media_reviewed(self) -> Any:
-        return self._decorate_library_media_reviewed_fn
-
-    @property
-    def _library_media_can_rename_speakers(self) -> Any:
-        return self._library_media_can_rename_speakers_fn
-
-    @property
-    def _library_media_content_matches(self) -> Any:
-        return self._library_media_content_matches_fn
 
     @property
     def _library_media_content_signature(self) -> Any:
@@ -1333,28 +1369,12 @@ class LibraryMediaController:
         return self._library_media_return_candidate_fn
 
     @property
-    def _library_media_selected_backing_id(self) -> Any:
-        return self._library_media_selected_backing_id_fn
-
-    @property
     def _library_media_settlement_tree(self) -> Any:
         return self._library_media_settlement_tree_fn
 
     @property
-    def _library_media_viewer_state_cached(self) -> Any:
-        return self._library_media_viewer_state_cached_fn
-
-    @property
     def _reconcile_library_media_stage_presentation(self) -> Any:
         return self._reconcile_library_media_stage_presentation_fn
-
-    @property
-    def _refresh_library_media_detail(self) -> Any:
-        return self._refresh_library_media_detail_fn
-
-    @property
-    def _restore_library_media_loaded_progress(self) -> Any:
-        return self._restore_library_media_loaded_progress_fn
 
     @property
     def _restore_library_media_reader_width_on_open(self) -> Any:
@@ -9158,6 +9178,820 @@ class LibraryMediaController:
             if detail is None or not detail_analysis_text(detail):
                 unanalyzed.append(media_id)
         return tuple(unanalyzed)
+
+    # -- TASK-36952.3.6 movers (16), byte-for-byte, original file order --
+    @on(LibraryMediaViewer.SpeakerRenamed)
+    def _handle_library_media_speaker_renamed(
+        self, event: LibraryMediaViewer.SpeakerRenamed
+    ) -> None:
+        """Re-read the renamed item so the memoized detail stops being stale.
+
+        TASK-31745: the reader repaints itself the moment the rename lands,
+        but this screen's viewer state is memoized by detail IDENTITY -- the
+        next sync would otherwise repaint the pre-rename transcript over the
+        new name (and re-derive the legend labels from it). Storing a NEW
+        detail dict carrying the rewritten content is what clears that memo;
+        a full ``_refresh_library_media_detail`` would re-run the reader
+        session's request/supersede machinery to change the one field the
+        rename touched.
+
+        Touches no widget, so it needs no ``is_mounted`` guard -- the DB read
+        is the only thing that can fail here, and a torn-down screen just
+        drops the assignment.
+        """
+        event.stop()
+        if event.media_id != self._library_media_selected_backing_id():
+            # The selection moved on mid-rename; the next detail load reads
+            # the renamed text from the DB anyway.
+            return
+        detail = self._media_state.detail
+        db = getattr(self.app_instance, "media_db", None)
+        if not isinstance(detail, Mapping) or db is None:
+            return
+        if event.content is not None:
+            # TASK-34933: the renamed content rides the message -- no
+            # full-content re-read on the rename path.
+            self._media_state.detail = {**detail, "content": event.content}
+            return
+        try:
+            row = db.get_media_by_id(event.media_id)
+        except Exception:  # noqa: BLE001 - a closed/failed DB just means no patch
+            return
+        if row is not None:
+            self._media_state.detail = {**detail, "content": row["content"] or ""}
+
+    def _decorate_library_media_reviewed(
+        self, items: Sequence[Mapping[str, Any]]
+    ) -> tuple[Mapping[str, Any], ...]:
+        """Stamp each browse row's ``reviewed`` from the ACTIVE review set.
+
+        The Media projection cannot know this -- a review set lives in the
+        Library collections DB, not the Media DB -- so the exact browse row
+        arrives with ``reviewed=None`` and is decorated here, at the one seam
+        every Media canvas build routes through (task-28009). A row in the
+        set carries its done mark (``True``/``False``); a row outside it, or
+        every row when no set is active, keeps ``None``.
+
+        Args:
+            items: The controller's retained exact browse rows.
+
+        Returns:
+            The rows with ``reviewed`` decorated.
+
+        Note:
+            Fails OPEN on a storage error (task-30042 doctrine): an
+            unreadable collections DB costs the markers, never the list.
+        """
+        service = self._review_set_service()
+        if service is None:
+            return tuple(items)
+        # task-31956: ``get_active_review_set`` loads the set HEADER AND
+        # every pinned item row (``REVIEW_SET_CAP`` = 500 of them), and this
+        # runs at every one of the ~30 viewer-flip sync sites -- a whole-set
+        # load to stamp at most a page. The map is memoised against the
+        # service's write ``revision``, which every mutating method bumps
+        # through its one transaction helper, so a done mark, a set
+        # create/activate/deactivate and a dismiss all invalidate it
+        # without a per-gesture invalidation call a new writer could forget.
+        # Read BEFORE the load, and stamp with THAT (fix round 1): a write
+        # committing during the load (``dismiss``/``undismiss`` run through
+        # ``asyncio.to_thread`` while this thread decorates) would otherwise
+        # be stamped as already included, leaving a stale map under a
+        # current revision that no later sync repairs. A stale-LOW stamp
+        # only costs one extra read.
+        try:
+            revision = service.revision
+            cached = getattr(self, "_review_done_map_cache", None)
+            if cached is not None and cached[0] == revision:
+                done_by_id = cached[1]
+            else:
+                review_set = service.get_active_review_set()
+                done_by_id = (
+                    None
+                    if review_set is None
+                    else {item.backing_media_id: item.done for item in review_set.items}
+                )
+                self._review_done_map_cache = (revision, done_by_id)
+        except Exception:
+            # Every ASK of the service is inside the guard, stamp included:
+            # the failure is deliberately NOT cached, so one transient read
+            # error costs one build's markers, not the session's.
+            return tuple(items)
+        if done_by_id is None:
+            return tuple(items)
+        return tuple(
+            {**item, "reviewed": done_by_id.get(item["backing_media_id"])}
+            for item in items
+        )
+
+    def _library_media_can_rename_speakers(
+        self, db: Any, backing_id: int | None
+    ) -> bool:
+        """Whether the selected item is a renameable meeting, memoized per id.
+
+        The presentation this feeds is rebuilt on EVERY media selection,
+        filter and page change, and the answer costs a DB read plus a
+        filesystem `exists()` on the UI thread (fix I3) -- while it can only
+        change when the selection does. One slot is enough: the cache is
+        keyed by the selected id, so a new selection replaces it.
+
+        Args:
+            db: The media database, or None when the app has none.
+            backing_id: The selected item's media id, or None.
+
+        Returns:
+            True only for a selected meeting recording whose folder survives.
+        """
+        if backing_id is None or db is None:
+            return False
+        cached = self._library_media_rename_cache
+        if cached is not None and cached[0] == backing_id:
+            return cached[1]
+        can_rename = can_rename_meeting_speakers(db, backing_id)
+        self._library_media_rename_cache = (backing_id, can_rename)
+        return can_rename
+
+    def _library_media_selected_backing_id(self) -> int | None:
+        """Resolve the Reader's target identity to its positive int id.
+
+        TASK-34000.18 fix round 1 (I-3): every caller is Reader-scoped -- the
+        Reader's speaker-rename id, the rename result's identity check and
+        the Reader's legend rows (the LIST canvas's own presentation,
+        ``_library_media_canvas_presentation``, resolves the list selection
+        itself; its preview is off, so that value is inert) -- and a rename
+        persisted against the LIST selection wrote the Reader's transcript
+        onto another record whenever the two diverged (a pending row
+        click, an off-page open). So this reads
+        ``_library_media_reader_target_id()``: the loaded item whenever one
+        is loaded (final review C-1: whatever the view), the selection
+        otherwise. The canonical
+        ``"local:media:<id>"`` is resolved by ``_library_media_backing_id``
+        (already used by every real mutation path in this screen); this
+        just narrows its ``int | str`` result to "a usable id, or None".
+        """
+        media_id = self._library_media_reader_target_id()
+        if not media_id:
+            return None
+        backing_id = self._library_media_backing_id(media_id)
+        return backing_id if type(backing_id) is int and backing_id > 0 else None
+
+    async def _refresh_library_media_detail(
+        self,
+        media_id: str,
+        *,
+        entry_origin: bool = False,
+        request_generation: int | None = None,
+        requested_id: str | None = None,
+    ) -> LibraryEntryReconcileResult | None:
+        """Fetch and store the full detail for a selected Library media item.
+
+        Mirrors ``_refresh_library_collections_snapshot``: guards against an
+        unavailable media service, offloads the (possibly blocking) service
+        call via ``_run_library_service_call``, and recomposes once the
+        fetched detail (or a cleared/failed state) has been stored.
+
+        Also fetches the item's reading highlights (see
+        ``_fetch_library_media_highlights``) so both the detail and the
+        highlights section are ready by the single recompose at the end,
+        rather than the highlights section popping in on a second refresh.
+
+        Triggered by ``handle_library_media_row`` on media-row selection;
+        ``compose_content`` renders the stored ``_library_media_detail`` via
+        ``build_library_media_viewer_state`` once this worker completes.
+
+        Args:
+            media_id: The Library media item id to fetch full detail for.
+        """
+        entry_route_key = self._library_entry_route_key() if entry_origin else None
+        entry_generation = (
+            self._library_snapshot_state_generation if entry_origin else None
+        )
+        pending = self._media_state.reader_session.pending_request
+        reader_identity = self._library_media_reader_identity(media_id)
+        requested_id = requested_id or (
+            reader_identity[0] if reader_identity is not None else media_id
+        )
+        external_detail = self._media_state.reader_session.external_detail
+        if (
+            request_generation is None
+            and pending is None
+            and reader_identity is not None
+            and requested_id == self._media_state.selected_media_id
+            and self._media_state.view == "viewer"
+        ):
+            canonical_id, backing_id = reader_identity
+            self._media_state.reader_session = begin_selection(
+                self._media_state.reader_session,
+                canonical_id,
+                backing_id,
+                self._media_state.reader_session.selected_title or canonical_id,
+                immediate=True,
+            )
+            pending = self._media_state.reader_session.pending_request
+        if request_generation is None:
+            request_generation = (
+                pending.generation
+                if pending is not None and pending.requested_id == requested_id
+                else (
+                    self._media_state.reader_session.request_generation
+                    if external_detail
+                    else None
+                )
+            )
+        service = getattr(self.app_instance, "media_reading_scope_service", None)
+        get_media_item = getattr(service, "get_media_item", None)
+        if not callable(get_media_item):
+            if request_generation is not None:
+                self._media_state.reader_session = settle_failure(
+                    self._media_state.reader_session,
+                    request_generation,
+                    requested_id,
+                    "Media service is unavailable.",
+                )
+            if self.is_mounted:
+                if entry_origin:
+                    if entry_route_key != self._library_entry_route_key():
+                        return LibraryEntryReconcileResult.SUPERSEDED
+                    self.refresh(recompose=True)
+                    return LibraryEntryReconcileResult.APPLIED
+                # task-21116: targeted media-surface projection (list view).
+                await self._apply_library_media_active_surface()
+            return None
+        resolved_service_media_id = self._library_media_backing_id(media_id)
+        if (
+            external_detail
+            and isinstance(resolved_service_media_id, str)
+            and resolved_service_media_id.isdecimal()
+        ):
+            # Server ingest persists its returned id as text, while the server
+            # media client requires the numeric path parameter it reported.
+            resolved_service_media_id = int(resolved_service_media_id)
+        try:
+            detail = await self._run_library_service_call(
+                get_media_item,
+                # A media item opened from a finished SERVER ingest lives in the
+                # server's library, so resolving it locally would find nothing
+                # (task-700). Every other route into this viewer is local.
+                mode="server" if external_detail else "local",
+                media_id=resolved_service_media_id,
+                include_content=True,
+                include_versions=True,
+                isolate_in_worker=True,
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Failed to load Library media detail for {media_id!r}."
+            )
+            detail = None
+        # Discard out-of-order results: if the user has since selected a
+        # different media row (or left the viewer), a slower in-flight fetch
+        # for the previous selection must not overwrite the current one. The
+        # highlights fetch is a second await point, so re-check after it too
+        # and store detail + highlights together only when still current.
+        current_session = self._media_state.reader_session
+        current_pending = current_session.pending_request
+        request_is_current = (
+            current_session.external_detail
+            and current_session.request_generation == request_generation
+            and current_session.loaded_id == requested_id
+            if external_detail
+            else (
+                request_generation is not None
+                and current_pending is not None
+                and current_pending.generation == request_generation
+                and current_pending.requested_id == requested_id
+            )
+        )
+        if not request_is_current or (
+            entry_route_key is not None
+            and entry_route_key != self._library_entry_route_key()
+        ):
+            return LibraryEntryReconcileResult.SUPERSEDED if entry_origin else None
+        highlights = (
+            []
+            if external_detail
+            else await self._fetch_library_media_highlights(media_id)
+        )
+        reading_progress = (
+            None
+            if external_detail
+            else await self._fetch_library_media_reading_progress(media_id)
+        )
+        current_session = self._media_state.reader_session
+        current_pending = current_session.pending_request
+        request_is_current = (
+            current_session.external_detail
+            and current_session.request_generation == request_generation
+            and current_session.loaded_id == requested_id
+            if external_detail
+            else (
+                request_generation is not None
+                and current_pending is not None
+                and current_pending.generation == request_generation
+                and current_pending.requested_id == requested_id
+            )
+        )
+        if not request_is_current or (
+            entry_route_key is not None
+            and entry_route_key != self._library_entry_route_key()
+        ):
+            return LibraryEntryReconcileResult.SUPERSEDED if entry_origin else None
+        if isinstance(detail, Mapping):
+            self._media_state.detail = detail
+            self._media_state.highlights = highlights
+            if request_generation is not None and not external_detail:
+                self._cache_library_media_reading_progress(
+                    request_generation, requested_id, reading_progress
+                )
+                self._media_state.reader_session = settle_success(
+                    self._media_state.reader_session,
+                    request_generation,
+                    requested_id,
+                )
+                self._schedule_library_media_image_preview(
+                    request_generation=request_generation,
+                    canonical_id=requested_id,
+                    backing_id=resolved_service_media_id,
+                    detail=detail,
+                )
+        elif request_generation is not None and not external_detail:
+            # Preserve the long-standing open-on-deleted contract after the
+            # permanent Reader conversion: a stale Search/RAG result or a
+            # record deleted between selection and fetch must not leave the
+            # Reader showing an older item's detail under the missing id.
+            self._media_state.detail = None
+            self._media_state.highlights = []
+            self._media_state.reader_session = settle_failure(
+                self._media_state.reader_session,
+                request_generation,
+                requested_id,
+                "Media item is unavailable.",
+            )
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify("Media item is unavailable.", severity="warning")
+        # LIB-13: default the content view per item, from the just-fetched
+        # detail's own is_markdown -- computed here (once, at load) rather
+        # than on every recompose, so a later Rendered<->Raw toggle press
+        # is never silently reset back to the default by an unrelated
+        # recompose (mirrors the note editor's ``_notes_state.preview``
+        # not being re-derived on every render).
+        self._media_state.content_mode = (
+            "rendered"
+            if isinstance(self._media_state.detail, Mapping)
+            and self._library_media_viewer_state_cached(
+                self._media_state.detail
+            ).is_markdown
+            else "raw"
+        )
+        # task-31271 seam (d): several Reader chips are gated on the SETTLED
+        # session -- l/c/t are off while a detail request is in flight (the
+        # actions would combine a new id with stale detail), so the footer
+        # registered at open time advertised none of them and nothing
+        # re-derived it once the fetch landed. Live: the three chips only
+        # appeared after an unrelated F6.
+        self._register_footer_shortcuts()
+        if (
+            entry_generation is not None
+            and entry_generation != self._library_snapshot_state_generation
+        ):
+            # The worker still owns and settles its fetched state, but a
+            # newer same-route snapshot owns projection into the permanent
+            # Reader (the pre-shell replacement seam enforced this fence).
+            current_route_key = self._library_entry_route_key()
+            if entry_route_key == current_route_key and self.is_attached:
+                self._library_entry_reconcile_dirty = True
+                self._schedule_library_entry_reconcile(
+                    self._library_snapshot_state_generation,
+                    current_route_key,
+                )
+            return LibraryEntryReconcileResult.SUPERSEDED
+        if self.is_mounted:
+            if entry_origin:
+                if entry_route_key != self._library_entry_route_key():
+                    return LibraryEntryReconcileResult.SUPERSEDED
+                await self._apply_library_media_active_surface()
+                return LibraryEntryReconcileResult.APPLIED
+            # task-15458: deliberately defer the legacy non-entry refresh.
+            # The open-time compose may already be rendering this exact detail;
+            # the identity guard below avoids a duplicate large-document parse.
+            self.call_next(self._recompose_library_media_detail_if_unrendered)
+        return None
+
+    async def _fetch_library_media_reading_progress(
+        self, media_id: str
+    ) -> Mapping[str, Any] | None:
+        """Fetch local progress for a detail request that still owns Reader."""
+        service = getattr(self.app_instance, "media_reading_scope_service", None)
+        get_progress = getattr(service, "get_reading_progress", None)
+        if not callable(get_progress):
+            return None
+        try:
+            progress = await self._run_library_service_call(
+                get_progress,
+                mode="local",
+                media_id=self._required_library_media_backing_id(media_id),
+                isolate_in_worker=True,
+            )
+        except Exception:
+            logger.warning("Failed to load Library media reading progress.")
+            return None
+        return progress if isinstance(progress, Mapping) else None
+
+    def _cache_library_media_reading_progress(
+        self,
+        request_generation: int,
+        requested_id: str,
+        progress: Mapping[str, Any] | None,
+    ) -> bool:
+        """Cache fetched progress only while its detail request still owns Reader."""
+        pending = self._media_state.reader_session.pending_request
+        if (
+            pending is None
+            or pending.generation != request_generation
+            or pending.requested_id != requested_id
+            or not isinstance(progress, Mapping)
+        ):
+            return False
+        try:
+            offset = (
+                int(progress.get("scroll_x", 0)),
+                int(progress.get("scroll_y", 0)),
+            )
+        except (TypeError, ValueError):
+            return False
+        self._media_state.read_scroll_by_id[requested_id] = offset
+        # TASK-22210: the fetched value IS the durable row -- record it so a
+        # later capture of the same offset skips its redundant write.
+        self._media_state.progress_persisted_offsets[requested_id] = offset
+        return True
+
+    def _library_media_viewer_state_cached(
+        self,
+        detail: Mapping[str, Any] | None,
+        *,
+        arrival_note: str = "",
+        backend: str = "local",
+        canonical_id: str = "",
+        force_raw: bool = False,
+    ):
+        """Memoized ``build_library_media_viewer_state`` per detail arrival.
+
+        task-22208: the raw builder performs at least one O(document) string
+        copy per call, and it used to run 2+ times per viewer sync (display
+        state + the console-representation clause of the unchanged compare)
+        on EVERY interaction -- traversal step, mode switch, More toggle,
+        Escape. This memo bounds that to once per (detail arrival x build
+        parameters), and because a no-change sync gets back the SAME state
+        object, the sync's unchanged test can short-circuit on identity
+        before ever falling back to the structural (content-memcmp) compare.
+
+        Memo key and invalidation:
+        * the detail OBJECT, by identity -- the detail is only replaced
+          wholesale by ``_refresh_library_media_detail``'s settle (a fresh
+          dict per fetch) or cleared to None, never mutated in place, so a
+          new arrival (including an edit's refetch) always misses and
+          rebuilds; a None detail memoizes the empty state the same way;
+        * ``arrival_note`` / ``backend`` / ``canonical_id`` / ``force_raw``
+          -- the remaining builder inputs; the per-detail entry dict is
+          reset whenever the detail identity changes, so it holds at most
+          the couple of parameter combinations live for one arrival.
+
+        Known consequence, accepted by design: the "Updated: <age>" relative
+        label freezes for the lifetime of one detail arrival (the raw
+        builder stamps it from ``now`` per call). Recomputing it per sync is
+        what the memo exists to stop -- and under the task-21116 compare a
+        ticked-over age label would otherwise force a FULL document
+        recompose just to repaint one metadata line.
+
+        Args:
+            detail: The loaded detail mapping, or None for the empty state.
+            arrival_note: One-shot context line (see the raw builder).
+            backend: Provenance backend displayed by Reader Info.
+            canonical_id: Stable backend-qualified id override.
+            force_raw: Force ``is_markdown`` False (external/server details
+                render raw); folded into the memo so the replace also
+                happens once per arrival.
+
+        Returns:
+            The memoized immutable viewer state.
+        """
+        if self._media_state.viewer_state_memo_detail is not detail:
+            self._media_state.viewer_state_memo_detail = detail
+            self._media_state.viewer_state_memo_states = {}
+        key = (arrival_note, backend, canonical_id, force_raw)
+        states = self._media_state.viewer_state_memo_states
+        state = states.get(key)
+        if state is None:
+            state = build_library_media_viewer_state(
+                detail,
+                arrival_note=arrival_note,
+                backend=backend,
+                canonical_id=canonical_id,
+            )
+            if force_raw:
+                state = dataclasses.replace(state, is_markdown=False)
+            state = dataclasses.replace(
+                state, **self._library_media_speaker_rename_facts(detail)
+            )
+            states[key] = state
+        return state
+
+    def _library_media_speaker_rename_facts(
+        self, detail: Mapping[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """TASK-31745: the selected item's meeting speaker-rename facts.
+
+        Resolved on the memo MISS above (once per detail arrival x build
+        parameters), never per sync: the legend rows parse the whole
+        ``transcript.jsonl``, which is the per-interaction cost class
+        task-22208 exists to keep off this path. A rename re-fetches the
+        detail, so the memo's own invalidation keeps the labels fresh.
+
+        Args:
+            detail: The detail this state is being built for. ``None`` is the
+                EMPTY state -- nothing is on screen to rename -- and the
+                reader discards the legend for it anyway, so the whole
+                ``transcript.jsonl`` parse is skipped (final review M1).
+
+        Returns:
+            The ``can_rename_speakers``/``speaker_legend_rows`` fields, ready
+            for ``dataclasses.replace``.
+        """
+        if detail is None:
+            return {"can_rename_speakers": False, "speaker_legend_rows": ()}
+        if self._media_state.reader_session.external_detail:
+            # A server item is being read; the local selection's id says
+            # nothing about it, and nothing local is renameable from here.
+            return {"can_rename_speakers": False, "speaker_legend_rows": ()}
+        db = getattr(self.app_instance, "media_db", None)
+        backing_id = self._library_media_selected_backing_id()
+        if not self._library_media_can_rename_speakers(db, backing_id):
+            return {"can_rename_speakers": False, "speaker_legend_rows": ()}
+        try:
+            rows = tuple(_meeting_speaker_legend_rows(db, backing_id))
+        except Exception:  # noqa: BLE001 - a bad read just means no legend
+            rows = ()
+        return {"can_rename_speakers": bool(rows), "speaker_legend_rows": rows}
+
+    def _capture_library_media_loaded_progress(self) -> None:
+        """Snapshot and queue persistence of the local content body's offset.
+
+        TASK-22210: this fires on every traversal step and mode switch, so
+        the write itself is deduplicated (an offset already durable or
+        already queued is skipped) and coalesced (one serial drainer keeps
+        only each item's latest value) instead of spawning one SQLite
+        writer per call.
+        """
+        session = self._media_state.reader_session
+        loaded_id = session.loaded_id
+        # task-28026: only the Read tab's content body carries transcript
+        # reading progress. The Analysis tab reuses the same
+        # #library-media-viewer-content id, so a capture taken in any other
+        # mode would persist an unrelated scroll offset as transcript progress.
+        if (
+            session.external_detail
+            or session.mode != "read"
+            or loaded_id is None
+            or not loaded_id.startswith("local:media:")
+        ):
+            return
+        try:
+            body = self.query_one(
+                "#library-media-viewer-content", LibraryMediaContentBody
+            )
+        except (NoMatches, QueryError):
+            return
+        content = body.scroller
+        offset = (int(content.scroll_x), int(content.scroll_y))
+        self._media_state.read_scroll_by_id[loaded_id] = offset
+        service = getattr(self.app_instance, "media_reading_scope_service", None)
+        update_progress = getattr(service, "update_reading_progress", None)
+        if not callable(update_progress) or session.loaded_backing_id is None:
+            return
+        self._queue_library_media_progress_write(
+            loaded_id, session.loaded_backing_id, offset
+        )
+
+    def _library_media_progress_write_is_current(
+        self, canonical_id: str, offset: tuple[int, int]
+    ) -> bool:
+        """True when ``offset`` already matches the newest known write intent.
+
+        Precedence mirrors write recency: a queued value supersedes the
+        in-flight one, which supersedes the last durably persisted one --
+        so an equal older value never masks a newer pending write.
+        """
+        pending = self._media_state.progress_pending_writes.get(canonical_id)
+        if pending is not None:
+            return pending[1] == offset
+        inflight = self._media_state.progress_inflight_write
+        if inflight is not None and inflight[0] == canonical_id:
+            return inflight[2] == offset
+        return self._media_state.progress_persisted_offsets.get(canonical_id) == offset
+
+    def _queue_library_media_progress_write(
+        self, canonical_id: str, backing_id: int | str, offset: tuple[int, int]
+    ) -> None:
+        """Coalesce progress writes to the latest per-item value, one drainer.
+
+        Last-write-wins coalescing, NOT ``exclusive=True``: cancelling an
+        in-flight ``to_thread`` writer leaves the durable outcome unknown
+        (the abandoned thread may still commit after its successor -- the
+        task-1541 lesson). Keying pending values per item means a slow
+        drain never drops a different item's final position either.
+        """
+        if self._library_media_progress_write_is_current(canonical_id, offset):
+            return
+        self._media_state.progress_pending_writes[canonical_id] = (
+            backing_id,
+            offset,
+        )
+        worker = self._media_state.progress_write_worker
+        if not self.is_attached or (worker is not None and not worker.is_finished):
+            return
+        self._media_state.progress_write_worker = self.run_worker(
+            self._drain_library_media_progress_writes(),
+            group="library_media_reading_progress",
+        )
+
+    async def _drain_library_media_progress_writes(self) -> None:
+        """Serialize progress writes while retaining each item's latest value."""
+        while self._media_state.progress_pending_writes:
+            canonical_id, (backing_id, offset) = next(
+                iter(self._media_state.progress_pending_writes.items())
+            )
+            del self._media_state.progress_pending_writes[canonical_id]
+            self._media_state.progress_inflight_write = (
+                canonical_id,
+                backing_id,
+                offset,
+            )
+            try:
+                persisted = await self._write_library_media_loaded_progress(
+                    backing_id, offset
+                )
+            finally:
+                self._media_state.progress_inflight_write = None
+            if persisted:
+                self._media_state.progress_persisted_offsets[canonical_id] = offset
+
+    async def _write_library_media_loaded_progress(
+        self, backing_id: int | str | None, offset: tuple[int, int]
+    ) -> bool:
+        """Persist a scroll snapshot already fenced to one loaded identity.
+
+        Returns:
+            True only when the service call completed; a failed write stays
+            un-recorded so a later capture of the same offset retries it.
+        """
+        if backing_id is None:
+            return False
+        service = getattr(self.app_instance, "media_reading_scope_service", None)
+        update_progress = getattr(service, "update_reading_progress", None)
+        if not callable(update_progress):
+            return False
+        try:
+            await self._run_library_service_call(
+                update_progress,
+                mode="local",
+                media_id=backing_id,
+                progress_data={"scroll_x": offset[0], "scroll_y": offset[1]},
+                isolate_in_worker=True,
+            )
+        except Exception:
+            logger.warning("Failed to persist Library media reading progress.")
+            return False
+        return True
+
+    def _restore_library_media_loaded_progress(self, expected_id: str) -> None:
+        """Restore the local content offset once its body has laid out.
+
+        task-31968: the rendered Markdown body parses in an executor and
+        mounts its blocks across later refreshes (Textual's
+        ``Markdown.update``), so the scroll container's ``max_scroll_y`` can
+        still be 0 when this first runs on the viewer's post-recompose hook.
+        A single deferred ``scroll_to`` then applies against an unlaid (or
+        still-short) body, clamps the saved offset to the top, and never
+        re-applies once the body grows -- the reader loses its place on a
+        mode change. So apply immediately, and while the offset has not
+        landed on the laid-out body, re-apply after the next refresh until it
+        does (or the bounded budget proves it genuinely cannot).
+
+        This stays task-31954's ONE restore owner: the settle-and-re-apply is
+        an inner continuation of this single call, not a second scheduler --
+        it never re-enters this method, so ``_library_media_progress_restored_id``
+        is still claimed exactly once (by the mode handler) and this restore
+        is still invoked exactly once per owner.
+        """
+        session = self._media_state.reader_session
+        if session.external_detail or session.loaded_id != expected_id:
+            return
+        offset = self._media_state.read_scroll_by_id.get(expected_id)
+        if offset is None:
+            return
+
+        def settle(remaining: int, unlaid: int) -> None:
+            # A newer navigation may have superseded this restore while the
+            # body was still laying out; only the loaded owner may land.
+            if self._media_state.reader_session.loaded_id != expected_id:
+                return
+            try:
+                body = self.query_one(
+                    "#library-media-viewer-content", LibraryMediaContentBody
+                )
+            except (NoMatches, QueryError):
+                return
+            scroller = body.scroller
+            # ``immediate=True`` so the clamp happens now against the current
+            # layout -- that synchronous outcome is what lets the guard below
+            # tell an unlaid body (offset clamped short) from a landed one.
+            scroller.scroll_to(
+                x=offset[0], y=offset[1], animate=False, force=True, immediate=True
+            )
+            if offset[1] <= 0 or int(scroller.scroll_y) >= offset[1]:
+                return
+            if scroller.max_scroll_y <= 0:
+                # TASK-34000.25: NOTHING is laid out yet, so this pass says
+                # nothing about the body's final height and must not spend
+                # the layout budget. ``call_after_refresh`` is two message
+                # hops, not a layout pass: on the rail-return path all of
+                # task-31968's eight re-applies -- and 48 when the budget
+                # was simply raised -- ran on the same unindexed Raw view
+                # before its first Resize built the wrap index (measured in
+                # the TASK-34000.25 probe), and the offset stayed at the
+                # top. So the continuation waits on the body's LAYOUT
+                # signal (``run_when_laid_out``: the Raw view's index build,
+                # or the Markdown's last mounted batch), bounded so a body
+                # that never lays out (an empty item) still ends the chain.
+                # Still this one owner's inner continuation, not a second
+                # scheduler: nothing here re-claims the restore id.
+                if unlaid > 0:
+                    body.run_when_laid_out(partial(settle, remaining, unlaid - 1))
+                return
+            if remaining > 0:
+                self.call_after_refresh(settle, remaining - 1, unlaid)
+
+        settle(8, _MEDIA_PROGRESS_RESTORE_LAYOUT_SIGNALS)
+
+    def _library_media_content_matches(self) -> tuple[int, ...]:
+        """Return the open item's matching line indexes for the active query.
+
+        task-22209: this used to run per Prev/Next click -- a full content
+        copy out of ``build_library_media_viewer_state`` plus a full
+        ``find_content_matches`` scan -- for a document and a query that
+        had not changed since the previous click. The result now lives in a
+        one-slot memo.
+
+        Memo key, and why each part is in it:
+
+        * the DETAIL OBJECT, by identity -- it is the document. A detail is
+          only ever replaced wholesale (a settling fetch builds a fresh
+          dict) or cleared to None, never mutated in place, so a new
+          arrival always misses. Arrow-key traversal swaps the document
+          while a submitted query stays live (only a row *press* blanks the
+          query), so this component is load-bearing, not defensive.
+        * the QUERY -- the same document answers differently per needle.
+
+        ``match_index`` is deliberately NOT in the key: navigation moves
+        the index over a match list that does not change.
+
+        Returns:
+            Ascending source-line indexes of the matching lines; empty when
+            no item is open, the query is blank, or nothing matches.
+        """
+        detail = (
+            self._media_state.detail
+            if isinstance(self._media_state.detail, Mapping)
+            else None
+        )
+        if detail is None:
+            # Nothing to search -- and dropping the entry here means the
+            # first lookup after a reader exit that cleared the detail
+            # (rail switch, delete) releases the PREVIOUS document instead
+            # of pinning its content behind the memo.
+            self._media_state.content_match_memo = None
+            return ()
+        query = self._media_state.content_query
+        # task-28026: the Analysis tab searches the analysis text; every other
+        # mode searches the transcript. Mode is part of the memo key.
+        mode = self._media_state.reader_session.mode
+        memo = self._media_state.content_match_memo
+        if (
+            memo is not None
+            and memo[0] is detail
+            and memo[1] == query
+            and memo[3] == mode
+        ):
+            return memo[2]
+        # task-22208 memoizes the viewer state per detail arrival; going
+        # through it keeps this memo's miss path from re-copying the whole
+        # document that 22208 already built for this same arrival.
+        viewer_state = self._library_media_viewer_state_cached(detail)
+        corpus = viewer_state.analysis if mode == "analysis" else viewer_state.content
+        matches = find_content_matches(corpus, query)
+        self._media_state.content_match_memo = (detail, query, matches, mode)
+        return matches
 
 
 # --- BEGIN generated media-controller-state shims ---

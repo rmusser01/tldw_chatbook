@@ -42,7 +42,7 @@ import pytest
 from PIL import Image
 from textual.widgets import Button, Static
 
-import tldw_chatbook.UI.Screens.library_screen as library_screen_module
+import tldw_chatbook.UI.Library_Modules.library_media_controller as library_media_controller_module
 from Tests.UI.test_library_media_reader_flow import (
     ControlledDetailMediaService,
     _row_identity,
@@ -141,7 +141,7 @@ def _make_image_item(service, backing_id: int, *, content: str, png: bytes) -> d
 
 @contextmanager
 def _count_state_builds():
-    """Count ``build_library_media_viewer_state`` calls through the screen module.
+    """Count ``build_library_media_viewer_state`` calls through the media controller.
 
     Every call with trailing-whitespace content performs at least one full
     O(document) copy (``str(content).strip()``), so the call count times the
@@ -150,14 +150,14 @@ def _count_state_builds():
     dispatch-safe.
     """
     counts = {"calls": 0}
-    real = library_screen_module.build_library_media_viewer_state
+    real = library_media_controller_module.build_library_media_viewer_state
 
     def counting(*args, **kwargs):
         counts["calls"] += 1
         return real(*args, **kwargs)
 
     with patch.object(
-        library_screen_module, "build_library_media_viewer_state", counting
+        library_media_controller_module, "build_library_media_viewer_state", counting
     ):
         yield counts
 

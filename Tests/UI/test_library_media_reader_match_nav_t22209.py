@@ -27,7 +27,7 @@ import pytest
 from textual.selection import Selection
 from textual.widgets import Button, Input, Markdown, Static
 
-import tldw_chatbook.UI.Screens.library_screen as library_screen_module
+import tldw_chatbook.UI.Library_Modules.library_media_controller as library_media_controller_module
 import tldw_chatbook.Widgets.Library.library_media_content as media_content_module
 from Tests.UI.test_library_media_reader_flow import (
     _flow_app,
@@ -89,7 +89,7 @@ def _count_document_passes():
     Three seams, all module globals (never ``@on`` handlers, so class-free
     monkeypatching is dispatch-safe):
 
-    * ``find_content_matches`` as the screen imported it,
+    * ``find_content_matches`` as the media controller imported it,
     * ``find_content_matches`` as the content widget imported it,
     * the content widget's renderable builder and -- once TASK-22209 adds
       it -- its highlight-plan builder, each of which walks every line.
@@ -112,7 +112,7 @@ def _count_document_passes():
         originals.append((module, name, original))
         setattr(module, name, counting)
 
-    _wrap(library_screen_module, "find_content_matches", "matches")
+    _wrap(library_media_controller_module, "find_content_matches", "matches")
     _wrap(media_content_module, "find_content_matches", "matches")
     # `build_raw_content_renderable` / `build_raw_content_highlight_plan`
     # were deleted by TASK-22500 (the virtualized view styles per row instead

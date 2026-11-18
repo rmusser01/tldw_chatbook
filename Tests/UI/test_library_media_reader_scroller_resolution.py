@@ -293,7 +293,7 @@ async def test_capture_progress_resolves_the_real_scroller_and_snapshots_its_off
         )
 
         screen._media_state.read_scroll_by_id.clear()
-        screen._capture_library_media_loaded_progress()
+        screen._media_controller._capture_library_media_loaded_progress()
 
         assert screen._media_state.read_scroll_by_id.get(canonical_id) == (
             int(body.scroller.scroll_x),
@@ -323,7 +323,7 @@ async def test_restore_progress_resolves_the_real_scroller_and_applies_the_saved
         assert body.scroller.scroll_y == 0, "Fixture must start unscrolled."
 
         screen._media_state.read_scroll_by_id[canonical_id] = (0, 41)
-        screen._restore_library_media_loaded_progress(canonical_id)
+        screen._media_controller._restore_library_media_loaded_progress(canonical_id)
         await pilot.pause()
 
         assert body.scroller.scroll_y == 41
@@ -531,7 +531,7 @@ async def test_mode_change_restore_lands_synchronously_on_the_laid_out_body():
         )
 
         screen._media_state.read_scroll_by_id[canonical_id] = (0, 14)
-        screen._restore_library_media_loaded_progress(canonical_id)
+        screen._media_controller._restore_library_media_loaded_progress(canonical_id)
         # No pause: the fix applies against the laid-out scroller immediately;
         # the deferred-only restore would still read 0 here.
         assert int(body.scroller.scroll_y) == 14

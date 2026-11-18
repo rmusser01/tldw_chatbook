@@ -10000,7 +10000,7 @@ async def test_library_shell_media_viewer_shows_loading_before_detail_loads(
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
     monkeypatch.setattr(
-        LibraryScreen, "_refresh_library_media_detail", _media_detail_never_loads
+        LibraryMediaController, "_refresh_library_media_detail", _media_detail_never_loads
     )
     host = LibraryHarness(app)
 
@@ -10350,7 +10350,7 @@ async def test_library_shell_media_detail_race_discards_stale_fetch():
 
         # Simulate a slower in-flight fetch for the previously-selected media-2
         # completing now: it must not overwrite media-1's detail.
-        await screen._refresh_library_media_detail("media-2")
+        await screen._media_controller._refresh_library_media_detail("media-2")
 
         detail = screen._media_state.detail
         assert isinstance(detail, dict)
