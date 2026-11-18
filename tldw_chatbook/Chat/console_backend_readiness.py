@@ -32,6 +32,20 @@ if TYPE_CHECKING:
     )
 
 
+class ConsoleBackendReadinessChanged(RuntimeError):
+    """One exact display-input invalidation; not authority to retry by itself."""
+
+    def __init__(self, owner, scope):
+        super().__init__("Console context inputs changed")
+        self.owner = owner
+        self.scope = scope
+        self._retirement = None
+
+
+_CHANGE_TYPE = ConsoleBackendReadinessChanged
+_CHANGE_INIT = _definition(ConsoleBackendReadinessChanged.__init__)
+
+
 class ConsoleBackendReadiness:
     """Retain one completion-aged read, with actual backend source ownership.
 
@@ -383,6 +397,8 @@ class ConsoleBackendReadiness:
     async def warm(
         self,
         identity: ControlIdentity,
+        *,
+        _retry_context: bool = True,
     ) -> tuple[ConsoleSessionSettings, ConsoleSettingsReadiness, str, str | None, str]:
         """Return actual settings/readiness after the exact read has retired."""
         backend = self.backend
@@ -421,6 +437,14 @@ class ConsoleBackendReadiness:
                     ):
                         self.context_summary = summary
                         return self.value
+        presentation = backend.presentation
+        lifecycle = presentation.view_lifecycle
+        display_owner = backend.runtime._execution_service._display_owner
+        checkpoint = presentation.capture_display_reuse_checkpoint(display_owner)
+        retry_visibility = (
+            presentation.association, lifecycle, lifecycle._current,
+            presentation.parent_attachment, checkpoint, backend.store.active_session_id,
+        )
         with backend.store._preparation_lock:
             # A display calculation cannot renew the captured native facts.
             # Rebind a changed key before taking the existing fresh-read path.
@@ -437,10 +461,14 @@ class ConsoleBackendReadiness:
             if current_context_key != self._context_key(session):
                 raise RuntimeError("Console context capture changed")
 
+        context_changed = ConsoleBackendReadinessChanged(
+            self, (source, session, settings, key, agent_key, retry_visibility),
+        )
+
         def current() -> None:
             self._current(session, settings, identity.source_revision, source)
             if self._context_key(session) != current_context_key:
-                raise RuntimeError("Console context inputs changed")
+                raise context_changed
             if self._agent_key(session) != agent_key:
                 raise RuntimeError("Console Agent selection changed")
 
@@ -579,6 +607,8 @@ class ConsoleBackendReadiness:
 
         task = asyncio.current_task()
         history_retired = False
+        failed_context = None
+        retry_history_key = None
         try:
             from ..Backup_Recovery.async_file_participants import FileJob
 
@@ -612,6 +642,7 @@ class ConsoleBackendReadiness:
                     or producer is not None and producer.done() and not producer.cancelled()
                 )
             )
+            retry_history_key = self._history_key()
             if history_error is not None:
                 raise history_error
             current()
@@ -694,6 +725,10 @@ class ConsoleBackendReadiness:
                 self.history_key, self.prompt_history_payload = history_key, history_payload
                 self.send_selection = send_selection
                 self.key, self.value, self.at = key, value, at
+        except ConsoleBackendReadinessChanged as error:
+            if error is not context_changed:
+                raise
+            failed_context = error
         finally:
             self.pending = False
             # Keep captured owners alive through all reads, then release them.
@@ -703,10 +738,65 @@ class ConsoleBackendReadiness:
             backend.controls._finish_effect(
                 effect, retired=history_retired and all(item.confirmed() for item in observations)
             )
+        if failed_context is not None:
+            failed_context._retirement = (
+                failed_context, self, effect, retry_history_key, tuple(observations),
+            )
+            self.require_retired_context_change(failed_context)
+            if _retry_context:
+                # Let foreground intake run. Only this subread is repeated;
+                # successful FULL/Inspector/counts effects are not replayed.
+                await asyncio.sleep(0)
+                self.require_retired_context_change(failed_context)
+                return await self.warm(identity, _retry_context=False)
+            raise failed_context
         if not settings.model or tokenizer_ready and preparation is not None:
             self._context_facts = context_facts
         self.vision_capability = vision_capability
         return value
+
+    def require_retired_context_change(self, error) -> bool:
+        """Authenticate this attempt's benign drift after its original cleanup."""
+        backend = self.backend
+        backend._require_owner_loop()
+        if (
+            ConsoleBackendReadinessChanged is not _CHANGE_TYPE
+            or not _definition_current(_CHANGE_INIT)
+            or type(error) is not _CHANGE_TYPE or error.owner is not self
+            or type(error.scope) is not tuple or len(error.scope) != 6
+            or type(error._retirement) is not tuple or len(error._retirement) != 5
+            or error._retirement[0] is not error or error._retirement[1] is not self
+        ):
+            raise RuntimeError("Console readiness invalidation proof changed")
+        source, session, settings, key, agent_key, visibility = error.scope
+        _error, _owner, effect, history_key, observations = error._retirement
+        self._current(session, settings, source.identity.source_revision, source)
+        association, lifecycle, current, attachment, checkpoint, active = visibility
+        presentation = backend.presentation
+        presentation.require_association(association)
+        if (
+            self.pending
+            or source.controls is not backend.controls
+            or effect.owner is not self or effect.kind != "display_readiness"
+            or not any(item is effect for item in source.effects)
+            or effect.source_revision != source.identity.source_revision
+            or not effect.completed.done() or effect.completed.cancelled()
+            or effect.completed.result() is not True or effect.physically_retired is not True
+            or any(item.read.creator is not self or not item.confirmed() for item in observations)
+            or key != self._key(session, settings, source.identity.source_revision)
+            or agent_key != self._agent_key(session) or history_key != self._history_key()
+            or presentation.view_lifecycle is not lifecycle or lifecycle._current is not current
+            or presentation.parent_attachment != attachment
+            or backend.store.active_session_id != active
+            or presentation.capture_display_reuse_checkpoint(
+                backend.runtime._execution_service._display_owner
+            ) is not checkpoint
+            or (checkpoint is not None and not presentation.display_reuse_checkpoint_current(
+                backend.runtime._execution_service._display_owner, checkpoint,
+            ))
+        ):
+            raise RuntimeError("Console readiness retry source or retirement changed")
+        return True
 
 
 _DEFINITIONS = tuple(
