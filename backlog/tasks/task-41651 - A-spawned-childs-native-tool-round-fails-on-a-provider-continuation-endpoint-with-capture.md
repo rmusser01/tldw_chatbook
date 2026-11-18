@@ -51,7 +51,10 @@ ADR required: no (applies ADR-063's existing rule that an ownerless run's contin
 - Red on dev d0486978dd (product files checked out, test kept): both fail, child run `error` with "Provider continuation could not be persisted"; the other 10 tests in the file pass.
 - Green after: the child sends `[system,user]` then `[system,user,assistant,tool]`, run `done`; its follow-up carries one `active` checkpoint to the provider handler; the host store sees only `primary` continuation events; under Capture On both child calls are `complete` in its own linked segment.
 - Mutations (each fails both cases; rerun alone, not while editing): no durability override ("could not be persisted"), no owner id or no owner key from preparation ("requires an owner"), host callbacks wired for children (store sees `fleet` events).
-- File: 12 passed at `-n 4`.
+- File (with TASK-41652's test): 16 passed at `-n 4`; serially alone 16 passed in 112 s (load 68-77).
+- Covering set (20 files: Agents service/continuation/fleet/redirect/code-review context, Plugins continuation, Chat agent bridge, provider continuation, Kimi/ZAI native tools, stop-mid-tool, dispatch handoff, crash recovery, named agent model, default send capture, fleet wake, engine swap, group merge, this file, mix-in journey) at `-n 4`: head 7 failed / 928 passed, base d0486978dd 7 failed / 922 passed, the same 7 nodes (5 `test_console_agent_bridge` usage/lifecycle, 2 `test_console_named_agent_model` `RecoveryRequired('raw_source_selection_changed')`); the 6 extra passes are the new tests.
+- `Tests/Architecture` serially: 4 failed / 1475 passed. Three also fail on base (`test_persistent_diagnostic_inventory::test_reviewed_diagnostic_changes_are_metadata_only`, `test_timer_path_static_update_inventory::{test_no_timer_path_update_defaults_to_layout_true,test_clock_root_set_is_pinned}`); the fourth, `test_task_15103_review_ledger_canonical_schema_and_arithmetic`, hit pytest-timeout (300 s) under load and passes alone on head (90 s).
+- `./scripts/preflight.sh`: all checks passed.
 
 **Files:** `tldw_chatbook/Agents/agent_service.py`, `tldw_chatbook/Chat/console_agent_preparation.py`, `Tests/Chat/test_console_spawn_subagent_trace_capture.py`, `Tests/Architecture/test_module_size_ratchet.py` (agent_service 7680 -> 7692, +12), `Docs/Architecture/agent-runtime.md`, `Docs/Architecture/llm-providers.md`.
 
