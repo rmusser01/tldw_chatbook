@@ -9,9 +9,13 @@ labels:
 - follow-up
 - ui
 - library
+- settings
 priority: low
 references:
 - tldw_chatbook/Widgets/Library/library_ingest_canvas.py
+- tldw_chatbook/UI/Screens/settings_screen.py
+- tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py
+- tldw_chatbook/Widgets/Settings_Widgets/personal_context_panel.py
 dependencies: []
 ---
 
