@@ -1,11 +1,11 @@
 ---
 id: TASK-41507
 title: "Headless Console sends (launch-wake, received dispatch, mobile) hit the cold-start skill trust refusal"
-status: In Progress
+status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-17 05:27
-updated_date: 2026-11-18 08:31
+updated_date: 2026-11-18 08:36
 labels:
 - follow-up
 - console
@@ -30,7 +30,7 @@ TASK-41138 (round 15) made a cold-Home Buddy send build the skill trust service 
 <!-- AC:BEGIN -->
 - [x] #1 A launch-wake delivery, a received dispatch and a mobile send into a cold Console each reach the provider (or a visible, correct refusal), never `console_capture_source_not_ready`
 - [x] #2 The trust service is built in the shared submit path or each caller, with one decision recorded in the notes
-- [ ] #3 Each of the three paths has a test that starts cold and is red before the fix
+- [x] #3 The launch-wake and received-dispatch paths each have a test that starts cold and is red before the fix; the mobile path has a cold test showing a send reaches the provider (no defect on that path, reason recorded)
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -63,7 +63,7 @@ TASK-41138 (round 15) made a cold-Home Buddy send build the skill trust service 
 - New `test_the_cold_trust_build_runs_only_where_capture_refuses_and_after_the_gate` (same file, 4 cases, in-process). A ready slot, or no factory, builds nothing; an empty slot with a factory runs the gate, then the build; a denied gate stops before the build; no app is a no-op. With the gate line removed, its two build cases fail. At base it cannot import the helper.
 - The same test covers received dispatch (the wake's custodied turn).
 - `Tests/UI/test_buddy_conversation_modal.py::test_cold_home_saved_buddy_bootstraps_only_after_explicit_open` now runs through the shared path: red with the submit-path build removed (the send failed in `controller_submit`), green with it.
-- Mobile has no cold refusal, so no mobile test can be red before a fix. AC#3 stays unticked for that clause (see the round report).
+- Mobile has no cold refusal, so no mobile test can be red before a fix. **Coordinator ruling (2026-11-18):** AC#3 was reworded (red-before for the launch-wake and received-dispatch paths; for mobile, a cold test showing the send reaches the provider, with the reason recorded). That test already exists and runs on a PR lane (`dreams-boundary`): `Tests/Web_Server/test_mobile_service.py::test_agent_round_trip_with_approval`. It builds a fresh `MobileChatService` over an empty data folder with the `AgentModeGateway` double (`Tests/console_provider_doubles.py`, no transport), sends, and asserts the provider saw the tool result and the final answer reached the transcript. Passed before and after this change (the file: 50 passed at base, and in the 189-pass covering run after). Reason it cannot be red: the engine's `HeadlessAppContext` has no skills scope or local skills service, so `_ready_attribute` has no trust slot to refuse on.
 
 **Runs.**
 - After the gate (final code), at `-n 4` (load ~17): launch wake, Buddy modal, fleet wake retry, fleet wake, wrapped skill collaborators, cold trust preparation, mobile service and the cardless compaction file gave 189 passed.
