@@ -1052,6 +1052,17 @@ class NavigationMixin:
                             current_tab_value,
                             type(exc).__name__,
                         )
+                elif screen_reused and hasattr(new_screen, "apply_generic_reentry"):
+                    # TASK-41500: a reused screen skipped ``restore_state``, so
+                    # a route with no context asks it for its landing instead.
+                    try:
+                        await new_screen.apply_generic_reentry()
+                    except Exception as exc:
+                        logger.warning(
+                            "Generic re-entry failed (route={}, exception_category={}).",
+                            current_tab_value,
+                            type(exc).__name__,
+                        )
 
                 # TASK-16300: `switch_screen` replaces the TOP of the stack, so
                 # the content screen has to BE the top before it runs -- see

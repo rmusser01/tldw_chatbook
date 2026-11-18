@@ -4909,6 +4909,62 @@ async def test_boot_with_search_default_tab_lands_on_library_rag_canvas():
 
 
 @pytest.mark.asyncio
+async def test_scope_recovery_mirror_mounts_nothing_once_the_app_is_exiting():
+    """TASK-41500: the boot-with-search node above failed 3 of 3 at teardown.
+
+    The scope recovery mirror removes the old block and then mounts the new
+    one, and the removal yields. ``TldwCli._shutdown`` and ``App.exit`` set
+    the app's ``_exit`` fence first, and Textual refuses every mount after
+    it with ``MountError`` (its "before ... is mounted" wording names the
+    container, which was mounted). Here the fence lands in that window.
+    """
+    from textual.widget import MountError
+
+    app = _build_test_app(configured_default="search")
+
+    async with app.run_test(size=(170, 48)) as pilot:
+
+        def settled() -> bool:
+            if type(app.screen).__name__ != "LibraryScreen":
+                return False
+            scope = app.screen.query("#library-rag-source-scope")
+            return bool(
+                scope
+                and scope.first().is_mounted
+                and app.screen.query("#library-rag-scope-recovery")
+                and not app.screen._rag_search_state.panel_refresh_lock.locked()
+            )
+
+        assert await _settle(pilot, settled), "the Search canvas never showed its recovery"
+        screen = app.screen
+        recovery = screen.query_one("#library-rag-scope-recovery")
+        real_remove = recovery.remove
+        held = asyncio.Event()
+        release = asyncio.Event()
+
+        async def held_remove():
+            held.set()
+            await release.wait()
+            await real_remove()
+
+        recovery.remove = held_remove
+        mirror = asyncio.create_task(screen._mirror_library_rag_scope_recovery())
+        error = None
+        try:
+            await asyncio.wait_for(held.wait(), timeout=15)
+            app._exit = True
+            release.set()
+            try:
+                await mirror
+            except MountError as exc:
+                error = exc
+        finally:
+            app._exit = False
+            release.set()
+        assert error is None, f"the mirror mounted after the exit fence: {error}"
+
+
+@pytest.mark.asyncio
 async def test_boot_with_prompts_default_tab_lands_on_library_with_prompts_row_selected():
     """Sibling of ``test_boot_with_search_default_tab_lands_on_library_rag_canvas``
     proving the boot-time fix is generic across
@@ -5941,6 +5997,36 @@ async def test_generic_reentry_returns_to_library_landing():
 
         assert type(app.screen).__name__ == "LibraryScreen"
         assert app.screen._library_selected_row_id == ""
+
+
+@pytest.mark.asyncio
+async def test_reused_library_reentry_shows_the_landing_and_keeps_its_live_state():
+    """TASK-41500 AC#4: what Library's screen reuse keeps on a generic return.
+
+    7992124e8d (TASK-31521) made the route reusable for speed, so a return
+    resumes the installed instance and skips ``restore_state``. The landing
+    must still be on screen, not only the row id reset. What reuse keeps on
+    purpose is the instance itself and its live state, here the RAG draft.
+    """
+    from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SEARCH
+
+    app = _build_test_app()
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await _wait_for_initial_screen(pilot)
+        await app.handle_screen_navigation(NavigateToScreen("search"))
+        library = app.screen
+        assert library._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH
+        library._rag_search_state.query = "roadmap notes"
+
+        await app.handle_screen_navigation(NavigateToScreen("home"))
+        await app.handle_screen_navigation(NavigateToScreen("library"))
+
+        assert app.screen is library
+        assert library._library_selected_row_id == ""
+        assert library.query("#library-landing-canvas")
+        assert not library.query("#library-search-rag-panel")
+        assert library._rag_search_state.query == "roadmap notes"
 
 
 @pytest.mark.asyncio

@@ -1140,6 +1140,10 @@ MINIMUM_FILES = 2243
 # MCP-row nodes and the held tool slots files at the tail. The floor is the
 # measured entry count.
 MINIMUM_FILES = 2251
+# TASK-41500 (2026-11-18): append the three Library re-entry and boot nodes
+# TASK-41127 left red, and the two that pin their fix, at the tail. The floor
+# is the measured entry count.
+MINIMUM_FILES = 2256
 
 
 def read_census(path: Path) -> list[str]:

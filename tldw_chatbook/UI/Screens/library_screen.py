@@ -10950,6 +10950,14 @@ class LibraryScreen(BaseAppScreen):
             self._artifacts_navigation.prepare_context(context)
         )
 
+    async def apply_generic_reentry(self) -> None:
+        """Land a reused Library on its landing, as ``restore_state`` does (TASK-41500).
+
+        Takes the Esc-to-hub rail seam, so its switch rules apply; drafts stay.
+        """
+        if self._library_selected_row_id:
+            await self._select_library_rail_row("")
+
     async def prepare_character_inspection(
         self, context: Mapping[str, Any], *, is_current: Callable[[], bool]
     ) -> PreparedLibraryInspection | None:

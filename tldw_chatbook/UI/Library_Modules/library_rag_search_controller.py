@@ -1763,6 +1763,11 @@ class LibraryRagSearchController:
         for widget in (*scope_recovery_widgets, *import_buttons):
             await widget.remove()
         for child in library_rag_scope_recovery_children(panel_state):
+            # TASK-41500: the awaits above can let the app's exit fence land
+            # (``_exit``, set first by ``App.exit`` and ``TldwCli._shutdown``),
+            # and Textual then refuses any mount here with MountError.
+            if not scope_container.is_attached:
+                return
             await scope_container.mount(child)
 
     def _sync_library_rag_query_gate_widgets(

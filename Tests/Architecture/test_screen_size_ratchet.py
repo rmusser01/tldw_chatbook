@@ -1511,7 +1511,12 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: ``_measure``).
     #: Review r2: the prune's orphaned ``Coroutine`` import is dropped:
     #: 32784 -> 32783 lines (measured with ``_measure``).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32783, 1287),
+    #: 2026-11-18, TASK-41500 (owner rule 2026-10-04, measured): a reused
+    #: Library takes its landing on a bare return (``apply_generic_reentry``,
+    #: the hook the app calls in place of ``restore_state``): 38282 -> 38280
+    #: lines, 1379 -> 1380 methods.
+    #: 2026-11-18, rebased onto dev 47a05413cb (dev's row 32783/1287 plus this commit's growth): measured 32791 lines, 1288 methods.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32791, 1288),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard
