@@ -219,10 +219,11 @@ MAX_SINGLE_ROUTE_ADDED_LOC = 135_111
 #: that uses it, so it adds one module, not two. The review service a first
 #: send also imported stays out: an ordinary turn no longer loads it.
 #: 2026-11-18 (TASK-41533, after #3627 / TASK-41800): this census reads 92,
-#: with no raise. Two changes took it to 99. ``RAG_Search.scope_evidence``
-#: (TASK-36947.3) is listed because a first Automatic send's evidence capture
-#: imports it on the UI loop. TASK-41319 took ``Chat.console_ordinary_tree``
-#: off the boot path, so the listed ``console_agent_reply`` now brings it in,
+#: and the limit is lowered to match. Two changes took it to 99.
+#: ``RAG_Search.scope_evidence`` (TASK-36947.3) is listed because a first
+#: Automatic send's evidence capture imports it on the UI loop. TASK-41319
+#: took ``Chat.console_ordinary_tree`` off the boot path, so the listed
+#: ``console_agent_reply`` now brings it in,
 #: with ``Agents.ordinary_tree``, ``Agents.execution_capacity`` and
 #: ``Workspaces.worktree_activity``. That is five new modules. They are paid
 #: for in two steps:
@@ -234,11 +235,15 @@ MAX_SINGLE_ROUTE_ADDED_LOC = 135_111
 #:   and its ``Web_Server`` package. They are served mode only, and a native
 #:   warm-up no longer loads them. It also unlisted textual_serve, a
 #:   third-party step that was listed only for them.
-#: The limit stays 94. ADR-097's tightening fires only past the standard
-#: slack, which for pre-import payload is 20 modules.
+#: The limit drops 94 -> 92 (ADR-097's tightening convention). This row was
+#: pinned exactly, with no slack, so headroom it frees is banked rather than
+#: left to be used up silently, which is how the collision happened. When
+#: #3571 unlists scope_evidence, the limit should drop again, to 91, and the
+#: owner's "Accept until #3571" closes.
 #: Live, measured from a warm boot after a 3 s settle and the screen-route
 #: walk (where the real warm-up starts), the native warm-up loads 78 modules
-#: (80 on dev without this branch). The last in-budget trees, a94c4aec67 and
+#: (80 on ffdf0c5472, which is dev d0486978dd plus round-16 waves 1 and 2
+#: without this branch). The last in-budget trees, a94c4aec67 and
 #: 5d1fc43130, load 77, so this is one live module more. That module is the
 #: collision: those trees listed only one of scope_evidence and
 #: agent_lesson_promotion, and this one lists both. It goes away when #3571
@@ -250,7 +255,7 @@ MAX_SINGLE_ROUTE_ADDED_LOC = 135_111
 #: about 1,500 to 2,300 more lines. Counted right at ``_ui_ready`` with no
 #: settle, one tree read 80 and 93 in two runs, so that count is not
 #: comparable from one run to the next.
-MAX_FIRST_SEND_WARMUP_ADDED_MODULES = 94
+MAX_FIRST_SEND_WARMUP_ADDED_MODULES = 92
 
 _CENSUS_SCRIPT = """
 import json

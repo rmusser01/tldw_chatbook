@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-17 05:39
-updated_date: 2026-11-18 19:27
+updated_date: 2026-11-18 20:18
 labels:
 - follow-up
 - tests
@@ -64,19 +64,20 @@ Where this branch did the same thing, dev's code was kept and this branch's vers
 
 All the numbers below are measured on the rebased tree.
 
-**Warm-up census: 99 -> 92.** No raise; the limit stays 94. The new modules, and the commit that added each:
+**Warm-up census: 99 -> 92.** No raise; the limit is lowered 94 -> 92 (review r16cs-rev5). The new modules, and the commit that added each:
 - `RAG_Search.scope_evidence`: bf9182a4f6 (TASK-36947.3, #3471) listed it. It stays listed, because a first Automatic send's evidence capture imports it on the UI loop. Unlisted, `test_an_automatic_library_send_loads_only_the_two_library_modules_lazily` names it as a third cold UI-thread load (checked). The budget comment records this (AC#3). Open PR #3571 moves this import off the UI loop and unlists it.
 - `Chat.console_ordinary_tree`, `Agents.ordinary_tree`, `Agents.execution_capacity` and `Workspaces.worktree_activity`: d2ea67fadc (TASK-41319, #3583) removed `console_chat_store`'s module-level import of `console_ordinary_tree`, so the listed `console_agent_reply` now pulls them in. The first three cannot be deferred without a behaviour change: the agent reply awaits `run_ordinary_preparation` on the UI loop, which calls `execution_capacity.current_ordinary_tree`.
 
 How the census came back down:
 - **#3627 (e5f0484644), census-only, 99 -> 94.** It removed `app_served`, `Canvas.compilation`, `Canvas.profiles`, `Canvas.runtime_assets` and `Workspaces.worktree_activity`. A booted Console already holds all five, so the live warm-up does not change.
 - **This branch, real sheds, 94 -> 92.** `served_relay_publisher` and its `Web_Server` package are unlisted. They are served mode only, and the app imports them when it is built (`app.py` line 1137, `app_served.py` line 71). A native send never imports them, and a native warm-up no longer loads them. #3533 makes the same one-line removal. The `textual_serve` step, listed only as their dependency, goes too. It is third-party, so the census does not count it, but a native warm-up no longer imports it.
-- **The limit stays 94** (headroom 2). ADR-097's tightening convention lowers a limit only when a reduction exceeds the guard's standard slack, and pre-import payload's slack is 20 modules.
+- **The limit is lowered 94 -> 92**, under ADR-097's tightening convention. The row was pinned exactly on 2026-10-20 with no slack, so headroom it frees is banked rather than silently re-consumed, which is how the collision happened. A lowering needs no sign-off (precedent: the 2026-10-03 row). When #3571 unlists `scope_evidence`, the limit should drop again, to 91, and the owner's "Accept until #3571" closes.
 
 **The live delta.** Method: probe `scratchpad/fu/r16cs/live_warmup_probe.py`. It warm-boots the app headless to `_ui_ready` the way the UI-ready census does, waits 3 s for the post-ready timers, runs the screen-route walk (where the real warm-up starts), then imports the list in order. It counts new `tldw_chatbook` modules and new third-party top-level packages.
 - **Counts:**
   - this rebased head: 78 (2 runs);
-  - ffdf0c5472, which is dev with #3627 but without this branch: 80 (2 runs);
+  - ffdf0c5472, which is dev d0486978dd plus round-16 waves 1 and 2, without this branch: 80 (2 runs);
+  - review r16cs-rev5 reproduced them: this head 78 in 3 runs and ffdf0c5472 80 in 3 runs, with identical module sets;
   - the last in-budget trees, a94c4aec67 (#3446 before its rebase, CI run 43331816906) and 5d1fc43130 (dev before #3446, CI run 43861223546): 77 each.
 - **The +1 against the in-budget trees still exists after #3627.** It is the collision of the two last-slot claims: 5d1fc43130 lists `scope_evidence` but not `agent_lesson_promotion`, a94c4aec67 the reverse, and this head lists both. It ends when #3571 unlists `scope_evidence`.
 - **Otherwise the in-budget trees differ from this head by:**
@@ -108,13 +109,13 @@ None of these can leave without a behaviour change. That leaves the one live mod
 - This branch refreshes the snapshot, so the drift reads zero.
 
 **Evidence (rebased tree).**
-- Before (ffdf0c5472, dev plus wave 2): the warm-up census reads 94/94.
-- After: the warm-up census reads 92/94. Its refreshed snapshot matches the census.
+- Before (ffdf0c5472, dev d0486978dd plus round-16 waves 1 and 2): the warm-up census reads 94/94.
+- After: the warm-up census reads 92/94. Its refreshed snapshot matches the census. With the limit lowered to 92 it reads 92/92: boot budget step plus `test_boot_budget_ratchet_messages`, serial, 44 passed and 1 failed, the CSS ratchet below that also fails at ffdf0c5472.
 - App import: 687/688, snapshot refreshed.
 - UI-ready census: 1039/1040.
 - Preimport route walk: 557/558.
 - Live warm-up: 78 (80 at ffdf0c5472).
-- 3 of 3 serial runs: `first-send-warmup: 92/94`, `boot-import-weight: 687/688`.
+- 3 of 3 serial runs, before the limit was lowered: `first-send-warmup: 92/94`, `boot-import-weight: 687/688`.
 - Boot budget step, serial: 33 passed, 1 failed. The failure is `test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet` (`assert 270 <= 268`), which also fails at ffdf0c5472; this branch touches no CSS. In a run at load ~97, `test_app_import_stays_well_under_pre_fix_baseline` failed once on wall time (11.4 s against 8.0 s); it passed on the rerun.
 - `Tests/CI` (`-n 4`): 1746 passed, 1 skipped.
 - The first-send tests (`test_console_first_send_preimport`, `test_console_first_send_import_cycles`, `test_console_first_send_review_imports`) with `test_boot_budget_ratchet_messages`: 72 passed.
