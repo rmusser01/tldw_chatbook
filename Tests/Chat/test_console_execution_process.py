@@ -10,11 +10,13 @@ from types import SimpleNamespace
 import pytest
 
 from tldw_chatbook.Chat.console_execution_process import (
+    ConsoleChannelLost,
     ConsoleExecutionClient,
     ConsoleRemoteFailure,
     _ConsoleFramedChannel,
 )
 from tldw_chatbook.Chat.console_execution_protocol import (
+    ConsoleProtocolError,
     ConsoleWireMessage,
     WireIdentity,
     encode_message,
@@ -75,8 +77,11 @@ async def test_projection_observer_cancel_keeps_next_read_behind_actual_retireme
     try:
         await _until(lambda: len(client._channel.messages) == 1)
         receipt = next(iter(client._requests.values()))
-        client._receive(_reply(client, receipt, 1, "failed", {
-            "code": "source_changed", "stage": "admission",
+        client._receive(_reply(client, receipt, 1, "received", {
+            "sequence": receipt.identity.sequence,
+        }))
+        client._receive(_reply(client, receipt, 2, "failed", {
+            "code": "source_changed", "stage": "operation",
         }))
         first.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -86,15 +91,18 @@ async def test_projection_observer_cancel_keeps_next_read_behind_actual_retireme
         await asyncio.sleep(0)
         assert len(client._channel.messages) == 1
         assert client._projection_lock.locked() and not receipt.retired.done()
-        client._receive(_reply(client, receipt, 2, "retired", {
+        client._receive(_reply(client, receipt, 3, "retired", {
             "operation_id": receipt.identity.request_id, "retired": True,
         }))
         await _until(lambda: len(client._channel.messages) == 2)
         next_receipt = next(iter(client._requests.values()))
-        client._receive(_reply(client, next_receipt, 3, "failed", {
-            "code": "source_changed", "stage": "admission",
+        client._receive(_reply(client, next_receipt, 4, "received", {
+            "sequence": next_receipt.identity.sequence,
         }))
-        client._receive(_reply(client, next_receipt, 4, "retired", {
+        client._receive(_reply(client, next_receipt, 5, "failed", {
+            "code": "source_changed", "stage": "operation",
+        }))
+        client._receive(_reply(client, next_receipt, 6, "retired", {
             "operation_id": next_receipt.identity.request_id, "retired": True,
         }))
         with pytest.raises(ConsoleRemoteFailure):
@@ -107,6 +115,130 @@ async def test_projection_observer_cancel_keeps_next_read_behind_actual_retireme
         if second is not None:
             await asyncio.gather(second, return_exceptions=True)
         await asyncio.gather(first, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel", [None, "before-refusal", "with-refusal"])
+async def test_projection_admission_refusal_never_waits_for_an_unissued_retirement(cancel):
+    from Tests.Chat.test_console_execution_workspace import _until
+
+    client = _ready_client()
+    # Cancel the owned operation itself to exercise cleanup's admission race;
+    # cancellation of the public shielded observer is covered above.
+    task = asyncio.create_task(client._read_projection_locked("session", "incarnation"))
+    receipt = None
+    try:
+        await _until(lambda: len(client._channel.messages) == 1)
+        receipt = next(iter(client._requests.values()))
+        if cancel == "before-refusal":
+            task.cancel()
+            await asyncio.sleep(0)
+            assert not task.done() and not receipt.applied.done()
+        client._receive(_reply(client, receipt, 1, "failed", {
+            "code": "command_refused", "stage": "admission",
+        }))
+        if cancel == "with-refusal":
+            task.cancel()
+        await _until(task.done)
+        if cancel is None:
+            with pytest.raises(ConsoleRemoteFailure, match="admission"):
+                await task
+        else:
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        assert receipt.applied.exception() is receipt.received.exception()
+        assert not receipt.retired.done()
+        assert client._requests[receipt.identity.request_id] is receipt
+        assert client._projection is None and client._channel_error is None
+    finally:
+        client._fail(RuntimeError("test cleanup"))
+        await asyncio.gather(task, return_exceptions=True)
+        if receipt is not None:
+            await _retrieve(receipt)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("retired", [True, False])
+async def test_received_projection_refusal_still_requires_actual_retirement(retired):
+    from Tests.Chat.test_console_execution_workspace import _until
+
+    client = _ready_client()
+    task = asyncio.create_task(client.read_projection("session", "incarnation"))
+    receipt = None
+    try:
+        await _until(lambda: len(client._channel.messages) == 1)
+        receipt = next(iter(client._requests.values()))
+        client._receive(_reply(client, receipt, 1, "received", {
+            "sequence": receipt.identity.sequence,
+        }))
+        # A stage label alone is insufficient once an actual receipt exists.
+        client._receive(_reply(client, receipt, 2, "failed", {
+            "code": "command_refused", "stage": "admission",
+        }))
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert not task.done() and client._projection_lock.locked()
+        client._receive(_reply(client, receipt, 3, "retired", {
+            "operation_id": receipt.identity.request_id, "retired": retired,
+        }))
+        await _until(task.done)
+        expected = ConsoleRemoteFailure if retired else ConsoleChannelLost
+        with pytest.raises(expected):
+            await task
+        assert receipt.received.result() is None
+        assert receipt.retired.result() is retired
+        assert client._projection is None
+        assert (client._channel_error is None) is retired
+    finally:
+        client._fail(RuntimeError("test cleanup"))
+        await asyncio.gather(*client._projection_reads, task, return_exceptions=True)
+        if receipt is not None:
+            await _retrieve(receipt)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("retired", [True, False])
+async def test_applied_projection_joins_retirement_before_original_value_checks(retired):
+    from Tests.Chat.test_console_execution_workspace import _until
+    from tldw_chatbook.Chat.console_chat_models import ConsoleRunState
+    from tldw_chatbook.Chat.console_control_dispatch import ConsoleProjection
+    from tldw_chatbook.Chat.console_execution_projection_result import encode_projection_payload
+
+    client = _ready_client()
+    task = asyncio.create_task(client.read_projection("session", "incarnation"))
+    receipt = None
+    try:
+        await _until(lambda: len(client._channel.messages) == 1)
+        receipt = next(iter(client._requests.values()))
+        client._receive(_reply(client, receipt, 1, "received", {
+            "sequence": receipt.identity.sequence,
+        }))
+        frame = ConsoleProjection(0, "session", "incarnation", 0, (), ConsoleRunState(), None)
+        client._receive(_reply(client, receipt, 2, "applied", encode_projection_payload(frame, messages=[])))
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert receipt.applied.exception() is None
+        assert not task.done() and client._projection_lock.locked()
+        client._receive(_reply(client, receipt, 3, "retired", {
+            "operation_id": receipt.identity.request_id, "retired": retired,
+        }))
+        await _until(task.done)
+        if retired:
+            # Successful Applied/Retired is necessary, not permission to skip
+            # the unchanged selected-value checks. This frame lacks a sidecar.
+            with pytest.raises(ConsoleProtocolError, match="projection_view_missing"):
+                await task
+        else:
+            with pytest.raises(ConsoleChannelLost, match="retirement is unproven"):
+                await task
+        assert receipt.retired.result() is retired
+        assert client._projection is None
+        assert (client._channel_error is None) is retired
+    finally:
+        client._fail(RuntimeError("test cleanup"))
+        await asyncio.gather(*client._projection_reads, task, return_exceptions=True)
+        if receipt is not None:
+            await _retrieve(receipt)
 
 
 @pytest.mark.asyncio

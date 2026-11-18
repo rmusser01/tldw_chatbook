@@ -834,10 +834,23 @@ class ConsoleExecutionClient:
         try:
             await asyncio.shield(receipt.applied)
         finally:
-            if await asyncio.shield(receipt.retired) is not True:
-                error = ConsoleChannelLost("Console projection retirement is unproven")
-                self._fail(error)
-                raise error
+            admission_refused = False
+            try:
+                # Cancellation can arrive before the admission verdict. An
+                # actual Received still owes retirement, even when Applied fails.
+                await asyncio.shield(receipt.received)
+            except ConsoleRemoteFailure as error:
+                admission_refused = error.stage == "admission"
+                if admission_refused:
+                    # The worker returned no local receipt and emits no Retired
+                    # frame. Retain the unresolved physical receipt; consume its
+                    # paired error if cancellation interrupted the Applied wait.
+                    receipt.applied.exception()
+            if not admission_refused:
+                if await asyncio.shield(receipt.retired) is not True:
+                    error = ConsoleChannelLost("Console projection retirement is unproven")
+                    self._fail(error)
+                    raise error
         if (
             self._channel_error is not None
             or self._source_revision != binding[0]
