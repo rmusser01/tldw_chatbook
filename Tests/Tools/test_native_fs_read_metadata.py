@@ -138,7 +138,18 @@ def test_native_read_refuses_named_replacement_before_body_open(tmp_path, monkey
 def test_native_metadata_refuses_reparse_and_retires_its_handle(tmp_path, monkeypatch):
     target, link = tmp_path / "real.txt", tmp_path / "link.txt"
     target.write_bytes(b"original")
-    link.symlink_to(target)
+    try:
+        link.symlink_to(target)
+    except OSError as error:
+        if error.winerror != 1314:
+            raise
+        # A junction exercises the same native reparse rejection without the
+        # optional Windows privilege required to create a file symlink.
+        import _winapi
+
+        directory = tmp_path / "real-directory"
+        directory.mkdir()
+        _winapi.CreateJunction(str(directory), str(link))
     original_close = pin._windows_close_metadata
     closes = []
 

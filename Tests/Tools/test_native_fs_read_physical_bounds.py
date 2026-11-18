@@ -1,5 +1,6 @@
 """Actual native fs_read observation and content must bound source bytes."""
 
+import os
 from pathlib import Path
 
 import pytest
@@ -95,14 +96,21 @@ def test_bounded_native_content_and_observation_have_same_truthful_hash(tmp_path
     assert "second" in result and stamp.sha256 in result
 
 
-def test_bounded_native_reader_rejects_directory_and_symlink(tmp_path):
-    target = tmp_path / "source.txt"
-    target.write_text("source")
-    link = tmp_path / "link.txt"
-    link.symlink_to(target)
-    for path in (tmp_path, link):
-        with pytest.raises(local.LocalToolError):
-            local._read_bounded_bytes(path)
+@pytest.mark.parametrize("kind", ["directory", "symlink"])
+def test_bounded_native_reader_rejects_directory_and_symlink(tmp_path, kind):
+    path = tmp_path
+    if kind == "symlink":
+        target = tmp_path / "source.txt"
+        target.write_text("source")
+        path = tmp_path / "link.txt"
+        try:
+            path.symlink_to(target)
+        except OSError as error:
+            if os.name != "nt" or error.winerror != 1314:
+                raise
+            pytest.skip("Windows file-symlink creation requires an unavailable privilege")
+    with pytest.raises(local.LocalToolError):
+        local._read_bounded_bytes(path)
 
 
 def test_native_directory_scan_never_materializes_uncapped_listdir(
