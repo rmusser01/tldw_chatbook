@@ -213,15 +213,17 @@ class _BackendCommandAdapter:
         if operation == "ApplySettings":
             return controls.ApplySettings(identity, _submission(value["submission"]))
         if operation == "ReceiveTurn":
+            backend_selection = value["selection"].get("source") == "backend"
             return controls.ReceiveTurn(
                 identity,
                 value["turn_id"],
                 value["draft_revision"],
-                _selection(value["selection"]),
+                None if backend_selection else _selection(value["selection"]),
                 expected_settings_revision=value["expected_settings_revision"],
                 expected_attachment_revision=value["expected_attachment_revision"],
                 expected_prefill_revision=value["expected_prefill_revision"],
                 wire_inputs=message,
+                backend_selection=backend_selection,
             )
         if operation == "ReadProjection":
             # The optional wire cache hint is not a local read/check authority.
@@ -685,6 +687,54 @@ class _BackendService:
         self.channel.send(message)
         self.sequence = message.identity.sequence
 
+    def publish_received_claim(self, command, receipt):
+        """Publish only the exact successful deferred original turn claim."""
+        from .console_control_dispatch import ReceiveTurn
+
+        identity = command.identity
+        entry = self.backend.adapter._receipts.get(identity.request_id)
+        turn = self.backend.controls._turns.get(command.turn_id)
+        if (
+            type(command) is not ReceiveTurn or not command.backend_selection
+            or self.backend._worker_service is not self
+            or entry is None or entry[1] is not receipt
+            or self.backend.adapter._commands.get(identity.request_id) is not command
+            or receipt.identity is not identity or turn is None
+            or turn[0] is not identity or turn[2] is not receipt.work
+            or receipt.turn_retirement is not self.backend.controls._turn_retirements.get(command.turn_id)
+            or receipt.turn_retirement is None
+            or identity.request_id in self._received_requests
+        ):
+            raise ConsoleProtocolError("received_claim_owner_changed")
+        self.emit(identity, "received", "ReceiveTurn", {"sequence": identity.sequence})
+        self._received_requests.add(identity.request_id)
+
+    async def _finish_backend_send_admission(self, message, command, receipt):
+        """A config read is not Received; settle it before a known refusal."""
+        try:
+            await asyncio.shield(receipt.applied)
+        except BaseException as error:
+            claimed = receipt.turn_retirement is not None
+            retired = False
+            try:
+                retired = await asyncio.shield(receipt.retired) is True
+            except BaseException as retirement_error:
+                self._failure(message.operation, "retirement", retirement_error)
+            self._failure(message.operation, "admission", error)
+            self.emit(message.identity, "failed", message.operation, {
+                "code": "command_refused" if retired and not claimed else "command_failed",
+                "stage": "admission" if retired and not claimed else "retirement",
+            })
+            self.emit(message.identity, "retired", message.operation, {
+                "operation_id": message.identity.request_id, "retired": retired,
+            })
+            if retired:
+                self._release_result(message)
+            return
+        if message.identity.request_id not in self._received_requests:
+            raise ConsoleProtocolError("received_claim_not_published")
+        await self.finish(message, command, receipt)
+
     def accept(self, message: ConsoleWireMessage):
         if message.operation == "CloseIntake":
             self._pending_turn_locations()
@@ -700,6 +750,13 @@ class _BackendService:
             )
             return None
         command = self.backend.adapter._commands[message.identity.request_id]
+        from .console_control_dispatch import ReceiveTurn
+
+        if type(command) is ReceiveTurn and command.backend_selection:
+            task = asyncio.create_task(self._finish_backend_send_admission(message, command, receipt))
+            self.handlers.add(task)
+            task.add_done_callback(self._finished)
+            return task
         # ReceiveTurn dispatch returns only after its original claim exists.
         self.emit(
             message.identity,

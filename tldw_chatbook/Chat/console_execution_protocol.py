@@ -430,6 +430,20 @@ _SELECTION = _record(
     project_bindings_eligible=_boolean,
     agent_runtime_enabled=_boolean,
 )
+_BACKEND_SEND_SELECTION = _record(
+    source=_enum("backend"), attachment_id=_REFERENCE, visit=_SEQUENCE,
+    rag_source_types=_array(_NONEMPTY),
+)
+
+
+def _send_selection(value, path):
+    _object(value, path)
+    if value.get("source") == "backend":
+        _BACKEND_SEND_SELECTION(value, path)
+    else:
+        _SELECTION(value, path)
+
+
 _ATTACHMENT = _record(
     attachment_id=_NONEMPTY,
     file_path=_TEXT,
@@ -730,7 +744,7 @@ _COMMANDS = {
     "ReceiveTurn": _record(
         turn_id=_TURN_ID,
         draft_revision=_REVISION,
-        selection=_SELECTION,
+        selection=_send_selection,
         expected_settings_revision=_MAYBE_REVISION,
         expected_attachment_revision=_MAYBE_REVISION,
         expected_prefill_revision=_MAYBE_REVISION,

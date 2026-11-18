@@ -190,13 +190,14 @@ class ReceiveTurn:
     identity: ControlIdentity
     turn_id: str
     draft_revision: int
-    selection: ConsoleTurnCaptureSelection = field(repr=False)
+    selection: ConsoleTurnCaptureSelection | None = field(repr=False)
     expected_settings_revision: int | None = None
     expected_attachment_revision: int | None = None
     expected_prefill_revision: int | None = None
     # Detached transport values add equality checks at the original locked
     # capture. They are not a substitute snapshot, stash or source capability.
     wire_inputs: object | None = field(default=None, repr=False, kw_only=True)
+    backend_selection: bool = field(default=False, repr=False, kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -908,7 +909,21 @@ class ConsoleLocalControls:
                     return await run_parent_settings_capture(command)
                 if type(command) is ReadProjection:
                     return await self._read_projection(identity)
-                self._apply_input_command(command, receipt, draft_checkpoint=draft_checkpoint)
+                selection = None
+                if type(command) is ReceiveTurn and command.backend_selection:
+                    from . import console_backend_send_capture as send_capture
+                    from .console_domain_services import _definition_current
+
+                    if (
+                        send_capture.capture_backend_send_selection is not send_capture._CAPTURE[0]
+                        or not _definition_current(send_capture._CAPTURE)
+                    ):
+                        raise RuntimeError("Console Send capture source changed")
+                    selection = await send_capture.capture_backend_send_selection(self, command)
+                self._apply_input_command(
+                    command, receipt, draft_checkpoint=draft_checkpoint,
+                    backend_selection=selection,
+                )
                 return receipt.applied.result()
             finally:
                 self._capture_tasks.pop(task, None)
@@ -1720,13 +1735,16 @@ class ConsoleLocalControls:
                 draft_checkpoint = presentation.capture_display_reuse_checkpoint(owner)
         if (
             type(command) is ApplySettings
+            or type(command) is ReceiveTurn and command.backend_selection
             or identity.session_id in self._session_capture_tails
         ):
+            if type(command) is ReceiveTurn and command.backend_selection:
+                receipt.retired = self._loop.create_future()
             self._queue_session_capture(command, receipt, draft_checkpoint=draft_checkpoint)
             return receipt
         return self._apply_input_command(command, receipt, draft_checkpoint=draft_checkpoint)
 
-    def _apply_input_command(self, command, receipt, *, draft_checkpoint=None):
+    def _apply_input_command(self, command, receipt, *, draft_checkpoint=None, backend_selection=None):
         identity = command.identity
         if type(command) is UpdateInputs:
             if type(command.draft) is not str:
@@ -1849,11 +1867,25 @@ class ConsoleLocalControls:
             )
             if preparation is None:
                 raise RecoveryRequired("console_capture_source_not_ready")
+            if command.backend_selection:
+                from . import console_backend_send_capture as send_capture
+                from .console_domain_services import _definition_current
+
+                if (
+                    send_capture.require_backend_send_selection is not send_capture._REQUIRE[0]
+                    or not _definition_current(send_capture._REQUIRE)
+                ):
+                    raise RuntimeError("Console Send capture verifier changed")
+                selection = send_capture.require_backend_send_selection(
+                    backend_selection, self, command
+                )
+            else:
+                selection = command.selection
             intent = ConsoleReceivedTurnIntent(
                 turn_id=command.turn_id,
                 session_id=identity.session_id,
                 inputs=inputs,
-                selection=command.selection,
+                selection=selection,
                 staged_evidence_launch=launch,
                 staged_evidence_revision=revision,
                 view_attachment_generation=self._runtime._attached_generation or 0,
@@ -1883,6 +1915,19 @@ class ConsoleLocalControls:
         receipt.work = record.task
         receipt.turn_retirement = retirement
         receipt.retired = retirement.retired
+        if command.backend_selection:
+            try:
+                if (
+                    send_capture.publish_backend_send_claim is not send_capture._PUBLISH[0]
+                    or not _definition_current(send_capture._PUBLISH)
+                ):
+                    raise RuntimeError("Console Send claim publisher changed")
+                send_capture.publish_backend_send_claim(self, command, receipt)
+            except BaseException:
+                # The original claim exists, but its wire publication failed.
+                # Keep its real retirement and cancel its exact retained task.
+                record.task.cancel()
+                raise
         receipt.applied.set_result(turn_id)
         return receipt
 

@@ -187,16 +187,11 @@ async def dispatch_send(screen, *, session_id=None, pending_send_token=None) -> 
     receipt = None
     terminal_seen = False
     try:
-        await client.read_projection(row.id, row.incarnation_id)
         _current(screen, client, visit)
-        selection = _detach(
-            _detach(client.send_selection, "selection", 0, set()),
-            "selection",
-            0,
-            set(),
-            thaw=True,
-        )
-        selection["rag_defaults"] = {"source_types": list(captured.rag_sources)}
+        selection = {
+            "source": "backend", "attachment_id": client._attachment_id,
+            "visit": visit, "rag_source_types": list(captured.rag_sources),
+        }
         task = client.submit_authored_turn(press, selection, str(uuid4()))
         receipt = await asyncio.shield(task)
         await asyncio.shield(receipt.applied)
