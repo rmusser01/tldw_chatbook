@@ -2221,6 +2221,115 @@ def test_child_fdinfo_requires_current_tracked_scratch_directory(
             os.close(descriptor)
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX canonical path contract")
+@pytest.mark.parametrize(
+    "system,boundary", (("linux", True), ("darwin", True), ("linux", False))
+)
+@pytest.mark.parametrize("probe", ("smaps", "smaps_rollup", "io", "policy0", "cpufreq"))
+def test_child_psutil_capability_probes_are_linux_stat_only(
+    tmp_path, monkeypatch, system, boundary, probe
+):
+    module = _load_child()
+    paths = {
+        **{
+            name: f"/proc/{os.getpid()}/{name}"
+            for name in ("smaps", "smaps_rollup", "io")
+        },
+        "policy0": "/sys/devices/system/cpu/cpufreq/policy0",
+        "cpufreq": "/sys/devices/system/cpu/cpu0/cpufreq",
+    }
+    module._SCRATCH = str(tmp_path) if boundary else ""
+    monkeypatch.setattr(module, "sys", SimpleNamespace(platform=system))
+    monkeypatch.setattr(
+        module, "_STAT_ONLY_PATHS", frozenset(paths.values()), raising=False
+    )
+    seen = []
+    result = object()
+
+    def stat_probe(path, *args, **kwargs):
+        seen.append((path, args, kwargs))
+        return result
+
+    def denied(record):
+        raise PermissionError(record)
+
+    monkeypatch.setitem(module._REAL_METADATA_READ_APIS, "stat", stat_probe)
+    monkeypatch.setattr(module, "_contain", denied)
+    path = paths[probe]
+    if system == "linux" and boundary:
+        assert module._guarded_metadata_read("stat", path) is result
+        assert seen == [(path, (), {})]
+
+        def missing_probe(*args, **kwargs):
+            raise FileNotFoundError(path)
+
+        monkeypatch.setitem(module._REAL_METADATA_READ_APIS, "stat", missing_probe)
+        with pytest.raises(FileNotFoundError) as missing:
+            module._guarded_metadata_read("stat", path)
+        assert missing.value.args == (path,)
+    else:
+        with pytest.raises(PermissionError) as refused:
+            module._guarded_metadata_read("stat", path)
+        assert refused.value.args == (module.FILESYSTEM_READ_DENIED,)
+        assert seen == []
+    assert not module._read_allowed(path)
+    if boundary:
+        assert not module._write_allowed(path)
+    assert not module._read_event_allowed("os.scandir", path)
+    for api in module._REAL_METADATA_READ_APIS:
+        if api != "stat":
+            with pytest.raises(PermissionError) as refused:
+                module._guarded_metadata_read(api, path)
+            assert refused.value.args == (module.FILESYSTEM_READ_DENIED,)
+    for other in (path + "/child", path + "-other", f"/proc/{os.getpid() + 1}/{probe}"):
+        with pytest.raises(PermissionError) as refused:
+            module._guarded_metadata_read("stat", other)
+        assert refused.value.args == (module.FILESYSTEM_READ_DENIED,)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux psutil capability probes")
+def test_child_imports_psutil_after_containment_without_reading_probe_contents(
+    tmp_path,
+):
+    module = _load_runner()
+    result, scratch, _ = _run_pytest_child(
+        module,
+        tmp_path,
+        "import sys\nassert 'psutil' not in sys.modules\nimport psutil\nassert callable(psutil.cpu_times)",
+        must_not_continue=False,
+    )
+
+    assert result.returncode == 0
+    assert result.error is None
+    assert (scratch / "attempts.jsonl").read_bytes() == b""
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux stat-only capability probes")
+@pytest.mark.parametrize(
+    "operation",
+    ("content", "foreign-pid", "sibling", "enumerate", "lstat", "access", "write"),
+)
+def test_child_psutil_stat_probes_grant_no_other_access(tmp_path, operation):
+    module = _load_runner()
+    body = {
+        "content": "open('/proc/self/smaps').read()",
+        "foreign-pid": "os.stat(f'/proc/{os.getpid() + 1}/smaps')",
+        "sibling": "os.stat('/proc/self/statm')",
+        "enumerate": "os.listdir('/sys/devices/system/cpu/cpufreq/policy0')",
+        "lstat": "os.lstat('/proc/self/io')",
+        "access": "os.access('/proc/self/smaps_rollup', os.R_OK)",
+        "write": "open('/proc/self/io', 'w')",
+    }[operation]
+    result, scratch, _ = _run_pytest_child(module, tmp_path, body)
+
+    _assert_containment_attempt(
+        module,
+        result,
+        scratch,
+        "filesystem_write_denied" if operation == "write" else "filesystem_read_denied",
+    )
+
+
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux kernel mount metadata")
 def test_child_reads_linux_mount_metadata_for_tracked_scratch_directory(tmp_path):
     module = _load_runner()
@@ -2756,7 +2865,10 @@ def test_child_pytest_explicitly_loads_only_required_async_plugin(
     assert isinstance(observed["plugins"][0], child.ResultRecorder)
 
 
-def test_missing_explicit_async_plugin_is_a_stable_child_failure(monkeypatch, tmp_path):
+@pytest.mark.parametrize("reuse_scratch", (False, True))
+def test_missing_explicit_async_plugin_is_a_stable_child_failure(
+    monkeypatch, tmp_path, reuse_scratch
+):
     module = _load_runner()
     checkout = tmp_path / "checkout"
     checkout.mkdir()
@@ -2769,11 +2881,21 @@ def test_missing_explicit_async_plugin_is_a_stable_child_failure(monkeypatch, tm
     )
     assert broken_source != source
     broken_child.write_text(broken_source, encoding="utf-8")
+    scratch = tmp_path / "scratch"
+    if reuse_scratch:
+        previous = module.run_closeout_child(
+            checkout=checkout, scratch=scratch, mode="pytest", target=target
+        )
+        assert previous.returncode == 0
+        assert previous.error is None
+        assert previous.result_path is not None
+        results = json.loads(previous.result_path.read_text())
+        assert len(results) == 1 and set(results.values()) == {"PASS"}
     monkeypatch.setattr(module, "CHILD_PATH", broken_child)
 
     result = module.run_closeout_child(
         checkout=checkout,
-        scratch=tmp_path / "scratch",
+        scratch=scratch,
         mode="pytest",
         target=target,
     )
