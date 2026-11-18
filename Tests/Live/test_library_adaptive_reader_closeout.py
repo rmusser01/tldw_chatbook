@@ -2878,6 +2878,94 @@ def test_child_runs_only_the_explicit_pytest_node(selector, expected_node, tmp_p
     assert recorded == {expected_node: "PASS"}
 
 
+@pytest.mark.parametrize("source", ("owned", "missing", "escape", "swap"))
+def test_child_discovers_only_checkout_owned_vendored_core(
+    tmp_path, monkeypatch, source
+):
+    module = _load_runner()
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    scratch = tmp_path / "scratch"
+    vendor = checkout / "packages/tldw_profile_core/src"
+    if source != "missing":
+        package = vendor / "tldw_profile_core"
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text("FIXTURE_ORIGIN = 'checkout'\n")
+    foreign = tmp_path / "foreign"
+    if source in {"escape", "swap"}:
+        package = foreign / "tldw_profile_core"
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text(
+            "import os\nfrom pathlib import Path\n"
+            "Path(os.environ['TMPDIR'], 'foreign-imported').write_text('foreign')\n"
+            "FIXTURE_ORIGIN = 'foreign'\n"
+        )
+    if source == "escape":
+        vendor.rename(vendor.with_name("original-src"))
+        vendor.symlink_to(foreign, target_is_directory=True)
+
+    # Keep the trusted driver inside checkout: its script directory must not
+    # accidentally authorize the foreign fixture through interpreter sys.path.
+    driver = checkout / "child_driver.py"
+    driver_source = CHILD_PATH.read_text(encoding="utf-8")
+    if source == "swap":
+        hook = textwrap.dedent(
+            f"""
+            _original_runtime_authority = _runtime_authority
+
+            def _swap_before_runtime_capture(*args, **kwargs):
+                vendor = Path({str(vendor)!r})
+                assert str(vendor) in sys.path
+                vendor.rename(vendor.with_name('original-src'))
+                vendor.symlink_to({str(foreign)!r}, target_is_directory=True)
+                Path(_SCRATCH, 'swap-complete').write_text('swapped')
+                return _original_runtime_authority(*args, **kwargs)
+
+            _runtime_authority = _swap_before_runtime_capture
+            """
+        )
+        main_guard = '\nif __name__ == "__main__":'
+        assert driver_source.count(main_guard) == 1
+        driver_source = driver_source.replace(main_guard, hook + main_guard)
+    driver.write_text(driver_source, encoding="utf-8")
+    monkeypatch.setattr(module, "CHILD_PATH", driver)
+
+    target = checkout / "test_vendored_core.py"
+    body = (
+        "import os\nimport sys\nfrom pathlib import Path\n\n"
+        "def test_vendored_core():\n"
+        "    Path(os.environ['TMPDIR'], 'target-started').write_text('started')\n"
+        "    assert not any(getattr(finder, '__module__', type(finder).__module__).startswith('__editable__') for finder in sys.meta_path)\n"
+    )
+    if source != "missing":
+        body += (
+            "    assert 'tldw_profile_core' not in sys.modules\n"
+            "    import tldw_profile_core\n"
+            "    assert tldw_profile_core.FIXTURE_ORIGIN == 'checkout'\n"
+            f"    assert Path(tldw_profile_core.__file__).resolve().parent == Path({str(vendor / 'tldw_profile_core')!r})\n"
+        )
+    target.write_text(body, encoding="utf-8")
+
+    result = module.run_closeout_child(
+        checkout=checkout, scratch=scratch, mode="pytest", target=target
+    )
+
+    assert not (scratch / "tmp/foreign-imported").exists()
+    if source in {"escape", "swap"}:
+        _assert_containment_attempt(module, result, scratch, "filesystem_read_denied")
+        if source == "escape":
+            assert not (scratch / "tmp/target-started").exists()
+        else:
+            assert (scratch / "swap-complete").read_text() == "swapped"
+    else:
+        assert result.returncode == 0
+        assert result.error is None
+        assert json.loads(result.result_path.read_text()) == {
+            "test_vendored_core.py::test_vendored_core": "PASS"
+        }
+        assert (scratch / "attempts.jsonl").read_bytes() == b""
+
+
 def test_real_hermetic_child_runs_declared_async_curated_selector(tmp_path):
     module = _load_runner()
     selector = (

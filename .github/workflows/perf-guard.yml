@@ -1,5 +1,5 @@
 name: Perf Guard
-run-name: Light CI process collector repair probe (not qualification)
+run-name: Light CI vendored discovery repair probe (not qualification)
 on:
   workflow_dispatch:
 permissions:
@@ -13,7 +13,7 @@ env:
   PYTHONUNBUFFERED: 1
 jobs:
   containment-diagnostic:
-    name: Linux process collector repair and refusal controls
+    name: Linux vendored discovery and containment controls
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -38,6 +38,7 @@ jobs:
       - name: Run original selectors and containment controls
         run: |
           python -m pytest \
+            Tests/Live/test_library_adaptive_reader_closeout.py::test_child_discovers_only_checkout_owned_vendored_core \
             Tests/Live/test_library_adaptive_reader_closeout.py::test_child_settles_one_real_catalogue_selector \
             Tests/Live/test_library_adaptive_reader_closeout.py::test_real_hermetic_child_runs_declared_async_curated_selector \
             Tests/Live/test_library_adaptive_reader_closeout.py::test_real_hermetic_child_still_runs_declared_synchronous_selector \
