@@ -37,7 +37,7 @@ _CLEAR_FAILED = "Couldn't clear the interrupted import. Restart the app and try 
 class ActorPackRecoveryNotice(Horizontal):
     """One keyboard-reachable notice and its clear action."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ActorPackRecoveryNotice {
         height: auto;
         padding: 0 1;

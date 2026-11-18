@@ -83,6 +83,8 @@ def cleanup_release_widget(
     note = Static(
         explanation, classes="console-transcript-cleanup-released", markup=False
     )
-    box = Vertical(note, action, classes="console-transcript-cleanup-released")
-    box.styles.margin = 0
-    return box
+    return Vertical(
+        note,
+        action,
+        classes="console-transcript-cleanup-released console-transcript-cleanup-released-group",
+    )

@@ -113,6 +113,9 @@ from tldw_chatbook.Widgets.Console.console_goal_status import (
     ConsoleGoalHistory,
     ConsoleGoalStatus,
 )
+from tldw_chatbook.Widgets.Console.console_held_tool_slots import (
+    ConsoleHeldToolSlotsModal,
+)
 from tldw_chatbook.Widgets.Console.console_hooks_review_modal import (
     ConsoleHooksReviewModal,
 )
@@ -1164,6 +1167,7 @@ _ROOT_INVENTORY_ONLY_MODAL_TYPES = (
     ConsoleEditThinkingModal,
     ConsoleEndpointTemplateModal,
     ConsoleForkChatModal,
+    ConsoleHeldToolSlotsModal,
     ConsoleHooksReviewModal,
     ConsoleLibraryAccessModal,
     ConsoleMessageDeleteReceiptModal,
@@ -1676,7 +1680,8 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
     # ConsoleLibrarySearchModal subclass is what the root opens.
     # TASK-35582 adds the safe-dismissal code-review report reader.
     # TASK-39147 adds the three safe-dismissal workflow dialogs.
-    assert len(reachable_modal_types) == 80
+    # TASK-41307 adds the held tool slots list (TASK-41730 names it).
+    assert len(reachable_modal_types) == 81
     all_contract_types = (
         console_contract_types
         | {contract.modal_type for contract in TASK4_MODAL_CONTRACTS}
