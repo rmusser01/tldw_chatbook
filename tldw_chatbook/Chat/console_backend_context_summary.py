@@ -194,6 +194,12 @@ def _context_state(
 def build_backend_context_summary(
     inputs: ConsoleBackendContextInputs,
 ) -> ConsoleContextSummaryProjection:
+    return build_backend_context_presentation(inputs)[0]
+
+
+def build_backend_context_presentation(
+    inputs: ConsoleBackendContextInputs,
+) -> tuple[ConsoleContextSummaryProjection, ConsoleContextControlState | None]:
     """Calculate the original active-session summary after native preparation.
 
     Args:
@@ -226,4 +232,4 @@ def build_backend_context_summary(
         ),
         state is not None and state.compaction_pause_forecast is not None,
         state is not None and bool(state.forecast_unavailable_reason),
-    )
+    ), state

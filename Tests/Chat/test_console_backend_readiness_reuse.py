@@ -29,6 +29,9 @@ async def test_backend_readiness_reuses_native_facts_without_renewing_age(
         WireIdentity,
     )
     from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.provider_usage import ProviderUsage
+    from tldw_chatbook.UI.Console_Modules import pricing_display
 
     path, directory, *_ = _settled_profile()
     profile = open_console_backend_profile(
@@ -54,6 +57,14 @@ async def test_backend_readiness_reuses_native_facts_without_renewing_age(
     )
     native_reads = []
     fail_config = [False]
+    fail_pricing = [False]
+    pricing_reads = []
+
+    def pricing_entry(_frame):
+        pricing_reads.append(True)
+        if fail_pricing[0]:
+            fail_pricing[0] = False
+            raise OSError("optional price read failed")
 
     def config_entry(frame):
         if fail_config[0] and frame.f_back.f_code is read_code:
@@ -105,6 +116,8 @@ async def test_backend_readiness_reuses_native_facts_without_renewing_age(
                 sys.monitoring.events.PY_START,
                 config_entry,
             ),
+            _observe(pricing_display.prepare_pricing_display.__code__,
+                     sys.monitoring.events.PY_START, pricing_entry),
         ):
             await projection()
             assert len(native_reads) == 1
@@ -112,6 +125,8 @@ async def test_backend_readiness_reuses_native_facts_without_renewing_age(
             summary = readiness.context_summary
             selection = readiness.send_selection
             assert facts is not None
+            assert len(pricing_reads) == 1
+            assert not readiness.cost.unavailable
 
             backend.store._bump_display_projection_revision(session.id)
             backend.store.set_session_one_shot_prefill(session.id, "Actual prefill")
@@ -122,6 +137,31 @@ async def test_backend_readiness_reuses_native_facts_without_renewing_age(
             assert readiness.context_key == readiness._context_key(session)
             assert readiness.send_selection is not selection
             assert not readiness.send_selection["project_bindings_eligible"]
+            assert len(pricing_reads) == 1
+
+            # Late usage changes the display revision, not request payload.
+            # Actual pricing must update without another config/catalog read.
+            message = backend.store.append_message(
+                session.id, role=ConsoleMessageRole.ASSISTANT, content="Paid answer",
+            )
+            usage = ProviderUsage(
+                uncached_input=1_000_000, output=1_000_000,
+                provider="anthropic", model="claude-sonnet-4-6",
+            )
+            backend.store.set_message_usage(message.id, usage)
+            payload_revision = backend.store.payload_revision(session.id)
+            await projection()
+            assert len(native_reads) == 1 and len(pricing_reads) == 1
+            assert readiness.cost.facts.snapshot.total_usd == 18.0
+            assert readiness.context_summary.cost is not None
+            backend.store.set_message_usage(message.id, ProviderUsage(
+                uncached_input=2_000_000, output=2_000_000,
+                provider="anthropic", model="claude-sonnet-4-6",
+            ))
+            await projection()
+            assert backend.store.payload_revision(session.id) == payload_revision
+            assert readiness.cost.facts.snapshot.total_usd == 36.0
+            assert len(native_reads) == 1 and len(pricing_reads) == 1
 
             clock[0] += 1.0
             await projection()
@@ -139,5 +179,21 @@ async def test_backend_readiness_reuses_native_facts_without_renewing_age(
             assert not readiness.pending and not readiness.reads
             await projection()
             assert len(native_reads) == 4 and readiness._context_facts is not None
+
+            previous_cost = readiness.context_summary.cost
+            clock[0] += 1.0
+            fail_pricing[0] = True
+            await projection()  # Real successful Applied + Retired despite optional failure.
+            assert readiness.cost.unavailable
+            assert readiness.context_summary.cost == previous_cost
+            reads = len(native_reads), len(pricing_reads)
+            backend.store._bump_display_projection_revision(session.id)
+            await projection()
+            assert (len(native_reads), len(pricing_reads)) == reads
+            assert readiness.context_summary.cost == previous_cost
+            clock[0] += 1.0
+            await projection()
+            assert not readiness.cost.unavailable
+            assert readiness.cost.facts.snapshot.total_usd == 36.0
     finally:
         await backend.aclose()

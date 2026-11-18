@@ -342,6 +342,8 @@ class ConsoleBackendPresentation:
                     self.readiness.context_summary.summary,
                     compaction_pause_expected=self.readiness.context_summary.compaction_pause_expected,
                     compaction_forecast_unavailable=self.readiness.context_summary.compaction_forecast_unavailable,
+                    cost=self.readiness.context_summary.cost,
+                    cost_cache_state=self.readiness.context_summary.cost_cache_state,
                 ),
                 "agent_rail": encode_agent_rail_projection(
                     self.readiness.agent_projection(store._sessions[identity.session_id])
@@ -580,6 +582,36 @@ class ConsoleBackendPresentation:
         ):
             raise ConsoleDisplayPhaseRefused("Backend display association changed")
         return None
+
+    def capture_display_reuse_checkpoint(self, owner):
+        """Qualify completed remote visibility, never an attached Screen."""
+        from .console_backend_view_lifecycle import ConsoleBackendViewLifecycle, _METHODS
+        from .console_domain_services import _definition_current
+
+        self._require_display_owner(owner)
+        lifecycle = self.view_lifecycle
+        record = dict(_METHODS)["capture_display_checkpoint"]
+        if (type(lifecycle) is not ConsoleBackendViewLifecycle
+            or lifecycle.presentation is not self
+            or getattr_static(lifecycle, "capture_display_checkpoint", None) is not record[0]
+            or not _definition_current(record)):
+            raise RuntimeError("Backend display checkpoint capture changed")
+        return record[0](lifecycle)
+
+    def display_reuse_checkpoint_current(self, owner, checkpoint) -> bool:
+        """Validate the exact completed lifecycle token alongside FULL guards."""
+        from .console_backend_view_lifecycle import ConsoleBackendViewLifecycle, _METHODS
+        from .console_domain_services import _definition_current
+
+        self._require_display_owner(owner)
+        lifecycle = self.view_lifecycle
+        record = dict(_METHODS)["display_checkpoint_current"]
+        if (type(lifecycle) is not ConsoleBackendViewLifecycle
+            or lifecycle.presentation is not self
+            or getattr_static(lifecycle, "display_checkpoint_current", None) is not record[0]
+            or not _definition_current(record)):
+            raise RuntimeError("Backend display checkpoint validation changed")
+        return record[0](lifecycle, checkpoint)
 
     def publish_commit_plan(self, controls, pending) -> None:
         """Emit only the original registered pre-ACK plan's inert projection."""

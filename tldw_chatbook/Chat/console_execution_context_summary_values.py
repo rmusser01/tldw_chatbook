@@ -6,11 +6,13 @@ from dataclasses import dataclass
 
 from .console_execution_projection_values import (
     _boolean,
+    _enum_record,
     _integer,
     _optional,
     _record,
     _text,
 )
+from .console_cost_tracker import ConsoleCacheState, ConsoleCostState
 from .console_execution_readiness_values import (
     decode_settings_readiness,
     encode_settings_readiness,
@@ -27,6 +29,8 @@ class ConsoleContextSummaryProjection:
     summary: ConsoleSettingsSummaryState
     compaction_pause_expected: bool
     compaction_forecast_unavailable: bool
+    cost: ConsoleCostState | None = None
+    cost_cache_state: ConsoleCacheState = ConsoleCacheState.NONE
 
 
 # The original constructors impose no nonnegative bound. The estimate builder
@@ -73,11 +77,24 @@ def _summary(value: object, decode: bool):
     return _record(value, ConsoleSettingsSummaryState, _SUMMARY, decode)
 
 
+def _cost(value: object, decode: bool):
+    return _record(value, ConsoleCostState, {
+        "label": _text, "compact_label": _text, "tooltip": _text,
+        "alert": _boolean, "cold": _boolean,
+    }, decode)
+
+
+def _cost_cache(value: object, decode: bool):
+    return _enum_record(value, ConsoleCacheState, decode)
+
+
 _PROJECTION = {
     "estimate": _estimate,
     "summary": _summary,
     "compaction_pause_expected": _boolean,
     "compaction_forecast_unavailable": _boolean,
+    "cost": _optional(_cost),
+    "cost_cache_state": _cost_cache,
 }
 
 
@@ -87,10 +104,13 @@ def encode_context_summary(
     *,
     compaction_pause_expected: bool,
     compaction_forecast_unavailable: bool,
+    cost: ConsoleCostState | None = None,
+    cost_cache_state: ConsoleCacheState = ConsoleCacheState.NONE,
 ) -> dict:
     """Detach exact original display values; flags are supplied, never inferred."""
     value = ConsoleContextSummaryProjection(
-        estimate, summary, compaction_pause_expected, compaction_forecast_unavailable
+        estimate, summary, compaction_pause_expected, compaction_forecast_unavailable,
+        cost, cost_cache_state,
     )
     return _record(value, ConsoleContextSummaryProjection, _PROJECTION, False)
 

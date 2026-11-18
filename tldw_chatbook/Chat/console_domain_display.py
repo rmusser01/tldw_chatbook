@@ -82,6 +82,7 @@ class _DisplaySelection:
     command_source: object
     loop: object
     task_factory: object
+    backend_checkpoint: object = None
 
 
 def _display_stock_eligible(owner):
@@ -171,6 +172,12 @@ def preselect_display(
         raise ConsoleDisplayPhaseRefused("Detached display requires its actual command")
     if stamp is not None:
         port.require_display_full_entry(entry, owner, task)
+    from .console_backend_presentation import ConsoleBackendPresentation
+
+    backend_checkpoint = (
+        port.capture_display_reuse_checkpoint(owner)
+        if type(port) is ConsoleBackendPresentation else None
+    )
     return _DisplaySelection(
         owner,
         task,
@@ -188,6 +195,7 @@ def preselect_display(
         actual,
         loop,
         factory,
+        backend_checkpoint,
     )
 
 
@@ -245,6 +253,7 @@ class ConsoleDomainDisplayOwner:
         self._full_tasks = {}
         self._preparation_reads = set()
         self._full = None
+        self._character_reuse_checkpoint = None
         self.character = None
         self.context = None
         self.appearance = None
@@ -440,6 +449,9 @@ class ConsoleDomainDisplayOwner:
         # owner._full + the effect in one controls-lock acquisition. No await,
         # worker scheduling or producer exposure occurs before this admission.
         selection.controls._begin_display_effect(full, selection)
+        # A failed/uncertain FULL cannot qualify a later observation. The
+        # original character cache remains its sole value/TTL owner.
+        self._character_reuse_checkpoint = None
         try:
             await full.run()
         finally:
@@ -453,6 +465,14 @@ class ConsoleDomainDisplayOwner:
             finish_admitted_display(full)
             # Do NOT unconditionally clear self._full. Uncertain original
             # owners remain retained by the effect/observer/parent registration.
+        if (
+            selection.backend_checkpoint is not None
+            and full.effect.completed.result() is True
+            and selection.port.display_reuse_checkpoint_current(
+                self, selection.backend_checkpoint,
+            )
+        ):
+            self._character_reuse_checkpoint = full.backend_character_key
 
     def retired_session_change(self, entry: object, error: BaseException) -> bool:
         """Recognize a failed old-session FULL only after its actual settlement.
@@ -582,6 +602,14 @@ class ConsoleDisplayFull(ConsoleDisplayPhysicalOwner):
         self.source_revision = selection.source_revision
         self.port = selection.port
         self.stamp = selection.stamp
+        self.backend_character_key = (
+            selection.backend_checkpoint, selection.session.id,
+            selection.incarnation, selection.source_revision,
+        ) if selection.backend_checkpoint is not None else None
+        self.reuse_backend_character = (
+            self.backend_character_key is not None
+            and self.backend_character_key == owner._character_reuse_checkpoint
+        )
         self.collecting = True
         self.sections = {}
         self.tasks = {}
@@ -629,6 +657,10 @@ class ConsoleDisplayFull(ConsoleDisplayPhysicalOwner):
             raise ConsoleDisplayPhaseRefused("Logical display source/session changed")
         if self.store.active_session_id != self.session.id:
             raise ConsoleDisplaySessionChanged(self)
+        if self.reuse_backend_character and not self.port.display_reuse_checkpoint_current(
+            self.owner, self.selection.backend_checkpoint,
+        ):
+            raise ConsoleDisplayPhaseRefused("Backend display visibility changed")
 
     def require_phase_task(self) -> None:
         current = asyncio.current_task()
@@ -885,7 +917,7 @@ class ConsoleDisplayFull(ConsoleDisplayPhysicalOwner):
                 self.character_result = (
                     await self.owner.character.refresh_presentation_if_scope_changed(
                         None,
-                        force_fresh=self.stamp is None,
+                        force_fresh=self.stamp is None and not self.reuse_backend_character,
                         _display_read=self,
                     )
                 )

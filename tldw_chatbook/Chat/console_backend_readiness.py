@@ -51,6 +51,10 @@ class ConsoleBackendReadiness:
         self.context_summary = None
         self.context_key = None
         self._context_facts = None
+        from .console_backend_cost import ConsoleBackendCost
+
+        self.cost = ConsoleBackendCost(backend)
+        self._cost_context = None
         self.agent_history = None
         self.agent_log_available = False
         self.agent_key = None
@@ -351,17 +355,29 @@ class ConsoleBackendReadiness:
         return capture_send_selection(self.backend, session, loaded)
 
     def _build_context_summary(
-        self, context_inputs, effective, readiness, window, tokenizer_ready, caps,
+        self, session, context_inputs, effective, readiness, window, tokenizer_ready, caps,
     ):
         from .console_backend_context_summary import (
-            ConsoleBackendContextInputs, build_backend_context_summary,
+            ConsoleBackendContextInputs, build_backend_context_presentation,
         )
 
-        return build_backend_context_summary(ConsoleBackendContextInputs(
+        summary, state = build_backend_context_presentation(ConsoleBackendContextInputs(
             **context_inputs, summary_settings=effective, readiness=readiness,
             context_window=window, tokenizer_ready=tokenizer_ready,
             provider_token_caps=caps,
         ))
+        self._cost_context = state
+        return self._cost_summary(session, summary)
+
+    def _cost_summary(self, session, summary):
+        return replace(
+            summary, cost=self.cost.project(session, self._cost_context),
+            cost_cache_state=self.cost.cache_state,
+        )
+
+    def _cost_can_derive(self, session):
+        return (self._context_facts is not None and self.value is not None
+                and self.cost.can_derive(session, self.value[0]))
 
     async def warm(
         self,
@@ -388,8 +404,13 @@ class ConsoleBackendReadiness:
             and self.agent_key == self._agent_key(session)
             and self.history_key == self._history_key()
             and backend.domain.sources.prompt_history._loaded
+            and self._cost_can_derive(session)
         ):
-            return self.value
+            with backend.store._preparation_lock:
+                if self.cost.derive(session, self.value[0]):
+                    self._current(session, settings, identity.source_revision, source)
+                    self.context_summary = self._cost_summary(session, self.context_summary)
+                    return self.value
         with backend.store._preparation_lock:
             agent_key = self._agent_key(session)
             current_context_key = self._context_key(session)
@@ -418,6 +439,7 @@ class ConsoleBackendReadiness:
             and self.key == key and time.monotonic() - self.at < 1.0
             and self.agent_key == agent_key and self.history_key == self._history_key()
             and backend.domain.sources.prompt_history._loaded
+            and self._cost_can_derive(session)
         ):
             from ..UI.Console_Modules import tokenizer_display
 
@@ -430,19 +452,20 @@ class ConsoleBackendReadiness:
                     current()
                     history_key = self._history_key()
                     effective, readiness, *_ = self.value
-                    send_selection = self._send_selection(session, loaded)
-                    summary = self._build_context_summary(
-                        context_inputs, effective, readiness, window, tokenizer_ready, caps,
-                    )
-                    current()
-                    if self._key(session, settings, identity.source_revision) != key:
-                        raise RuntimeError("Console readiness derivation changed")
-                    if history_key != self._history_key():
-                        raise RuntimeError("Console prompt history publication changed")
-                    if time.monotonic() - self.at < 1.0:
-                        self.context_key, self.context_summary = current_context_key, summary
-                        self.send_selection = send_selection
-                        return self.value
+                    if self.cost.derive(session, effective):
+                        send_selection = self._send_selection(session, loaded)
+                        summary = self._build_context_summary(
+                            session, context_inputs, effective, readiness, window, tokenizer_ready, caps,
+                        )
+                        current()
+                        if self._key(session, settings, identity.source_revision) != key:
+                            raise RuntimeError("Console readiness derivation changed")
+                        if history_key != self._history_key():
+                            raise RuntimeError("Console prompt history publication changed")
+                        if time.monotonic() - self.at < 1.0:
+                            self.context_key, self.context_summary = current_context_key, summary
+                            self.send_selection = send_selection
+                            return self.value
 
         # Failed or cancelled replacement reads cannot leave a reusable partial
         # input set. Publish the next one only after the effect retires below.
@@ -514,6 +537,20 @@ class ConsoleBackendReadiness:
                 with config_participants.operation(config) as active:
                     before = config_participants.checked_config_identity(config, active)
                     loaded = copy.deepcopy(config.load_settings())
+                    selection = controller_source.resolve_console_selection_core(settings, app_config=loaded)
+                    effective = replace(
+                        settings, model=selection.explicit_model or selection.configured_model,
+                        base_url=selection.base_url,
+                    )
+                    with backend.store._preparation_lock:
+                        current()
+                        try:
+                            self.cost.prepare(session, effective, tokenizer_ready, preparation)
+                        except Exception:
+                            self.cost.failed()
+                        # Optional display errors cannot swallow source changes
+                        # or the observation's actual native-retirement outcome.
+                        current()
                     after = config_participants.checked_config_identity(config, active)
                     if before != key[0] or after != before:
                         raise RuntimeError("Console readiness config changed")
@@ -627,7 +664,7 @@ class ConsoleBackendReadiness:
                     provider=selection.provider, app_config=loaded,
                 ).provider_label
                 summary = self._build_context_summary(
-                    context_inputs, effective, readiness, window, tokenizer_ready, caps,
+                    session, context_inputs, effective, readiness, window, tokenizer_ready, caps,
                 )
                 current()
                 value = effective, readiness, selection.provider, model, provider_chip
@@ -677,6 +714,7 @@ _CONTROL_LABEL_BODY = _definition(_CONTROL_LABEL_DESCRIPTOR.__func__)
 
 from .console_chat_controller import ConsoleChatController
 from .console_chat_store import ConsoleChatStore
+from .console_runtime import ConsoleRuntime
 from .console_provider_gateway import ConsoleProviderGateway
 from .console_domain_services import ConsoleDomainServices
 from .console_agent_bridge import ConsoleAgentBridge
@@ -689,11 +727,15 @@ from tldw_chatbook.UI.Console_Modules import tokenizer_display as _tokenizer_dis
 from tldw_chatbook.UI.Console_Modules import run_log_probe_scope as _run_log_probe
 from . import console_backend_context_summary as _context_summary
 from . import console_execution_agent_rail_values as _agent_values
+from . import console_backend_cost as _cost_owner
+from ..UI.Console_Modules import cost_display as _cost_display
+from ..UI.Console_Modules import pricing_display as _cost_pricing
 
 _CONTEXT_METHODS = tuple(
     (owner, name, _definition(getattr(owner, name)))
     for owner, names in (
-        (ConsoleChatController, ("run_state_for", "_submit_tasks_for_session", "_seeded_greeting_text", "_context_content_for", "context_breakdown_accounting", "_resolve_submit_prefill", "_pinned_prefill_for_session", "fleet_summary_counts")),
+        (ConsoleChatController, ("run_state_for", "_submit_tasks_for_session", "_seeded_greeting_text", "_context_content_for", "context_breakdown_accounting", "_resolve_submit_prefill", "_pinned_prefill_for_session", "fleet_summary_counts", "unattributed_fleet_tokens", "payload_fingerprint_baseline", "compute_current_fingerprint", "cache_ttl_snapshot", "_lightweight_provider_message_rows", "resolve_turn_configuration_snapshot")),
+        (ConsoleRuntime, ("response_rule_usage",)),
         (ConsoleAgentBridge, ("run_log_target_token", "historical_snapshot", "_derive_historical_snapshot", "resolve_run_log_target", "run_log_available", "live_snapshot", "fleet_snapshot", "live_run_snapshot", "live_primary_run_id", "subagent_history_page")),
         (ConsoleFleetWakeCoordinator, ("pause_reason", "has_pending")),
         (PromptHistory, ("load", "_load_locked", "_file_job", "_history_io", "entry_texts")),
@@ -707,8 +749,12 @@ _CONTEXT_FUNCTIONS = tuple(
     (owner, name, _definition(getattr(owner, name)))
     for owner, names in (
         (_tokenizer_display, ("capture_tokenizer_preparation", "preparation_current")),
-        (_context_spend, ("build_console_spend_history_projection",)),
-        (_context_summary, ("build_backend_context_summary", "_settings_estimate", "_context_state")),
+        (_context_spend, ("build_console_spend_history_projection", "build_console_current_cost_messages", "pricing_snapshot_options", "build_console_spend_cost_state", "console_rate_limit_line")),
+        (_context_summary, ("build_backend_context_summary", "build_backend_context_presentation", "_settings_estimate", "_context_state")),
+        (_cost_display, ("build_cost_facts", "build_cost_display", "fingerprint_break_reason", "token_estimate_signature")),
+        (_cost_owner, ("build_cost_snapshot", "_estimate_tokens_locally")),
+        (_cost_pricing, ("prepare_pricing_display", "pricing_display_current", "_bindings_current", "_stock_catalog_current")),
+        (_cost_pricing.DisplayPricingCatalog, ("__init__", "__eq__", "get_pricing")),
         (_agent_values, ("build_agent_rail_projection", "_fleet_rows", "_historical")),
         (_run_log_probe, ("finite_stock_probe", "_stock_default_probe")),
         (_history_raw, ("scope", "_retire")),
@@ -721,6 +767,7 @@ def _require_context_readers(backend) -> None:
     snapshot = backend.runtime._execution_service._display_owner.context
     receivers = {
         ConsoleChatController: backend.controller, ConsoleChatStore: backend.store,
+        ConsoleRuntime: backend.runtime,
         ConsoleProviderGateway: gateway, ConsoleDomainServices: backend.domain,
         ConsoleAgentBridge: backend.runtime.agent_bridge,
         ConsoleFleetWakeCoordinator: backend.controller.fleet_wake,
@@ -739,6 +786,13 @@ def _require_context_readers(backend) -> None:
     history = backend.domain.sources.prompt_history
     if backend.runtime._prompt_history is not history or backend.controller.prompt_history is not history:
         raise RuntimeError("Console prompt history source changed")
+    cost = backend.presentation.readiness.cost
+    if (type(cost) is not _cost_owner.ConsoleBackendCost or cost.backend is not backend
+        or cost._build_cost_snapshot is not _cost_owner.build_cost_snapshot
+        or cost._estimate_tokens_locally is not _cost_owner._estimate_tokens_locally
+        or any(getattr_static(cost, name, None) is not record[0] or not _definition_current(record)
+               for name, record in _cost_owner._METHODS)):
+        raise RuntimeError("Console cost source changed")
     if (
         getattr_static(FileJob, "native_retired", None) is not _HISTORY_RETIREMENT_DESCRIPTOR
         or not _definition_current(_HISTORY_RETIREMENT_BODY)

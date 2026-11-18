@@ -14,6 +14,7 @@ from tldw_chatbook.Chat.console_execution_context_summary_values import (
     encode_context_summary,
 )
 from tldw_chatbook.Chat.console_execution_protocol import ConsoleProtocolError
+from tldw_chatbook.Chat.console_cost_tracker import ConsoleCacheState, ConsoleCostState
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
@@ -24,6 +25,35 @@ from tldw_chatbook.Chat.console_session_settings import (
 
 def _empty_summary():
     return ConsoleSettingsSummaryState("", "", "", "", action_label="", action_tooltip="")
+
+
+def test_cost_roundtrip_keeps_absence_zero_and_original_cache_state_distinct():
+    estimate, summary = ConsoleSettingsContextEstimate(None, None, ""), _empty_summary()
+    for cost, cache in (
+        (None, ConsoleCacheState.NONE),
+        (ConsoleCostState("$0.00", "$0.00", "Empty", False, False), ConsoleCacheState.NONE),
+        (ConsoleCostState("$18.00", "$18.00", "Actual usage", True, False), ConsoleCacheState.WARM),
+        (ConsoleCostState("$18.00", "$18.00", "Expired", False, True), ConsoleCacheState.EXPIRED),
+    ):
+        payload = encode_context_summary(
+            estimate, summary, compaction_pause_expected=False,
+            compaction_forecast_unavailable=False, cost=cost, cost_cache_state=cache,
+        )
+        restored = decode_context_summary(json.loads(json.dumps(payload)))
+        assert restored.cost == cost and restored.cost_cache_state is cache
+        bad = deepcopy(payload)
+        bad["cost_cache_state"] = "ready"
+        with pytest.raises(ConsoleProtocolError):
+            decode_context_summary(bad)
+        if cost is not None:
+            bad = deepcopy(payload)
+            bad["cost"]["alert"] = 1
+            with pytest.raises(ConsoleProtocolError):
+                decode_context_summary(bad)
+            bad = deepcopy(payload)
+            bad["cost"]["authority"] = {}
+            with pytest.raises(ConsoleProtocolError):
+                decode_context_summary(bad)
 
 
 def test_unknown_zero_and_signed_estimates_keep_explicit_flags():

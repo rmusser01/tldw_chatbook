@@ -93,6 +93,7 @@ class ConsoleBackendViewLifecycle:
         self._association = presentation.association
         self._attachment: tuple[str, int] | None = None
         self._current: ConsoleBackendViewCheckpoint | None = None
+        self._display_prepared: ConsoleBackendViewCheckpoint | None = None
         self._current_values: tuple[str, int, str] | None = None
         self._current_owners: tuple | None = None
         self._seeds: dict[tuple[str, int], _MountSeed] = {}
@@ -251,6 +252,7 @@ class ConsoleBackendViewLifecycle:
         self._attachment = key
         self.presentation.parent_attachment = key
         self._current = checkpoint
+        self._display_prepared = None
         self._current_values = (attachment_id, visit, action)
         self._current_owners = owners
         # Optional seed failures return zero. Only the independent exact native
@@ -309,6 +311,86 @@ class ConsoleBackendViewLifecycle:
         _CHECK[0](self, checkpoint)
         controller.on_console_view_visibility_changed(True)
         _CHECK[0](self, checkpoint)
+        self._display_prepared = checkpoint
+
+    def capture_display_checkpoint(self) -> ConsoleBackendViewCheckpoint | None:
+        """Capture completed visibility under the original creator-loop checks."""
+        _REQUIRE[0](self)
+        checkpoint = self._display_prepared
+        if checkpoint is not None:
+            _CHECK[0](self, checkpoint)
+        return checkpoint
+
+    def display_checkpoint_current(self, checkpoint: ConsoleBackendViewCheckpoint) -> bool:
+        """Recheck a retained display token without granting native authority.
+
+        FULL's original source/effect checks also run on its native workers.
+        This reads only the already-authenticated checkpoint; new lifecycle
+        admission and preparation still require the original creator loop.
+        """
+        presentation = self.presentation
+        if (
+            type(self) is not ConsoleBackendViewLifecycle
+            or type(presentation) is not ConsoleBackendPresentation
+            or presentation.view_lifecycle is not self
+            or _retire_seed is not _RETIRE[0]
+            or not _definition_current(_RETIRE)
+            or _seed_retired is not _SEED_RETIRED[0]
+            or not _definition_current(_SEED_RETIRED)
+            or ConsoleBackendViewSuperseded is not _SUPERSEDED
+            or any(
+                getattr_static(self, name, None) is not record[0]
+                or not _definition_current(record)
+                for name, record in _METHODS
+            )
+            or type(checkpoint) is not ConsoleBackendViewCheckpoint
+            or type(checkpoint._registration) is not tuple
+            or len(checkpoint._registration) != 4
+            or checkpoint._registration[0] is not self
+            or checkpoint._registration[1] is not checkpoint
+            or (checkpoint.attachment_id, checkpoint.visit, checkpoint.action)
+            != checkpoint._registration[2]
+        ):
+            raise RuntimeError("Backend display checkpoint source changed")
+        presentation.require_association(self._association)
+        controller, store = presentation.backend.controller, presentation.backend.store
+        wake, bridge = controller._fleet_wake, controller._agent_bridge
+        if (
+            type(wake) is not ConsoleFleetWakeCoordinator
+            or wake._controller is not controller or wake._app is not None or wake._disposed
+            or type(controller._interrupt_host) is not InterruptRoundHost
+            or (bridge is not None and type(bridge) is not ConsoleAgentBridge)
+        ):
+            raise RuntimeError("Backend display checkpoint owner changed")
+        if any(
+            current is not captured
+            for current, captured in zip(
+                (controller, store, wake, bridge), checkpoint._registration[3], strict=True,
+            )
+        ) or any(
+            getattr_static(owner, name, None) is not record[0]
+            or not _definition_current(record)
+            for owner, definitions in (
+                (presentation, _PRESENTATION_METHODS),
+                (controller, _CONTROLLER_METHODS),
+                (store, _STORE_METHODS),
+                (wake, _WAKE_METHODS),
+                (controller._interrupt_host, _HOST_METHODS),
+            )
+            for name, record in definitions
+        ):
+            raise RuntimeError("Backend display checkpoint owner changed")
+        return (
+            not self._draining
+            and self._display_prepared is checkpoint
+            and self._current is checkpoint
+            and checkpoint.action in {"mount", "visible"}
+            and self._current_values == checkpoint._registration[2]
+            and self._current_owners == checkpoint._registration[3]
+            and self._attachment == (checkpoint.attachment_id, checkpoint.visit)
+            and presentation.parent_attachment == self._attachment
+            and controller._interrupt_host.view_visible
+        )
 
     async def drain(self) -> None:
         """Seal this producer and retire every issued seed before backend close."""
@@ -334,6 +416,7 @@ class ConsoleBackendViewLifecycle:
         if self._drained:
             return
         self._draining = True
+        self._display_prepared = None
         cancelled = False
         error = None
         for task, receipt in self._tasks:
