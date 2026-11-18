@@ -136,13 +136,27 @@ async def _run_agent_reply(
     if session is not None and project_state.project_instructions_enabled:
         from .console_project_dispatch import project_dispatch_registry
 
-        if getattr(self, "domain_services", None) is not None:
+        project_domain = getattr(self, "domain_services", None)
+        if project_domain is not None:
+            project_sources = project_domain.sources
+            project_association = project_domain.presentation.association
             registry = project_dispatch_registry(self)
         else:
             try:
                 registry = getattr(self.app, "workspace_registry_service", None)
             except Exception:
                 registry = None
+
+        def require_project_registry():
+            if project_domain is not None:
+                project_domain.require_current(project_sources)
+                project_domain.presentation.require_association(project_association)
+                if (
+                    self.domain_services is not project_domain
+                    or project_dispatch_registry(self) is not registry
+                ):
+                    raise RuntimeError("Console project registry source changed")
+
         try:
             if project_snapshot is not None:
                 if project_snapshot.selected is None:
@@ -193,6 +207,7 @@ async def _run_agent_reply(
                         assistant_message_id, session_id, str(exc)
                     )
                 action, binding_id = decision
+                require_project_registry()
                 action, project_selection = (
                     host.commit_project_instruction_setup_decision(
                         store=self.store,
@@ -231,11 +246,22 @@ async def _run_agent_reply(
                 # root -- they must not run on the UI event loop that
                 # owns this coroutine (the resolve-time preview twin
                 # already runs them via asyncio.to_thread).
-                await host.asyncio.to_thread(
-                    self.store.set_session_project_instruction_state,
-                    session_id,
-                    state,
-                )
+                if project_domain is not None:
+                    def set_project_state():
+                        require_project_registry()
+                        result = self.store.set_session_project_instruction_state(
+                            session_id, state
+                        )
+                        require_project_registry()
+                        return result
+
+                    await host.asyncio.to_thread(set_project_state)
+                else:
+                    await host.asyncio.to_thread(
+                        self.store.set_session_project_instruction_state,
+                        session_id,
+                        state,
+                    )
             if host.is_remote(project_selection.root):
                 # Task 19: AGENTS.md reads route through the remote
                 # executor (reader strategy). ADR-317 prep-failure
