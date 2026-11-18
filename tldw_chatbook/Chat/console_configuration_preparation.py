@@ -1534,13 +1534,12 @@ def _composition_mcp_capture_current(creator, service):
     from tldw_chatbook.MCP import console_tool_preparation as preparation_source
     from tldw_chatbook.MCP.console_snapshot import standard_console_catalog_sources
 
-    checker, code, namespace = controller_source._CONSOLE_TOOL_COMPOSITION_CHECKER
+    # The module's registered checker and its current-state verdict decide;
+    # its code and globals do not (ADR-356 rule 4, TASK-41644).
+    checker = controller_source._CONSOLE_TOOL_COMPOSITION_CHECKER[0]
     return (
         type(creator) is controller_source.ConsoleChatController
         and controller_source._stock_console_tool_composition_current is checker
-        and checker.__code__ is code
-        and checker.__globals__ is namespace
-        and namespace is vars(controller_source)
         and checker(creator)
         and provider_source.controller_factory_current(
             controller_source.MCPToolProvider
@@ -2500,9 +2499,9 @@ async def capture_mounted_configuration_owned(
     runtime_accessor = screen._console_runtime
 
     def same(left, right):
+        # Bound-method ``==`` is same receiver and same function (TASK-41644).
         return left is right or (
-            type(left) is MethodType and type(right) is MethodType
-            and left.__self__ is right.__self__ and left.__func__ is right.__func__
+            type(left) is MethodType and type(right) is MethodType and left == right
         )
 
     def current():
@@ -2699,8 +2698,7 @@ async def _controller_capture_turn_configuration_snapshot(
         return current is original or (
             type(current) is MethodType
             and type(original) is MethodType
-            and current.__func__ is original.__func__
-            and current.__self__ is original.__self__
+            and current == original
         )
     def require_resident_current() -> None:
         _require_mcp_attachment_source(app, self, attachment)
