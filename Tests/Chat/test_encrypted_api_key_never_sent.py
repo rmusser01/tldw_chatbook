@@ -211,6 +211,7 @@ def _local_config() -> dict:
         "aphrodite_api",
         "ollama",
         "custom",
+        "custom_2",
         "custom_openai_api_2",
     )
     return {
@@ -228,6 +229,10 @@ def _local_config() -> dict:
         "chat_with_vllm",
         "chat_with_aphrodite",
         "chat_with_ollama",
+        # TASK-41523: Custom OpenAI API 2 needs no key either (readiness reads
+        # it as keyless), so ciphertext in its slot or its legacy [API] key
+        # reads as no key, as it does for Custom OpenAI API 1.
+        "chat_with_custom_openai_2",
     ],
 )
 def test_local_handlers_never_forward_ciphertext(monkeypatch, sent, function_name):
@@ -275,28 +280,6 @@ def test_kobold_never_sends_ciphertext_as_x_api_key(monkeypatch, sent):
     assert sent, "the handler never reached its transport"
     assert not _ciphertext_credentials(sent)
     assert "X-Api-Key" not in sent[0]
-
-
-def test_custom_openai_2_refuses_ciphertext(monkeypatch, sent):
-    # custom_openai_2 often points at a REMOTE OpenAI-compatible host and
-    # requires a key: ciphertext is the missing-key refusal.
-    from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local as local
-
-    config = _local_config()
-    monkeypatch.setattr(local, "load_settings", lambda: config)
-    forwarded: list = []
-    monkeypatch.setattr(
-        local,
-        "_chat_with_openai_compatible_local_server",
-        lambda **kwargs: forwarded.append(kwargs.get("api_key")) or "captured",
-    )
-
-    error = _outcome(
-        lambda: local.chat_with_custom_openai_2(MESSAGES, api_key=None, model="m")
-    )
-
-    assert not forwarded, "ciphertext forwarded to the request builder"
-    _assert_missing_key_refusal(error, sent)
 
 
 #: Representative dispatch keys: one cloud provider that requires a key and

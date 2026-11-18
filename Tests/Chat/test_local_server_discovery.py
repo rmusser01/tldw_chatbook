@@ -4356,6 +4356,77 @@ def test_the_word_bench_still_targets_an_accepted_endpoint(configured):
     assert sample_bench.configured_llama_cpp_url(app_config) == "http://localhost:8080"
 
 
+@pytest.mark.parametrize(
+    ("llama_cpp", "why"),
+    [
+        (
+            {"api_url": "http://127.1:8080"},
+            "The configured llama.cpp endpoint is refused: "
+            + _contract_reason("llama_cpp", "http://127.1:8080"),
+        ),
+        (
+            {},
+            "No llama.cpp endpoint is configured: set [api_settings.llama_cpp] api_url.",
+        ),
+    ],
+    ids=["refused", "missing"],
+)
+# EvalsDB writes trip config-participant admission under the per-test
+# redirect, as for Tests/UI/test_evals_empty_states.py (TASK-32628).
+@pytest.mark.bootstrap_profile
+def test_the_word_bench_sends_nothing_without_a_usable_endpoint(llama_cpp, why, monkeypatch):
+    """TASK-41524: with a refused or missing llama.cpp URL the bench reads as
+    not configured, yet an existing target (reused by the sample bench, or a
+    saved bench's) still sent to a hard-coded ``http://localhost:8080``. Both
+    entry points now send nothing, write nothing, and say why."""
+    import asyncio
+
+    from tldw_chatbook.DB.Evals_DB import EvalsDB
+    from tldw_chatbook.Evals.word_bench.capture_client import WordBenchCaptureClient
+    from tldw_chatbook.UI.Evals import sample_bench
+    from tldw_chatbook.UI.Evals.evals_state import EvalsViewModel
+
+    requests: list[str] = []
+    transport = httpx.MockTransport(
+        lambda request: requests.append(str(request.url)) or httpx.Response(503)
+    )
+    monkeypatch.setattr(
+        sample_bench,
+        "WordBenchCaptureClient",
+        lambda **kwargs: WordBenchCaptureClient(**kwargs, transport=transport),
+    )
+    db = EvalsDB(db_path=":memory:", client_id="test")
+    view_model = EvalsViewModel(db)
+    dataset_id = db.create_dataset(name="d", format="custom", source_path="inline:d")
+    sample_bench.import_snippets_into_dataset(
+        db, dataset_id, [{"id": "s1", "text": "The sky is", "group": None, "note": None}]
+    )
+    target_id = db.create_model(name="existing target", provider="llama_cpp", model_id="m")
+    task_id = sample_bench.save_bench(
+        db,
+        sample_bench.BenchConfig(
+            name="saved bench",
+            prompt_mode="raw",
+            top_k=5,
+            dataset_id=dataset_id,
+            target_ids=(target_id,),
+        ),
+    )
+    app_config = {"api_settings": {"llama_cpp": llama_cpp}}
+    rows_before = (len(db.list_datasets()), len(db.list_tasks()))
+
+    for run in (
+        lambda: sample_bench.create_and_run_sample_bench(view_model, app_config),
+        lambda: sample_bench.run_existing_bench(view_model, app_config, task_id),
+    ):
+        with pytest.raises(RuntimeError) as caught:
+            asyncio.run(run())
+        assert str(caught.value) == why
+
+    assert requests == []
+    assert (len(db.list_datasets()), len(db.list_tasks())) == rows_before
+
+
 #: Owner decision 2026-11-16 (TASK-41145): Custom OpenAI API 2 reads its
 #: endpoint where Settings writes it.
 _CUSTOM_2_SLOT = {
@@ -4465,6 +4536,128 @@ def test_custom_2_without_an_endpoint_names_the_setting_to_fill(monkeypatch):
         _dispatch("custom-openai-api-2")
 
     assert "[api_settings.custom_2] api_url" in str(caught.value)
+
+
+class _AuthRecordingSession(_RecordingSession):
+    """Also records each POST's Authorization header."""
+
+    def __init__(self, posts, auth):
+        super().__init__(posts)
+        self.auth = auth
+
+    def post(self, url, **kwargs):
+        self.auth.append((kwargs.get("headers") or {}).get("Authorization"))
+        return super().post(url, **kwargs)
+
+
+def _auth_world(monkeypatch, config):
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local as local_calls
+
+    posts = _local_world(monkeypatch, config)
+    auth: list = []
+    monkeypatch.setattr(
+        local_calls,
+        "create_pooled_default_session",
+        lambda **_kw: _AuthRecordingSession(posts, auth),
+    )
+    return posts, auth
+
+
+@pytest.mark.parametrize(
+    ("provider", "env_var", "endpoint"),
+    [
+        ("custom", "CUSTOM_API_KEY", "http://127.0.0.1:1234/v1"),
+        ("custom_2", "CUSTOM_2_API_KEY", "http://127.0.0.1:5678/v1"),
+    ],
+)
+def test_a_keyless_custom_slot_sends_from_dreams_and_ingest(
+    provider, env_var, endpoint, monkeypatch
+):
+    """TASK-41523: readiness reads a custom slot with no key as ready and
+    keyless, but Custom OpenAI API 2's handler required a key unless the
+    caller had resolved one, so a keyless Dreams or ingest send failed with
+    "API Key required". Custom OpenAI API (1) is the control: the same
+    keyless config sends, with no Authorization header."""
+    from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+    from tldw_chatbook.Dreams import story_service
+    from tldw_chatbook.Library.ingest_analysis import resolve_ingest_analysis_provider
+    from tldw_chatbook.Local_Ingestion import local_file_ingestion
+
+    monkeypatch.delenv(env_var, raising=False)
+    defaults = {"provider": provider, "model": "m"}
+    config = _merged(
+        {
+            "api_settings": {provider: {"api_url": endpoint}},
+            "chat_defaults": defaults,
+            "analysis_defaults": defaults,
+        }
+    )
+    readiness = get_provider_readiness(provider, config)
+    assert (readiness.ready, readiness.requires_api_key, readiness.api_key) == (
+        True,
+        False,
+        None,
+    )
+    posts, auth = _auth_world(monkeypatch, config)
+    monkeypatch.setattr(
+        "tldw_chatbook.Dreams.settings.get_cli_setting",
+        lambda section, key, default=None: default,
+    )
+    monkeypatch.setattr(story_service, "load_cli_config_and_ensure_existence", lambda **kw: config)
+
+    reply = story_service.resolve_dreams_chat()(
+        messages_payload=[{"role": "user", "content": "hi"}], streaming=False
+    )
+    resolution = resolve_ingest_analysis_provider(config)
+    analysis = local_file_ingestion._run_chat_analysis(
+        api_name=resolution.dispatch_name,
+        api_key=resolution.api_key,
+        content="text",
+        custom_prompt="p",
+        system_prompt="s",
+        analysis_call={"model": "m"},
+    )
+
+    assert reply["choices"][0]["message"]["content"] == "ok"
+    assert analysis == ("ok", None)
+    assert posts == [f"{endpoint}/chat/completions"] * 2
+    assert auth == [None, None]
+
+
+@pytest.mark.parametrize(
+    ("slot", "sent"),
+    [
+        ({}, "Bearer legacy-key-0000"),
+        ({"api_key": "slot-key-0000"}, "Bearer slot-key-0000"),
+        ({"credential_source": "none"}, None),
+        ({"credential_source": "stored"}, None),
+    ],
+    ids=["no-decision", "slot-key-first", "none", "stored-without-a-key"],
+)
+def test_custom_2_reads_its_legacy_key_only_without_a_credential_decision(
+    slot, sent, monkeypatch
+):
+    """TASK-41523: Custom OpenAI API 2 resolves its key from its slot, as
+    readiness does; the legacy ``[API] custom_openai2_api_key`` (exposed by
+    ``load_settings`` as ``custom_openai_api_2.api_key``) is still read when
+    the slot records no credential decision, never over an explicit one."""
+    monkeypatch.delenv("CUSTOM_2_API_KEY", raising=False)
+    endpoint = {"api_url": "http://127.0.0.1:5678/v1"}
+    config = _merged({"api_settings": {"custom_2": {**endpoint, **slot}}})
+    config["custom_openai_api_2"] = {"api_key": "legacy-key-0000"}
+    posts, auth = _auth_world(monkeypatch, config)
+
+    from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+
+    chat_api_call(
+        "custom-openai-api-2",
+        [{"role": "user", "content": "x"}],
+        model="m",
+        streaming=False,
+    )
+
+    assert posts == [_CUSTOM_2_POST]
+    assert auth == [sent]
 
 
 # --- TASK-41145, owner decision 2026-11-16: "Settings edits host/port" -------

@@ -339,8 +339,12 @@ async def test_create_and_run_sample_bench_produces_a_populated_grid(db, view_mo
 
 @pytest.mark.asyncio
 async def test_create_and_run_sample_bench_raises_when_no_target_available(view_model):
-    with pytest.raises(RuntimeError):
-        await sample_bench.create_and_run_sample_bench(view_model, {})
+    # A supplied client factory skips the endpoint check (TASK-41524), so this
+    # reaches the no-target guard itself.
+    with pytest.raises(RuntimeError, match="No configured target is available"):
+        await sample_bench.create_and_run_sample_bench(
+            view_model, {}, client_factory=lambda t: _FakeCaptureClient([])
+        )
 
 
 @pytest.mark.asyncio

@@ -2428,15 +2428,26 @@ def chat_with_custom_openai_2(
             ),
         )
 
-    current_api_key = (
-        api_key
-        if api_key_resolved
-        else api_key or resolve_provider_api_key(cfg.get("api_key"))
-    )
-    if not current_api_key and not api_key_resolved:
-        raise ChatConfigurationError(
-            provider=cfg_section, message=f"{cfg_section} API Key required."
+    # TASK-41523: the key resolves from the slot as readiness resolves it (and
+    # as Custom OpenAI API 1 does), so a keyless endpoint readiness calls
+    # ready sends with no key. The legacy ``[API] custom_openai2_api_key``
+    # stays the fallback only while the slot records no credential decision.
+    if api_key_resolved or api_key:
+        current_api_key = api_key
+    else:
+        from tldw_chatbook.Chat.provider_readiness import (
+            configured_provider_credential_source,
+            resolve_provider_credential,
         )
+
+        slot_settings = slot if isinstance(slot, dict) else {}
+        current_api_key = resolve_provider_credential(
+            "custom_2", slot_settings, environ=os.environ
+        )[0]
+        if current_api_key is None and (
+            configured_provider_credential_source(slot_settings) is None
+        ):
+            current_api_key = resolve_provider_api_key(cfg.get("api_key"))
 
     current_model = model or cfg.get("model")
     if not current_model:
