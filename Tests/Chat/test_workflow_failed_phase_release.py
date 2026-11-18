@@ -100,6 +100,16 @@ def test_an_earlier_unproven_metadata_read_keeps_the_chat_until_restart(tmp_path
     _run(tmp_path, "unproven_earlier_read", "native", script=_SCRIPT, timeout=180)
 
 
+def test_stop_under_an_unproven_read_applies_and_says_so(tmp_path):
+    """Another chat's workflow read lost a storage handle, which leaves the
+    coordinator's unproven-read marker. Stop on a running phase then took
+    effect, but its trailing read-back was refused, so Stop reported plain
+    `workflow_return_unproven` for an action it had applied (TASK-41647). It
+    now reports `workflow_command_applied`, and the Console says Stop was
+    applied and names a restart for the view."""
+    _run(tmp_path, "stop_under_unproven_read", "native", script=_SCRIPT, timeout=180)
+
+
 async def _started(rig):
     rig.provider.plan["phases"][0]["tasks"].append(
         dict(
@@ -807,6 +817,96 @@ async def unproven_earlier_read(tmp_path):
             )
         ).accepted
     finally:
+        await _close_unresolved(rig, "workflow_original_metadata_shutdown_unresolved")
+
+
+async def _unproven_other_read(rig):
+    """Another chat's workflow read loses a storage handle: the coordinator's
+    unproven-read marker is set without touching this workflow's run."""
+    import asyncio
+    import contextlib
+
+    from tldw_chatbook.Agents.goal_storage_lifetime import owned_goal_storage
+    from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import (
+        preparation_read_for,
+    )
+    from tldw_chatbook.Chat import console_workflow_runs
+
+    with owned_goal_storage(rig.service):
+        other = rig.service.db.workflow_runs.create(
+            rig.workflow.request.model_copy(update={"conversation_id": "other"}),
+            launch_id="other-chat-workflow",
+        )
+    storage_return = console_workflow_runs._remaining_storage_return
+    reader = []
+
+    @contextlib.contextmanager
+    def handle_lost(databases):
+        read = preparation_read_for(rig.controller)
+        with storage_return(databases):
+            yield
+        if read is not None and read.task in reader:  # Only that read.
+            raise RuntimeError("original source database handle did not return")
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(console_workflow_runs, "_remaining_storage_return", handle_lost)
+        reader.append(asyncio.create_task(rig.coordinator.get(other.id)))
+        with pytest.raises(RuntimeError, match="workflow_return_unproven"):
+            await reader[0]
+    assert rig.coordinator._metadata_unproven()
+
+
+async def stop_under_unproven_read(tmp_path):
+    import asyncio
+
+    from Tests.Chat.workflow_rig import WorkflowProvider, build_workflow_rig
+    from tldw_chatbook.Chat import console_workflow_wave
+    from tldw_chatbook.UI.Console_Modules.workflows import workflow_view_error
+
+    rig = await build_workflow_rig(tmp_path, None, WorkflowProvider())
+    original = console_workflow_wave.run_workflow_wave
+    entered, gate = asyncio.Event(), asyncio.Event()
+
+    async def gated(phase, selected, **kwargs):
+        # The phase runs with task-1 prepared; its wave waits for the test.
+        entered.set()
+        await gate.wait()
+        return await original(phase, selected, **kwargs)
+
+    try:
+        decision = await _started(rig)
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(console_workflow_wave, "run_workflow_wave", gated)
+            await rig.coordinator.approve(decision, command_id="approved-once")
+            run = rig.coordinator._runs[rig.workflow.id]
+            await asyncio.wait_for(entered.wait(), 60)
+        await _unproven_other_read(rig)
+        running = await rig.service.call(rig.service.get, rig.workflow.id)
+        assert not run.driver.done() and run.control is None  # Still running.
+        with pytest.raises(RuntimeError) as applied:
+            await rig.coordinator.stop(
+                rig.workflow.id, expected_control_revision=running.control_revision
+            )
+        assert applied.value.args == ("workflow_command_applied",), applied.value
+        assert applied.value.__cause__.args == ("workflow_return_unproven",)
+        # Stop took effect: the phase is revoked and the stop is stored.
+        assert run.control == "stop"
+        stopped = await rig.service.call(rig.service.get, rig.workflow.id)
+        assert stopped.status == "stopped", stopped.status
+        assert stopped.control_revision > running.control_revision
+        message = workflow_view_error("Stop", applied.value)
+        assert message.startswith("Stop applied"), message
+        assert "Restart Chatbook to read workflows again" in message, message
+        # A read-back that failed for another reason offers a refresh.
+        other = workflow_view_error("Pause", RuntimeError("workflow_command_applied"))
+        assert other.startswith("Pause applied") and "Refresh to read" in other
+        gate.set()
+        await asyncio.wait({run.driver}, timeout=60)
+        assert run.driver.done()
+        assert [key for key, _ in rig.provider.calls] == ["planning"]
+    finally:
+        gate.set()
+        # The marker stays until restart (TASK-41320).
         await _close_unresolved(rig, "workflow_original_metadata_shutdown_unresolved")
 
 

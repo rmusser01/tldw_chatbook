@@ -66,6 +66,7 @@ _VIEW_REASONS = frozenset(
         "clock_reversed",
         "workflow_resources_still_live",
         "workflow_return_unproven",
+        "workflow_command_applied",
         "recovery_audit_required",
         "recovery_unavailable",
         "workflow_runtime_changed",
@@ -156,6 +157,16 @@ def workflow_view_error(context: str, error: BaseException) -> str:
             f"{operation} unavailable · Chatbook could not confirm that a Pause, "
             "Stop or background check finished cleanly. Restart Chatbook to read "
             "workflows again and release held chats."
+        )
+    if error.args == ("workflow_command_applied",):
+        # TASK-41647: the command took effect; only its read-back failed.
+        unproven = getattr(error.__cause__, "args", None) == (
+            "workflow_return_unproven",
+        )
+        return f"{operation} applied · The workflow view could not be refreshed. " + (
+            "Restart Chatbook to read workflows again and release held chats."
+            if unproven
+            else "Refresh to read the current workflow."
         )
     if error.args == ("recovery_audit_required",):
         return f"{operation} unavailable · Restart Chatbook to audit interrupted work, then review it."

@@ -1131,6 +1131,19 @@ class ConsoleWorkflowCoordinator:
         ):
             return full.model_copy(update={"status": view.status})
 
+    async def _applied(self, workflow_id):
+        """Publish and read back a command that has already taken effect.
+
+        TASK-41647: a failed read-back cannot undo the command, so it raises
+        ``workflow_command_applied`` (chained from the cause), never a plain
+        failure. Cancellation still propagates as itself.
+        """
+        try:
+            await self._publish(workflow_id)
+            return await self.get(workflow_id)
+        except Exception as error:  # noqa: BLE001 - any read-back failure follows a change already made.
+            raise RuntimeError("workflow_command_applied") from error
+
     async def _command(self, key, identity, operation):
         import asyncio
 
@@ -1397,9 +1410,7 @@ class ConsoleWorkflowCoordinator:
             except BaseException:
                 run.status = "recovery_required"
                 raise
-            _metadata_source(self)
-            await self._publish(run.workflow_id)
-            return await self.get(run.workflow_id)
+            return await self._applied(run.workflow_id)
 
         return await self._command(
             ("start", launch_id), request.canonical_json(), accept
@@ -1571,9 +1582,7 @@ class ConsoleWorkflowCoordinator:
                 await self.service.call(
                     self.service.review_quality, decision, accepted=True
                 )
-                _metadata_source(self)
-                await self._publish(decision.workflow_id)
-                return await self.get(decision.workflow_id)
+                return await self._applied(decision.workflow_id)
             if decision.action != "approve":
                 raise ValueError("workflow_approval_required")
             snapshot = await self.service.call(self.service.get, decision.workflow_id)
@@ -1634,9 +1643,7 @@ class ConsoleWorkflowCoordinator:
             run.driver = asyncio.create_task(
                 self._execute(run), name="native-workflow-phase"
             )
-            _metadata_source(self)
-            await self._publish(run.workflow_id)
-            return await self.get(run.workflow_id)
+            return await self._applied(run.workflow_id)
 
         return await self._command(
             ("approve", command_id), decision.canonical_json(), accept
@@ -2410,9 +2417,7 @@ class ConsoleWorkflowCoordinator:
                     run.control = action
                     if run.status != "recovery_required":
                         run.status = "pausing" if action == "pause" else "stopping"
-            _metadata_source(self)
-            await self._publish(workflow_id)
-            return await self.get(workflow_id)
+            return await self._applied(workflow_id)
 
         return await self._command(
             (action, workflow_id, expected_control_revision), action, control
@@ -2444,9 +2449,7 @@ class ConsoleWorkflowCoordinator:
                 expected_control_revision=expected_control_revision,
                 command_id=command_id,
             )
-            _metadata_source(self)
-            await self._publish(workflow_id)
-            return await self.get(workflow_id)
+            return await self._applied(workflow_id)
 
         return await self._command(
             ("resume", command_id), (workflow_id, expected_control_revision), resume
@@ -2521,8 +2524,7 @@ class ConsoleWorkflowCoordinator:
                 if run.prepared is None:
                     self._return_reviewed_admission(run)
                 self._runs.pop(workflow_id)
-            await self._publish(workflow_id)
-            return await self.get(workflow_id)
+            return await self._applied(workflow_id)
 
         return await self._command(
             ("reconcile", command_id),
@@ -2541,8 +2543,7 @@ class ConsoleWorkflowCoordinator:
                 workflow_id,
                 expected_control_revision=expected_control_revision,
             )
-            await self._publish(workflow_id)
-            return await self.get(workflow_id)
+            return await self._applied(workflow_id)
 
         return await self._command(
             ("remove", command_id), (workflow_id, expected_control_revision), remove
@@ -2621,9 +2622,7 @@ class ConsoleWorkflowCoordinator:
             except BaseException:
                 run.status = "recovery_required"
                 raise
-            _metadata_source(self)
-            await self._publish(workflow_id)
-            return await self.get(workflow_id)
+            return await self._applied(workflow_id)
 
         return await self._command(
             ("revise", command_id),

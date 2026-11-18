@@ -408,7 +408,10 @@ class ConsoleWorkflowStatus(SafeModalDismissMixin, ModalScreen[None]):
                         if self._can_render:
                             self.decision = None
                             self._disable_commands()
-                            self.query_one("#workflow-notice").update(message)
+                            # TASK-41647: keep "<Action> applied" visible.
+                            self.query_one("#workflow-notice").update(
+                                "\n".join(filter(None, (message, self._action_notice)))
+                            )
             finally:
                 self._reading = False
         except NoMatches:

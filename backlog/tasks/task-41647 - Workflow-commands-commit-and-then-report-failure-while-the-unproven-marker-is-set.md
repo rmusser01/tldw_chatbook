@@ -1,7 +1,7 @@
 ---
 id: TASK-41647
 title: "Workflow commands commit and then report failure while the unproven marker is set"
-status: To Do
+status: In Progress
 assignee: []
 created_date: 2026-11-17 19:05
 labels:
@@ -30,3 +30,14 @@ Found during the TASK-41306..41320 follow-up burn-down (2026-11-17, merged as #3
 - [ ] #2 Stop keeps working on a run with the unproven marker
 - [ ] #3 A test covers Stop under the marker
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: yes, a dated ADR-285 amendment under the TASK-41320 section (what a command that took effect reports when its read-back fails).
+
+1. Red test first (`Tests/Chat/test_workflow_failed_phase_release.py`): with a running phase (held task-1) and the coordinator's unproven-read marker set by another chat's workflow read, Stop takes effect (durable `stopped`, `run.control == "stop"`) but on d0486978dd reports plain `workflow_return_unproven` from its trailing `_publish`.
+2. One coordinator helper does every command's trailing publish and read-back. A failure there raises a distinct `workflow_command_applied`, chained from the cause; cancellation still propagates.
+3. The Console maps that reason to "<Action> applied · the workflow view could not be refreshed", naming a restart when the cause is the unproven marker, and keeps the action notice when the following refresh fails.
+4. ADR-285 amendment and the User Guide Recovery paragraph; mutation check; covering files on base and head.
+<!-- SECTION:PLAN:END -->
