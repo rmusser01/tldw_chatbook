@@ -385,7 +385,13 @@ _BUDGETS: dict[str, int] = {
     # gate (+1, 16,878 -> 16,879).
     # 2026-11-13, TASK-40304 (same rule): the storage-busy import copy
     # (+3, 16,879 -> 16,882).
-    "tldw_chatbook/UI/Screens/personas_screen.py": 16882,
+    # 2026-11-16, TASK-41114 (same rule; owner decision "Clear the interrupted
+    # import"): the stuck-import copy and the notice's import and two calls; the
+    # notice itself lives in Persona_Widgets (+7, 16,882 -> 16,889).
+    # 2026-11-16, TASK-41114 review r15ac-rev2 (same rule): a persona Actor Pack
+    # creation refused by the stuck import names it and shows the notice (+3,
+    # 16,889 -> 16,892).
+    "tldw_chatbook/UI/Screens/personas_screen.py": 16892,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
     # Roleplay frame B1 (TASK-33910.2), owner decision 2026-10-04 ("expand the
     # limits"), applied 2026-10-09: the final-review fix that puts a name and a

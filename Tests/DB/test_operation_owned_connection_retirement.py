@@ -100,41 +100,48 @@ def test_core_guard_retires_only_replacement_borrowers(
         db.close()
 
 
-def test_owned_cleanup_deadline_bounds_checkpoint_with_live_reader(tmp_path):
-    """A finite read must not spend the ordinary 15s timeout checkpointing."""
+def test_closing_worker_does_not_hold_other_writers_behind_a_live_reader(tmp_path):
+    """TASK-41115: a finite worker's close (``run_owned_db_call`` passes no
+    deadline) ran ``wal_checkpoint(TRUNCATE)`` with the 15 s busy timeout. A
+    pending TRUNCATE checkpoint holds the WAL writer lock while it waits for
+    readers, so the app's own writes stalled behind it, and under load
+    ``add_note`` failed ``database is locked``."""
+    import sys
     import time
 
-    path = tmp_path / "checkpoint-budget.sqlite"
-    db = CharactersRAGDB(path, "checkpoint-budget")
+    path = tmp_path / "close-checkpoint.sqlite"
+    db = CharactersRAGDB(path, "close-checkpoint")
     reader = sqlite3.connect(path)
     executor = ThreadPoolExecutor(max_workers=1)
+    worker = {}
     try:
         reader.execute("BEGIN")
-        reader.execute("SELECT COUNT(*) FROM conversations").fetchone()
-        db.add_conversation({"title": "WAL newer than the reader"})
+        reader.execute("SELECT COUNT(*) FROM notes").fetchone()
+        db.add_note("Seed", "WAL frames newer than the reader's snapshot.")
 
         def read():
-            with operation_owned_connection(
-                db, operation_deadline=time.monotonic() + 0.2
-            ):
-                connection = db.get_connection()
-                assert (
-                    connection.execute("SELECT COUNT(*) FROM conversations").fetchone()[
-                        0
-                    ]
-                    == 1
-                )
-            with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
-                connection.execute("SELECT 1")
+            worker["ident"] = threading.get_ident()
+            with operation_owned_connection(db):
+                db.get_connection().execute("SELECT COUNT(*) FROM notes").fetchone()
 
-        executor.submit(read).result(timeout=3)
+        future = executor.submit(read)
+        # Write while the worker closes its handle (or once it has closed).
+        deadline = time.monotonic() + 10
+        while not future.done() and time.monotonic() < deadline:
+            frame = sys._current_frames().get(worker.get("ident"))
+            names = set()
+            while frame is not None:
+                names.add(frame.f_code.co_name)
+                frame = frame.f_back
+            if "_close_connection_handle" in names:
+                break
+            time.sleep(0.005)
+        started = time.monotonic()
+        db.add_note("Main", "A write while another thread closes.")
+        waited = time.monotonic() - started
+        future.result(timeout=20)
         assert reader.in_transaction
-        assert (
-            db.get_connection()
-            .execute("SELECT COUNT(*) FROM conversations")
-            .fetchone()[0]
-            == 1
-        )
+        assert waited < 3, f"the write waited {waited:.1f}s behind a closing worker"
     finally:
         reader.rollback()
         reader.close()
@@ -142,13 +149,13 @@ def test_owned_cleanup_deadline_bounds_checkpoint_with_live_reader(tmp_path):
         db.close_connection()
 
 
-def test_cleanup_deadline_preserves_borrowed_timeout_and_transaction(tmp_path):
+def test_cleanup_preserves_borrowed_timeout_and_transaction(tmp_path):
     db = CharactersRAGDB(tmp_path / "borrowed-deadline.sqlite", "borrowed-deadline")
     try:
         connection = db.get_connection()
         connection.execute("PRAGMA busy_timeout = 3141")
         connection.execute("BEGIN")
-        with operation_owned_connection(db, operation_deadline=0):
+        with operation_owned_connection(db):
             assert connection.execute("SELECT 1").fetchone()[0] == 1
         assert connection.in_transaction
         assert connection.execute("PRAGMA busy_timeout").fetchone()[0] == 3141
@@ -157,7 +164,7 @@ def test_cleanup_deadline_preserves_borrowed_timeout_and_transaction(tmp_path):
 
 
 @pytest.mark.parametrize("body_fails", [False, True])
-def test_cleanup_deadline_tolerates_already_retired_native_handle(tmp_path, body_fails):
+def test_cleanup_tolerates_already_retired_native_handle(tmp_path, body_fails):
     db = CharactersRAGDB(tmp_path / "retired-deadline.sqlite", "retired-deadline")
     db.close_connection()
     error = (
@@ -166,7 +173,7 @@ def test_cleanup_deadline_tolerates_already_retired_native_handle(tmp_path, body
         else nullcontext()
     )
     try:
-        with error, operation_owned_connection(db, operation_deadline=0):
+        with error, operation_owned_connection(db):
             connection = db.get_connection()
             with db.quiesce_connections(timeout_seconds=2):
                 pass

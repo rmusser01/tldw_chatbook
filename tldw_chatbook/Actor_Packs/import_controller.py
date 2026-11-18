@@ -243,8 +243,13 @@ class ActorPackImportController:
                 cleanup_pending=outcome.cleanup_pending,
             )
 
+        from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
+
+        # TASK-41110: retire the executor thread's own store caches when the
+        # work ends, or that idle thread's lease keeps a later capture waiting.
         task = asyncio.create_task(
-            asyncio.to_thread(execute), name=f"actor-pack-import:{operation_id}"
+            asyncio.to_thread(run_finite_local_worker, execute),
+            name=f"actor-pack-import:{operation_id}",
         )
         active = _ActiveImport(operation_id, generation, cancelled, task, phase)
         self._active = active
@@ -347,7 +352,11 @@ class ActorPackImportController:
         with self._lock:
             review, self._leased_review = self._leased_review, None
         if review is not None:
-            await asyncio.to_thread(self._cleanup, review)
+            from tldw_chatbook.Backup_Recovery.participants import (
+                run_finite_local_worker,
+            )
+
+            await asyncio.to_thread(run_finite_local_worker, self._cleanup, review)
 
     def _cleanup(self, review: object) -> None:
         try:

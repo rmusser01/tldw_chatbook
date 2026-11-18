@@ -314,6 +314,16 @@ class LocalCharacterPersonaService:
             token=uuid.uuid4().hex,
         )
 
+    def _actor_pack_mutation_scope(self):
+        """Hold this store's paired file and ChaChaNotes admission (TASK-41114).
+
+        The Actor Pack coordinator keeps it from its plan through its commit,
+        so a capture's pause waits for the whole two-store change. Guarded
+        calls inside reuse it; an exception leaving it marks the store's
+        publication incomplete.
+        """
+        return _chat_sources.operation(self)
+
     @_chat_sources.guarded
     def _actor_pack_plan_persona_profile(
         self,

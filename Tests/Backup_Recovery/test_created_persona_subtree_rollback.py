@@ -1,7 +1,6 @@
 """Native rollback retires only a committed incoming nested Persona pack."""
 
 import sys
-import time
 
 import pytest
 
@@ -166,7 +165,7 @@ print('NATIVE_NESTED_PERSONA_REPLACEMENT_COMPLETE',flush=True)
 """
 
 _REOPEN = r"""
-import asyncio,hashlib,json,sys
+import asyncio,hashlib,json,sys,threading,time
 from pathlib import Path
 from Tests.network_guard import install
 install()
@@ -182,8 +181,14 @@ async def run():
  async with initial_screen_observation(app), app.run_test(size=(120,40)):
   notes={row['title']:row['content'] for row in app.chachanotes_db.list_notes()}
   assert notes['Original source']=='Before replacement for source' and 'Original target' not in notes
-  with observe_notes_write_failure(Path.home()/'persona-note-write.log',app.chachanotes_db):
-   app.chachanotes_db.add_note('After nested pack replacement','New current data must enter the later safety copy.')
+  started=time.monotonic()
+  try:
+   with observe_notes_write_failure(Path.home()/'persona-note-write.log',app.chachanotes_db):
+    app.chachanotes_db.add_note('After nested pack replacement','New current data must enter the later safety copy.')
+  except BaseException:
+   # TASK-41115: how long the INSERT waited, and the thread names the record's idents belong to.
+   (Path.home()/'persona-note-write-context.json').write_text(json.dumps({'waited':round(time.monotonic()-started,3),'names':{str(t.ident):t.name for t in threading.enumerate()}}))
+   raise
   pack=Path(json.loads((Path.home()/'operation.json').read_text())['pack'])
   files={path.relative_to(pack).as_posix():hashlib.sha256(path.read_bytes()).hexdigest() for path in pack.rglob('*') if path.is_file()}
   (Path.home()/'current-persona.json').write_text(json.dumps(files))
@@ -298,21 +303,43 @@ print('NATIVE_NESTED_PERSONA_LATER_COMPLETE',flush=True)
 _HANG_SECONDS = 60
 
 
+def _note_write_summary(home):
+    """TASK-41115: the failed add_note's error, its wait and every thread's
+    top frames, compact enough that the failure report keeps all of it."""
+    import json
+
+    record = json.loads((home / "persona-note-write.log").read_text("utf-8"))
+    context = home / "persona-note-write-context.json"
+    context = json.loads(context.read_text("utf-8")) if context.is_file() else {}
+    names = context.get("names", {})
+    error = {key: value for key, value in record["error"].items() if key != "frames"}
+    lines = [
+        f"add_note waited {context.get('waited', '?')} s; error {error}; "
+        f"transaction {record['transaction_entry']}"
+    ]
+    for thread in record["threads"]:
+        frames = " < ".join(
+            f"{frame['file']}:{frame['function']}:{frame['line']}"
+            for frame in thread["frames"][:12]
+        )
+        lines.append(f"{names.get(str(thread['thread']), thread['thread'])}: {frames}")
+    return "\n".join(lines)
+
+
 def _prepare_native(tmp_path):
+    # TASK-41115: at load 83-106 the capture child outlasted its fixed 120 s in
+    # every fixture build while busy. Like the replacement (TASK-40306), each
+    # fixture child now fails only once it uses no CPU, under a 600 s cap.
     for label in ("source", "target"):
         home = tmp_path / label
         (home / ".config/tldw_cli").mkdir(parents=True, mode=0o700)
-        _child(
-            home,
-            _SEED_PERSONA,
-            "seed-persona",
-            timeout=480 if sys.platform == "win32" else 70,
-        )
+        _child(home, _SEED_PERSONA, "seed-persona", timeout=600, idle=_HANG_SECONDS)
     _child(
         tmp_path / "source",
         _CAPTURE,
         "persona-capture",
-        timeout=480 if sys.platform == "win32" else 120,
+        timeout=600,
+        idle=_HANG_SECONDS,
     )
     # TASK-40306: two whole-profile replaces (the credential review aborts the
     # first), built by every xdist worker. On a loaded host the child outlasted
@@ -329,47 +356,48 @@ def _prepare_native(tmp_path):
             tmp_path / "target",
             _REOPEN,
             "persona-reopen",
-            timeout=300 if sys.platform == "win32" else 90,
+            timeout=600,
+            idle=_HANG_SECONDS,
         )
     except AssertionError as failure:
         # TASK-40306: one reopen failed `database is locked` on add_note under
         # load and its thread record was lost with the basetemp; keep it.
-        record = tmp_path / "target" / "persona-note-write.log"
-        if record.is_file():
-            failure.add_note(record.read_text(encoding="utf-8")[-6000:])
+        if (tmp_path / "target" / "persona-note-write.log").is_file():
+            failure.add_note(_note_write_summary(tmp_path / "target"))
         raise
     return tmp_path / "target"
 
 
-# Windows child ceilings reuse existing seed/F9/later/open observations;
-# The enclosing bounds exceed all seed/capture/recovery/reopen child ceilings.
-@pytest.mark.timeout(4200 if sys.platform == "win32" else 900)
+#: TASK-41115: each child after the fixture fails only once idle, under a wall
+#: backstop about twice its loaded run. At load 38-68 the later child outlasted
+#: the 299 s left of the old shared 860 s budget while busy, and the capture
+#: child its fixed 120 s at load 83-106 (2026-11-16).
+_LATER_BACKSTOP, _RESTORED_REOPEN_BACKSTOP, _RESTORED_CAPTURE_BACKSTOP = 900, 300, 480
+
+
+# Above the sum of every child backstop: the fixture's five (600 s each) and
+# the three below.
+@pytest.mark.timeout(4800)
 def test_native_nested_persona_pack_survives_reopen_and_later_rollback(tmp_path):
-    started = time.monotonic()
     home = _prepare_native(tmp_path)
-    later_timeout = 900
-    if sys.platform != "win32":
-        # Reuse unspent setup allowance within the original 860s child budget;
-        # reserve the final 90s reopen and 120s capture observations.
-        later_timeout = started + 860 - time.monotonic() - (90 + 120)
-        if later_timeout <= 0:
-            raise TimeoutError("persona_rollback_test_budget_exhausted")
     output = _child(
-        home, _LATER, "persona-later", timeout=later_timeout, idle=_HANG_SECONDS
+        home, _LATER, "persona-later", timeout=_LATER_BACKSTOP, idle=_HANG_SECONDS
     )
     assert "NATIVE_NESTED_PERSONA_LATER_COMPLETE" in output
     output = _child(
         home,
         _RESTORED_REOPEN,
         "persona-restored-reopen",
-        timeout=300 if sys.platform == "win32" else 90,
+        timeout=_RESTORED_REOPEN_BACKSTOP,
+        idle=_HANG_SECONDS,
     )
     assert "NATIVE_PERSONA_ORDINARY_RESTORED_REOPEN_COMPLETE" in output
     output = _child(
         home,
         _CAPTURE.replace("incoming.tldw-backup.zip", "after-later.tldw-backup.zip"),
         "persona-restored-capture",
-        timeout=480 if sys.platform == "win32" else 120,
+        timeout=_RESTORED_CAPTURE_BACKSTOP,
+        idle=_HANG_SECONDS,
     )
     assert "NATIVE_PERSONA_CAPTURE_COMPLETE" in output
 
@@ -455,7 +483,10 @@ def native_persona_negatives(tmp_path_factory):
         "foreign-owner",
     ],
 )
-@pytest.mark.timeout(3600 if sys.platform == "win32" else 600)
+# TASK-41115: a node's timeout also covers the module fixture it builds. At
+# load 75-90 that build outlasted 600 s while busy, so the cap now sits above
+# the fixture's five child caps (600 s each) plus this node's own child.
+@pytest.mark.timeout(3600)
 def test_native_persona_mapping_refuses_unproved_graph(native_persona_negatives, case):
     output = _child(native_persona_negatives, _NEGATIVE, case, timeout=60)
     assert "NATIVE_PERSONA_NEGATIVE_COMPLETE" in output
@@ -542,7 +573,7 @@ print('NATIVE_PERSONA_OVERLAP_REFUSED',case,flush=True)
         "ancestor-replaced",
     ],
 )
-@pytest.mark.timeout(3600 if sys.platform == "win32" else 600)
+@pytest.mark.timeout(3600)  # As above.
 def test_native_persona_retirement_keeps_ancestor_exclusion(
     native_persona_negatives, case
 ):
@@ -562,9 +593,12 @@ def test_native_persona_retirement_keeps_ancestor_exclusion(
 # orchestrator never imports config and holds no lease across maintenance
 # (TASK-40132 lesson). The route argument picks the scenario:
 #   changed         back up, add a second pack, restore, roll the restore back
-#   created-source  back up a profile holding one pack (for created-target)
-#   created-target  restore that backup into a profile that never had either
-#                   tree, then roll the restore back
+#   created-source  back up a profile holding one pack (for both targets below)
+#   created-target  restore that backup into a profile that had neither tree
+#                   nor a persona store, then roll the restore back
+#   nested-target   restore that backup into a profile holding another pack,
+#                   so the restore creates a pack folder inside each existing
+#                   root, then roll the restore back (TASK-41113)
 _ACTOR_TREES_ROLLBACK = r"""
 import hashlib,json,os,subprocess,sys
 from pathlib import Path
@@ -606,11 +640,9 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 root=get_user_data_dir()
 db=CharactersRAGDB(database_path(tomllib.loads(selector.read_text()),'chachanotes_db_path'),'actor-pack-rollback')
 if sys.argv[1]=='populate':
-    # A profile with a persona of its own, which never imported an Actor Pack.
-    try:
-        build_persona_service(db).create_persona_profile({'name':'Existing persona'})
-    finally:
-        db.close_connection()
+    # A profile with no persona and no Actor Pack: the restore creates the
+    # persona store file as well as both trees (TASK-41113).
+    db.close_connection()
     print(json.dumps({'root':str(root)}))
     raise SystemExit(0)
 from Tests.Actor_Packs.test_actor_pack_activation import _persona_runtime_section,_shared_visual_section,_write_archive
@@ -720,15 +752,37 @@ try:
         root=Path(first['root'])
         backup(service,root,Path.home()/'created.tldw-backup.zip')
         (Path.home()/'created-trees.json').write_text(json.dumps(trees(root)))
-    else:
-        assert route=='created-target',route
+    elif route=='created-target':
         root=Path(produce('populate')['root'])
+        store=root/'tldw_chatbook_personas.json'
         assert not (root/'actor_packs').exists() and not (root/'visual_identities').exists()
+        assert not store.exists()
         operation=restore(service,shared/'created.tldw-backup.zip')
         incoming=json.loads((shared/'created-trees.json').read_text())
         assert incoming and trees(root)==incoming,'restore did not create both trees'
-        # The prior state had neither tree: the rollback retires what it created.
+        assert store.is_file(),'restore did not create the persona store'
+        # The prior state had neither tree nor a persona store: the rollback
+        # retires what the restore created.
         roll_back(service,operation,root,{})
+        assert not store.exists(),'rollback kept the created persona store'
+    else:
+        assert route=='nested-target',route
+        root=Path(produce('prepare','223e4567-e89b-42d3-a456-426614174000')['root'])
+        before=trees(root)
+        # The target's own persona store: the restore replaces it, so only the
+        # created-file rule's previous-is-None test keeps the rollback from
+        # retiring it as restore-created (TASK-41113 review).
+        store=root/'tldw_chatbook_personas.json'
+        own=store.read_bytes()
+        incoming=json.loads((shared/'created-trees.json').read_text())
+        assert before and not set(before)&set(incoming),(before,incoming)
+        operation=restore(service,shared/'created.tldw-backup.zip')
+        assert trees(root)==incoming,'restore did not replace the target pack'
+        assert store.read_bytes()!=own,'restore did not replace the own persona store'
+        # The restore created the source's pack folder inside each existing
+        # root and retired the target's own; the rollback reverses both.
+        roll_back(service,operation,root,before)
+        assert store.is_file() and store.read_bytes()==own,'rollback lost the own persona store'
 finally:
     service.close()
 assert not network_guard.blocked_attempts()
@@ -774,6 +828,33 @@ def test_later_rollback_of_a_restore_that_created_actor_pack_trees(tmp_path):
     _run(
         tmp_path / "created-target",
         "created-target",
+        "rollback",
+        script=_ACTOR_TREES_ROLLBACK,
+        timeout=4000 if sys.platform == "win32" else 1100,
+    )
+
+
+# Above the two children's summed budgets on every platform.
+@pytest.mark.timeout(5700 if sys.platform == "win32" else 1500)
+def test_later_rollback_of_a_restore_that_created_nested_actor_pack_folders(tmp_path):
+    """TASK-41113 AC2: restore a backup holding one pack into a profile that
+    holds another, so the restore creates the incoming pack's folder inside
+    both existing roots, then roll that restore back later. Both trees come
+    back byte for byte."""
+    from Tests.Backup_Recovery.test_home_citation_retirement import _run
+
+    for name in ("created-source", "nested-target"):
+        (tmp_path / name).mkdir(mode=0o700)
+    _run(
+        tmp_path / "created-source",
+        "created-source",
+        "backup",
+        script=_ACTOR_TREES_ROLLBACK,
+        timeout=1500 if sys.platform == "win32" else 300,
+    )
+    _run(
+        tmp_path / "nested-target",
+        "nested-target",
         "rollback",
         script=_ACTOR_TREES_ROLLBACK,
         timeout=4000 if sys.platform == "win32" else 1100,
