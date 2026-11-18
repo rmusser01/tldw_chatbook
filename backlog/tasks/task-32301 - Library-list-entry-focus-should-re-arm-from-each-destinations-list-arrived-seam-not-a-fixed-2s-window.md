@@ -19,6 +19,8 @@ priority: medium
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
 Entry focus (task-2856) arms a fixed LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS window when a rail row is pressed, so a destination whose list takes longer than that to arrive lands focus nowhere and the keys that depend on focus being in the canvas go unadvertised. task-32260 measured Library at 12.6s to open on a seeded profile, which makes the miss routine on a session's first visit rather than rare. Measured on fix/library-crit9-shell: a cold first visit to Conversations misses the window and lands nowhere; a warm re-entry lands every time; a cold Prompts visit lands in its filter rather than row 0. Raised by the critique-9 shell re-review as the rider for task-32228's accepted ceiling.
+
+TASK-41532 (2026-11-18): the cold Prompts visit lands in its filter because `_focus_library_list_entry` (`UI/Screens/library_screen.py`, the empty-list `fallback_selector`) takes the filter fallback when its attempt finds no rows yet; only Notes waits for loading rows there (TASK-41129). `Tests/UI/test_library_shell.py::test_slash_focuses_the_prompts_filter_not_the_rail_search` failed on every push-to-dev run from this until it focused the row itself.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

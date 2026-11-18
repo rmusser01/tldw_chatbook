@@ -7299,14 +7299,16 @@ async def test_slash_focuses_the_prompts_filter_not_the_rail_search(tmp_path):
             row_id = f"library-prompt-row-{prompt_id}"
             await _wait_for_selector(screen, pilot, f"#{row_id}")
             # TASK-41532: when the rows arrive after the entry's first attempt,
-            # entry focus takes the empty-list fallback, this filter (Prompts
-            # has no wait for loading rows; Notes got one in TASK-41129), and
-            # CI lost that race on every push. Let the entry settle, then
-            # start "/" from the row.
+            # entry focus takes the empty-list fallback, this filter (the cold
+            # Prompts visit TASK-32301 tracks: Prompts has no wait for loading
+            # rows; Notes got one in TASK-41129), and CI lost that race on
+            # every push. Let the entry settle, then start "/" from the row.
             await _wait_for_condition(
                 pilot,
                 lambda: not screen._library_pending_list_entry_focus,
-                message="Prompts entry focus never settled.",
+                message=lambda: (
+                    f"Prompts entry focus never settled: {screen.focused!r}"
+                ),
             )
             screen.query_one(f"#{row_id}").focus()
             await _wait_for_condition(
@@ -13226,15 +13228,32 @@ async def test_library_media_complete_facets_commit_during_initial_recovery(
             opener = screen.query_one("#library-media-type-filter", Button)
             opener.press()
             # TASK-41532: CI run 43917600414 saw no chooser for 30 s here
-            # ([loading-All]), not reproduced locally. If it recurs, this says
-            # whether the press ever opened the strip.
+            # ([loading-All]). Once locally (load ~31) a background canvas
+            # recompose pruned the opener before its Pressed message was
+            # handled, and Textual drops that message. Press the live
+            # replacement then; any other miss fails with the opener's state.
+            pressed = [opener]
+
+            def strip_opened() -> bool:
+                if screen._media_state.type_choices_visible:
+                    return True
+                if pressed[-1].parent is None or pressed[-1]._pruning:
+                    live = screen.query("#library-media-type-filter")
+                    if live and live.first() is not pressed[-1]:
+                        pressed.append(live.first())
+                        pressed[-1].press()
+                return False
+
             await _wait_for_condition(
                 pilot,
-                lambda: screen._media_state.type_choices_visible,
+                strip_opened,
+                timeout=30.0,
                 message=lambda: (
-                    "The type opener press never opened the strip: opener "
-                    f"pruning={getattr(opener, '_pruning', False)}, "
-                    f"parent={opener.parent!r}, focused={screen.focused!r}."
+                    f"{len(pressed)} type opener press(es) never opened the "
+                    f"strip: last opener disabled={pressed[-1].disabled}, "
+                    f"display={pressed[-1].display}, "
+                    f"pruning={pressed[-1]._pruning}, "
+                    f"parent={pressed[-1].parent!r}, focused={screen.focused!r}."
                 ),
             )
             chooser = await _wait_for_selector(
