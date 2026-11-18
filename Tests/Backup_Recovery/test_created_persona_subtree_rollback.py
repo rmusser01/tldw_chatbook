@@ -603,6 +603,9 @@ def test_native_persona_retirement_keeps_ancestor_exclusion(
 # later_rollback._CREATED_FILE_OWNERS besides the persona store: created-target
 # has none, so the restore creates each, and nested-target holds its own copy
 # of each, which the rollback must bring back (TASK-41521).
+#   recreated-target  as created-target, but one created file is replaced
+#                   after the restore (same bytes, new inode): the later
+#                   rollback refuses to retire it (TASK-41521 review)
 _ACTOR_TREES_ROLLBACK = r"""
 import hashlib,json,os,subprocess,sys
 from pathlib import Path
@@ -806,6 +809,24 @@ try:
         assert not store.exists(),'rollback kept the created persona store'
         kept={owner for owner,text in read_single_files(root).items() if text is not None}
         assert not kept,'rollback kept created single files: '+repr(sorted(kept))
+    elif route=='recreated-target':
+        root=Path(produce('populate')['root'])
+        operation=restore(service,shared/'created.tldw-backup.zip')
+        files=json.loads((shared/'created-files.json').read_text())
+        assert read_single_files(root)==files,'restore did not create the single files'
+        # Same bytes under a new inode: only the created file's device/inode
+        # check tells it from the file the restore published.
+        path=single_files(root)['feedback']
+        temp=path.with_name(path.name+'.replacement')
+        temp.write_text(path.read_text());temp.chmod(0o600);os.replace(temp,path)
+        try:
+            preview_rollback(operation,control_root=service.control_root,old_password=b'rollback-test-password',
+                target=service.preview_backup((source,),options={}),cancel=Event())
+        except ValueError as error:
+            assert str(error)=='local_snapshot_created_root_changed',error
+        else:
+            raise AssertionError('later rollback accepted a created file recreated after the restore')
+        assert path.read_text()==files['feedback'],'refused rollback touched the recreated file'
     else:
         assert route=='nested-target',route
         root=Path(produce('prepare','223e4567-e89b-42d3-a456-426614174000')['root'])
@@ -877,6 +898,32 @@ def test_later_rollback_of_a_restore_that_created_actor_pack_trees(tmp_path):
         tmp_path / "created-target",
         "created-target",
         "rollback",
+        script=_ACTOR_TREES_ROLLBACK,
+        timeout=4000 if sys.platform == "win32" else 1100,
+    )
+
+
+# Above the two children's summed budgets on every platform.
+@pytest.mark.timeout(5700 if sys.platform == "win32" else 1500)
+def test_later_rollback_refuses_a_created_file_recreated_after_the_restore(tmp_path):
+    """TASK-41521 review: replace one file the restore created with a copy of
+    itself (a new inode) before the later rollback. The rollback refuses with
+    ``local_snapshot_created_root_changed`` and leaves the file as it is."""
+    from Tests.Backup_Recovery.test_home_citation_retirement import _run
+
+    for name in ("created-source", "recreated-target"):
+        (tmp_path / name).mkdir(mode=0o700)
+    _run(
+        tmp_path / "created-source",
+        "created-source",
+        "backup",
+        script=_ACTOR_TREES_ROLLBACK,
+        timeout=1500 if sys.platform == "win32" else 300,
+    )
+    _run(
+        tmp_path / "recreated-target",
+        "recreated-target",
+        "refused",
         script=_ACTOR_TREES_ROLLBACK,
         timeout=4000 if sys.platform == "win32" else 1100,
     )

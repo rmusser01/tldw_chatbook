@@ -88,3 +88,8 @@ Red/green (load 55-80, `-n 2` unless noted):
 **Not met: AC#2 for the owners the table marks "not covered".** Each needs more than joining the set: the SQLite owners a proof for the database and its `-wal`/`-shm` sidecars; the MCP stores their credential review and retained `fresh`/`history` destinations; `config.history` its path-keyed family of files beside the config, which the proof's owner-keyed rediscovery does not model; `tamagotchi.config` a path outside the profile. They are proposed as follow-ups, so this task stays In Progress.
 
 Also read from the code, not run: a restore of saved chatbooks *with* archives into a profile without a `chatbooks/` folder creates that tree root, and `chatbooks.archives` is not in `_CREATED_TREE_ROOT_OWNERS`, so that later rollback would still refuse even though the registry file now retires. The test's registry holds one metadata-only entry for that reason.
+
+### Review r16rs-rev1, fix round 1
+
+- **Important 1: the recreated-file guard is tested.** New route `recreated-target` and test `test_later_rollback_refuses_a_created_file_recreated_after_the_restore`: after the restore, the created `feedback` file is replaced by a copy of itself through a temporary file and `os.replace` (same bytes, new inode). The later rollback's preview refuses with `local_snapshot_created_root_changed`, and the file is left as it was. Green: 1 passed (92 s serial, load 52-39). Red with the device/inode comparison in `_created_destination_target` temporarily disabled: `AssertionError: later rollback accepted a created file recreated after the restore` (79 s). Added test time: one more created-source backup and one target restore, about 1.5 min serial.
+
