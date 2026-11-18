@@ -789,12 +789,13 @@ def set_encryption_password(password: str):
     before the startup unlock prompt) holds ciphertext, so it must be dropped and
     re-decrypted on the next load.
     """
-    global _ENCRYPTION_PASSWORD, _SETTINGS_CACHE, _CONFIG_CACHE
+    global _ENCRYPTION_PASSWORD, _SETTINGS_CACHE, _CONFIG_CACHE, _CONFIG_PINNED_READ
     global _STARTUP_UNLOCK_PENDING
     _ENCRYPTION_PASSWORD = password
     _STARTUP_UNLOCK_PENDING = False
     _SETTINGS_CACHE = None
     _CONFIG_CACHE = None
+    _CONFIG_PINNED_READ = None
     get_encryption_module().clear_derived_key_cache()
     logger.info("Encryption password set for current session")
 
@@ -3813,6 +3814,9 @@ def _merge_user_config_over_shipped_defaults(
 # --- Primary Configuration Loading Logic for the CLI ---
 _CONFIG_CACHE: Optional[Dict[str, Any]] = None
 _CONFIG_CACHE_SOURCE: Optional[Path] = None
+# A bootstrap read identifies its own cache object. Rebuilding the normalized
+# settings view advances _CONFIG_CACHE_INSTALLS without replacing this object.
+_CONFIG_PINNED_READ: tuple[dict, Path, tuple[int, ...] | None] | None = None
 #: TASK-26038: (mtime_ns, size) of the config file at its last successful
 #: load, and the last monotonic time we statted it. A THROTTLED inline
 #: metadata check on the read path picks up external edits without a
@@ -4167,6 +4171,26 @@ class _ConfigBootstrapResult(NamedTuple):
     succeeded: bool
 
 
+def _load_private_config_toml(opened, stamps: list | None) -> dict:
+    """Record the identity of the exact private file whose contents were parsed."""
+    if os.name != "nt" or stamps is None or not opened.result.verified_private:
+        return tomllib.load(opened.stream)
+    from tldw_chatbook.Utils.platform_files import os as files
+
+    def sample():
+        try:
+            info = files.fstat(opened.stream.fileno())
+        except (AttributeError, OSError, ValueError):
+            return None
+        return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
+
+    before = sample()
+    parsed = tomllib.load(opened.stream)
+    if before is not None and sample() == before:
+        stamps.append(before)
+    return parsed
+
+
 @_config_participants.guarded
 def _load_cli_config_bootstrap_unlocked(
     force_reload: bool = False,
@@ -4175,6 +4199,7 @@ def _load_cli_config_bootstrap_unlocked(
     global _FIRST_PROFILE_CREATED_THIS_SESSION
     global _CONFIG_FILE_STAMP, _CONFIG_STAT_CHECKED_MONOTONIC
     global _CONFIG_SCHEMA_CONFLICT, _CONFIG_CACHE_INSTALLS
+    global _CONFIG_PINNED_READ
     config_path = _get_effective_config_path()
     if (
         _CONFIG_CACHE is not None
@@ -4193,6 +4218,7 @@ def _load_cli_config_bootstrap_unlocked(
     )
     _CONFIG_CACHE = None
     _CONFIG_CACHE_SOURCE = None
+    _CONFIG_PINNED_READ = None
     # TASK-26040 (lane-7 review Minor): clear any prior schema conflict so a
     # later parse-failure load does not retain a stale "newer version" warning.
     _CONFIG_SCHEMA_CONFLICT = None
@@ -4200,6 +4226,7 @@ def _load_cli_config_bootstrap_unlocked(
     # Start with the programmatic defaults defined in CONFIG_TOML_CONTENT
     loaded_config = copy.deepcopy(DEFAULT_CONFIG_FROM_TOML)
     bootstrap_succeeded = False
+    read_stamps = []
     application_directory = application_owned_config_directory(config_path)
     if application_directory is not None:
         directory_result = secure_private_directory(
@@ -4212,7 +4239,7 @@ def _load_cli_config_bootstrap_unlocked(
     try:
         with open_private_binary(config_path) as opened:
             _report_config_path_posture(opened.result)
-            user_config_from_file = tomllib.load(opened.stream)
+            user_config_from_file = _load_private_config_toml(opened, read_stamps)
         # TASK-26040: migrate the RAW file forward before the default merge --
         # an unversioned file must be seen as the baseline (0), not inherit the
         # default's current version and skip its migrations. A newer-than-code
@@ -4306,6 +4333,8 @@ def _load_cli_config_bootstrap_unlocked(
         _CONFIG_CACHE = loaded_config
         _CONFIG_CACHE_SOURCE = config_path
         _CONFIG_CACHE_INSTALLS = next(_CONFIG_CACHE_INSTALL_NUMBERS)
+        if os.name == "nt":
+            _CONFIG_PINNED_READ = (loaded_config, config_path, read_stamps[0] if read_stamps else None)
         # TASK-26038: stamp the file we just loaded so a later external edit
         # is detected, and reset the throttle so the next read re-checks.
         _CONFIG_FILE_STAMP = _current_config_file_stamp(config_path)
@@ -4768,13 +4797,15 @@ def _prepare_config_parent(config_path: Path) -> Path | None:
 
 
 @_config_participants.guarded
-def _read_raw_cli_config_unlocked(config_path: Path) -> Dict[str, Any]:
+def _read_raw_cli_config_unlocked(
+    config_path: Path, *, read_stamps: list | None = None,
+) -> Dict[str, Any]:
     """Read the on-disk config mapping while the config lock is held."""
 
     try:
         with open_private_binary(config_path) as opened:
             _report_config_path_posture(opened.result)
-            loaded = tomllib.load(opened.stream)
+            loaded = _load_private_config_toml(opened, read_stamps)
     except FileNotFoundError:
         return {}
     if not isinstance(loaded, dict):
@@ -4785,11 +4816,12 @@ def _read_raw_cli_config_unlocked(config_path: Path) -> Dict[str, Any]:
 def _invalidate_config_caches() -> None:
     """Drop config/settings caches after a successful whole-file write."""
 
-    global _CONFIG_CACHE, _CONFIG_CACHE_SOURCE
+    global _CONFIG_CACHE, _CONFIG_CACHE_SOURCE, _CONFIG_PINNED_READ
     global _SETTINGS_CACHE, _SETTINGS_CACHE_SOURCE
 
     _CONFIG_CACHE = None
     _CONFIG_CACHE_SOURCE = None
+    _CONFIG_PINNED_READ = None
     _SETTINGS_CACHE = None
     _SETTINGS_CACHE_SOURCE = None
 
@@ -4931,6 +4963,7 @@ def _install_bootstrap_cache_from_raw(
 
     global _CONFIG_CACHE, _CONFIG_CACHE_SOURCE, _LAST_CONFIG_LOAD_FAILURE
     global _CONFIG_FILE_STAMP, _CONFIG_STAT_CHECKED_MONOTONIC, _CONFIG_CACHE_INSTALLS
+    global _CONFIG_PINNED_READ
 
     if config_path is None:
         config_path = _get_effective_config_path()
@@ -4950,6 +4983,7 @@ def _install_bootstrap_cache_from_raw(
     # preserve that ordering.
     _CONFIG_CACHE = loaded_config
     _CONFIG_CACHE_SOURCE = config_path
+    _CONFIG_PINNED_READ = None
     _CONFIG_CACHE_INSTALLS = next(_CONFIG_CACHE_INSTALL_NUMBERS)
     _LAST_CONFIG_LOAD_FAILURE = None
     # TASK-26038 (lane-7 review Important #1): stamp the file WE just wrote so a
@@ -6351,6 +6385,8 @@ def apply_literal_settings_transaction_to_cli_config(
 def refresh_runtime_config_from_cli_config() -> LiteralConfigMutationResult:
     """Republish the existing on-disk config without writing the file."""
 
+    global _CONFIG_PINNED_READ
+
     try:
         config_path = _get_effective_config_path()
     except Exception as error:
@@ -6362,9 +6398,14 @@ def refresh_runtime_config_from_cli_config() -> LiteralConfigMutationResult:
 
     try:
         with _config_write_lock(config_path):
-            raw = _read_raw_cli_config_unlocked(config_path)
+            read_stamps = []
+            raw = _read_raw_cli_config_unlocked(config_path, read_stamps=read_stamps)
             _invalidate_config_caches()
-            _publish_runtime_config_unlocked(raw_config=raw, config_path=config_path)
+            loaded = _publish_runtime_config_unlocked(raw_config=raw, config_path=config_path)
+            # A fallback bootstrap read produces its own receipt. Only a cache
+            # installed directly from our original raw read can borrow its stamp.
+            if read_stamps and loaded is _CONFIG_CACHE and _CONFIG_PINNED_READ is None:
+                _CONFIG_PINNED_READ = (loaded, config_path, read_stamps[0])
             return LiteralConfigMutationResult(
                 False,
                 True,
@@ -6914,11 +6955,12 @@ def get_detected_api_providers() -> List[str]:
 def _set_session_encryption_password(password: Optional[str]) -> None:
     """Install (or clear) the in-process password and drop stale caches."""
 
-    global _SETTINGS_CACHE, _CONFIG_CACHE
+    global _SETTINGS_CACHE, _CONFIG_CACHE, _CONFIG_PINNED_READ
     if password is None:
         clear_encryption_password()
         _SETTINGS_CACHE = None
         _CONFIG_CACHE = None
+        _CONFIG_PINNED_READ = None
         return
     set_encryption_password(password)
 
@@ -8792,6 +8834,7 @@ _SENSITIVE_DB_PATH_SOURCE = (
             "_get_custom_database_path", "get_user_data_dir", "get_cli_setting",
             "load_cli_config_and_ensure_existence", "_warm_config_cache_hit",
             "_load_cli_config_bootstrap", "_load_cli_config_bootstrap_unlocked",
+            "_load_private_config_toml",
             "_get_effective_config_path", "_external_edit_detected", "_user_data_dir_inputs",
             "_user_data_dir_stamps", "_resolve_user_data_dir", "get_user_folder_name",
             "validate_path_simple", "lexical_path",

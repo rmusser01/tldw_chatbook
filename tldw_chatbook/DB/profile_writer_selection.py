@@ -120,9 +120,14 @@ def _selected(profile: Path, owner: str, *, facts=None) -> list | None:
     stamp = _stamp(selector)
     previous = _last
     if previous is None or (previous.selector, previous.stamp) != (selector, stamp):
-        # The normal CLI detects external edits on a throttle. Even a replacement
-        # preserving size/mtime must invalidate this routing decision immediately.
-        if not config._load_cli_config_bootstrap(force_reload=True).succeeded:
+        # The runtime may already have read this exact file under its configuration
+        # fence. Reinstalling identical data would revoke the live source object.
+        # A new file with the same length and mtime still requires the full reload.
+        read = config._CONFIG_PINNED_READ
+        current_read = (
+            read is not None and read[0] is config._CONFIG_CACHE and read[1:] == (selector, stamp)
+        )
+        if not current_read and not config._load_cli_config_bootstrap(force_reload=True).succeeded:
             raise RecoveryRequired("profile_writer_configuration_unavailable")
     current = _observe(config, source, selector, stamp)
     if previous is None or not previous.matches(current):
