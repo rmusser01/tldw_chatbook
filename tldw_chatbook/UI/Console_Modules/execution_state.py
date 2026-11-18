@@ -403,6 +403,43 @@ def sync_selected_controls(screen: ChatScreen, *, draft_only: bool = False) -> b
     return False
 
 
+def sync_selected_draft_spend(screen: ChatScreen) -> bool:
+    """Render the original spend pair; coalesce shared refresh only on expiry."""
+    if getattr(screen.app_instance, "console_execution_client", None) is None:
+        return False
+    if defer_selected_passive_render(screen):
+        return True
+    client = selected_client(screen)
+    if client is None:
+        raise RuntimeError("Console spend presentation owner changed")
+    visit = client._visit
+    if time.monotonic() < client._readiness_deadline:
+        _require_methods(screen, _SPEND_REFRESH_METHODS)
+        try:
+            with screen._console_derivation_scope():
+                screen._sync_console_settings_summary()
+                if time.monotonic() >= client._readiness_deadline:
+                    raise ConsoleDisplayExpired("Console spend presentation expired")
+                screen._sync_console_cost_chip()
+            if selected_client(screen) is not client or client._visit != visit:
+                raise RuntimeError("Console spend presentation owner changed")
+            if time.monotonic() >= client._readiness_deadline:
+                raise ConsoleDisplayExpired("Console spend presentation expired")
+            return True
+        except ConsoleDisplayExpired:
+            pass
+    refresh_selected_when_due(screen)
+    return True
+
+
+_SPEND_REFRESH_METHODS = tuple(
+    (name, _definition(getattr(ChatScreen, name)))
+    for name in (
+        "_console_derivation_scope", "_sync_console_settings_summary", "_sync_console_cost_chip",
+    )
+)
+
+
 def sync_selected_guidance(screen: ChatScreen) -> None:
     """Refresh the inline guidance and blocking modal together from this visit."""
     if (

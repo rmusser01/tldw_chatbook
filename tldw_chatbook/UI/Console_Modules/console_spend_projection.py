@@ -2433,6 +2433,7 @@ class ConsoleDraftSpendRefresh:
     sync_cost_chip: Callable[[], None]
     delay_seconds: float = 0.2
     timer: Any | None = None
+    sync_selected_display: Callable[[], bool] | None = None
 
     def schedule(self) -> None:
         """Replace any pending timer with one coalesced refresh."""
@@ -2459,6 +2460,8 @@ class ConsoleDraftSpendRefresh:
     def refresh(self) -> None:
         """Clear timer ownership and refresh context and spend displays."""
         self.timer = None
+        if self.sync_selected_display is not None and self.sync_selected_display():
+            return
         self.sync_settings_summary()
         self.sync_cost_chip()
 

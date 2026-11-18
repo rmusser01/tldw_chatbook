@@ -3473,7 +3473,14 @@ def build_console_controllers(
         schedule_timer=lambda delay, callback: screen.set_timer(delay, callback),
         sync_settings_summary=lambda: screen._sync_console_settings_summary(),
         sync_cost_chip=lambda: screen._sync_console_cost_chip(),
+        sync_selected_display=lambda: _sync_selected_draft_spend(screen),
     )
+
+
+def _sync_selected_draft_spend(screen):
+    from .execution_state import sync_selected_draft_spend
+
+    return sync_selected_draft_spend(screen)
 
 
 # Defining factory/accessor identities for optional stock Character resume work.
