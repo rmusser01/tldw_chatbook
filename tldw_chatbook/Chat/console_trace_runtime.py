@@ -362,6 +362,14 @@ class ConsoleTraceBoundaryFactory:
             for descriptor in provenance.messages_payload
             for revision_id in _saved_revision_ids(descriptor)
         )
+        # TASK-41310: a spawned child's rows are its own (no saved revision);
+        # its route names the spawning turn, whose owner traces the child in
+        # the child's own segment.
+        child_turn_revision_id = route_record.parent_revision_id
+        if child_turn_revision_id is not None:
+            if message_revision_ids:
+                raise ValueError("trace_child_owner")
+            message_revision_ids = (child_turn_revision_id,)
         if not message_revision_ids:
             raise ValueError("trace_owner_unavailable")
         active_descriptor_index = len(provenance.messages_payload) - 1
@@ -415,7 +423,7 @@ class ConsoleTraceBoundaryFactory:
             _saved_revision_ids(provenance.messages_payload[active_descriptor_index])
         )
         tool_loop = route_record.route is ConsoleRequestRoute.TOOL_LOOP
-        if tool_loop:
+        if tool_loop or child_turn_revision_id is not None:
             # Tool results are provider artifacts, not a new saved user turn.
             # This candidate must match the durable chain origin below; it is
             # never sufficient on its own to admit continuation ownership.
@@ -511,8 +519,34 @@ class ConsoleTraceBoundaryFactory:
                     cursor,
                     conversation_id,
                 )
+                segment_id = None if owner is None else owner.root_segment_id
+                if child_turn_revision_id is not None:
+                    # The child's own segment, keyed by its chain identity.
+                    child = (
+                        None
+                        if owner is None
+                        else self.repository.get_child_segment(cursor, run_id)
+                    )
+                    if (
+                        child is None
+                        and owner is not None
+                        and route_record.route is ConsoleRequestRoute.AGENT_FIRST
+                    ):
+                        child = self.repository.create_child_segment(
+                            cursor,
+                            owner_id=owner.owner_id,
+                            turn_id=turn_id,
+                            run_id=run_id,
+                        )
+                    if child is None or (child.owner_id, child.turn_id) != (
+                        owner.owner_id,
+                        turn_id,
+                    ):
+                        raise ValueError("trace_child_segment_unavailable")
+                    segment_id = child.segment_id
                 if (
                     owner is not None
+                    and child_turn_revision_id is None
                     and route_record.route
                     in {
                         ConsoleRequestRoute.FRESH,
@@ -538,7 +572,7 @@ class ConsoleTraceBoundaryFactory:
                         )
                         != (
                             owner.owner_id,
-                            owner.root_segment_id,
+                            segment_id,
                             turn_id,
                             policy.policy_id,
                         )
@@ -561,16 +595,14 @@ class ConsoleTraceBoundaryFactory:
                     previous = self.repository.get_call_by_logical_identity(
                         cursor,
                         owner_id=owner.owner_id,
-                        segment_id=owner.root_segment_id,
+                        segment_id=segment_id,
                         turn_id=turn_id,
                         run_id=run_id,
                         call_sequence=call_sequence - 1,
                     )
-                    tail = self.repository.get_surface_tail(
-                        cursor, owner.root_segment_id
-                    )
+                    tail = self.repository.get_surface_tail(cursor, segment_id)
                     latest_call = self.repository.get_latest_call_boundary(
-                        cursor, owner.root_segment_id
+                        cursor, segment_id
                     )
                     if (
                         previous is None
@@ -603,6 +635,7 @@ class ConsoleTraceBoundaryFactory:
                         conversation_id=conversation_id,
                         root_segment_id=segment.segment_id,
                     )
+                    segment_id = owner.root_segment_id
                 self.repository.ensure_policy(cursor, policy)
                 continuation_values = tuple(
                     _checkpoint_semantic_value(group.checkpoint)
@@ -643,7 +676,8 @@ class ConsoleTraceBoundaryFactory:
                     )
                 completed_tool_turn = None
                 if (
-                    route_record.route
+                    child_turn_revision_id is None
+                    and route_record.route
                     in {ConsoleRequestRoute.AGENT_FIRST, ConsoleRequestRoute.FRESH}
                     and active_descriptor_index >= 1
                     and current_turn_source_revision_id(
@@ -782,7 +816,7 @@ class ConsoleTraceBoundaryFactory:
                         self.service.prepare_current_surface_delta(
                             cursor,
                             owner_id=owner.owner_id,
-                            segment_id=owner.root_segment_id,
+                            segment_id=segment_id,
                             route_identity=route_identity,
                             preparation_identity=preparation_identity,
                             provenance=provenance,
@@ -840,7 +874,7 @@ class ConsoleTraceBoundaryFactory:
                         key = ("rendered_system", "artifact", rows[0].artifact_id)
                     else:
                         projection = self.service._surface_projection(
-                            cursor, owner.root_segment_id, tail
+                            cursor, segment_id, tail
                         )
                         key = projection.entries[0][1]
                     artifact = (
@@ -863,7 +897,7 @@ class ConsoleTraceBoundaryFactory:
                 reserved = self.repository.reserve_call(
                     cursor,
                     owner_id=owner.owner_id,
-                    segment_id=owner.root_segment_id,
+                    segment_id=segment_id,
                     turn_id=turn_id,
                     run_id=run_id,
                     call_sequence=call_sequence,
@@ -873,18 +907,16 @@ class ConsoleTraceBoundaryFactory:
                 # Surface identity alone cannot detect a newer run with the
                 # same prompt. Record the reservation in the existing ordered
                 # ledger, atomically with the call, before provider dispatch.
-                event_tail = self.repository.get_event_tail(
-                    cursor, owner.root_segment_id
-                )
+                event_tail = self.repository.get_event_tail(cursor, segment_id)
                 self.repository.append_event(
                     cursor,
-                    segment_id=owner.root_segment_id,
+                    segment_id=segment_id,
                     sequence=0 if event_tail is None else event_tail.sequence + 1,
                     event_type="call_boundary",
                     call_id=reserved.call_id,
                     semantic_revision_id=current_revision_id,
                 )
-                if route_record.route in {
+                if child_turn_revision_id is None and route_record.route in {
                     ConsoleRequestRoute.FRESH,
                     ConsoleRequestRoute.AGENT_FIRST,
                 }:
@@ -904,7 +936,7 @@ class ConsoleTraceBoundaryFactory:
                 database=self.database,
                 identity=TraceCallIdentity(
                     owner_id=owner.owner_id,
-                    segment_id=owner.root_segment_id,
+                    segment_id=segment_id,
                     turn_id=turn_id,
                     run_id=run_id,
                     call_sequence=call_sequence,

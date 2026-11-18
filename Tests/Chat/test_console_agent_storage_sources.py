@@ -2,6 +2,7 @@
 
 import asyncio
 import threading
+from types import SimpleNamespace
 
 import pytest
 
@@ -50,11 +51,10 @@ pytestmark = [
         ("unrelated", 2),
         ("mcp_deny", 1),
         ("database", 1),
-        ("writer", 1),
-        ("writer_segment_path", 1),
-        ("writer_write_bytes", 1),
-        ("writer_manifest", 1),
-        ("writer_close", 1),
+        # Replaced writer methods (writer, writer_segment_path,
+        # writer_write_bytes, writer_manifest, writer_close) were retired:
+        # ADR-356 decision 4 (06f8b0bf94) dropped implementation-identity
+        # checks; owner decision 2026-11-17 (TASK-41314, TASK-41315).
         ("writer_source", 1),
         ("root", 1),
         ("log_dir", 1),
@@ -194,12 +194,10 @@ async def test_original_console_mcp_context_reaches_child_model(
         return permission_check(grant)
 
     monkeypatch.setattr(MCPResultPermission, "check", checked_permission)
-    edited_at, writer_callbacks = [], []
-    sentinel = None
+    edited_at = []
 
     class Gateway(_RecordingGateway):
         async def stream_chat(self, resolution, messages, **kwargs):
-            nonlocal sentinel
             self.payloads.append(messages)
             model_sources.append(_guard.captured_sources(None))
             model_runs.append(current_run_id())
@@ -217,33 +215,6 @@ async def test_original_console_mcp_context_reaches_child_model(
                     )
                 elif mutation == "database":
                     bridge._db = replacement_database
-                elif mutation == "writer":
-                    source.writer.append = lambda **kwargs: None
-                elif mutation in {
-                    "writer_segment_path",
-                    "writer_write_bytes",
-                    "writer_manifest",
-                    "writer_close",
-                }:
-                    sentinel = source.root / "visible-user-file.txt"
-                    sentinel.write_text("original user file")
-
-                    def changed_callback(*args, **kwargs):
-                        writer_callbacks.append(mutation)
-                        if mutation == "writer_segment_path":
-                            return sentinel
-                        sentinel.write_text("changed writer invoked")
-
-                    setattr(
-                        source.writer,
-                        {
-                            "writer_segment_path": "_segment_path",
-                            "writer_write_bytes": "_write_bytes",
-                            "writer_manifest": "write_manifest",
-                            "writer_close": "close",
-                        }[mutation],
-                        changed_callback,
-                    )
                 elif mutation == "writer_source":
                     from types import SimpleNamespace
 
@@ -383,9 +354,6 @@ async def test_original_console_mcp_context_reaches_child_model(
             assert project_notices and not gateway.payloads
             assert not any(row["agent_kind"] == "subagent" for row in rows)
             return
-        if sentinel is not None:
-            assert sentinel.read_text() == "original user file"
-            assert not writer_callbacks, "changed writer callback was invoked"
         if mutation not in {
             "none",
             "unrelated",
@@ -403,7 +371,8 @@ async def test_original_console_mcp_context_reaches_child_model(
             assert len(case.service.execution_log.read_recent()) == 1
             return
         assert len(gateway.payloads) == 3, rows
-        assert model_sources == [sources[0].sources] * 3
+        # Admitted sources are a set; nesting order follows the entry path.
+        assert [set(seen) for seen in model_sources] == [set(sources[0].sources)] * 3
         assert bool(child_threads) is (workers > 1)
         assert any(
             row["id"] in model_runs for row in rows if row["agent_kind"] == "subagent"
@@ -449,23 +418,217 @@ async def test_original_console_mcp_context_reaches_child_model(
             global_registry.db.close()
 
 
-async def test_original_mcp_capture_retains_structured_names_with_definition_hashes(
-    mcp_case,
-):
-    from tldw_chatbook.MCP.permission_store import definition_hash
-    from tldw_chatbook.MCP.tool_naming import llm_tool_name
+async def test_original_mcp_capture_defers_a_non_stock_catalog(mcp_case):
+    """A managed runtime defers a non-stock MCP catalog (TASK-41315).
 
+    The fixture's catalog is not the stock manifest, so the synchronous
+    capture pins no definition hash or structured name it could not prove
+    (11d71e5db5); the send treats the pending capture as opaque instead.
+    """
     case = mcp_case
     configuration = await case.rig.controller.capture_turn_configuration_snapshot(
         case.rig.session.id
     )
-    expected = (
-        case.tool.tool_id,
-        case.tool.server_key,
-        case.tool.name,
-        llm_tool_name(case.tool.server_key, case.tool.name),
+    assert configuration.mcp_capture_pending is True
+    assert dict(configuration.mcp_definition_maximum) == {}
+    assert tuple(configuration.mcp_definition_sources) == ()
+    assert configuration.mcp_definition_complete is False
+
+
+async def test_reordered_admission_is_not_a_source_change(tmp_path):
+    """A worker guard nests the same sources in another order (TASK-41315)."""
+    from tldw_chatbook.Agents.activation import (
+        captured_sources,
+        execution,
+        selected_sources,
+        sources_changed,
     )
-    assert configuration.mcp_definition_maximum[case.tool.tool_id] == definition_hash(
-        case.tool.description, case.tool.input_schema
+
+    with execution(sources=tuple(reversed(selected_sources(None)))):
+        reordered = captured_sources(None)
+    with execution():
+        assert captured_sources(None) != reordered
+        assert not sources_changed(reordered)
+        assert sources_changed(reordered[1:])
+        assert sources_changed((*reordered, ("agents.history", tmp_path)))
+
+
+def _refused_source_turn(owner):
+    """An ordinary turn whose original sources changed (TASK-41315)."""
+    import threading
+    from concurrent.futures import Future
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents.ordinary_tree import OrdinaryTurn, _Member
+
+    from tldw_chatbook.Agents.activation import OriginalSourceChanged
+
+    class Source:
+        @contextmanager
+        def activate(self):
+            raise OriginalSourceChanged("original agent storage source changed")
+            yield
+
+    tree = object.__new__(OrdinaryTurn)
+    tree.lock = threading.Lock()
+    tree.sealed = tree.primary_finishing = tree.settled = False
+    tree.primary_hosts, tree.future_events, tree.source_scopes = set(), {}, 0
+    tree.source, tree.stop_notification = Source(), None
+    tree.scratch_lease = None
+    tree.configuration = SimpleNamespace(scratch_space=None)
+    member = _Member(settlement=None, run_id="run", row_started=True)
+    member.terminal = ("done", "", None)
+    tree.members = {owner: member}
+    tree.retired = Future()
+    tree.runtime = SimpleNamespace(_wake_first_send=lambda: None)
+    return tree, member
+
+
+class _Owner:
+    finished = False
+    cleanup_unproven = False
+
+    def finish_root(self):
+        self.finished = True
+
+    def mark_cleanup_unproven(self):
+        self.cleanup_unproven = True
+
+    def drain_state(self):
+        if not self.finished:
+            return "live"
+        return "unproven" if self.cleanup_unproven else "proven"
+
+
+async def test_changed_source_at_finish_leaves_the_primary_returned_unproven():
+    """A refused original source must not strand the turn (TASK-41315).
+
+    The primary returned, so its host settles, but with nothing proven
+    durable: the claim stays held (TASK-40716) and disposal can leave it.
+    """
+    owner = _Owner()
+    tree, member = _refused_source_turn(owner)
+    tree.owner = owner
+
+    tree.finish()
+
+    assert member.host_returned and not member.durable
+    assert owner.finished
+    assert tree.unproven_only() and not tree.retired.done()
+
+
+async def test_changed_source_at_child_return_leaves_the_child_unproven():
+    """A surviving child's return refuses a changed source without a live owner."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents.agent_native_execution import _finish_execution
+
+    child = _Owner()
+    tree, member = _refused_source_turn(child)
+    tree.owner = _Owner()
+    tree.sealed = True
+
+    with pytest.raises(RuntimeError, match="original agent storage source changed"):
+        _finish_execution(SimpleNamespace(_ordinary_tree=tree), child)
+
+    assert member.host_returned and not member.durable
+    assert child.finished
+    assert tree.unproven_only() and not tree.retired.done()
+
+
+async def test_refused_owner_whose_row_never_started_stays_unproven():
+    """Skipped cleanup must not drain proven, even with no row to read (TASK-41315)."""
+    owner = _Owner()
+    tree, member = _refused_source_turn(owner)
+    member.row_started = False
+    tree.sealed = True
+
+    refused = tree.return_host(owner, lambda: pytest.fail("release ran unscoped"))
+
+    assert refused is not None and owner.cleanup_unproven
+    assert tree.unproven_only() and not tree.retired.done()
+
+
+async def test_unrelated_activation_error_settles_unproven_and_propagates():
+    """Any entry failure returns the owner unproven once, then propagates (TASK-41315)."""
+    from contextlib import contextmanager
+
+    owner = _Owner()
+    tree, member = _refused_source_turn(owner)
+    tree.sealed = True
+    member.row_started = False
+    wakes = []
+    tree.runtime = SimpleNamespace(_wake_first_send=lambda: wakes.append(1))
+
+    @contextmanager
+    def lease_gone():
+        raise RuntimeError("original ordinary scratch lease retired")
+        yield
+
+    tree.source = SimpleNamespace(activate=lease_gone)
+    with pytest.raises(RuntimeError, match="scratch lease retired"):
+        tree.return_host(owner, lambda: pytest.fail("release ran unscoped"))
+
+    assert owner.finished and owner.cleanup_unproven and member.host_returned
+    assert tree.unproven_only() and not tree.retired.done() and wakes
+
+
+async def test_body_error_in_host_return_propagates_without_a_second_return():
+    from contextlib import contextmanager
+
+    owner = _Owner()
+    tree, member = _refused_source_turn(owner)
+    returns = []
+    tree.host_returned = returns.append
+
+    @contextmanager
+    def live():
+        yield
+
+    tree.source = SimpleNamespace(activate=live)
+
+    def broken():
+        raise RuntimeError("release failed")
+
+    with pytest.raises(RuntimeError, match="release failed"):
+        tree.return_host(owner, broken)
+    assert returns == [] and not owner.finished
+
+
+async def test_first_send_wait_wakes_when_a_parked_turn_becomes_unproven_only():
+    """The give-up needs a wake: a turn can turn unproven after the waiter parks."""
+    from tldw_chatbook.Chat.console_received_dispatch import (
+        _persist_first_send_when_quiescent,
     )
-    assert getattr(configuration, "mcp_definition_sources", ()) == (expected,)
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+    owner = _Owner()
+    tree, member = _refused_source_turn(owner)
+    tree.sealed = True
+    member.row_started = False
+    member.host_returned = False
+    states = {"owner": "live"}
+    owner.drain_state = lambda: states["owner"]
+    runtime = SimpleNamespace(
+        _first_send_wakeup=asyncio.Event(),
+        _first_send_loop=asyncio.get_running_loop(),
+        _execution_capacity_lock=threading.Lock(),
+        _first_send_sources=0,
+        _turn_custody={},
+        _ordinary_turns={tree},
+    )
+    runtime._wake_first_send = lambda: ConsoleRuntime._wake_first_send(runtime)
+    tree.runtime = runtime
+    waiter = asyncio.ensure_future(
+        _persist_first_send_when_quiescent(
+            runtime, None, None, None, SimpleNamespace(), None
+        )
+    )
+    await asyncio.sleep(0.05)
+    assert not waiter.done()  # parked on a live owner
+
+    states["owner"] = "unproven"
+    tree.host_returned(owner)
+
+    await asyncio.wait_for(waiter, 5)

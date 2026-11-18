@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING, Any, Literal
 
+from loguru import logger
+
 from tldw_chatbook.Provider_Contract.provider_continuation import EPHEMERAL_ORIGIN_KEY
 
 from .agent_models import (
@@ -858,3 +860,28 @@ def _is_safe_relative_label(value: str) -> bool:
         and ".." not in posix.parts
         and ".." not in windows.parts
     )
+
+
+def consent_decision(confirm: Callable[[Any], object] | None, snapshot: Any) -> str:
+    """Ask the project-instruction consent callback, failing closed.
+
+    Args:
+        confirm: The run's consent callback, or None when it has none.
+        snapshot: The instruction snapshot the callback decides on.
+
+    Returns:
+        ``"proceed"``, ``"cancel"`` or ``"disable"``. A missing callback, an
+        unknown answer or a raising callback cancels; a raise is logged by
+        exception type only, never its text (TASK-41312).
+    """
+    if confirm is None:
+        return "cancel"
+    try:
+        decision = confirm(snapshot)
+    except Exception as exc:  # noqa: BLE001 - consent failures are content-free
+        logger.warning(
+            "project instruction consent failed; run cancelled (exception_type={})",
+            type(exc).__name__,
+        )
+        return "cancel"
+    return decision if decision in {"proceed", "cancel", "disable"} else "cancel"

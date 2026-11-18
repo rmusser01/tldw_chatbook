@@ -295,6 +295,7 @@ async def mock_app_instance(mock_app_config):
     app = MagicMock()
     app.app_config = mock_app_config
     app.current_chat_is_ephemeral = False
+    app.persona_actor_pack_coordinator = None
     app.loguru_logger = MagicMock()
 
     # Mock common methods

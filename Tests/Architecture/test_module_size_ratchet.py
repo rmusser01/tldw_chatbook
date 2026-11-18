@@ -103,7 +103,9 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/app_shutdown.py": 225,
     # 2026-10-31: re-measured after rebasing onto dev 4d6764b132 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 2873 -> 2899.
     # PR3301, 2026-10-31: user size waiver; exact integrated measurement.
-    "tldw_chatbook/Chat/console_display_state.py": 2875,
+    # 2026-11-17, TASK-41308 (owner rule: raise by the change's own lines):
+    # 2875 -> 2884 (+9), the MCP row says off, and why, for an unbound store.
+    "tldw_chatbook/Chat/console_display_state.py": 2884,
     "tldw_chatbook/Widgets/Console/console_selection.py": 379,
     # PR #3361, 2026-11-07 (owner size waiver, 2026-11-02 audit TASK-38580..38613):
     # 244 -> 257 (+13), TASK-38585 renders labels literally, not as markup.
@@ -284,7 +286,11 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-12: re-measured after rebasing onto dev 4b90eb860b (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 28743 -> 28755.
     # 2026-11-15: re-measured after rebasing onto dev 2ff0e9a5e5 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 28746 -> 28753.
     # 2026-11-16: re-measured after rebasing onto dev 5e3c8b2bd4 (owner rule: dev's row + this branch's growth): 28753 -> 28757 (+4, TASK-41102 Partial tray status).
-    "tldw_chatbook/Chat/console_chat_controller.py": 28757,
+    # Raised for TASK-41307, 2026-11-17: +4 lines on 28,753, the accepted-turn
+    # failure handler names a pre-run unproven cleanup just before each recovery
+    # restore (Chat/console_unproven_cleanup.py).
+    # 2026-11-18: rebased onto dev 45b1949ca3 (dev's row + this branch's growth, measured): 28761.
+    "tldw_chatbook/Chat/console_chat_controller.py": 28761,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6298,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.
@@ -910,7 +916,9 @@ _BUDGETS: dict[str, int] = {
     # internal call sites use the public seams and the three aliases are gone.
     # 2026-11-10: the deltas above were measured on different bases; with all
     # of them on dev e78b62f0e7 the file measures 22552.
-    "tldw_chatbook/DB/ChaChaNotes_DB.py": 22552,
+    # 2026-11-17, TASK-41310: 22552 -> 22544 (-8). The v86->v87 child trace
+    # segment step and the v85->v86 step share DB/chachanotes_sql_steps.py.
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": 22544,
     # TASK-39147: the rebased report reader and workflow migrations cross 4000.
     # 2026-11-12, TASK-36948.1 (owner rule: a size ratchet raises the row with a dated
     # comment): +2, the store's @declare_store backup-participant declaration and import.
@@ -936,12 +944,15 @@ _BUDGETS: dict[str, int] = {
     # DB/ChaChaNotes_DB, and config.py loads it lazily from there (types stay
     # under TYPE_CHECKING, per #3470); dev 4a9c4c1132 (#3480) shrank the file,
     # so this branch measures 8,837 (dev 8,835, +2); exact measurement.
-    "tldw_chatbook/config.py": 8837,
+    # TASK-41564 plan22: reuse the resident registry for the legacy endpoint bridge.
+    "tldw_chatbook/config.py": 8836,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
     # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):
     # the storage provider reaches the per-run BuiltinToolProvider (+8 on 12,091).
-    "tldw_chatbook/Chat/console_agent_bridge.py": 10084,
+    # 2026-11-17, TASK-41310 B review: 10084 -> 10111 (+27), exact measurement.
+    # The factory verifies a child route names its spawning turn.
+    "tldw_chatbook/Chat/console_agent_bridge.py": 10111,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # TASK-36944.2, 2026-11-03: +6 for the public `setting` Console reads.
@@ -950,7 +961,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-15, TASK-40716 rebased onto dev ecad404bd4 (owner rule: raise by
     # the change's own lines): 7677 -> 7686 (+9) -- the unproven-cleanup
     # retention and immediate return in the tool-call wait.
-    "tldw_chatbook/Agents/agent_service.py": 7686,
+    # 2026-11-17, TASK-41312 review: the consent decision moved to
+    # project_instruction_runtime.consent_decision; 7686 -> 7680.
+    "tldw_chatbook/Agents/agent_service.py": 7680,
     # 2026-10-31, PR #3259: explicit user size-limit waiver. Pin the
     # actual current-base N-32 file-body F6 integration at 9,541 lines.
     # TASK-36513, 2026-11-03 (size waiver per the burn-down brief: re-pin at
@@ -1131,6 +1144,13 @@ _BUDGETS: dict[str, int] = {
     # (ADR-337 amendment 2026-11-06): the planner cuts a rewritten tail into
     # links, and the writer validates and writes each link in dispatch binding.
     "tldw_chatbook/Chat/console_trace_service.py": 6739,
+    # 2026-11-17, TASK-41310 (owner rule 2026-10-04: a fix over a size ratchet
+    # raises the row): crosses 4000 at 4017, exact measurement. The owner-
+    # approved child trace segments (ADR-337 amendment 2026-11-17): create and
+    # read a child run's segment, and its owner resolution.
+    # 2026-11-17, TASK-41310 B: 4017 -> 4021 (+4), exact measurement. A
+    # child's open calls never block the parent's turn.
+    "tldw_chatbook/Chat/console_trace_repository.py": 4021,
     "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,
     "tldw_chatbook/MCP/unified_control_plane_service.py": 6049,

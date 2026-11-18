@@ -14,6 +14,10 @@ from textual.widgets import Static
 
 from Tests.UI.app_factory import persist_seeded_config
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
+from Tests.UI.test_console_internals_decomposition import (
+    _build_bound_mcp_test_app,
+    _open_console_inspector,
+)
 from Tests.UI.test_console_native_chat_flow import (
     ConsoleNavigationHarness,
     _ReadyResolutionGateway,
@@ -903,13 +907,17 @@ async def test_console_blocked_inspector_explains_impact_and_next_action():
 
 @pytest.mark.asyncio
 async def test_console_ready_inspector_shows_run_recipe_and_operational_groups():
-    app = _build_test_app()
+    # TASK-41308: a ready Console has a bound MCP store; the factory's own data
+    # folder leaves it unbound, and its "MCP: off" row would lift Tools above
+    # More. The Inspector rail opens on request, so open it before reading.
+    app = _build_bound_mcp_test_app()
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(120, 40)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-shell")
+        await _open_console_inspector(console, pilot)
 
         inspector = console.query_one("#console-run-inspector-state")
         text = " ".join(

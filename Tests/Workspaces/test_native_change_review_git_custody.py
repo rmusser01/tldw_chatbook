@@ -390,9 +390,20 @@ def test_unavailable_cleanup_proof_retains_original_worker_in_isolated_process(
                 return leases and claim is None
 
         assert held()
-        # Abandon returns only the slot; the leases and claim stay held.
+        # TASK-41307: the initialization job has no transcript row; the
+        # held-slots list releases only its slot. The leases and claim stay held.
+        from types import SimpleNamespace
+
+        from tldw_chatbook.Chat.console_unproven_cleanup import (
+            held_tool_slots,
+            release_held_tool_slot,
+        )
+
+        chat = SimpleNamespace(run_terminal_rows={}, _hooks_v2_runtime=host.runtime)
+        key = ticket.owner.execution_id
+        assert held_tool_slots(chat) == {key: ("native Git", False)}
         assert host.runtime.execution_capacity.snapshot().tool_workers == 1
-        assert retention.abandon()
+        assert release_held_tool_slot(chat, key)
         assert host.runtime.execution_capacity.snapshot().tool_workers == 0
         assert held() and not ticket.retired.is_set()
         # Disposal records the retained custody and returns.

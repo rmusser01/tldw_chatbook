@@ -2057,9 +2057,11 @@ async def test_pending_mcp_original_path_or_factory_replacement_refuses(
         raise
 
 
-async def test_pending_mcp_manifest_changed_defaults_refuses_before_callback(
+async def test_pending_mcp_manifest_replaced_refuses_before_callback(
     snapshot_case, native_ordinary_host
 ):
+    # TASK-41319 (ADR-356 rule 4): a replaced manifest slot refuses; the
+    # captured callback's own defaults or code are no longer inspected.
     snapshot_controls._loop_projection(snapshot_case)
     h = native_ordinary_host
     h.controller._confirm_project_instruction_dispatch = lambda notice: "proceed"
@@ -2073,7 +2075,7 @@ async def test_pending_mcp_manifest_changed_defaults_refuses_before_callback(
     snapshot_case.local.manifest_provider = manifest
     configuration = await h.controller.capture_turn_configuration_snapshot(h.session.id)
     assert configuration.mcp_capture_pending and not calls
-    manifest.__defaults__ = ("replacement",)
+    snapshot_case.local.manifest_provider = lambda: manifest("replacement")
     with pytest.raises(
         RuntimeError, match="Original MCP capture source is unavailable"
     ):
@@ -2886,12 +2888,20 @@ async def test_wired_chatscreen_unqualified_cold_source_refuses(
             capture_console_received_configuration_preparation,
         )
 
+        # TASK-41319: a test-patched data-dir getter no longer disqualifies
+        # the cold source (ADR-356 rule 4); a trust factory the app did not
+        # register does, before anything calls it.
+        foreign = []
+        vars(app.local_skills_service)["_trust_service_factory"] = (
+            lambda: foreign.append(True)
+        )
         diagnostic = capture_console_received_configuration_preparation(
             app, store, controller, session_id=session.id
         )
         assert diagnostic is None
         with pytest.raises(RuntimeError, match="source unavailable"):
             await _precapture_turn_authority(screen, session.id)
+        assert not foreign
     finally:
         await runtime.dispose(timeout_seconds=3)
 

@@ -403,12 +403,12 @@ class ConsoleWorkflowStatus(SafeModalDismissMixin, ModalScreen[None]):
                             self._render_state(view, repair_required)
                     except WORKFLOW_VIEW_ERRORS as error:
                         message = workflow_view_error("Review", error)
+                        if error.args != ("workflow_return_unproven",):
+                            message += ". Refresh to read the current workflow."
                         if self._can_render:
                             self.decision = None
                             self._disable_commands()
-                            self.query_one("#workflow-notice").update(
-                                message + ". Refresh to read the current workflow."
-                            )
+                            self.query_one("#workflow-notice").update(message)
             finally:
                 self._reading = False
         except NoMatches:

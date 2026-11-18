@@ -553,7 +553,14 @@ async def test_unproven_required_terminal_keeps_real_worker_and_storage(
     else:
         db.set_terminal_with_step = fail
     from tldw_chatbook.Agents.execution_capacity import holds_unproven_custody
+    from tldw_chatbook.Chat.console_unproven_cleanup import (
+        held_tool_slots,
+        release_unproven_tool_slot,
+        unproven_cleanup_rows,
+    )
 
+    chat = SimpleNamespace(run_terminal_rows={})
+    h.runtime.set_chat_controller(chat)
     assert h.controller.start_user_command(stash())
     call = next(iter(h.runtime.raw_cli_source.pending))
     work, _ = h.workers.pop()
@@ -590,8 +597,15 @@ async def test_unproven_required_terminal_keeps_real_worker_and_storage(
     assert claim_held()
     # Disposal of Raw CLI stops waiting for the retained call.
     assert await asyncio.wait_for(h.runtime.raw_cli_source.drain(), 10) is False
-    # Abandon returns only the slot; storage, scratch and the claim stay held.
-    assert call.operation.retention.abandon()
+    # TASK-41307: Release sits under the command's own marker and in the
+    # held-slots list. It returns only the slot; storage, scratch and the
+    # claim stay held.
+    marker = f"raw-cli-{call.request.invocation_id}"
+    messages = h.store.messages_for_session(h.session.id)
+    assert marker in {message.id for message in messages}
+    assert unproven_cleanup_rows(chat, messages) == {marker: (False, "")}
+    assert held_tool_slots(chat) == {call.run_id: ("Raw CLI", False)}
+    assert release_unproven_tool_slot(chat, marker)
     assert h.runtime.execution_capacity.snapshot().tool_workers == 0
     assert call.snapshot.root.is_dir() and claim_held()
     assert not call.retired.is_set() and custody[0].is_alive()

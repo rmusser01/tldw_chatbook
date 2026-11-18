@@ -11,8 +11,6 @@ from . import app_collections_wiring as _collections_wiring
 from .app_skill_wiring import (
     _disabled_builtin_skills,  # noqa: F401 - retained original importing/patch slot
     _read_app_disabled_builtin_skills,
-    _read_app_published_plugin_service,
-    _console_skill_metadata_current,  # noqa: F401 - retained original importing/patch slot
     _console_skill_source_current,  # noqa: F401 - retained original importing/patch slot
     _capture_console_skill_trust_source,  # noqa: F401 - retained original importing/patch slot
     _capture_console_skill_trust_preparation,  # noqa: F401 - retained original importing/patch slot
@@ -387,12 +385,6 @@ def _read_app_raw_cli_permitted(app: object) -> bool:
 _STOCK_DISABLED_BUILTINS_READER = (
     _read_app_disabled_builtin_skills,
     _read_app_disabled_builtin_skills.__code__,
-)
-
-
-_STOCK_PUBLISHED_PLUGIN_READER = (
-    _read_app_published_plugin_service,
-    _read_app_published_plugin_service.__code__,
 )
 
 
@@ -3676,13 +3668,6 @@ class ServiceWiringMixin(
     def llamacpp_snapshot_service(self, service: Any) -> None:
         """Preserve the public injection seam used by screens and tests."""
         self._llamacpp_snapshot_service = service
-
-
-# Defining factory identity; this observation never constructs a plugin facade.
-_STOCK_PLUGIN_SERVICE_FACTORY = (
-    ServiceWiringMixin._build_plugin_service,
-    ServiceWiringMixin._build_plugin_service.__code__,
-)
 
 
 from typing import NamedTuple  # noqa: F401, I001 - original definition-time importing slot

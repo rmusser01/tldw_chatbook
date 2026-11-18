@@ -24,6 +24,7 @@ Constraints):
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import Callable, Mapping
 from typing import Any
@@ -122,7 +123,6 @@ class ServedRelayPublisher:
         self._queue: asyncio.Queue[tuple[str, dict[str, Any]]] | None = None
         self._drainer: asyncio.Task[None] | None = None
         self._poller: asyncio.Task[None] | None = None
-        self._busy = False
         # round ids of currently mounted approval rounds, newest last —
         # mirrors the TUI card slot (one deep) and the parent's capture.
         self._mounted_rounds: list[str] = []
@@ -176,21 +176,22 @@ class ServedRelayPublisher:
             await asyncio.gather(*tasks, return_exceptions=True)
 
     async def wait_idle(self, *, timeout: float = 1.0) -> None:
-        """Wait until every queued event has been sent (test surface)."""
+        """Wait until every queued event has been sent (test surface).
+
+        Returns at ``timeout`` with events still pending; never raises.
+        """
 
         queue = self._queue
         if queue is None:
             return
-        deadline = asyncio.get_running_loop().time() + timeout
-        while True:
-            # Always yield first so a just-scheduled put (call_soon_threadsafe)
-            # lands before the emptiness check.
-            await asyncio.sleep(0)
-            if not queue.empty() or self._busy:
-                if asyncio.get_running_loop().time() >= deadline:
-                    return
-                continue
-            return
+        # Yield first so a just-scheduled put (call_soon_threadsafe) lands
+        # before the join counts it.
+        await asyncio.sleep(0)
+        # join() lets the loop sleep until the drainer's last task_done(); a
+        # sleep(0) poll kept the loop thread on-CPU, which starves worker
+        # threads on Linux (TASK-41317, after TASK-40334).
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(queue.join(), timeout)
 
     # ------------------------------------------------------------------ #
     # Publish surface (fire-and-forget, never blocking, never raising)     #
@@ -279,7 +280,6 @@ class ServedRelayPublisher:
         assert queue is not None
         while True:
             message_type, payload = await queue.get()
-            self._busy = True
             try:
                 await self._client.send_relay_event(message_type, payload)
             except asyncio.CancelledError:
@@ -291,7 +291,7 @@ class ServedRelayPublisher:
                     payload.get("round_id") or payload.get("session_id") or "",
                 )
             finally:
-                self._busy = False
+                queue.task_done()
 
     async def _poll_run_states(self, source: _RunStateSource) -> None:
         while True:

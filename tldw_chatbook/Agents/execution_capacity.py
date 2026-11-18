@@ -32,9 +32,10 @@ class CapacityRefused(RuntimeError):
 class CleanupUnprovenRefused(CapacityRefused):
     """The owner's earlier tool cleanup is unproven; its run must end."""
 
-    def __init__(self, label: str) -> None:
+    def __init__(self, label: str, retention: UnprovenRetention | None = None) -> None:
         super().__init__("previous_tool_cleanup_unproven")
         self.label = label
+        self.retention = retention  # what a pre-run stop offers to release
 
 
 def _integer(value: object, default: int) -> int:
@@ -352,7 +353,7 @@ class ExecutionOwner:
                 ]
                 for op in stopping:
                     if op.retention is not None:  # TASK-40716: end the run
-                        raise CleanupUnprovenRefused(op.retention.label)
+                        raise CleanupUnprovenRefused(op.retention.label, op.retention)
                 if stopping:
                     raise CapacityRefused("previous_tool_still_running")
                 tools = [
@@ -550,7 +551,7 @@ def run_on_custody_thread(function, operation_of, poll_seconds: float = 0.1):
         operation = operation_of()
         retention = getattr(operation, "retention", None)
         if retention is not None:
-            raise CleanupUnprovenRefused(retention.label)
+            raise CleanupUnprovenRefused(retention.label, retention)
         worker.join(poll_seconds)
     if "error" in box:
         raise box["error"]

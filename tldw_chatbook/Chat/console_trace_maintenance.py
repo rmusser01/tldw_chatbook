@@ -33,6 +33,7 @@ MAX_LEGACY_BATCH_SECONDS = 0.100
 _GC_ENTITY_TABLES = (
     "console_trace_artifacts",
     "console_trace_calls",
+    "console_trace_child_segments",
     "console_trace_events",
     "console_trace_header_components",
     "console_trace_owners",
@@ -1468,6 +1469,7 @@ class TraceGarbageCollector:
         identities = {
             "console_trace_artifacts": "artifact_id",
             "console_trace_calls": "call_id",
+            "console_trace_child_segments": "segment_id",
             "console_trace_events": "event_id",
             "console_trace_header_components": (
                 "header_id || char(31) || component_kind || char(31) || ordinal"
@@ -1504,6 +1506,22 @@ class TraceGarbageCollector:
                      JOIN console_trace_owners AS owner
                        ON retention.entity_kind = 'owner'
                       AND retention.entity_id = owner.owner_id
+                    WHERE julianday(retention.retain_until) > julianday('now')
+                   UNION ALL
+                   -- A spawned child's own segment lives while its owner does.
+                   -- (Both branches join on link.owner_id, a non-key column with no
+                   -- index: links are few and the join is a scan, so no plan pin.)
+                   SELECT link.segment_id, NULL
+                     FROM console_trace_child_segments AS link
+                     JOIN console_trace_owners AS owner
+                       ON owner.owner_id = link.owner_id
+                    WHERE owner.attached = 1
+                   UNION ALL
+                   SELECT link.segment_id, NULL
+                     FROM console_trace_retention_roots AS retention
+                     JOIN console_trace_child_segments AS link
+                       ON retention.entity_kind = 'owner'
+                      AND retention.entity_id = link.owner_id
                     WHERE julianday(retention.retain_until) > julianday('now')
                    UNION ALL
                    SELECT call.segment_id, NULL
@@ -1604,10 +1622,26 @@ class TraceGarbageCollector:
                  JOIN console_trace_gc_segment_scopes AS scope
                    ON scope.segment_id = owner.root_segment_id
                 WHERE scope.request_id = ?
+                UNION SELECT link.owner_id FROM console_trace_child_segments AS link
+                 JOIN console_trace_gc_segment_scopes AS scope
+                   ON scope.segment_id = link.segment_id
+                WHERE scope.request_id = ?
                 UNION SELECT call.owner_id FROM console_trace_calls AS call
                  JOIN console_trace_gc_marks AS mark ON mark.entity_id = call.call_id
                 WHERE mark.request_id = ? AND mark.entity_kind = 'console_trace_calls'""",
-            (request_id, request_id),
+            (request_id, request_id, request_id),
+        )
+        self._mark_sql(
+            cursor,
+            request_id,
+            epoch,
+            "console_trace_child_segments",
+            """SELECT link.segment_id AS entity_id
+                 FROM console_trace_child_segments AS link
+                 JOIN console_trace_gc_segment_scopes AS scope
+                   ON scope.segment_id = link.segment_id
+                WHERE scope.request_id = ?""",
+            (request_id,),
         )
         self._mark_sql(
             cursor,
@@ -1946,6 +1980,7 @@ class TraceGarbageCollector:
             ("console_trace_semantic_revisions", "revision_id"),
             ("console_trace_artifacts", "artifact_id"),
             ("console_trace_policies", "policy_id"),
+            ("console_trace_child_segments", "segment_id"),
             ("console_trace_owners", "owner_id"),
             ("console_trace_segments", "segment_id"),
         )

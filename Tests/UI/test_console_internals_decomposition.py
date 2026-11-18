@@ -3852,9 +3852,25 @@ async def test_console_run_inspector_exposes_pending_approval_and_chatbook_artif
         )
 
 
+def _build_bound_mcp_test_app():
+    """An app whose MCP store binds, as at a profile's own data folder.
+
+    The factory's default data folder is not the profile's, so its MCP store
+    stays unbound and the row reads "MCP: off" (TASK-41308). These tests pin
+    the bound rows.
+    """
+    from tldw_chatbook import config as config_module
+    from tldw_chatbook.MCP.console_snapshot import unbound_console_sources
+
+    app = _build_test_app(user_data_dir=config_module.get_user_data_dir())
+    assert not unbound_console_sources(app.unified_mcp_service)
+    return app
+
+
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_run_inspector_shows_mcp_tools_ready_row():
-    app = _build_test_app()
+    app = _build_bound_mcp_test_app()
     app.console_mcp_tool_count = 5
     host = ConsoleHarness(app)
 
@@ -3873,6 +3889,7 @@ async def test_console_run_inspector_shows_mcp_tools_ready_row():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_run_inspector_shows_mcp_not_connected_row():
     """Finding I2: the blocked "not connected" row must win even when
@@ -3880,7 +3897,7 @@ async def test_console_run_inspector_shows_mcp_not_connected_row():
     mixed state (a stale server's snapshot tools still count toward
     `tool_count`); the old (0, 2) case this test used to pin can never
     actually happen in production (see `_mcp_inspector_row`'s docstring)."""
-    app = _build_test_app()
+    app = _build_bound_mcp_test_app()
     app.console_mcp_tool_count = 5
     app.console_mcp_not_connected_count = 2
     host = ConsoleHarness(app)
@@ -3895,11 +3912,12 @@ async def test_console_run_inspector_shows_mcp_not_connected_row():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_run_inspector_omits_mcp_row_by_default():
     """No `console_mcp_tool_count` seam wired -- e.g. no `unified_mcp_service`
     on the app, or the kill switch is on -- must not render an "MCP" row."""
-    app = _build_test_app()
+    app = _build_bound_mcp_test_app()
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(196, 48)) as pilot:
@@ -3910,6 +3928,7 @@ async def test_console_run_inspector_omits_mcp_row_by_default():
         assert not list(console.query("#console-inspector-mcp"))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_run_inspector_mcp_row_reflects_real_compose_mcp_provider():
     """P5 review fix: the three tests above only prove the render logic
@@ -3947,6 +3966,7 @@ async def test_console_run_inspector_mcp_row_reflects_real_compose_mcp_provider(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_run_inspector_mcp_row_shows_blocked_when_stale_server_has_tools():
     """Finding I2, RED per the review: build the state from a REAL

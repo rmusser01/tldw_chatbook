@@ -636,6 +636,19 @@ def console_turn_activity_text(
     )
 
 
+def project_held_tool_slots(screen: Any, count: int) -> None:
+    """Show how many tool slots unproven cleanups hold (TASK-41307)."""
+    from textual.css.query import QueryError
+    from ...Widgets.Console.console_status_chips import ConsoleStatusChips
+
+    try:
+        screen.query_one("#console-status-chips", ConsoleStatusChips).sync_held_slots(
+            count
+        )
+    except QueryError:
+        pass
+
+
 def project_console_run_feedback(screen: Any, copy: str) -> None:
     """Paint resident run feedback without configuration or authority reads."""
     from textual.css.query import QueryError
@@ -726,6 +739,28 @@ def _viewed_reply_is_streaming(controller: Any, session_id: Any) -> bool:
                 status in ("pending", "streaming") and len(thought) >= floor
             )
     return False
+
+
+def _memoized_reply_is_streaming(owner: Any, controller: Any, session_id: Any) -> bool:
+    """``_viewed_reply_is_streaming``, read again only when the transcript moved.
+
+    The 0.2s tick asks on every pass and the read copies the whole session,
+    so the answer is kept per (store, session, display revision): most
+    transcript-visible store changes advance that revision (TASK-41313). A
+    ~3 s time bucket re-reads it anyway, like the transcript gate's forced
+    pass, for the changes that do not (a resumed attempt, an empty chunk).
+    """
+    try:
+        store = controller.store
+        revision = store.display_projection_revision(session_id)
+        key = (id(store), session_id, revision, int(time.monotonic() // 3))
+    except Exception:  # noqa: BLE001 - store double or unknown session: no memo
+        return _viewed_reply_is_streaming(controller, session_id)
+    memo = getattr(owner, "_console_reply_streaming_memo", None)
+    if memo is None or memo[0] != key:
+        memo = (key, _viewed_reply_is_streaming(controller, session_id))
+        vars(owner)["_console_reply_streaming_memo"] = memo
+    return memo[1]
 
 
 #: TASK-34100.5 AC#5: the first-token wait copy and when it replaces
@@ -1284,21 +1319,67 @@ class ConsoleAgentController:
             reply_streaming=(
                 getattr(snapshot, "status", "idle") == "idle"
                 and now - seen[1] >= _FIRST_TOKEN_HINT_AFTER_SECONDS
-                and _viewed_reply_is_streaming(controller, viewed)
+                and _memoized_reply_is_streaming(self, controller, viewed)
             ),
         )
 
-    def sync_unproven_cleanup(self, transcript: Any, messages: Any = ()) -> None:
-        """Push Release rows for runs with an unproven tool cleanup (TASK-40716)."""
+    def sync_unproven_cleanup(self, transcript: Any, messages: Any = ()) -> int:
+        """Push Release rows for unproven tool cleanups (TASK-40716, TASK-41307).
+
+        Returns:
+            The tool slots unproven cleanups still hold, for the status line.
+        """
         controller = self._console_chat_controller
-        rows = {}
-        if getattr(controller, "run_terminal_rows", None):
+        capacity = getattr(
+            getattr(controller, "_hooks_v2_runtime", None), "_execution_capacity", None
+        )
+        rows, held = {}, 0
+        if getattr(controller, "run_terminal_rows", None) or (
+            capacity is not None and capacity.retained()
+        ):
             from tldw_chatbook.Chat.console_unproven_cleanup import (
                 unproven_cleanup_rows,
+                unreleased_slot_count,
             )
 
             rows = unproven_cleanup_rows(controller, messages)
+            held = unreleased_slot_count(controller)
         transcript.set_unproven_cleanup_rows(rows)
+        return held
+
+    def open_held_tool_slots(self) -> None:
+        """List every held tool slot with Release (TASK-41307)."""
+        from functools import partial
+
+        from tldw_chatbook.Chat.console_unproven_cleanup import (
+            held_tool_slots,
+            release_held_tool_slot,
+        )
+        from tldw_chatbook.Widgets.Console.console_held_tool_slots import (
+            ConsoleHeldToolSlotsModal,
+        )
+
+        controller = self._console_chat_controller
+        if controller is None:
+            return
+        self.push_screen(
+            ConsoleHeldToolSlotsModal(
+                held_tool_slots(controller), partial(release_held_tool_slot, controller)
+            ),
+            callback=lambda _result: self.resync_held_tool_slots(),
+        )
+
+    def resync_held_tool_slots(self) -> None:
+        """Repaint the held-slots segment and Release rows after a release.
+
+        Forced: abandoning a record changes nothing the TASK-34958 transcript
+        gate reads, so an ordinary pass would skip it while the Console idles.
+        """
+        self.run_worker(
+            self._screen._sync_native_console_transcript(force=True),
+            exclusive=True,
+            group="console-held-slots",
+        )
 
     def release_unproven_tool_slot(self, message_id: str) -> bool:
         """Return only the tool slot; the tool's workspace stays held."""

@@ -16,7 +16,9 @@ PREPARATION = CHAT / "console_configuration_preparation.py"
 # Measured over tldw_chatbook/Chat/**/*.py (Attribute `X` + getattr(.., "X")):
 #   __code__ 60 -> 56, __defaults__ 28 -> 27, __kwdefaults__ 43 <- 44
 # (base 66155632ed -> head; console_configuration_preparation.py is the only file that moved).
-PINS = {"__code__": 56, "__defaults__": 27, "__kwdefaults__": 43}
+# TASK-41319: 55/26/42 on its base -> 49/24/39 (Send skill trust and the first
+# library receipt decided from registration and current slots).
+PINS = {"__code__": 49, "__defaults__": 24, "__kwdefaults__": 39}
 
 
 def _identity_attr(node: ast.AST) -> str | None:

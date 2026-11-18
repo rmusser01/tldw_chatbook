@@ -41,6 +41,8 @@ from Tests.Agents.test_agent_runtime import make_deps
 from Tests.Agents.conftest import join_fleet_children
 from Tests.Agents.test_agent_service import FleetChat, verbatim
 
+pytestmark = pytest.mark.bootstrap_profile
+
 
 def _fence(name, args):
     return f"```tool_call\n{json.dumps({'name': name, 'arguments': args})}\n```"

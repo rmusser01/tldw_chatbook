@@ -245,6 +245,55 @@ async def test_bounded_queue_drops_when_the_drainer_stalls() -> None:
 
 
 @pytest.mark.asyncio
+async def test_wait_idle_lets_an_idle_loop_sleep_until_the_send_finishes() -> None:
+    """A send in flight leaves the loop idle while ``wait_idle`` waits on it.
+
+    A wait that re-queued itself with ``sleep(0)`` never let the loop block
+    in its selector; on Linux that keeps the loop thread on-CPU and starves
+    the worker threads that publish through ``call_soon_threadsafe``
+    (TASK-41317, the shape TASK-40334 found in the idle-heap sampler).
+    """
+    client = FakeRelayClient()
+    client.gate = asyncio.Event()
+    publisher = ServedRelayPublisher(client)
+    publisher.attach()
+    try:
+        publisher.run_status("session-7", "streaming")
+        await client.in_flight.wait()  # queue empty, drainer busy
+
+        loop = asyncio.get_running_loop()
+        previous_override = vars(loop).get("_run_once")
+        original_run_once = loop._run_once
+        turns = 0
+
+        def counting_run_once() -> None:
+            nonlocal turns
+            turns += 1
+            original_run_once()
+
+        loop._run_once = counting_run_once
+        started = loop.time()
+        try:
+            await publisher.wait_idle(timeout=0.2)
+        finally:
+            if previous_override is None:
+                del loop._run_once
+            else:
+                loop._run_once = previous_override
+        # A sleeping loop turns a handful of times in 0.2 s; a spin, hundreds.
+        assert turns <= 20, f"wait_idle turned an idle loop {turns} times in 0.2 s"
+        assert loop.time() - started >= 0.19
+        assert client.frames == []
+
+        client.gate.set()
+        # Returns as soon as the last event is sent, not at its deadline.
+        await asyncio.wait_for(publisher.wait_idle(timeout=60), 5)
+        assert [kind for kind, _ in client.frames] == ["relay.run.status"]
+    finally:
+        await publisher.aclose()
+
+
+@pytest.mark.asyncio
 async def test_run_state_polling_publishes_only_deltas() -> None:
     client = FakeRelayClient()
     states: dict[str, Any] = {}

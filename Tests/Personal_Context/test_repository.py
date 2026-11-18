@@ -2180,6 +2180,119 @@ def _pointers(db_path) -> dict[str, set[tuple]]:
         return {table: set(connection.execute(sql)) for table, sql in queries.items()}
 
 
+@pytest.mark.parametrize(
+    "pointer",
+    [
+        ("messages", "undo_id", "encrypted_undo_version"),
+        ("unreviewed_target", "undo_id", "encrypted_undo_version"),
+        ("local_undo", "wrong_id", "encrypted_undo_version"),
+        ("local_undo", "undo_id", "wrong_version"),
+        (),
+    ],
+    ids=["canonical-table", "unknown-table", "wrong-id", "wrong-version", "empty"],
+)
+def test_remove_damaged_refuses_unsupported_pointer_before_sql(
+    monkeypatch, pointer
+) -> None:
+    monkeypatch.setitem(repository_keys._DROPPABLE, "undo", pointer)
+    custody = repository_keys.RepositoryKeyCustody()
+    with closing(sqlite3.connect(":memory:")) as connection:
+        # Every candidate is executable SQL: refusal must come from custody,
+        # not an absent table or column. Trace only after schema setup.
+        connection.executescript(
+            "CREATE TABLE messages (undo_id, encrypted_undo_version);"
+            "CREATE TABLE unreviewed_target (undo_id, encrypted_undo_version);"
+            "CREATE TABLE local_undo "
+            "(undo_id, encrypted_undo_version, wrong_id, wrong_version);"
+            "CREATE TABLE encrypted_outbox "
+            "(outbox_id, envelope_version, object_type, object_id, version_id);"
+            "CREATE TABLE object_heads (object_type, object_id, version_id);"
+            "CREATE TABLE quarantine (object_type, object_id, version_id);"
+            "CREATE TABLE encrypted_objects (object_type, object_id, version_id);"
+        )
+        statements = []
+        connection.set_trace_callback(statements.append)
+        with pytest.raises(
+            ProfileLockedError, match=r"^Damaged object reference is invalid\.$"
+        ):
+            custody._remove_damaged(
+                connection, [("undo", "private-id", "private-version")]
+            )
+        assert statements == []
+
+
+@pytest.mark.parametrize(
+    ("object_type", "pointer"),
+    [
+        ("runtime_policy", ("messages", "scope_id", "encrypted_policy_version")),
+        ("scope_binding", ("messages", "scope_id", "encrypted_binding_version")),
+        (
+            "runtime_policy",
+            ("unreviewed_target", "scope_id", "encrypted_policy_version"),
+        ),
+        (
+            "runtime_policy",
+            ("local_runtime_policy", "wrong_id", "encrypted_policy_version"),
+        ),
+        ("runtime_policy", ("local_runtime_policy", "scope_id", "wrong_version")),
+        ("runtime_policy", ()),
+        ("undo", ("local_runtime_policy", "scope_id", "encrypted_policy_version")),
+        (
+            "unknown_kind",
+            ("local_runtime_policy", "scope_id", "encrypted_policy_version"),
+        ),
+        (
+            "scope_binding",
+            ("local_runtime_policy", "scope_id", "encrypted_policy_version"),
+        ),
+    ],
+    ids=[
+        "canonical-policy",
+        "canonical-binding",
+        "unknown-table",
+        "wrong-id",
+        "wrong-version",
+        "empty",
+        "unsupported-kind",
+        "unknown-kind",
+        "cross-kind",
+    ],
+)
+def test_put_local_body_refuses_unsupported_reference_before_mutation(
+    monkeypatch, object_type, pointer
+) -> None:
+    monkeypatch.setitem(repository_keys._DROPPABLE, object_type, pointer)
+    custody = repository_keys.RepositoryKeyCustody()
+    encrypted_inserts = []
+
+    def observe_encrypted_insert(*args, **kwargs):
+        encrypted_inserts.append((args, kwargs))
+
+    monkeypatch.setattr(
+        custody, "_insert_encrypted", observe_encrypted_insert, raising=False
+    )
+    with closing(sqlite3.connect(":memory:")) as connection:
+        connection.executescript(
+            "CREATE TABLE messages (scope_id PRIMARY KEY, encrypted_policy_version, "
+            "encrypted_binding_version);"
+            "CREATE TABLE unreviewed_target (scope_id PRIMARY KEY, encrypted_policy_version);"
+            "CREATE TABLE local_runtime_policy "
+            "(scope_id PRIMARY KEY, encrypted_policy_version, wrong_version);"
+            "CREATE TABLE local_scope_bindings (scope_id PRIMARY KEY, encrypted_binding_version);"
+            "CREATE TABLE object_heads (object_type, object_id, version_id);"
+        )
+        statements = []
+        connection.set_trace_callback(statements.append)
+        with pytest.raises(
+            ProfileLockedError, match=r"^Local body reference is invalid\.$"
+        ):
+            custody._put_local_body(
+                connection, object_type, "private-scope", {"private-body": True}
+            )
+        assert encrypted_inserts == []
+        assert statements == []
+
+
 def _damage_object(db_path, key) -> None:
     with closing(sqlite3.connect(db_path)) as connection, connection:
         connection.execute(

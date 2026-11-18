@@ -1395,6 +1395,48 @@ def test_child_uses_exactly_one_root_delivery_path(
     assert sum(sentinel in str(row) for row in child_first) == 1
 
 
+def test_failed_project_consent_callback_cancels_and_logs_only_its_type(
+    db, tmp_path
+):
+    """TASK-41312: a raising consent callback stays fail-closed, but not silent."""
+    from loguru import logger
+
+    candidate = StartupInstructionCandidate(
+        binding_id="binding",
+        binding_root=tmp_path,
+        locator_fingerprint="fingerprint",
+        dispatch_started_wall_ns=time.time_ns(),
+        source=None,
+        outcomes=(),
+    )
+
+    def confirm(_snapshot):
+        raise AttributeError("CONSENT-SECRET-DETAIL")
+
+    chat = ScriptedChat(["never sent"])
+    service = AgentService(
+        db=db,
+        registry=ToolCatalogRegistry(),
+        chat_call=chat,
+        startup_instruction_candidate=candidate,
+        confirm_project_instruction_dispatch=confirm,
+    )
+    messages = []
+    sink = logger.add(lambda m: messages.append(m.record["message"]), level="WARNING")
+    try:
+        _run_id, outcome = service.run_turn(
+            conversation_id="c-consent-raises",
+            messages=[{"role": "user", "content": "go"}],
+            config=CFG,
+            api_endpoint="openai",
+        )
+    finally:
+        logger.remove(sink)
+    assert outcome.status == agent_service.RUN_CANCELLED and not chat.calls
+    assert any("exception_type=AttributeError" in m for m in messages), messages
+    assert not any("CONSENT-SECRET-DETAIL" in m for m in messages)
+
+
 def test_native_endpoint_sends_tools_and_suppresses_fence_protocol(db):
     service, chat = make_service(
         db,

@@ -406,7 +406,6 @@ async def test_fleet_child_script_after_its_parent_runs_only_while_the_turn_is_c
     chat's conversation is rebound, the same call is refused.
     """
     from Tests.Chat.test_console_agent_bridge import SUBAGENT_PROMPT_PREFIX
-    from Tests.console_provider_doubles import provider_resolution
 
     monkeypatch.setenv("TLDW_AGENTS_MAX_LIVE_SUBAGENTS", "3")
     monkeypatch.setenv("TLDW_AGENTS_AUTOWAKE_ENABLED", "false")
@@ -427,12 +426,6 @@ async def test_fleet_child_script_after_its_parent_runs_only_while_the_turn_is_c
     child_payloads = []
 
     class Gateway(_RecordingGateway):
-        async def resolve_for_send(self, selection):
-            # A child run needs the continuation fields a real resolution has.
-            return provider_resolution(
-                provider="llama_cpp", model="m", continuation_protocol=None, api_mode=None
-            )
-
         async def stream_chat(self, resolution, messages, **kwargs):
             self.payloads.append(messages)
             system = str(messages[0].get("content", "")) if messages else ""
@@ -489,6 +482,95 @@ async def test_fleet_child_script_after_its_parent_runs_only_while_the_turn_is_c
             "run_skill_script is unavailable: this chat changed after its turn began"
             in script_result
         ), script_result
+
+
+async def test_closing_a_chat_while_its_fleet_child_runs_releases_the_claim(
+    ordinary_host, monkeypatch
+):
+    """TASK-41311: the tab's own close, not ``store.close_session``.
+
+    The close enters where the tab's confirmed close does (``session.py``'s
+    ``_complete_close``): the same impact, then ``ConsoleRuntime.close_session``.
+    A fleet child's cancel is observed only at its next call boundary, so a
+    child still inside its provider call when the close's grace ends returns
+    after the session is gone. Its tool call then runs nothing (the close's
+    cancel stops it; the turn's own gate refuses the closed chat too), and once
+    it returns its OPAQUE claim is released and another chat can send.
+    """
+    from Tests.Chat.test_console_agent_bridge import SUBAGENT_PROMPT_PREFIX
+    from tldw_chatbook.UI.Console_Modules.loss_inventory import session_close_impact
+
+    monkeypatch.setenv("TLDW_AGENTS_MAX_LIVE_SUBAGENTS", "3")
+    monkeypatch.setenv("TLDW_AGENTS_AUTOWAKE_ENABLED", "false")
+    h = ordinary_host
+    closing = _chat(h)
+    entered, release = threading.Event(), threading.Event()
+    effects, child_payloads = [], []
+    h.bridge._skills_service = _ScriptSkills(lambda: effects.append("ran"))
+    h.controller.set_pending_skill_script = lambda *args, **kwargs: None
+
+    class Gateway(_RecordingGateway):
+        async def stream_chat(self, resolution, messages, **kwargs):
+            self.payloads.append(messages)
+            system = str(messages[0].get("content", "")) if messages else ""
+            if system.startswith(SUBAGENT_PROMPT_PREFIX):
+                child_payloads.append(messages)
+                if len(child_payloads) == 1:
+                    entered.set()
+                    assert release.wait(30)  # a provider call the close cannot cut
+                    yield fence(
+                        "run_skill_script",
+                        {"skill": "demo", "script": "scripts/x.py", "args": []},
+                    )
+                else:
+                    yield "child done"
+                return
+            if len(self.payloads) == 1:
+                yield fence(SPAWN_TOOL_NAME, {"task": "CHILD-TASK outlive the parent"})
+            else:
+                yield "parent done"
+
+    _install(h, Gateway())
+    tree = None
+    try:
+        result = await asyncio.wait_for(
+            h.controller.submit_draft("spawn chat", session_id=closing.id), 30
+        )
+        assert result.accepted, result.visible_copy
+        tree = _turn(h, closing)
+        assert tree.sealed and tree.footprint.opaque
+        assert await _eventually(entered.is_set), "the child never reached the model"
+        impact = session_close_impact(h.store, h.controller, h.runtime, closing.id)
+        await asyncio.wait_for(
+            h.runtime.close_session(
+                closing.id, expected_revision=impact.lifecycle.revision
+            ),
+            30,
+        )
+        assert all(item.id != closing.id for item in h.store.sessions())
+        with pytest.raises(RuntimeError, match="ordinary turn source changed"):
+            tree.check()  # every effect's own gate refuses the closed chat
+        assert not tree.retired.done(), "the child returned before the close"
+        release.set()
+        assert await _eventually(lambda: tree.retired.done()), (
+            "the closed chat's claim outlived its child"
+        )
+    finally:
+        release.set()
+        if tree is not None and not tree.retired.done():
+            # Fail here, not in teardown: disposal waits for every turn.
+            tree.retired.set_result(None)
+            h.runtime._ordinary_turns.discard(tree)
+    assert effects == [], "the closed chat's child ran a tool effect"
+    child_rows = [
+        row
+        for row in h.database.list_runs(closing.persisted_conversation_id)
+        if row["agent_kind"] == "subagent"
+    ]
+    # The close's cancel stopped the tool call at its next boundary.
+    assert [row["status"] for row in child_rows] == ["cancelled"]
+    result = await h.controller.submit_draft("other chat", session_id=_chat(h).id)
+    assert result.accepted, "the closed chat's claim outlived its child"
 
 
 async def test_widened_turn_refuses_a_skill_install_after_runtime_disposal(

@@ -91,6 +91,16 @@ class TraceSegmentRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class TraceChildSegmentRecord:
+    """A spawned child run's own segment under its parent's owner and turn."""
+
+    segment_id: str
+    owner_id: str
+    turn_id: str
+    run_id: str
+
+
+@dataclass(frozen=True, slots=True)
 class TraceOwnerRecord:
     owner_id: str
     conversation_id: str | None
@@ -1850,6 +1860,52 @@ class ConsoleTraceRepository:
         ).fetchone()
         return None if row is None else TraceSegmentRecord(*row)
 
+    def create_child_segment(
+        self,
+        cursor: sqlite3.Cursor,
+        *,
+        owner_id: str,
+        turn_id: str,
+        run_id: str,
+    ) -> TraceChildSegmentRecord:
+        """Create one child run's own root-less segment under an attached owner.
+
+        Args:
+            cursor: Cursor for the caller-owned transaction.
+            owner_id: Attached owner of the spawning conversation.
+            turn_id: Saved user turn whose run spawned the child.
+            run_id: The child's provider-call chain identity; one segment each.
+
+        Returns:
+            The new link. Database triggers refuse a detached owner.
+        """
+
+        _nonempty(owner_id, "owner_id")
+        _nonempty(turn_id, "turn_id")
+        _nonempty(run_id, "run_id")
+        self._claim_write_intent(cursor)
+        segment = self.create_segment(cursor)
+        cursor.execute(
+            """INSERT INTO console_trace_child_segments(
+                   segment_id, owner_id, turn_id, run_id) VALUES (?, ?, ?, ?)""",
+            (segment.segment_id, owner_id, turn_id, run_id),
+        )
+        self._advance_graph_epoch(cursor)
+        return TraceChildSegmentRecord(segment.segment_id, owner_id, turn_id, run_id)
+
+    def get_child_segment(
+        self, cursor: sqlite3.Cursor, run_id: str
+    ) -> TraceChildSegmentRecord | None:
+        """Return the segment a child run owns, by its chain identity."""
+
+        _nonempty(run_id, "run_id")
+        row = cursor.execute(
+            """SELECT segment_id, owner_id, turn_id, run_id
+                 FROM console_trace_child_segments WHERE run_id = ?""",
+            (run_id,),
+        ).fetchone()
+        return None if row is None else TraceChildSegmentRecord(*row)
+
     def attach_owner(
         self,
         cursor: sqlite3.Cursor,
@@ -2321,7 +2377,13 @@ class ConsoleTraceRepository:
     ) -> TraceOwnerRecord | None:
         row = cursor.execute(
             """WITH RECURSIVE segment_ancestry(segment_id, depth) AS (
-                   SELECT ?, 0 UNION ALL
+                   -- A child run's segment resolves to its owner's root.
+                   SELECT COALESCE((
+                     SELECT owner.root_segment_id
+                       FROM console_trace_child_segments AS link
+                       JOIN console_trace_owners AS owner
+                         ON owner.owner_id = link.owner_id
+                      WHERE link.segment_id = ?1), ?1), 0 UNION ALL
                    SELECT segment.parent_segment_id, child.depth + 1
                      FROM console_trace_segments AS segment
                      JOIN segment_ancestry AS child ON child.segment_id = segment.segment_id
@@ -3386,13 +3448,17 @@ class ConsoleTraceRepository:
             turn_id: Saved user-turn identity whose replay is being considered.
 
         Returns:
-            Whether any call for this owner and turn remains unresolved.
+            Whether any of the owner's own calls for this turn remains
+            unresolved. A spawned child's calls never block it (TASK-41310).
         """
         # The existing owner-order index starts with (owner_id, turn_id).
         return (
             cursor.execute(
-                """SELECT 1 FROM console_trace_calls
+                """SELECT 1 FROM console_trace_calls AS call
                 WHERE owner_id = ? AND turn_id = ? AND state IN (?, ?, ?, ?)
+                  AND NOT EXISTS (
+                    SELECT 1 FROM console_trace_child_segments AS link
+                     WHERE link.segment_id = call.segment_id)
                 LIMIT 1""",
                 (
                     owner_id,

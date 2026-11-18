@@ -21,7 +21,7 @@ import time
 from collections import deque
 from collections.abc import Awaitable
 from concurrent.futures import TimeoutError as FuturesTimeoutError  # noqa: F401 - lazy request helper compatibility seam
-from collections.abc import Collection, Mapping, Set as AbstractSet
+from collections.abc import Collection, Iterator, Mapping, Set as AbstractSet
 from dataclasses import dataclass, field, replace as dataclass_replace
 from pathlib import Path
 from types import MappingProxyType
@@ -207,8 +207,10 @@ from tldw_chatbook.Chat.console_trace_provenance import (
     DerivedTraceProvenance,
     OmittedTraceProvenance,
     ProviderArtifactTraceProvenance,
+    RequestRouteTraceProvenance,
     SavedRevisionTraceProvenance,
     TraceProvenance,
+    TraceProvenanceAlignmentError,
     TraceProvenanceSource,
     request_route_provenance,
 )
@@ -3024,12 +3026,18 @@ class ConsoleAgentTraceRequestFactory:
         chain_id: str,
         continuation_groups: Sequence[ContinuationOwnerGroup] = (),
         thinking_owner_key: str | None = None,
+        child: bool = False,
     ) -> PreparedConsoleRequest:
-        """Bind current agent rows to admitted references or new artifacts."""
+        """Bind current agent rows to admitted references or new artifacts.
+
+        A spawned child's rows are its own: none may borrow the parent's
+        saved references, even a byte-equal task. Its route instead names
+        the spawning turn, whose owner traces the child in its own segment.
+        """
 
         provenance = self.admitted_request.provenance
         assert provenance is not None
-        base_rows = self.admitted_request.flattened_messages()
+        base_rows = () if child else self.admitted_request.flattened_messages()
         base_descriptors = provenance.flattened_messages()
         thinking_owners = {
             group.owner_message_id
@@ -3092,11 +3100,68 @@ class ConsoleAgentTraceRequestFactory:
                     route,
                     actor_id=actor_id,
                     chain_id=chain_id,
+                    parent_revision_id=self._turn_revision_id() if child else None,
                 ),
             ),
             capture_policy=provenance.capture_policy,
             capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
         )
+
+    def verify_child_route(self, prepared: Any) -> None:
+        """Fail closed unless a prepared child request names the spawning turn.
+
+        Args:
+            prepared: The ``PreparedProviderRequest`` about to be dispatched.
+
+        Raises:
+            TraceProvenanceAlignmentError: If its route does not carry exactly
+                the revision this factory derives for the spawning turn.
+        """
+
+        provenance = prepared.semantic.provenance
+        routes = (
+            ()
+            if provenance is None
+            else tuple(
+                item
+                for item in provenance.metadata
+                if type(item) is RequestRouteTraceProvenance
+            )
+        )
+        if len(routes) != 1 or routes[0].parent_revision_id != self._turn_revision_id():
+            raise TraceProvenanceAlignmentError(
+                "child call route does not name the spawning turn"
+            )
+
+    def _turn_revision_id(self) -> str:
+        """Return the spawning turn's saved user revision.
+
+        The factory is built per turn from the request the parent run was
+        admitted with, so that request's last user row IS the spawning turn;
+        no separate turn id is available here. Fails closed when that row
+        has no single saved revision.
+        """
+
+        provenance = self.admitted_request.provenance
+        assert provenance is not None
+        rows = self.admitted_request.flattened_messages()
+
+        def saved(descriptor: TraceProvenance) -> Iterator[str]:
+            if type(descriptor) is SavedRevisionTraceProvenance:
+                yield descriptor.revision_id
+            elif type(descriptor) is DerivedTraceProvenance:
+                for nested in descriptor.inputs:
+                    yield from saved(nested)
+
+        for row, descriptor in zip(
+            reversed(rows), reversed(provenance.flattened_messages()), strict=True
+        ):
+            ids = tuple(dict.fromkeys(saved(descriptor)))
+            if row.get("role") == "user" and ids:
+                if len(ids) != 1:
+                    break
+                return ids[0]
+        raise ValueError("trace_turn_unavailable")
 
 
 def _stall_timeout_seconds() -> float:

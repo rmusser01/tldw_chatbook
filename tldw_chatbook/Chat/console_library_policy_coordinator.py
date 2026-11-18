@@ -225,21 +225,15 @@ _CONSOLE_LIBRARY_EXECUTION_NATIVE_METHODS = tuple(
     )
 )
 
-from .console_ordinary_tree import _function_record as _ordinary_function_record
-
+# The coordinator type and the reader methods a per-instance override of
+# which declines the first-library receipt (Console Send preparation).
 _NATIVE_FIRST_LIBRARY_COORDINATOR = (
     ConsoleLibraryPolicyCoordinator,
-    tuple(
-        (
-            name,
-            _ordinary_function_record(getattr(ConsoleLibraryPolicyCoordinator, name)),
-        )
-        for name in (
-            "capture_for_execution",
-            "_read_current_binding",
-            "_run_repository_call",
-            "_publish",
-            "_require_session",
-        )
+    (
+        "capture_for_execution",
+        "_read_current_binding",
+        "_run_repository_call",
+        "_publish",
+        "_require_session",
     ),
 )

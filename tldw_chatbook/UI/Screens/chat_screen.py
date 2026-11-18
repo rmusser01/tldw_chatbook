@@ -136,6 +136,7 @@ from ..Console_Modules.agent import (
     CONSOLE_AGENT_CANCEL_ALL_ID,
     CONSOLE_AGENT_FLEET_SECTION_ID,
     apply_console_agent_status_state,
+    project_held_tool_slots,
 )
 from ..Console_Modules.prompt_queue import ConsolePromptQueueRegion
 from ..Console_Modules.realtime import CONSOLE_REALTIME_CHIP_MESSAGES
@@ -637,6 +638,7 @@ from ...Widgets.Console.console_status_chips import (
     ConsoleAssistantChip,
     ConsoleCostChip,
     ConsoleEmergencyStopChip,
+    ConsoleHeldSlotsChip,
     ConsoleRunChip,
     ConsoleScopeChip,
     ConsoleSourcesChip,
@@ -10879,6 +10881,14 @@ class ChatScreen(BaseAppScreen):
         event.stop()
         self._reveal_console_inspector_rail()
 
+    @on(ConsoleHeldSlotsChip.OpenRequested)
+    def _console_held_slots_activated(
+        self, event: ConsoleHeldSlotsChip.OpenRequested
+    ) -> None:
+        """List the tool slots unproven cleanups hold, with Release (TASK-41307)."""
+        event.stop()
+        self._agent.open_held_tool_slots()
+
     @on(ConsoleEmergencyStopChip.ClearRequested)
     async def _console_emergency_stop_cleared(
         self, event: ConsoleEmergencyStopChip.ClearRequested
@@ -12956,6 +12966,9 @@ class ChatScreen(BaseAppScreen):
         self,
         pending_launch: Optional[ConsoleLiveWorkLaunch],
     ) -> ConsoleInspectorState:
+        from tldw_chatbook.app_services import read_mcp_service
+        from tldw_chatbook.MCP.console_snapshot import console_mcp_unavailable_reason
+
         _provider_display, model, _settings = (
             self._active_console_provider_model_display()
         )
@@ -13027,6 +13040,10 @@ class ChatScreen(BaseAppScreen):
             approval_count=self._console_pending_approval_count(),
             mcp_tool_count=self._console_mcp_tool_count(),
             mcp_not_connected_count=self._console_mcp_not_connected_count(),
+            # TASK-41308: an unbound MCP store says off, and why, in the row.
+            mcp_unavailable_reason=console_mcp_unavailable_reason(
+                read_mcp_service(self.app_instance)
+            ),
             can_save_chatbook=can_save_chatbook,
             scope_item_count=self._retrieval._console_retrieval_scope_run_recipe_count(),
             change_review_available=(
@@ -17006,6 +17023,15 @@ class ChatScreen(BaseAppScreen):
                 logger.warning("Console effective-memory presentation selection failed")
         if region := self._console_transcript_region_or_none():
             region.sync_recovery()
+        # The SHOWN turn-activity line moves with time, not the store: it joins
+        # the gate, or a quiet tool call froze it ~3s (re-applied after set_messages).
+        activity_line = activity_action = activity_shown = None
+        if transcript is not None:
+            activity_line = self._agent.console_turn_activity()
+            activity_action = self._agent.console_turn_activity_abandon_action()
+            activity_shown = transcript.apply_turn_activity(
+                activity_line, action=activity_action
+            )
         if store is not None:
             session_id = store.active_session_id
             try:
@@ -17086,6 +17112,7 @@ class ChatScreen(BaseAppScreen):
                 (ack := getattr(self, "_console_send_ack", None))
                 and ack.pending_row_id(session_id),
                 run_activity,
+                (activity_shown, activity_shown and activity_action),
                 delete_arm,
                 # Existing finite context publication must reopen a quiet
                 # transcript after cold preparation, without holding chunks.
@@ -17155,8 +17182,7 @@ class ChatScreen(BaseAppScreen):
             # is what joins the refresh key below -- so an idle transcript
             # can never repaint once a second off a stale run snapshot.
             turn_activity = transcript.apply_turn_activity(
-                self._agent.console_turn_activity(),
-                action=self._agent.console_turn_activity_abandon_action(),
+                activity_line, action=activity_action
             )
             # TASK-35100: the same poll tick feeds the tok/s tracker from
             # the messages this sync just pushed and drives its chip.
@@ -17167,7 +17193,8 @@ class ChatScreen(BaseAppScreen):
                 if type(count) is int and count != 0
             }
             transcript.set_citation_counts(visible_citation_counts)
-            self._agent.sync_unproven_cleanup(transcript, messages)  # TASK-40716
+            held = self._agent.sync_unproven_cleanup(transcript, messages)  # TASK-40716
+            project_held_tool_slots(self, held)  # TASK-41307
             visible_library_activity_counts = self._library_activity.sync_transcript(
                 transcript
             )

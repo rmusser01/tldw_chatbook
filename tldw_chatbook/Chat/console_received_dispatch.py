@@ -900,14 +900,19 @@ async def _persist_first_send_when_quiescent(
                 and any(state.total_count for state in registry._states.values())
             )
             with self._execution_capacity_lock:
-                if (
+                idle = (
                     not self._first_send_sources
-                    and not self._ordinary_turns
                     and not self._turn_custody
                     and not queued
-                ):
+                )
+                turns = tuple(self._ordinary_turns)
+                if idle and not turns:
                     self._first_send_publishing = True
                     break
+            # A turn kept only by unproven outcomes never retires (TASK-40716),
+            # so this save can never run: give up rather than hold Quit.
+            if idle and all(turn.unproven_only() for turn in turns):
+                return
             await wakeup.wait()
 
         def current():

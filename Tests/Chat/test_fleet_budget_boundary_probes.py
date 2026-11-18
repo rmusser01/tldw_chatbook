@@ -40,6 +40,8 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
+pytestmark = pytest.mark.bootstrap_profile
+
 
 @pytest.mark.parametrize(
     ("origins", "expected_counts"),
@@ -108,10 +110,12 @@ def test_timed_out_tool_workers_cannot_accumulate_within_one_run(
     capacity = RuntimeCapacity()
     owner = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="c")
     release = threading.Event()
+    entered = threading.Event()
     workers = []
 
     def blocked_tool():
         workers.append(threading.current_thread())
+        entered.set()
         assert release.wait(5)
         return ToolResult(ok=True, content="late result")
 
@@ -124,6 +128,8 @@ def test_timed_out_tool_workers_cannot_accumulate_within_one_run(
             assert (
                 "timed out" if index == 0 else "previous_tool_still_running"
             ) in result.error
+        # The 0.02s timeout can fire before a loaded worker reaches the tool.
+        assert entered.wait(5)
         occupied = sum(worker.is_alive() for worker in workers)
         record_property("timed_out_operations", 1)
         record_property("actual_tool_workers_still_alive", occupied)
@@ -169,7 +175,8 @@ async def test_successive_wakes_stop_at_shared_generation_limit(
                 and wake.has_pending(session.id)
                 and not wake.delivering_conversation_ids()
                 and db.automatic_work.snapshot(chain).pause_reason == "generation_budget"
-            )
+            ),
+            seconds=30,
         )
         users_after = sum(
             m.role is ConsoleMessageRole.USER
@@ -193,7 +200,9 @@ def test_terminal_status_cannot_release_runtime_capacity_before_worker_exit(
     tmp_path, monkeypatch, record_property
 ):
     pin_turn_scoped_children(monkeypatch)
-    monkeypatch.setattr(agent_service, "FLEET_JOIN_TIMEOUT_SECONDS", 0.01)
+    # 06f8b0bf94 (TASK-39147) also bounds a child's admission by this
+    # timeout: at 0.01s the child was refused before it reached its call.
+    monkeypatch.setattr(agent_service, "FLEET_JOIN_TIMEOUT_SECONDS", 2.0)
     release = threading.Event()
     entered = threading.Event()
     db = AgentRunsDB(tmp_path / "runs.db", client_id="budget-probe")

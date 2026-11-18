@@ -44,6 +44,9 @@ PACKAGE = Path(__file__).resolve().parents[2] / "tldw_chatbook"
 # __globals__ and __wrapped__, two higher for f_code and __func__, and three
 # higher for f_locals and __code__. Rebased onto dev bf0006bb47, which had
 # added one __func__ (de8880504c) and three __code__ (11be39b8c3) sites.
+# TASK-41319 (Console Send skill trust decided from the app's registrations)
+# removed 68: __func__ 2, __code__ 18, __defaults__ 8, __kwdefaults__ 9,
+# __closure__ 12, cell_contents 3, __globals__ 9, __wrapped__ 7.
 # Lower a row when you remove sites.
 PINS = {
     # caller frames, coroutine/generator implementation
@@ -63,14 +66,14 @@ PINS = {
     "ag_code": 0,
     "ag_frame": 0,
     # function, code, default and closure identity
-    "__func__": 144,
-    "__code__": 401,
-    "__defaults__": 210,
-    "__kwdefaults__": 314,
-    "__closure__": 250,
-    "cell_contents": 129,
-    "__globals__": 218,
-    "__wrapped__": 212,
+    "__func__": 142,
+    "__code__": 383,
+    "__defaults__": 202,
+    "__kwdefaults__": 305,
+    "__closure__": 238,
+    "cell_contents": 126,
+    "__globals__": 209,
+    "__wrapped__": 205,
 }
 
 

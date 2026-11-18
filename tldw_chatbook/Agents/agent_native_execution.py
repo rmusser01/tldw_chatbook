@@ -1839,20 +1839,24 @@ def _finish_execution(self, owner):
     if tree is not None:
         if owner is tree.owner:
             return  # Original submit owns primary cleanup and late producers.
-        with tree.source.activate():
-            child_id = self.__dict__.get("_ordinary_child_keys", {}).pop(owner, None)
-            legacy = self.__dict__.get("_ordinary_child_notifications", {}).pop(
-                child_id, None
-            )
+
+        # Dict bookkeeping only: popped here so a refused scope still drops it.
+        child_id = self.__dict__.get("_ordinary_child_keys", {}).pop(owner, None)
+        legacy = self.__dict__.get("_ordinary_child_notifications", {}).pop(
+            child_id, None
+        )
+
+        def release():
             if (
                 legacy is not None
                 and legacy[1] is not None
                 and not legacy[1].notification_claimed
             ):
                 legacy[1].abandon_unstarted()
-            tree.close_unused_events(owner)
-            tree.host_returned(owner)
-            owner.finish_root()
+
+        refused = tree.return_host(owner, release)
+        if refused is not None:
+            raise refused  # the child's worker records its cleanup as unproven
         return
     owner.finish_root()
 

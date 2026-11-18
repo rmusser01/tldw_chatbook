@@ -2367,6 +2367,30 @@ ConsoleForkChatModal #console-fork-chat-open {
     display: none;
 }
 
+/* ===== WIDGET: ConsoleHeldToolSlotsModal (Widgets/Console/console_held_tool_slots.py) ===== */
+
+
+
+ConsoleHeldToolSlotsModal #console-held-tool-slots {
+    width: 76;
+    height: auto;
+    max-height: 32;
+    border: tall $tldw-boundary;
+    background: $panel;
+    color: $text;
+    padding: 1 2;
+}
+
+ConsoleHeldToolSlotsModal #console-held-tool-slots-rows {
+    height: auto;
+    max-height: 20;
+    margin: 1 0;
+}
+
+ConsoleHeldToolSlotsModal .console-held-tool-slot {
+    height: auto;
+}
+
 /* ===== WIDGET: ConsoleLibraryAccessModal (Widgets/Console/console_library_access_modal.py) ===== */
 
 

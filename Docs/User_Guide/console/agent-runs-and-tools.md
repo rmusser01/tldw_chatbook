@@ -6,7 +6,7 @@ Workflow runs start disabled. Enable **Workflow runs** in **F4 Settings → Cons
 
 **Prepare plan** spends a planning attempt. Review the returned plan revision, each task's scope, dependencies, outputs and checks. **Approve plan and start** authorizes its first phase. The same detail view shows task progress, remaining allowance, the active-time limit and saved result/check evidence. Use **Fleet** for task inspection or steering, **Review pending tool decision** for an existing approval, and **Open Changes** for the selected recorded snapshot.
 
-At a phase boundary, accept the phase result and review the next phase before approving it. **Revise remaining plan** takes an instruction and spends another planning attempt. At final review choose **Accept result** or request a revision. **Pause** prevents further launches while admitted work returns. **Resume** requests fresh review. **Stop** preserves edits. **Recovery required** means physical execution or accounting remains unresolved; quality acceptance cannot clear it.
+At a phase boundary, accept the phase result and review the next phase before approving it. **Revise remaining plan** takes an instruction and spends another planning attempt. At final review choose **Accept result** or request a revision. **Pause** prevents further launches while admitted work returns. **Resume** requests fresh review. **Stop** preserves edits. **Recovery required** means physical execution or accounting remains unresolved; quality acceptance cannot clear it. Once its work has returned, **Recovery** records your review and the chat accepts new turns again. If Chatbook could not confirm that a Pause, Stop or background check finished cleanly, workflow details and reviews stay unavailable in every chat, and that chat stays held, until you restart Chatbook. The workflow detail view says so.
 
 Use `/workflow` for this chat's saved history. Selecting a record only opens its detail. Escape closes the view while accepted work continues. The compact workflow line opens the exact workflow needing attention, including one in another chat. Refresh detail if the plan revision, folder inputs or runtime state have changed. Existing composer drafts and attachments stay with their chat.
 
@@ -278,13 +278,20 @@ reservation. When that read's cleanup is unproven, the reference or the
 instructions are left out, and the turn stops at its first tool call (for an
 `@git` reference, *the cleanup of native Git could not be proven*), or before the
 run starts when the turn needs a tool slot to set up its MCP tools. A turn that
-stops before its run starts has no run to release, so its slot stays counted
-until you restart the app. Otherwise, while the worker slots stay counted against
-the app-wide tool limit, the run's last reply shows **Release tool slot**, also
-after you close and reopen the conversation.
-Releasing frees every slot that run still holds for other runs; the workspace and
-storage stay held until you restart the app. When you quit, the app does not wait
-for such a tool, and everything else still shuts down normally.
+stops before its run starts shows the same *Agent stopped: …* explanation in
+place of "Response recovery failed", with **Release tool slot** under its reply.
+
+While the worker slots stay counted against the app-wide tool limit, the run's
+last reply shows **Release tool slot**, also after you close and reopen the
+conversation. A Raw CLI command whose **Cleanup** reads *Unproven* shows it
+under its row too. Every held slot is also listed under **Held tool slots: N**
+on the status line above the composer, including work that has no row of its
+own: Undo, Change Review work outside an agent turn, an `@git` reference read
+outside an agent turn, and sub-agents. The segment shows only while a slot is held; select it to open the
+list, which names what held each slot and offers **Release tool slot** for it.
+Releasing frees only the tool slot for other work; the workspace, storage and
+reservation stay held until you restart the app. When you quit, the app does not
+wait for such a tool, and everything else still shuts down normally.
 
 While a model call is generating or thinking, this line may also show its
 current output count. `17 provider output tok` means the provider supplied an
@@ -2449,6 +2456,16 @@ extra tools the agent can call. The Inspector's **MCP** row (under Tools)
 shows their state: "N tools ready", or "N servers enabled, not connected" when
 servers are configured but unreachable. MCP tool calls go through the same
 "Approval required" card as everything else.
+
+When Console cannot use the profile's MCP settings file
+(`local_mcp_store.json`), a Send carries no MCP tools, neither your servers'
+nor chatbook's own, and the **MCP** row reads "off · this profile's MCP
+settings file can't be used here" from the moment Console opens. The model
+is not told why; it only sees that no MCP tools were offered. Your servers
+stay configured in Settings ▸ Tools & MCP. Console uses only the file the
+loaded config.toml selects, `<[paths] data_dir>/<[general] users_name>/local_mcp_store.json`
+(the default data folder when `data_dir` is unset). If the row appears, check
+those two settings in the config.toml chatbook loads, then restart chatbook.
 
 Some servers describe a tool's arguments with a rule at the top of the schema,
 such as "give either `id` or `name`" (`anyOf`, `oneOf`, `allOf`, `enum`,
