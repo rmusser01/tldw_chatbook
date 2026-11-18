@@ -228,3 +228,14 @@ separate accounting. The archive includes the CPython 3.12 synthetic controls,
 installer, analyzer, instructions and frozen source pins for `737e2a1ba8`.
 Use a separate disposable replay for these instrumented measurements.
 [Sampler source archive](windows-source-cost-737e2a.zip) · [SHA-256](windows-source-cost-737e2a.sha256)
+
+## Windows stack sampling
+
+The stack sampler observes the UI and backend main threads and workers at
+jittered intervals. Its report shows the most frequently sampled Python
+locations for each thread between the original HTTP responses and subsequent
+requests, and between the last response and visible reply. It qualifies code
+identities against the frozen product and selected dependency sources at
+shutdown. The source-only kit includes the reviewed parent and child installer,
+the analyzer, and offline controls for thread attribution, source drift and
+incomplete results. [Stack sampler kit](windows-stack-sampling.zip) · [SHA-256](windows-stack-sampling.sha256)
