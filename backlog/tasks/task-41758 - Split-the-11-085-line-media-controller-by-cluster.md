@@ -20,7 +20,7 @@ references:
 <!-- SECTION:DESCRIPTION:BEGIN -->
 The media body-move series (TASK-36952.3.1 to 3.8, merged 2026-11-18) moved 142 bodies from LibraryScreen into `library_media_controller.py`. Its rulings had each slice raise the controller's size row rather than stall ("line counts are re-pins, never stalls"), and asked for a follow-up to split the controller by cluster once the series landed.
 
-Measured with the size ratchet's own line count, the module grew from 5,313 lines at dev 45b1949ca3 (the series' base) to 11,085 at dev 908e9840aa (2026-11-18). The `LibraryMediaController` class is 10,214 lines with 397 methods, and the module docstring alone is 630 lines. The next-largest Library controller, `library_notes_controller.py`, is 7,462 lines.
+Measured with the size ratchet's own line count, the module grew from 5,313 lines at dev 45b1949ca3 (the base the series merged on) to 11,085 at dev 908e9840aa (2026-11-18). The `LibraryMediaController` class is 10,214 lines with 397 methods, and the module docstring alone is 631 lines. The next-largest Library controller, `library_notes_controller.py`, is 7,462 lines.
 
 The slices' clusters give a ready-made split:
 - find and the Console handoff;

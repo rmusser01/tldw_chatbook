@@ -30,5 +30,5 @@ The recipe's teardown probe is a different instrument. It counted 80-81 mounts f
 <!-- AC:BEGIN -->
 - [ ] #1 The notes name the cause of the 81-mount Notes switch: a load-dependent extra mount pass, or a second real switch path
 - [ ] #2 A real second path is fixed, or the bound is re-derived with that evidence; a load effect no longer changes what the test measures
-- [ ] #3 The test passes 10 of 10 at -n 4 under load, with the load recorded
+- [ ] #3 The test passes 10 of 10 at -n 4 under load, under the private-profile marker if it still stops at RecoveryRequired locally, with the load recorded
 <!-- AC:END -->

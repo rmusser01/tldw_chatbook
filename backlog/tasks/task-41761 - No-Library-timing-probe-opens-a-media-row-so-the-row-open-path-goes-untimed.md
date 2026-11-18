@@ -29,5 +29,5 @@ Both switch rail modes, and neither presses a media row. The row-open path, `han
 <!-- AC:BEGIN -->
 - [ ] #1 A Helper_Scripts probe opens a media row headless and reports the press-to-painted-detail time with its recompose, full-update and mount counts, in the click probe's report format
 - [ ] #2 The recipe says when a move must run it, alongside §9 and §26
-- [ ] #3 A paired, order-swapped base and head run of it on one dev commit is recorded in the notes as a baseline, with n and the load
+- [ ] #3 Two order-swapped runs of the probe on one dev commit are recorded in the notes as its baseline, with n and the load
 <!-- AC:END -->

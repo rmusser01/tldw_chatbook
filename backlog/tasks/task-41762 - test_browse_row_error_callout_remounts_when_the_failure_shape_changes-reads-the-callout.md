@@ -23,6 +23,7 @@ Found while verifying the media chain's last rebase (rb5, 2026-11-18): dev 45b19
 
 | Run | Load | Base red | Head red |
 |---|---|---|---|
+| the rb5 A/B itself | - | 0 of 1 | 1 of 1 |
 | 3 serial rounds | - | 0 of 3 | 2 of 3 |
 | 10 paired single-id rounds | 19-22 | 0 of 10 | 1 of 10 |
 | 6 concurrent runs per side, 5 rounds | 20-28 | 2 of 30 | 3 of 30 |

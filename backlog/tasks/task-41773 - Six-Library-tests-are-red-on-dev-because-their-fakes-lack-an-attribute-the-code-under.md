@@ -24,7 +24,7 @@ Each of these tests builds a `SimpleNamespace` fake and calls a real method on i
 - `::test_type_filter_change_exits_select_mode_and_notifies_discard` (`:1182`);
 - `::test_single_delete_arm_supersedes_stale_receipt` (`:2248`).
 
-The seam came from 05b078e1c2 (2026-10-20, TASK-34000.22). The three were already red at the series' base, 08b3c9d337, according to the 3.2 review and the 3.3 report. The series retargeted them receiver-only. They are also listed in TASK-34000.100, which open PR #3423 adds; that task is not on dev at filing. Whichever change lands first fixes them.
+The seam came from 05b078e1c2 (2026-10-20, TASK-34000.22). The three were already red at 08b3c9d337, the series' original base, according to the 3.2 review and the 3.3 report. The series retargeted them receiver-only. They are also listed in TASK-34000.100, which only open PR #3423 adds; at filing, #3423 is conflicting and not armed. If TASK-34000.100 lands first, this task's notes cite its commit for the multiselect three, and AC #1 then covers the walker three.
 
 **Three review-set walker tests.** These use `_walker_fake` (`Tests/UI/test_review_set_walker.py:35`), which predates 9feec051c1 (2026-09-19, TASK-32804.4). That commit added `_active_review_set_snapshot`.
 - `::test_review_footer_at_last_follows_the_loaded_item_not_the_cursor` (`:1349`) raises `AttributeError: ... '_active_review_set_snapshot'`.

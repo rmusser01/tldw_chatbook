@@ -13,6 +13,8 @@ references:
 - tldw_chatbook/UI/Library_Modules/library_media_controller.py
 - tldw_chatbook/Utils/ui_responsiveness.py
 - Tests/UI/test_library_media_return_settlement.py
+- backlog/docs/lessons-textual.md
+- TASK-34000.1
 ---
 
 ## Description
@@ -30,6 +32,8 @@ In Textual 8.2.8, `set_timer` builds a `Timer` with `skip=True`. Whenever the ne
 **Effects.** The settlement never expires through its deadline, and the error escapes when the screen's timers are stopped.
 
 **Same shape elsewhere.** `Utils/ui_responsiveness.py:825` arms `owner.set_timer(max(0.0, delay), ...)`.
+
+**This is the third time.** `backlog/docs/lessons-textual.md` ("`set_timer(0.0)` never fires — silently") records this divide-by-zero twice: TASK-21110's zero constant, then TASK-34000.1's computed `max(0.0, ...)` autosave delay. Its fix is to clamp a computed delay to a small positive floor where it is computed (`AUTOSAVE_MIN_DELAY_SECONDS`, 0.05 s), not at the call.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -37,4 +41,5 @@ In Textual 8.2.8, `set_timer` builds a `Timer` with `skip=True`. Whenever the ne
 - [ ] #1 A settlement whose deadline has already passed expires, and its expiry runs, without arming a zero-second timer
 - [ ] #2 A test that binds the deadline after it has passed is red before the fix and green after, and shows the expiry runs once
 - [ ] #3 Utils/ui_responsiveness.py:825 and every other set_timer call in tldw_chatbook whose delay can reach 0 are fixed the same way or recorded as safe
+- [ ] #4 The lessons-textual entry records this third recurrence
 <!-- AC:END -->

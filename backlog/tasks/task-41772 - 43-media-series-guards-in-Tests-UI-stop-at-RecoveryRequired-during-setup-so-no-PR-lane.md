@@ -78,11 +78,13 @@ The 43, by file (slice that retargeted them in brackets):
   - `test_read_analysis_read_round_trip_restores_the_rendered_scroll_offset`
 
 The same files hold more test functions that stop the same way and that no slice touched: 24 in Trash, 25 in return-settlement, 5 in t22209 and 1 in t22208.
+
+`test_trash_status_fold_recaps_the_list_so_actions_stay_inside` is also listed in TASK-34000.100 (only in open PR #3423), which records it failing on its own assertion ("Long status never folded.") once it runs. The lane PR's review found about 32 more slice-retargeted tests in 11 Tests/UI files that run on no lane; any of them that stop at RecoveryRequired belong in this list.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Each of the 43 tests gets the profile setup it needs (a marker or a fixture) and passes 3 of 3 in a serial run with the UI lane's flags
-- [ ] #2 Each of them that passes is in scripts/ui_pr_gate_census.txt, with the census floor raised to match and the shard budget checked
+- [ ] #1 Each of the 43 tests gets the profile setup it needs (a marker or a fixture) and no longer stops at RecoveryRequired during setup
+- [ ] #2 Each of them that then passes 3 of 3 in a serial run with the UI lane's flags is in scripts/ui_pr_gate_census.txt, with the census floor raised to match and the shard budget checked
 - [ ] #3 Any of the 43 that still fails after the setup fix has its failure recorded, with its own task or fix named
 <!-- AC:END -->

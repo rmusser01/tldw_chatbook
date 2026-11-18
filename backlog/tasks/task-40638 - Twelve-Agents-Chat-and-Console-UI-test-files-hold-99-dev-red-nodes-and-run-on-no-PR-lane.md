@@ -35,7 +35,7 @@ Failure signatures, per file (dev and branch identical):
 
 Some of these may be real product regressions rather than test drift. For example, the Stop that persists `error`, the missing footer key and the census's new root reads all describe behaviour.
 
-2026-11-18, from TASK-36950.2's A/B (2026-11-15, base and head alike): run at `-n 4` with its chunk, `test_console_turn_library_authority.py` left xdist workers dead and the rest idle. Run alone on each side, it was stopped by a 900 s watchdog at identical progress, as was `test_console_ordinary_tree.py` (TASK-41028).
+2026-11-18, from TASK-36950.2's A/B (2026-11-15, base and head alike): chunk 2, which held `test_console_turn_library_authority.py`, hung at `-n 4` on both sides (workers died, then went idle). Run alone on each side, the file was stopped by a 900 s watchdog at identical progress, as was `test_console_ordinary_tree.py` (TASK-41028).
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

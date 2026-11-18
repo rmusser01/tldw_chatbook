@@ -18,7 +18,7 @@ references:
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Found by the second re-review of TASK-36952.3.8 (finding R2-1, 2026-11-18). The census counts a module-level import of `library_screen.py` as unused when the module never loads the name and no string in the module names it. It finds 42 such imports at dev 45b1949ca3, the series' base, and 54 at dev 908e9840aa (2026-11-18). The 12 new ones are what the moves left behind:
+Found by the second re-review of TASK-36952.3.8 (finding R2-1, 2026-11-18). The census counts a module-level import of `library_screen.py` as unused when the module never loads the name and no string in the module names it. It finds 42 such imports at dev 45b1949ca3, the base the series merged on, and 54 at dev 908e9840aa (2026-11-18). The 12 new ones are what the moves left behind:
 - `suppress` (`:24`, from contextlib);
 - `LibraryMediaReaderSessionState` and `set_more_open` (`:190`);
 - `LibraryMediaContentBody` (`:450`);
