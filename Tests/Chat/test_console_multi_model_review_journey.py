@@ -26,17 +26,21 @@ from tldw_chatbook.Chat.console_prepared_request import PreparedProviderRequest
 pytestmark = pytest.mark.bootstrap_profile
 
 
-async def _settled(controller, session, service, review_id, *, timeout=20.0):
+async def _settled(controller, session, service, review_id, *, timeout=60.0):
     """Wait until every launched child is terminal and wake delivery is idle.
 
     The schedule driver stops once the expected launches exist; the last child
     (and the wake its settlement triggers) can still be running at that point.
+    A wall-clock deadline that fails with the state, not a sleep count that
+    fell through silently (TASK-41505).
     """
     import asyncio
+    import time
 
     conversation_id = session.persisted_conversation_id
     quiet = 0
-    for _ in range(int(timeout / 0.03)):
+    deadline = time.monotonic() + timeout
+    while True:
         with service.store.lease(review_id) as context:
             terminal = all(
                 context.streams[
@@ -51,6 +55,11 @@ async def _settled(controller, session, service, review_id, *, timeout=20.0):
         quiet = quiet + 1 if terminal and idle else 0
         if quiet >= 3:
             return
+        assert time.monotonic() < deadline, (
+            f"review never settled within {timeout} s",
+            f"children terminal={terminal}",
+            f"wake idle={idle}",
+        )
         await asyncio.sleep(0.03)
 
 

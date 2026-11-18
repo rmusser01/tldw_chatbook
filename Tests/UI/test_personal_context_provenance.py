@@ -1,6 +1,7 @@
 """Mounted inspection lifecycle and literal rendering, with controlled readers."""
 
 import asyncio
+import time
 from threading import Event
 from typing import ClassVar
 
@@ -91,10 +92,23 @@ class Host(ConsolidatedCSSApp):
         self.push_screen(HostScreen(self.detail))
 
 
-async def until(pilot, predicate):
-    async with asyncio.timeout(5):
-        while not predicate():
-            await pilot.pause(0.01)
+async def until(pilot, predicate, *, state=None, seconds: float = 30.0):
+    """Wait until ``predicate()`` holds, or fail naming the wait (TASK-41517).
+
+    A provenance read runs on a thread (0.25-0.65 s at load ~15), and its
+    result is dropped as "Provenance unavailable." when it outlives the 2 s
+    lease; the next 1 s tick reads again. Reads slow down under load, and the
+    old 5 s bound ran out at load ~85. ``state`` reports what was on screen
+    when the wait ran out.
+    """
+    deadline = time.monotonic() + seconds
+    while not predicate():
+        if time.monotonic() >= deadline:
+            code = predicate.__code__
+            where = f"{code.co_filename.rsplit('/', 1)[-1]}:{code.co_firstlineno}"
+            seen = f"; showing {state()!r}" if state is not None else ""
+            raise AssertionError(f"{where} still false after {seconds:.0f}s{seen}")
+        await pilot.pause(0.01)
 
 
 def rendered(detail):

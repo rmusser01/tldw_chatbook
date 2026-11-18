@@ -629,7 +629,12 @@ async def test_info_describes_the_same_stored_text_representation_sent_to_consol
             message="Local detail never loaded for the Console handoff check.",
         )
 
-        screen.query_one("#library-media-reader-select-info", Button).press()
+        # TASK-41505 (as TASK-41127 did for the sibling below): the loaded
+        # detail re-mounts the Reader chrome after ``loaded_backing_id`` is
+        # published, so the tab may not be mounted yet; press the live one.
+        (
+            await _wait_for_selector(screen, pilot, "#library-media-reader-select-info")
+        ).press()
         provenance = await _wait_for_selector(
             screen, pilot, "#library-media-reader-provenance"
         )

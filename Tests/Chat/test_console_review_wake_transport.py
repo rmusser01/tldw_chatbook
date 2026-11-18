@@ -306,7 +306,11 @@ class PhysicalReviewTransport:
         self.monkeypatch.setattr(self.gateway, "prepare_chat_request", observe)
 
         async def observe_wait():
-            await asyncio.wait_for(self.entered.wait(), 15)
+            # No deadline of its own: one started here, before the first turn,
+            # expired under load while that turn still ran, so the held probe
+            # was never released and the wake was refused for capacity
+            # (TASK-41505). The schedule wait bounds the run; close() cancels.
+            await self.entered.wait()
             before = len(self.wire)
             await asyncio.sleep(0.03)
             assert len(self.wire) == before

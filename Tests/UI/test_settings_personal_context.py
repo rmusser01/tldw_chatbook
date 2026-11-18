@@ -2081,7 +2081,11 @@ async def test_production_settings_inspects_private_and_deleted_metadata(
         detail = panel.query_one(PersonalContextProvenanceDetails)
         detail.query_one("CollapsibleTitle").focus()
         await pilot.press("enter")
-        await until(pilot, lambda: "Recorded source: manual" in rendered(detail))
+        await until(
+            pilot,
+            lambda: "Recorded source: manual" in rendered(detail),
+            state=lambda: rendered(detail),
+        )
         assert "DELETED_PAYLOAD_MARKER" not in rendered(detail)
         detail.query_one("CollapsibleTitle").scroll_visible(
             top=True, animate=False, force=True
@@ -2094,10 +2098,18 @@ async def test_production_settings_inspects_private_and_deleted_metadata(
         await pilot.pause()
         assert "Recorded source: manual" not in rendered(detail)
         await host.pop_screen()
-        await until(pilot, lambda: "Recorded source: manual" in rendered(detail))
+        await until(
+            pilot,
+            lambda: "Recorded source: manual" in rendered(detail),
+            state=lambda: rendered(detail),
+        )
         service.delete_record(record.record_id, expected_version_id=record.version_id)
         detail._tick()
-        await until(pilot, lambda: "Record changed; reload details" in rendered(detail))
+        await until(
+            pilot,
+            lambda: "Record changed; reload details" in rendered(detail),
+            state=lambda: rendered(detail),
+        )
         button = detail.query_one(".personal-context-provenance-reload", Button)
         button.focus()
         await pilot.press("enter")
@@ -2129,7 +2141,11 @@ async def test_production_settings_inspects_private_and_deleted_metadata(
         await pilot.pause()
         assert host.focused is title
         await pilot.press("enter")
-        await until(pilot, lambda: "State: deleted" in rendered(detail))
+        await until(
+            pilot,
+            lambda: "State: deleted" in rendered(detail),
+            state=lambda: rendered(detail),
+        )
         assert "DELETED_PAYLOAD_MARKER" not in rendered(detail)
         for name in ("edit", "archive-restore", "delete"):
             assert panel.query_one(f"#personal-context-{name}", Button).disabled
