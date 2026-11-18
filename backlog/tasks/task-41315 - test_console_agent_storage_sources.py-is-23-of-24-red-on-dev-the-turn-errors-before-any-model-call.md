@@ -1,7 +1,7 @@
 ---
 id: TASK-41315
 title: "test_console_agent_storage_sources.py is 23 of 24 red on dev: the turn errors before any model call"
-status: In Progress
+status: Done
 created_date: 2026-11-16 19:55
 labels:
 - follow-up
@@ -33,7 +33,7 @@ Filed from the 2026-11-13..16 burn-down, which saw this file at 23 failing. Re-r
 <!-- AC:BEGIN -->
 - [x] #1 The task notes name the cause of the primary run's first-step error and of the missing fixture definition, from the tests' own tracebacks
 - [x] #2 Every node passes on dev at `-n 4`, or is retargeted or retired with the reason recorded; any product defect found is fixed with a test that is red first
-- [ ] #3 The file runs on a PR lane, or the task notes record why it should not
+- [x] #3 The file runs on a PR lane, or the task notes record why it should not
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -85,3 +85,5 @@ A static review of 2fdd1e8b09 found three Importants and a Minor; each is confir
 - Mutation checks, each fix reverted alone: wakes, `mark_cleanup_unproven`, and the narrowed except each make exactly their own test fail.
 
 **Review round 2 (delta review of 2965b0dcb9).** Narrowing the except let plain entry-time errors (scratch lease retired, a database handle that did not return, any raise inside `activate()`) escape before the owner returned, the original hang. `return_host` now runs the unproven return (`mark_cleanup_unproven`, `host_returned`, `finish_root`) exactly once on ANY exception at scope entry, then absorbs and logs only `OriginalSourceChanged` and re-raises everything else. Body errors still propagate with no second return. Test: an activation-time `RuntimeError` settles the owner unproven, keeps the claim, wakes first-send and propagates; it fails with the broad catch narrowed back. Minor: the child's `_ordinary_child_keys`/`_ordinary_child_notifications` pops moved out of `release()` into `_finish_execution` (dict bookkeeping, no custody effect); `abandon_unstarted()` stays in `release()` because it acts on custody.
+
+**AC #3 (lane PR, 2026-11-18).** The file runs in the new `pr-fast-lane-admission-4` job (owner decision 2026-11-18, "New job"), not `pr-fast-lane-admission`, which measured up to 27 of its 35 min over the ten PR runs before this. With the first-send survivor file: 34 nodes in 362 s serially at load 29-36 on dev 908e9840aa.

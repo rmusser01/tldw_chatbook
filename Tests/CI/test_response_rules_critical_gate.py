@@ -92,6 +92,8 @@ INHERITED = {
         "Tests/UI/test_console_hook_review_send_freeze.py::test_the_app_pump_answers_ctrl_q_while_the_enter_review_is_open",
         "Tests/UI/test_console_hook_review_send_freeze.py::test_a_declined_send_review_settles_and_keeps_the_draft",
         "Tests/UI/test_console_hook_review_send_freeze.py::test_allow_all_resumes_the_captured_send_exactly_once",
+        # TASK-41319: a wrapped skill collaborator's Send (follow-ups burn-down lanes, 2026-11-18).
+        "Tests/Chat/test_console_send_wrapped_skill_collaborators.py",
         "Tests/Chat/test_console_trace_graph_gc.py::test_stale_mark_never_sweeps_after_concurrent_reachability_change",
         "Tests/Chat/test_console_trace_admission_gc.py::test_collection_between_admission_and_reservation_preserves_exact_revision",
         "Tests/Chat/test_console_trace_admission_gc.py::test_canonical_ancestry_cannot_retain_payload_through_another_owners_policy",

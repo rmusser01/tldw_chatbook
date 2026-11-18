@@ -154,9 +154,9 @@ cron entry on `dev`.
   Architecture guard contracts, the architecture-review tests, the
   recovered suites and native plugin recovery UI are jobs of their own
   (TASK-34916, TASK-34929, TASK-34986, TASK-38989, PR #3399, owner decision
-  2026-11-06, TASK-41217), so an
+  2026-11-06, TASK-41217, owner decision 2026-11-18), so an
   ordinary unlabeled,
-  non-GGUF PR now requests 34 test runners in parallel, 35 with perf-guard
+  non-GGUF PR now requests 35 test runners in parallel, 36 with perf-guard
   (see the dated notes below).
 - That figure is not a global maximum. The two path-scoped GGUF
   evidence matrices can add six jobs, and a synchronize event on a PR carrying
@@ -404,7 +404,7 @@ Even ideal balance at 27 shards has a lower-bound forecast of 1027.70 seconds un
 
 ## Amendment (2026-10-28, TASK-37266..37268): enroll native publication and export controls
 
-Current UI lane: 42 shards. The current total is 55 eligible test jobs per PR
+Current UI lane: 42 shards. The current total is 56 eligible test jobs per PR
 (2026-11-02: includes the third admission-sensitive lane; 2026-11-06: and the
 Architecture guard contracts job, TASK-38989, and the architecture-review
 tests' own job, `pr-fast-lane-arch`, split out of the PR Fast Lane at its
@@ -641,3 +641,21 @@ counting perf-guard. `Tests/CI/test_ui_lane_shard_count_statements.py`
 derives all three from the workflow. At 42 the floor leaves about 0.63
 pytest min a shard, about 26 min of new entries, before the next
 shard-count decision.
+
+## Amendment (2026-11-18): a fourth admission-sensitive job
+
+Owner decision of 2026-11-18, "New job (Recommended)". The follow-ups
+burn-down of TASK-41306..41320 repaired or added nine `bootstrap_profile`
+files that ran on no PR lane (TASK-41307, TASK-41310, TASK-41313..41316):
+about 16.7 min serially on a host at load 15-34. No existing job had that
+room. Over the ten PR runs before this, the recovered suites measured
+15.4-19.6 of their 20 min, and admission lanes 1-3 measured up to 27, 33 and
+20 of 35. `pr-fast-lane-admission-4` ("PR Fast Lane (admission-sensitive
+4)") runs them, shaped like lane 3 (`Tests/CI`'s `ADMISSION_4_TARGETS` pins
+the list). The same PR appends three UI files and five node ids from a fourth to the UI
+census (one `--rebalance 13.0` swap; every shard replays at 12.9 pytest min or
+less over six recent 42-shard runs) and puts TASK-41319's wrapped-collaborator
+Send file in the Console P0 gate's admission-sensitive step.
+
+One more job: 56 eligible test jobs per PR, 35 concurrent test runners, 36
+counting perf-guard.

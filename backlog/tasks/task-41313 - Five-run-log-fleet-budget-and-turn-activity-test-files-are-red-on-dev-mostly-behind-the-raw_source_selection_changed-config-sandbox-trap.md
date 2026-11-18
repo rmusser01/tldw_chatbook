@@ -1,7 +1,7 @@
 ---
 id: TASK-41313
 title: "Five run-log, fleet-budget and turn-activity test files are red on dev, mostly behind the raw_source_selection_changed config-sandbox trap"
-status: In Progress
+status: Done
 created_date: 2026-11-16 19:55
 labels:
 - follow-up
@@ -43,7 +43,7 @@ Filed from the 2026-11-13..16 burn-down. TASK-40715's PR #3548 listed the run-lo
 <!-- AC:BEGIN -->
 - [x] #1 Each of the five files passes on dev under the plain one-file command at `-n 4`, without binding config to the developer's real profile
 - [x] #2 The two activity-line repaint nodes are classified as test drift (naming the commit) or a product defect (fixed, with the test red first)
-- [ ] #3 Each file runs on a PR lane, or the task notes record why it should not
+- [x] #3 Each file runs on a PR lane, or the task notes record why it should not
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -88,3 +88,5 @@ ADR required: no. This applies the existing `bootstrap_profile` test marker (TAS
 - Serial times, for the lane decision: the four non-UI files take 131 s in one invocation, the UI file 42 s.
 
 Files: the five test files (module marker), `Tests/Chat/test_fleet_budget_boundary_probes.py` (three drift fixes), `Tests/Chat/test_first_token_window.py` (I1 test), `tldw_chatbook/UI/Screens/chat_screen.py` (gate component), `tldw_chatbook/UI/Console_Modules/agent.py` (memoized streaming check).
+
+**AC #3 (lane PR, 2026-11-18).** The four non-UI files run in the new `pr-fast-lane-admission-4` job (owner decision 2026-11-18, "New job"): `recovered-suites`, the first candidate home, measured 15.4-19.6 of its 20 min over the ten PR runs before this. `Tests/UI/test_console_turn_activity_line.py` joins the UI census tail (one `--rebalance 13.0` swap). Serially at load 15 on dev 908e9840aa: the four files 157 passed in 97 s, the UI file 53 passed in 14 s.

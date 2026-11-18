@@ -163,11 +163,7 @@ Tests/UI/test_theme_contrast.py::test_focus_edges_clear_non_text_contrast_on_eve
 Tests/UI/test_settings_agents_offloop_read.py::test_owned_runs_db_retires_every_worker_connection_at_unmount
 Tests/UI/test_settings_connect_rows.py::test_the_revert_dialog_leaves_focus_off_the_navigation_bar
 Tests/UI/test_dictionary_settings_pending_save_drafts.py::test_pending_dictionary_save_retains_raw_child_input_and_next_save[budget]
-# task-35597: the Tools-hub UI suites are PR-gate-lane safe now (bootstrap
-# profile / private-profile isolation against the ADR-126 config-participant
-# admission) and re-enter the census. Three whole files; the two files that
-# still carry dev-red nodes are gated by node id instead (see below).
-Tests/UI/test_settings_tools_hub.py
+Tests/UI/test_settings_connect_key_rows.py::test_api_key_row_says_where_the_key_comes_from
 Tests/UI/test_settings_default_model_picker.py::test_a_click_on_a_listed_model_picks_it
 # TASK-35444, TASK-35645: the recovery, screen-resume and full UI syncs never wait for a config rebuild, held from the sync's start or its transcript step (about 4.5 s each).
 Tests/UI/test_console_response_rules.py::test_console_syncs_never_wait_for_a_config_rebuild
@@ -206,7 +202,11 @@ Tests/UI/test_study_quiz_submit_lifetime.py::test_obsolete_submit_preserves_curr
 Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_later_draft[card-search-Vex-before-publication]
 Tests/UI/test_library_media_editor_dirty_escape.py
 Tests/UI/test_speech_shortcuts.py::test_pane_does_not_shadow_reserved_or_terminal_shortcuts
-Tests/UI/test_settings_connect_key_rows.py::test_api_key_row_says_where_the_key_comes_from
+# task-35597: the Tools-hub UI suites are PR-gate-lane safe now (bootstrap
+# profile / private-profile isolation against the ADR-126 config-participant
+# admission) and re-enter the census. Three whole files; the two files that
+# still carry dev-red nodes are gated by node id instead (see below).
+Tests/UI/test_settings_tools_hub.py
 Tests/UI/test_app_keep_alive_dead_screen.py::test_ctrl_q_quits_after_a_screen_handler_error_while_a_modal_is_up
 Tests/UI/test_settings_model_defaults_rows.py::test_every_row_paints_its_whole_help
 # TASK-33008.1: a stale return applies nothing and says so.
@@ -3273,3 +3273,19 @@ Tests/UI/test_settings_custom_endpoints.py::test_settings_screen_edit_flow_clear
 # TASK-41138 review r15ti-rev1 (2026-11-17): the cold-home Buddy send, laned once
 # the product stopped refusing it (35.0-99.5 s serially, load 47-76).
 Tests/UI/test_buddy_conversation_modal.py::test_cold_home_saved_buddy_bootstraps_only_after_explicit_open
+# Follow-ups burn-down lanes (2026-11-18, TASK-41313): the Console turn
+# activity line, on no lane before (53 tests, 14 s serially at load 15).
+Tests/UI/test_console_turn_activity_line.py
+# TASK-41308: a Send with an unbound MCP store runs without MCP tools and the
+# Inspector's MCP row says why (15 tests, 98 s serially at load 15).
+Tests/UI/test_console_send_without_mcp_store.py
+# TASK-41308: the five mounted Inspector MCP-row nodes, red on dev before it
+# with raw_source_selection_changed (25 s serially for the five, load 15).
+Tests/UI/test_console_internals_decomposition.py::test_console_run_inspector_shows_mcp_tools_ready_row
+Tests/UI/test_console_internals_decomposition.py::test_console_run_inspector_shows_mcp_not_connected_row
+Tests/UI/test_console_internals_decomposition.py::test_console_run_inspector_omits_mcp_row_by_default
+Tests/UI/test_console_internals_decomposition.py::test_console_run_inspector_mcp_row_reflects_real_compose_mcp_provider
+Tests/UI/test_console_internals_decomposition.py::test_console_run_inspector_mcp_row_shows_blocked_when_stale_server_has_tools
+# TASK-41307: the Console-wide held tool slots chip and its list's Release
+# (6 tests, 15 s serially at load 15).
+Tests/UI/test_console_held_tool_slots.py
