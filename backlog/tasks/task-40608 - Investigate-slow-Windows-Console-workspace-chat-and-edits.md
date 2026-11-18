@@ -202,6 +202,12 @@ and median edit time fell from 461.5773 to 28.0529 seconds (93.92%).
 All six candidate turns exceeded five seconds. AC5 remains open. Regular
 Windows startup still selects the local route. [Paired timings and work counts](../../Docs/Development/task-40608-recovery/windows-journey-timings.md#qualifying-pairs)
 
+The updated process candidate `495b3249e9` completed three fresh sequential
+Windows 10 pairs with the original checks and shutdown. Median README time
+fell from 303.0308 to 24.1755 seconds (92.02%) and median approved edit time
+from 459.1983 to 23.9084 seconds (94.79%). All six candidate turns exceeded
+five seconds. AC5 remains open. [Original paired measurements and work counts](../../Docs/Development/task-40608-recovery/original-journey/qc-windows10-results.json)
+
 <!-- SECTION:NOTES:END -->
 
 Measured follow-up under the same [ADR-126 bounded configuration-read amendment](../decisions/126-complete-local-backup-and-recovery.md#task-40608--bounded-sensitive-database-path-configuration-reads): qualify the original sensitive container-reader cohort, then group its admissions without changing readers, overrides or refusal checks. The measured 0.218-second component is separate from the unresolved planning delay; final three-pair acceptance remains open.

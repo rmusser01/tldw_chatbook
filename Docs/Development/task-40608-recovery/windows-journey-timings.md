@@ -2,6 +2,8 @@
 
 TASK-40608 measures from Send to the persisted reply, subtracting only the original measured disclosure and approval waits. Each of three sequential baseline/candidate pairs must preserve all original journey assertions. Every candidate README and approved edit must finish in under 5 seconds, with at least a 30% median reduction for each journey. The measurements below come from Windows 10 and the scripted loopback provider. [Task and benchmark contract](../../../backlog/tasks/task-40608%20-%20Investigate-slow-Windows-Console-workspace-chat-and-edits.md) · [Original timing observer](original-journey/task40608_trace.py)
 
+On November 18 the latest complete Windows 10 comparison (`495b3249e9`, process route) reduced median README time from **303.03 to 24.18 s** and approved edit time from **459.20 to 23.91 s**. All three pairs passed the original checks. All six candidate turns exceeded five seconds. [Pair results](#qualifying-pairs) · [Revalidated measurements and work counts](original-journey/qc-windows10-results.json)
+
 ## Where the time goes
 
 On the separate Windows 10 diagnostic `g57s` (`5a8b730cfa`), README
@@ -340,6 +342,17 @@ including the original bounded Enter test and the Settings navigation cases.
 |---|---:|---:|---|
 | 1 | 326.2255 s / 24.1755 s | 459.1983 s / 24.5370 s | Both sides passed. Candidate first HTTP arrived at 9.7183 s and 7.4541 s. |
 | 2 | 291.5947 s / 24.3015 s | 515.7448 s / 22.1905 s | Both sides passed. Candidate first HTTP arrived at 12.3709 s and 5.8483 s. |
+| 3 | 303.0308 s / 22.1459 s | 409.9467 s / 23.9084 s | Both sides passed. Candidate first HTTP arrived at 9.8419 s and 6.6822 s. |
+| **Median** | **303.0308 s / 24.1755 s** | **459.1983 s / 23.9084 s** | **92.02% and 94.79% median reductions. All six candidate turns exceeded five seconds.** |
+
+In pair order, the parent process recorded 2,322 / 102, 2,175 / 99 and
+2,277 / 98 baseline / candidate admissions for README. The corresponding
+edit counts were 2,575 / 49, 2,621 / 47 and 2,428 / 50. Every counted
+candidate parent admission reused checked evidence. The candidate also ran
+a backend process, so these counts alone cannot measure total application
+work. All twelve turns completed with their expected five or six loopback
+requests, ordered approvals and original file checks.
+[Numeric report, source pins and work counts](original-journey/qc-windows10-results.json)
 
 The subsequent local-parent change on `cae5d57fea` was measured separately
 on Windows Server 2022. Each arm used two warmups and 21 timed complete warm
