@@ -27,6 +27,37 @@ from tldw_chatbook.Chat.console_execution_protocol import (
 )
 
 
+def test_lookups_in_a_published_view_do_not_walk_all_open_chats():
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
+    from tldw_chatbook.Chat.console_execution_projection_values import decode_session_projection, encode_session_projection
+    from tldw_chatbook.Chat.console_execution_projection_view import ConsoleProjectionView
+
+    rows = tuple(
+        decode_session_projection(encode_session_projection(ConsoleChatSession(id=f"chat-{n}")))
+        for n in range(64)
+    )
+    frames = tuple(
+        ConsoleProjection(0, row.id, row.incarnation_id, n, (),
+                          ConsoleRunState(ConsoleRunStatus.IDLE, "Ready"), None)
+        for n, row in enumerate(rows)
+    )
+    view = ConsoleProjectionView(0, rows, rows[-1].id, tuple((row.id, (0, 0)) for row in rows), frames)
+
+    class LookupKey(str):
+        comparisons = 0
+        __hash__ = str.__hash__
+
+        def __eq__(self, other):
+            self.comparisons += 1
+            return super().__eq__(other)
+
+    last = LookupKey(rows[-1].id)
+    assert view.session(last) is rows[-1]
+    assert view.session_fingerprint(last) == (0, 0)
+    assert view.display_projection_revision(last) == 63
+    assert last.comparisons <= 3
+
+
 def test_reference_reuses_exact_transcript_and_refreshes_run_values():
     original = ConsoleProjection(
         3,

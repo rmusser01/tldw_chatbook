@@ -555,7 +555,9 @@ def _build_test_app(
             ),
         ):
             stack.enter_context(ctx)
-        app = TldwCli()
+        # This harness injects process-local services and mounts ChatScreen
+        # on a separate Textual App. The stock Windows app owns its own screen.
+        app = TldwCli(console_execution="local")
         _created_apps.append(app)
         handle = app._instance_lock_status.handle
         if handle is not None:

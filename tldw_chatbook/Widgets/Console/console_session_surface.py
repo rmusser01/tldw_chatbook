@@ -13,6 +13,7 @@ from rich.text import Text
 from textual import events
 from textual._context import active_message_pump
 from textual.app import ComposeResult
+from textual.content import Content
 from textual.containers import Horizontal, HorizontalScroll, Vertical
 from textual.css.query import NoMatches
 from textual.message import Message
@@ -35,6 +36,7 @@ from tldw_chatbook.Chat.console_glyphs import (
     GLYPH_TEMPORARY,
 )
 from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
+from tldw_chatbook.Widgets.Console.compose_delta import same_visual
 from tldw_chatbook.Chat.console_onboarding_state import ConsoleSetupCardState
 from tldw_chatbook.Utils.console_background_effects import (
     ConsoleBackgroundEffectSettings,
@@ -746,7 +748,7 @@ class ConsoleSessionSurface(Vertical):
                     streaming_session_id=streaming_session_id,
                     run_markers=run_markers,
                 )
-                child.label = Text(
+                label = Text(
                     self._tab_label(
                         session.title,
                         marker=marker,
@@ -754,16 +756,19 @@ class ConsoleSessionSurface(Vertical):
                         queued_count=(queue_counts or {}).get(session_id, 0),
                     )
                 )
-                child.tooltip = _session_tab_tooltip(
+                if not same_visual(child.label, Content.from_text(label)):
+                    child.label = label
+                tooltip = _session_tab_tooltip(
                     session,
                     active=session.id == active_session_id,
                     marker=marker,
                     queued_count=(queue_counts or {}).get(session_id, 0),
                 )
-                child.set_class(
-                    session.id == active_session_id,
-                    "console-session-tab-active",
-                )
+                if child.tooltip != tooltip:
+                    child.tooltip = tooltip
+                active = session.id == active_session_id
+                if child.has_class("console-session-tab-active") != active:
+                    child.set_class(active, "console-session-tab-active")
 
     def show_active_session(self, session_id: str | None, title: str | None) -> None:
         """Move the active-tab highlight and header title, mounting nothing.

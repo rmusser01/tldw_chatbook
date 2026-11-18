@@ -60,6 +60,36 @@ def _sessions(count: int) -> list[ConsoleChatSession]:
 
 
 @pytest.mark.asyncio
+async def test_session_poll_updates_only_changed_mounted_tabs(monkeypatch):
+    app = TabStripHost()
+    async with app.run_test(size=(100, 30)) as pilot:
+        surface = app.query_one(ConsoleSessionSurface)
+        sessions = _sessions(4)
+        await surface.sync_sessions(sessions=sessions, active_session_id="s1")
+        tabs = [app.query_one(f"#console-session-tab-s{i}", Button) for i in range(1, 5)]
+        tabs[1].focus()
+        await pilot.pause()
+        assert app.focused is tabs[1]
+        tabs[2].tooltip = "stale"
+        writes = []
+        original = Button.tooltip
+
+        def set_tooltip(button, value):
+            if button in tabs:
+                writes.append(button.id)
+            original.fset(button, value)
+
+        monkeypatch.setattr(Button, "tooltip", property(original.fget, set_tooltip))
+        await surface.sync_sessions(sessions=sessions, active_session_id="s1")
+        assert writes == [tabs[2].id]
+        writes.clear()
+        await surface.sync_sessions(sessions=sessions, active_session_id="s1",
+                                    run_markers={"s4": ConsoleRunMarker.RUNNING})
+        assert writes == [tabs[3].id]
+        assert app.focused is tabs[1]
+
+
+@pytest.mark.asyncio
 async def test_tab_strip_is_horizontally_scrollable() -> None:
     app = TabStripHost()
     async with app.run_test(size=(80, 24)):

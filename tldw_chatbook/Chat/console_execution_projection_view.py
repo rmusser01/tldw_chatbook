@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from types import MappingProxyType
 
 from .console_chat_controller import ConsolePendingDecisionProjection
 from .console_chat_models import (
@@ -41,6 +43,9 @@ class ConsoleProjectionView:
     active_session_id: str | None
     fingerprints: tuple[tuple[str, tuple[int, int]], ...]
     projections: tuple[ConsoleProjection, ...]
+    _rows: Mapping[str, ConsoleSessionView] = field(init=False, repr=False, compare=False)
+    _fingerprints: Mapping[str, tuple[int, int]] = field(init=False, repr=False, compare=False)
+    _frames: Mapping[str, ConsoleProjection] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         _count(self.source_revision)
@@ -62,7 +67,7 @@ class ConsoleProjectionView:
         ):
             raise ValueError("Console projection active session is unavailable")
 
-        fingerprint_ids = set()
+        fingerprints = {}
         for entry in self.fingerprints:
             if type(entry) is not tuple or len(entry) != 2:
                 raise TypeError("Console projection fingerprint entry is invalid")
@@ -70,18 +75,18 @@ class ConsoleProjectionView:
             if (
                 type(session_id) is not str
                 or session_id not in rows
-                or session_id in fingerprint_ids
+                or session_id in fingerprints
             ):
                 raise ValueError("Console projection fingerprint identity is invalid")
             if type(fingerprint) is not tuple or len(fingerprint) != 2:
                 raise TypeError("Console projection fingerprint is invalid")
             for value in fingerprint:
                 _count(value)
-            fingerprint_ids.add(session_id)
-        if fingerprint_ids != rows.keys():
+            fingerprints[session_id] = fingerprint
+        if fingerprints.keys() != rows.keys():
             raise ValueError("Console projection fingerprints do not cover its rows")
 
-        frame_ids = set()
+        frames = {}
         for frame in self.projections:
             if type(frame) is not ConsoleProjection:
                 raise TypeError("Original Console projection frame is required")
@@ -90,7 +95,7 @@ class ConsoleProjectionView:
             if (
                 type(frame.session_id) is not str
                 or frame.session_id not in rows
-                or frame.session_id in frame_ids
+                or frame.session_id in frames
                 or frame.source_revision != self.source_revision
                 or type(frame.incarnation_id) is not str
                 or frame.incarnation_id != rows[frame.session_id].incarnation_id
@@ -111,7 +116,10 @@ class ConsoleProjectionView:
                 or frame.decision.session_id != frame.session_id
             ):
                 raise ValueError("Console projection decision session changed")
-            frame_ids.add(frame.session_id)
+            frames[frame.session_id] = frame
+        object.__setattr__(self, "_rows", MappingProxyType(rows))
+        object.__setattr__(self, "_fingerprints", MappingProxyType(fingerprints))
+        object.__setattr__(self, "_frames", MappingProxyType(frames))
 
     def sessions(self) -> list[ConsoleSessionView]:
         """Return original frozen rows in their supplied creation order."""
@@ -119,16 +127,13 @@ class ConsoleProjectionView:
 
     def session(self, session_id: str) -> ConsoleSessionView:
         """Return the exact frozen row, raising KeyError when it is absent."""
-        for row in self.session_rows:
-            if row.id == session_id:
-                return row
-        raise KeyError(session_id)
+        return self._rows[session_id]
 
     def _projection_for_session(self, session_id: str) -> ConsoleProjection:
-        for frame in self.projections:
-            if frame.session_id == session_id:
-                return frame
-        raise ConsoleProjectionUnavailable(session_id)
+        try:
+            return self._frames[session_id]
+        except KeyError:
+            raise ConsoleProjectionUnavailable(session_id) from None
 
     def messages_for_session(self, session_id: str) -> list[ConsoleChatMessage]:
         """Return original shallow rendering copies from the supplied frame.
@@ -145,10 +150,7 @@ class ConsoleProjectionView:
         Equal-length edits and non-final message changes may be invisible. This
         original cheap hint is neither complete snapshot nor source authority.
         """
-        for original_id, fingerprint in self.fingerprints:
-            if original_id == session_id:
-                return fingerprint
-        raise KeyError(session_id)
+        return self._fingerprints[session_id]
 
     def display_projection_revision(self, session_id: str) -> int:
         """Return the supplied frame revision, refusing an unavailable frame."""
