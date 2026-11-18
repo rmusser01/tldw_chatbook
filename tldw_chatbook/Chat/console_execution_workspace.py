@@ -91,7 +91,14 @@ def set_workspace_binding_access(
 
     task = asyncio.create_task(publish(), name="console-workspace-binding-access")
     client._workspace_operations.add(task)
-    task.add_done_callback(client._workspace_operations.discard)
+    client._workspace_binding_task = task
+
+    def finished(operation):
+        client._workspace_operations.discard(operation)
+        if client._workspace_binding_task is operation:
+            client._workspace_binding_task = None
+
+    task.add_done_callback(finished)
     task.add_done_callback(
         lambda finished: None if finished.cancelled() else finished.exception()
     )

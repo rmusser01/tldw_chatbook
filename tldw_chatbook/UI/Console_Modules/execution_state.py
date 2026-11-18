@@ -7,6 +7,7 @@ reads native storage, changes a session, or grants command authority.
 from __future__ import annotations
 
 import time
+from collections.abc import Awaitable
 from dataclasses import replace
 from functools import partial
 
@@ -100,6 +101,91 @@ def _resumed_source_refresh(screen, client) -> bool:
         and getattr(screen, "_console_process_visit", None) == client._visit
         and client._intake_open
     )
+
+
+def selected_rail_publication(screen, client=None):
+    """Observe only the original retained configuration action for this visit."""
+    if client is None:
+        client = getattr(screen.app_instance, "console_execution_client", None)
+    if client is None or getattr(client, "_rail_publication", None) is None:
+        return None
+    from ...Chat import console_execution_rail_preferences as rail
+    from ...Chat.console_domain_services import _definition_current
+
+    if (rail.rail_publication_for is not rail._RAIL_LOOKUP[0]
+        or not _definition_current(rail._RAIL_LOOKUP)):
+        raise RuntimeError("Console rail publication observer changed")
+    return rail.rail_publication_for(client, screen, client._visit)
+
+
+def _require_applied_rail_publication(scope):
+    from ...Chat import console_execution_rail_preferences as rail
+    from ...Chat.console_domain_services import _definition_current
+
+    if (rail.require_rail_publication is not rail._RAIL_REQUIRE[0]
+        or not _definition_current(rail._RAIL_REQUIRE)):
+        raise RuntimeError("Console rail publication verifier changed")
+    rail.require_rail_publication(scope, applied=True)
+
+
+def _rail_source_refresh(screen, client) -> bool:
+    """The exact completed writer may replace its old same-visit publication."""
+    import asyncio
+
+    scope = selected_rail_publication(screen, client)
+    if scope is None or scope.task is not asyncio.current_task():
+        return False
+    _require_applied_rail_publication(scope)
+    client.require_view(screen, scope.visit)
+    if client.projection_view.source_revision == client._source_revision:
+        return False
+    if (client.projection_view is not scope.projection_view
+        or client._attachment_id != scope.attachment_id
+        or client._source_revision != scope.revision
+        or scope.revision != scope.old_revision + 1):
+        raise RuntimeError("Console rail publication selection changed")
+    _require_sources()
+    _require_methods(client, _PREPARE_METHODS)
+    _require_selected_publication(client, scope.old_revision)
+    return True
+
+
+async def finish_selected_rail_publication(scope) -> None:
+    """Adopt original visible data only after the exact config action retired."""
+    _require_applied_rail_publication(scope)
+    screen, client = scope.view, scope.client
+    if (screen is None or client._view is not screen or client._visit != scope.visit
+        or not screen.is_current or getattr(screen, "_console_chat_tearing_down", False)):
+        return  # Original resume owns a later visible read; never read while hidden.
+    client.require_view(screen, scope.visit)
+    if not await refresh_selected_view(screen, checkpoint="visible"):
+        # Navigation owns its later visible mount. An interrupted widget render
+        # may defer normally only if the checked new publication was adopted.
+        if (client._view is not screen or client._visit != scope.visit
+            or not screen.is_current or getattr(screen, "_console_chat_tearing_down", False)):
+            return
+        if selected_client(screen) is not client:
+            raise RuntimeError("Console rail publication display did not complete")
+        screen._console_process_surface_reconciled = False
+
+
+def rail_publication_finished(scope) -> None:
+    """Resume actual queued gestures after the action releases its sole record."""
+    screen, client = scope.view, scope.client
+    if (screen is None or getattr(client, "_rail_publication", None) is not None
+        or client._view is not screen or client._visit != scope.visit
+        or not screen.is_current or getattr(screen, "_console_chat_tearing_down", False)):
+        return
+    client.require_view(screen, scope.visit)
+    if selected_client(screen) is not client:
+        raise RuntimeError("Console rail publication completion changed")
+    from .execution_rail import replay_selected_rail_toggles
+
+    replay_selected_rail_toggles(screen, client, scope.visit)
+
+
+_RAIL_FINISH = _definition(finish_selected_rail_publication)
+_RAIL_FINISHED = _definition(rail_publication_finished)
 
 
 class ConsoleDisplayExpired(RuntimeError):
@@ -279,6 +365,16 @@ def selected_workspace_surface(screen: ChatScreen):
 
 def defer_selected_resize(screen: ChatScreen, event) -> bool:
     """Keep the latest resize until this visit has a current display snapshot."""
+    if _awaiting_resume_publication(screen):
+        client = screen.app_instance.console_execution_client
+        screen._console_pending_process_resize = (client, client._visit, event)
+        return True
+    publication = selected_rail_publication(screen)
+    if publication is not None:
+        client = publication.client
+        client.require_view(screen, publication.visit)
+        screen._console_pending_process_resize = (client, publication.visit, event)
+        return True
     client = selected_client(screen)
     if client is None:
         return False
@@ -306,6 +402,15 @@ def _defer_selected_refresh(screen, client, visit: int) -> bool:
         or client._channel_error is not None
     ):
         return False
+    if _awaiting_resume_publication(screen):
+        return True
+    scope = selected_rail_publication(screen, client)
+    if scope is not None:
+        import asyncio
+
+        if scope.task is not asyncio.current_task():
+            return True
+        _require_applied_rail_publication(scope)
     deferred = (
         client._visit > visit or client._disposed or client._shutdown_task is not None
         or getattr(screen, "_console_chat_tearing_down", False)
@@ -339,7 +444,9 @@ async def refresh_selected_view(screen: ChatScreen, *, checkpoint: str | None = 
     visit = getattr(screen, "_console_process_visit", client._visit)
     if _defer_selected_refresh(screen, client, visit):
         return False
-    if not _resumed_source_refresh(screen, client) and selected_client(screen) is not client:
+    if (not _resumed_source_refresh(screen, client)
+        and not _rail_source_refresh(screen, client)
+        and selected_client(screen) is not client):
         raise RuntimeError("Console process refresh requires its selected owner")
     source = client._source_revision
     screen._console_selected_refresh_count = getattr(screen, "_console_selected_refresh_count", 0) + 1
@@ -376,9 +483,21 @@ async def _refresh_current_selected_view(screen, client, visit, checkpoint) -> b
         return False  # Only the finite decision head is eligible under this modal.
 
     row = client.projection_view.session(client.projection_view.active_session_id)
-    projection = await client.read_view_display(
-        screen, visit, row.id, row.incarnation_id, checkpoint=checkpoint,
-    )
+    prepared = None
+    if checkpoint == "mount":
+        prepared = getattr(screen, "_console_resumed_publication", None)
+        screen._console_resumed_publication = None
+        if prepared is not None and (prepared[0] is not client or prepared[1] != visit):
+            prepared = None
+    if (prepared is not None and prepared[2] is client.projection_view
+        and prepared[3] is client._projection and time.monotonic() < client._readiness_deadline):
+        projection = client._projection
+    else:
+        if prepared is not None:
+            checkpoint = None  # This visit's original mount already applied and retired.
+        projection = await client.read_view_display(
+            screen, visit, row.id, row.incarnation_id, checkpoint=checkpoint,
+        )
     if _defer_selected_refresh(screen, client, visit):
         return False
     client.require_view(screen, visit)
@@ -529,8 +648,8 @@ _REFRESH_METHODS = tuple(
 ) + _GUIDANCE_METHODS
 
 
-def resume_selected_view(screen: ChatScreen) -> None:
-    """Issue reconciliation from the actual screen message-pump visit."""
+def resume_selected_view(screen: ChatScreen) -> Awaitable[None] | None:
+    """Publish the resumed source before synchronous screen readers run."""
     _require_sources()
     client = screen.app_instance.console_execution_client
     if type(client) is not ConsoleExecutionClient or type(screen) is not ChatScreen:
@@ -540,8 +659,57 @@ def resume_selected_view(screen: ChatScreen) -> None:
     if getattr(screen, "_console_process_visit", None) != visit:
         screen._console_process_visit = visit
         screen._console_process_surface_reconciled = False
+    mounted = getattr(screen, "_console_process_mounted_visit", None)
+    operation = getattr(client, "_workspace_binding_task", None)
+    if (type(mounted) is int and mounted < visit
+        and (operation is not None or (
+            client.projection_view is not None
+            and client.projection_view.source_revision < client._source_revision
+        ))):
+        return _publish_resumed_source(screen, client, visit, operation)
     if not getattr(screen, "_console_process_surface_reconciled", False):
         screen.call_after_refresh(screen._start_console_attach_reconciliation)
+
+
+def _awaiting_resume_publication(screen) -> bool:
+    client = getattr(screen.app_instance, "console_execution_client", None)
+    pending = getattr(screen, "_console_resuming_source", None)
+    if pending is None or client is None or pending[0] is not client or pending[1] != client._visit:
+        return False
+    client.require_view(screen, client._visit)
+    return True
+
+
+async def _publish_resumed_source(screen, client, visit, operation):
+    import asyncio
+
+    # Textual awaits this ScreenResume handler. Only the original visible
+    # backend read belongs here. Widget mounting continues in its normal worker.
+    pending = client, visit
+    screen._console_resuming_source = pending
+    try:
+        client.require_view(screen, visit)
+        if operation is not None:
+            if (operation is not client._workspace_binding_task
+                or operation not in client._workspace_operations):
+                raise RuntimeError("Console workspace publication owner changed")
+            await asyncio.shield(operation)
+            client.require_view(screen, visit)
+        if not _resumed_source_refresh(screen, client):
+            selected_client(screen)
+        else:
+            row = client.projection_view.session(client.projection_view.active_session_id)
+            frame = await client.read_view_display(
+                screen, visit, row.id, row.incarnation_id, checkpoint="mount",
+            )
+            client.require_view(screen, visit)
+            if selected_client(screen) is not client or frame is not client._projection:
+                raise RuntimeError("Console resumed publication changed")
+            screen._console_resumed_publication = client, visit, client.projection_view, frame
+        screen.call_after_refresh(screen._start_console_attach_reconciliation)
+    finally:
+        if screen._console_resuming_source is pending:
+            screen._console_resuming_source = None
 
 
 async def reconcile_selected_view(screen: ChatScreen) -> None:

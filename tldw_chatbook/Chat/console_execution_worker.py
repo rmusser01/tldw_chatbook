@@ -270,7 +270,7 @@ class _BackendCommandAdapter:
             return publication.ApplySourceRevision(identity, result)
         fence = self._result(value["fence_request_id"], ("FenceSource",))
         if operation == "RefreshConfiguration":
-            return publication.RefreshConfiguration(identity, fence)
+            return publication.RefreshConfiguration(identity, fence, fence.rail_update)
         if operation == "SetWorkspaceBindingAccess":
             return publication.SetWorkspaceBindingAccess(
                 identity, fence, value["binding_id"], value["allow_write"]
@@ -863,6 +863,7 @@ class _BackendService:
             ResolveDecision,
             ProjectDecisionPresentation,
             ReadDecisionHead,
+            RefreshConfiguration,
             SetWorkspaceBindingAccess,
             Shutdown,
             UpdateInputs,
@@ -878,7 +879,7 @@ class _BackendService:
                 # validate its exact issued fence before exporting that outcome.
                 self.backend.controls._require_source_publication(result)
                 source_retired = True
-            elif type(command) is SetWorkspaceBindingAccess:
+            elif type(command) in (SetWorkspaceBindingAccess, RefreshConfiguration):
                 # This original publication exists only after its native Registry
                 # scope and preparation-read producer have physically retired.
                 self.backend.controls._require_publication(result)
@@ -938,7 +939,7 @@ class _BackendService:
                 retired = await asyncio.shield(receipt.retired)
                 if type(retired) is not bool:
                     raise ConsoleProtocolError("invalid_original_retirement")
-            elif type(command) in (FenceSource, SetWorkspaceBindingAccess):
+            elif type(command) in (FenceSource, SetWorkspaceBindingAccess, RefreshConfiguration):
                 retired = source_retired
             elif type(command) is Drain:
                 # The original drain's successful return follows all original

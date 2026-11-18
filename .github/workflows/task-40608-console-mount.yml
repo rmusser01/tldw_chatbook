@@ -41,6 +41,11 @@ jobs:
           $env:TEMP = $env:TMP = $testRoot
           $checks = @(
             'Tests/Chat/test_console_rail_configuration_publication.py'
+            'Tests/UI/test_console_resumed_source_publication.py'
+            'Tests/UI/test_console_execution_transcript_partial_mount.py'
+            'Tests/UI/test_console_execution_rail_toggle.py'
+            'Tests/UI/test_console_transcript_markdown_widget.py'
+            'Tests/UI/test_console_transcript_window_reconcile.py'
             'Tests/Chat/test_console_backend_log_probe_group.py'
             'Tests/UI/test_console_selected_refresh_coverage.py'
             'Tests/UI/test_console_return_acknowledgement.py'

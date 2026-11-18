@@ -8,6 +8,7 @@ from ...Chat.console_domain_services import _definition
 from ..Screens.chat_screen import ChatScreen
 from .execution_state import (
     ConsoleDisplayExpired, _require_methods, refresh_selected_when_due, selected_client,
+    selected_rail_publication,
 )
 
 
@@ -40,11 +41,14 @@ def _same_intent_scope(screen, client, visit, captured):
 
 def apply_selected_rail_toggle(screen, section_id: str, *, next_open: bool | None) -> None:
     """Retain each actual input in order; a refresh never invents a toggle."""
-    client = selected_client(screen)
+    publication = selected_rail_publication(screen)
+    client = publication.client if publication is not None else selected_client(screen)
     if client is None:
         raise RuntimeError("Selected rail toggle requires its actual client")
     if getattr(screen, "_console_process_content_failed", False):
         return
+    if publication is not None:
+        client.require_view(screen, publication.visit)
     pending = getattr(screen, "_console_pending_process_rail_toggles", None)
     if pending is None:
         pending = screen._console_pending_process_rail_toggles = deque()
@@ -59,6 +63,8 @@ def replay_selected_rail_toggles(screen, client, visit: int) -> None:
         return
     if getattr(screen, "_console_process_content_failed", False):
         return
+    if selected_rail_publication(screen, client) is not None:
+        return  # Keep both unsent and post-write intent until publication releases.
     while pending:
         intent = pending[0]
         captured = intent.identity

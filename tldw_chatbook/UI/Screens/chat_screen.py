@@ -12133,15 +12133,20 @@ class ChatScreen(BaseAppScreen):
         notify_on_failure: bool = False,
     ) -> None:
         """Persist Console rail preferences without blocking the UI thread."""
+        def save(key, value):
+            if getattr(self.app_instance, "console_execution_client", None) is None:
+                return save_setting_to_cli_config("console.rail_state", key, value)
+            from tldw_chatbook.Chat.console_execution_rail_preferences import save_rail_preference
+
+            return save_rail_preference(self, key, value)
+
         with _CONSOLE_RAIL_PREFERENCE_WRITE_LOCK:
             saved = False
             # Retain failed prerequisites; a dependent record must not pass them.
             while self._console_rail_seed_flush:
                 flush_key, flush_value = self._console_rail_seed_flush[0]
                 try:
-                    saved = save_setting_to_cli_config(
-                        "console.rail_state", flush_key, flush_value
-                    )
+                    saved = save(flush_key, flush_value)
                 except Exception as exc:  # noqa: BLE001 -- retain failed seed for retry
                     logger.warning(  # noqa: PLE1205 - Loguru brace format
                         "Failed to persist Console rail seed defaults (error_type={})",
@@ -12165,11 +12170,7 @@ class ChatScreen(BaseAppScreen):
                             latest = rail_state_config[key]
                 latest_serialized = serialize_console_rail_stored_preferences(latest)
                 try:
-                    saved = save_setting_to_cli_config(
-                        "console.rail_state",
-                        key,
-                        latest_serialized,
-                    )
+                    saved = save(key, latest_serialized)
                 except Exception as exc:
                     logger.warning("Failed to persist Console rail preference: {}", exc)
                     saved = False
@@ -23983,7 +23984,7 @@ class ChatScreen(BaseAppScreen):
         skip_unchanged_resume_restyle(self, event)
         run_controls.arm_arrival_focus(self)
 
-    def on_screen_resume(self) -> None:
+    def on_screen_resume(self) -> Awaitable[None] | None:
         """Called when returning to this screen."""
         if getattr(self.app_instance, "console_execution_client", None) is not None:
             if (getattr(self, "_console_process_prepare_failed", False)
@@ -23991,8 +23992,7 @@ class ChatScreen(BaseAppScreen):
                 return
             from ..Console_Modules.execution_state import resume_selected_view
 
-            resume_selected_view(self)
-            return
+            return resume_selected_view(self)
         if (controller := self._console_chat_controller) is not None:
             controller.on_console_view_visibility_changed(True)
             wiring.review_view_resumed(controller)

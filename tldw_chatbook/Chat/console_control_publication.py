@@ -28,6 +28,7 @@ class ReplaceConfiguration:
 class RefreshConfiguration:
     identity: Any
     fence: Any
+    rail_update: Any = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +54,9 @@ class ConsoleConfigurationPublication:
     config_identity: Any = field(repr=False)
     original_result: Any = field(repr=False)
     _issuer: Any = field(repr=False)
+    rail_update: Any = field(default=None, repr=False)
+    selection_cache: Any = field(default=None, repr=False)
+    selection_facts: Any = field(default=None, repr=False)
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -83,6 +87,7 @@ async def publish_original_source(controls, command):
         effect = controls._begin_publication_effect(fence)
         confirmed = False
         operation = state = None
+        selection_cache = selection_facts = None
         try:
             if type(command) is SetWorkspaceBindingAccess:
                 from tldw_chatbook.Workspaces.project_index.runtime import (
@@ -135,6 +140,11 @@ async def publish_original_source(controls, command):
                     configuration = result.settings_view
                     view = "normalized_settings"
                 identity = config.current_config_identity()
+                if type(command) is RefreshConfiguration and command.rail_update is not None:
+                    from .console_execution_profile import _selection_facts
+
+                    selection_cache = config._CONFIG_CACHE
+                    selection_facts = _selection_facts()
             with storage._lock:
                 confirmed = (
                     operation not in raw_participants._states
@@ -152,6 +162,9 @@ async def publish_original_source(controls, command):
                 identity,
                 result,
                 controls,
+                command.rail_update if type(command) is RefreshConfiguration else None,
+                selection_cache,
+                selection_facts,
             )
         finally:
             if operation is not None and state is not None:

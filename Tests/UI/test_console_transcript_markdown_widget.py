@@ -38,6 +38,8 @@ from tldw_chatbook.Widgets.Console.console_assistant_turn import (
 )
 from Tests.UI.consolidated_css import APP_STYLESHEETS
 
+pytestmark = pytest.mark.bootstrap_profile
+
 
 def _assistant_header(
     transcript: ConsoleTranscript, message_id: str

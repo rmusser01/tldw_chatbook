@@ -26,6 +26,8 @@ from tldw_chatbook.Widgets.Console.console_transcript import (
     get_console_transcript_window_lines,
 )
 
+pytestmark = pytest.mark.bootstrap_profile
+
 
 class ReconcileHarness(App):
     """Transcript host with explicit watermarks and window settings."""

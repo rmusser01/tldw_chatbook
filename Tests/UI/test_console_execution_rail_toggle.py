@@ -205,3 +205,52 @@ def test_post_write_expiry_never_finishes_on_a_superseded_scope(monkeypatch, cha
     module.replay_selected_rail_toggles(screen, client, client._visit)
     assert effects == [("preference", "character", True)]
     assert not screen._console_pending_process_rail_toggles
+
+
+def test_rail_publication_retains_new_gestures_without_reading_stale_values(monkeypatch):
+    module, screen_type, screen, client, _, effects, _ = _surface(monkeypatch)
+    client._readiness_deadline = 3.0
+    scope = SimpleNamespace(client=client, visit=client._visit)
+    active = [scope]
+    monkeypatch.setattr(module, "selected_rail_publication", lambda *_: active[0])
+
+    def stale(_):
+        pytest.fail("fenced publication used as current display")
+
+    monkeypatch.setattr(module, "selected_client", stale)
+    screen_type._toggle_console_rail_section(screen, "details")
+    screen_type._toggle_console_rail_section(screen, "details")
+    assert not effects
+    assert len(screen._console_pending_process_rail_toggles) == 2
+    active[0] = None
+    monkeypatch.setattr(module, "selected_client", lambda _: client)
+    module.replay_selected_rail_toggles(screen, client, client._visit)
+    assert [effect for effect in effects if effect[0] == "preference"] == [
+        ("preference", "details", True), ("preference", "details", False),
+    ]
+
+
+def test_rail_publication_does_not_resubmit_a_previously_written_gesture(monkeypatch):
+    module, screen_type, screen, client, _, effects, _ = _surface(monkeypatch)
+    client._readiness_deadline = 3.0
+    active = [None]
+    original = screen._set_console_rail_preference
+    monkeypatch.setattr(module, "selected_rail_publication", lambda *_: active[0])
+
+    def write(**kwargs):
+        original(**kwargs)
+        active[0] = SimpleNamespace(client=client, visit=client._visit)
+        client._readiness_deadline = 0.0
+
+    screen._set_console_rail_preference = write
+    screen_type._toggle_console_rail_section(screen, "character", next_open=True)
+    assert effects == [("preference", "character", True)]
+    module.replay_selected_rail_toggles(screen, client, client._visit)
+    assert effects == [("preference", "character", True)]
+    active[0] = None
+    client._readiness_deadline = 3.0
+    module.replay_selected_rail_toggles(screen, client, client._visit)
+    assert effects == [
+        ("preference", "character", True), ("widget", "character", True),
+        ("allocation",), ("character",), ("focus",),
+    ]

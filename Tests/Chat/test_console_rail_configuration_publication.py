@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import subprocess
 import sys
@@ -65,3 +66,190 @@ async def test_external_original_rail_save_invalidates_backend_selection(request
         assert not profile.selection_is_current()
     finally:
         await profile.aclose()
+
+
+async def _external_rail_save(path, directory, key, value, *, extra=False):
+    result = await asyncio.to_thread(
+        subprocess.run,
+        [sys.executable, "-c", (
+            "import sys,json; from pathlib import Path; "
+            "from tldw_chatbook import config; "
+            "assert config.get_cli_config_path() == Path(sys.argv[1]); "
+            "assert config.get_user_data_dir() == Path(sys.argv[2]); "
+            "assert config.save_setting_to_cli_config("
+            "'console.rail_state', sys.argv[3], json.loads(sys.argv[4])); "
+            "assert sys.argv[5] == 'False' or config.save_setting_to_cli_config("
+            "'console.rail_state', 'unrequested-record', {'left_open': False})"
+        ), str(path), str(directory), key, json.dumps(value), str(extra)],
+        env={**os.environ, "TLDW_CONFIG_PATH": str(path)},
+        capture_output=True, check=False,
+    )
+    assert result.returncode == 0, "Original external rail save failed"
+
+
+@private_profile_test
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["accepted", "partial", "extra", "refresh_failure"])
+async def test_exact_rail_publication_reassociates_only_after_retired_refresh(request, outcome):
+    import inspect
+    from contextlib import nullcontext
+    from dataclasses import replace
+
+    from Tests.Chat.test_console_control_trace import _observe
+    from Tests.Chat.test_console_execution_profile import _settled_profile
+    from Tests.Chat.test_console_execution_process import _SentFrames
+    from tldw_chatbook import config
+    from tldw_chatbook.Chat.console_execution_backend import ConsoleExecutionBackend
+    from tldw_chatbook.Chat.console_execution_profile import open_console_backend_profile
+    from tldw_chatbook.Chat.console_execution_protocol import ConsoleWireMessage, WireIdentity
+    from tldw_chatbook.Chat.console_execution_worker import _BackendService
+    from tldw_chatbook.Chat.console_rail_state import (
+        build_console_rail_preference_key, serialize_console_rail_stored_preferences,
+    )
+
+    path, directory, *_ = _settled_profile()
+    profile = open_console_backend_profile(expected_config_path=path, expected_data_directory=directory)
+    backend = ConsoleExecutionBackend(profile, profile_epoch="rail-profile", service_epoch="rail-service")
+    channel = _SentFrames()
+    key = build_console_rail_preference_key(layout_scope="global").value
+    value = serialize_console_rail_stored_preferences({"workspace_open": True})
+    original_cleanup = profile._cleanup
+
+    def command(sequence, operation, payload, revision=0):
+        return ConsoleWireMessage(
+            WireIdentity("rail-profile", "rail-service", sequence, f"rail-{sequence}", source_revision=revision),
+            "command", operation, payload,
+        )
+
+    def replies(sequence):
+        return [row for row in channel.messages if row.identity.request_id == f"rail-{sequence}"]
+
+    def fail_reload(_frame):
+        raise RuntimeError("Original configuration publication failed")
+
+    try:
+        backend.start()
+        service = _BackendService(backend, channel)
+        await service.accept(command(1, "FenceSource", {
+            "source": "configuration", "rail_update": {"key": key, "value": value},
+        }))
+        assert [row.kind for row in replies(1)] == ["received", "applied", "retired"]
+        assert replies(1)[-1].payload["retired"] is True
+        original_sources = backend.domain.sources
+        before = profile._selection_cache
+        actual = dict(value)
+        if outcome == "partial":
+            actual.pop("agent_open")
+        await _external_rail_save(path, directory, key, actual, extra=outcome == "extra")
+        assert profile._selection_cache is config._CONFIG_CACHE is before
+
+        observation = (
+            _observe(inspect.unwrap(config._publish_runtime_config_unlocked).__code__,
+                     sys.monitoring.events.PY_START, fail_reload)
+            if outcome == "refresh_failure" else nullcontext()
+        )
+        with observation:
+            await service.accept(command(2, "RefreshConfiguration", {"fence_request_id": "rail-1"}, 1))
+        if outcome == "refresh_failure":
+            assert [row.kind for row in replies(2)] == ["received", "failed", "retired"]
+            assert replies(2)[-1].payload["retired"] is False
+            assert not backend.controls._publications
+        else:
+            assert [row.kind for row in replies(2)] == ["received", "applied", "retired"]
+            assert replies(2)[-1].payload["retired"] is True
+            publication = backend.adapter._result("rail-2", ("RefreshConfiguration",))
+            assert publication.selection_cache is config._CONFIG_CACHE is not before
+            with pytest.raises(RuntimeError, match="source association changed"):
+                backend.require_sources()
+            with pytest.raises(RuntimeError, match="not issued"):
+                backend._require_rail_publication(replace(publication))
+            applied = service.accept(command(3, "ApplySourceRevision", {"publication_request_id": "rail-2"}, 1))
+            if applied is not None:
+                await applied
+            if outcome == "accepted":
+                assert [row.kind for row in replies(3)] == ["received", "applied", "retired"]
+                assert replies(3)[-1].payload["retired"] is True
+                backend.require_sources()
+                assert backend.profile is profile and profile._cleanup is original_cleanup
+                assert backend.domain.sources.configuration is profile.configuration
+                assert profile.configuration["console"]["rail_state"][key] == value
+                assert backend.controls._intake_open
+            else:
+                assert [row.kind for row in replies(3)] == ["failed"]
+        if outcome != "accepted":
+            assert backend.domain.sources is original_sources
+            assert profile._selection_cache is before
+            assert not backend.controls._intake_open
+        assert not backend.controls.admitted_effects
+    finally:
+        await backend.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("retired", [True, False])
+async def test_rail_receipt_failure_joins_independent_retirement(retired):
+    """Transport control: failed Applied never retires the actual operation."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_execution_process import ConsoleChannelLost
+    from tldw_chatbook.Chat.console_execution_rail_preferences import _settle
+
+    loop = asyncio.get_running_loop()
+    receipt = SimpleNamespace(**{name: loop.create_future() for name in ("received", "applied", "retired")})
+    receipt.received.set_result(None)
+    failure = RuntimeError("Original rail operation failed")
+    task = asyncio.create_task(_settle(receipt))
+    await asyncio.sleep(0)
+    receipt.applied.set_exception(failure)
+    await asyncio.sleep(0)
+    assert not task.done()
+    receipt.retired.set_result(retired)
+    with pytest.raises(RuntimeError) as caught:
+        await task
+    if retired:
+        assert caught.value is failure
+    else:
+        assert type(caught.value) is ConsoleChannelLost
+
+
+@pytest.mark.asyncio
+async def test_rail_receipt_repeated_cancellation_retains_admitted_operation():
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_execution_rail_preferences import _settle
+
+    loop = asyncio.get_running_loop()
+    receipt = SimpleNamespace(**{name: loop.create_future() for name in ("received", "applied", "retired")})
+    task = asyncio.create_task(_settle(receipt))
+    await asyncio.sleep(0)
+    task.cancel()
+    await asyncio.sleep(0)
+    assert not task.done() and not receipt.received.cancelled()
+    receipt.received.set_result(None)
+    receipt.applied.set_result({"source_revision": 1})
+    await asyncio.sleep(0)
+    task.cancel()
+    await asyncio.sleep(0)
+    assert not task.done() and not receipt.retired.cancelled()
+    receipt.retired.set_result(True)
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+@pytest.mark.asyncio
+async def test_rail_admission_refusal_does_not_invent_retirement():
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_execution_process import ConsoleRemoteFailure
+    from tldw_chatbook.Chat.console_execution_rail_preferences import _settle
+
+    loop = asyncio.get_running_loop()
+    receipt = SimpleNamespace(**{name: loop.create_future() for name in ("received", "applied", "retired")})
+    failure = ConsoleRemoteFailure("command_failed", "admission")
+    receipt.received.set_exception(failure)
+    receipt.applied.set_exception(failure)
+    with pytest.raises(ConsoleRemoteFailure) as caught:
+        await _settle(receipt)
+    assert caught.value is failure
+    assert receipt.applied.exception() is failure
+    assert not receipt.retired.done()

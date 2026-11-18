@@ -730,6 +730,16 @@ def _decision_head_result(value, path):
     decode_decision_head(_detach(value, path, 2, set(), thaw=True))
 
 
+def _source_fence_request(value, path):
+    _object(value, path)
+    fields = {"source": _SOURCE}
+    if "rail_update" in value:
+        fields["rail_update"] = _record(
+            key=_NONEMPTY, value=_map(_boolean, keys=_NONEMPTY),
+        )
+    _record(**fields)(value, path)
+
+
 _COMMANDS = {
     "ArchiveSendCheckpointAck": _archive_checkpoint_ack,
     "UpdateInputs": _record(
@@ -762,7 +772,7 @@ _COMMANDS = {
     "ReadDecisionHead": _record(attachment_id=_REFERENCE, visit=_SEQUENCE),
     "CancelTurn": _record(turn_id=_TURN_ID),
     "PermissionAction": _record(operation=_PERMISSION),
-    "FenceSource": _record(source=_SOURCE),
+    "FenceSource": _source_fence_request,
     "CloseIntake": _EMPTY,
     "Drain": _EMPTY,
     "Shutdown": _EMPTY,
@@ -1130,6 +1140,7 @@ _APPLIED = {
     "PermissionAction": _PERMISSION_RESULT,
     "CancelTurn": _APPLIED_BOOL,
     "FenceSource": _record(source=_SOURCE, revision=_REVISION),
+    "RefreshConfiguration": _record(source_revision=_REVISION),
     "SetWorkspaceBindingAccess": _record(
         binding_id=_NONEMPTY,
         workspace_id=_NONEMPTY,

@@ -158,6 +158,135 @@ def test_resume_does_not_accept_mixed_or_unrelated_publications(monkeypatch, cha
 
 
 @pytest.mark.asyncio
+async def test_rail_publication_refreshes_only_after_its_positive_apply(monkeypatch):
+    screen, client, _ = _resumed_publication(monkeypatch)
+    screen._console_process_mounted_visit = client._visit
+    scope = SimpleNamespace(
+        client=client, view=screen, visit=client._visit, old_revision=3,
+        revision=4, projection_view=client.projection_view, task=asyncio.current_task(),
+        attachment_id="actual-attachment",
+    )
+    client._attachment_id = scope.attachment_id
+    monkeypatch.setattr(execution_state, "selected_rail_publication", lambda *_: scope)
+    verified = []
+    monkeypatch.setattr(execution_state, "_require_applied_rail_publication", verified.append)
+    reads = []
+
+    async def refresh(actual_screen, actual_client, visit, checkpoint):
+        assert (actual_screen, actual_client, visit, checkpoint) == (screen, client, 3, "visible")
+        with pytest.raises(RuntimeError, match="selected projection is unavailable"):
+            execution_state.selected_client(screen)
+        reads.append(None)
+        client.projection_view.source_revision = client._projection.source_revision = 4
+        assert execution_state.selected_client(screen) is client
+        return True
+
+    monkeypatch.setattr(execution_state, "_refresh_current_selected_view", refresh)
+    screen.call_later = lambda *_: None
+    await execution_state.finish_selected_rail_publication(scope)
+    assert reads == [None] and verified and all(item is scope for item in verified)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("changed", ["covered", "visit", "teardown", "no_view", "failed_apply"])
+async def test_rail_publication_never_reads_a_hidden_or_unsettled_view(monkeypatch, changed):
+    screen, client, app = _resumed_publication(monkeypatch)
+    scope = SimpleNamespace(client=client, view=screen, visit=client._visit)
+
+    def verify(actual):
+        assert actual is scope
+        if changed == "failed_apply":
+            raise ConsoleChannelLost("actual publication was not positively applied")
+
+    monkeypatch.setattr(execution_state, "_require_applied_rail_publication", verify)
+    monkeypatch.setattr(execution_state, "refresh_selected_view", lambda *_: pytest.fail("unexpected display read"))
+    if changed == "covered":
+        _cover(screen, app)
+    elif changed == "visit":
+        client._visit += 1
+    elif changed == "teardown":
+        screen._console_chat_tearing_down = True
+    elif changed == "no_view":
+        scope.view = client._view = None
+    if changed == "failed_apply":
+        with pytest.raises(ConsoleChannelLost, match="not positively applied"):
+            await execution_state.finish_selected_rail_publication(scope)
+    else:
+        await execution_state.finish_selected_rail_publication(scope)
+
+
+@pytest.mark.asyncio
+async def test_rail_publication_defers_only_its_passive_observers(monkeypatch):
+    screen, client, _ = _resumed_publication(monkeypatch)
+    scope = SimpleNamespace(task=object())
+    monkeypatch.setattr(execution_state, "selected_rail_publication", lambda *_: scope)
+    assert execution_state._defer_selected_refresh(screen, client, client._visit)
+    client._channel_error = ConsoleChannelLost("actual channel failure")
+    assert not execution_state._defer_selected_refresh(screen, client, client._visit)
+
+
+def test_rail_publication_keeps_latest_actual_resize_without_stale_render(monkeypatch):
+    screen, client, _ = _resumed_publication(monkeypatch)
+    scope = SimpleNamespace(client=client, visit=client._visit)
+    monkeypatch.setattr(execution_state, "selected_rail_publication", lambda *_: scope)
+    events = (object(), object())
+    for event in events:
+        assert execution_state.defer_selected_resize(screen, event)
+    assert screen._console_pending_process_resize == (client, client._visit, events[-1])
+    with pytest.raises(RuntimeError, match="selected projection is unavailable"):
+        execution_state.selected_client(screen)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("adopted", [False, True])
+async def test_interrupted_rail_render_requires_the_actual_new_publication(monkeypatch, adopted):
+    screen, client, _ = _resumed_publication(monkeypatch)
+    scope = SimpleNamespace(client=client, view=screen, visit=client._visit)
+    monkeypatch.setattr(execution_state, "_require_applied_rail_publication", lambda _: None)
+
+    async def interrupted(actual, *, checkpoint):
+        assert actual is screen and checkpoint == "visible"
+        if adopted:
+            client.projection_view.source_revision = client._projection.source_revision = 4
+        return False
+
+    monkeypatch.setattr(execution_state, "refresh_selected_view", interrupted)
+    if adopted:
+        await execution_state.finish_selected_rail_publication(scope)
+        assert not screen._console_process_surface_reconciled
+    else:
+        with pytest.raises(RuntimeError, match="selected projection is unavailable"):
+            await execution_state.finish_selected_rail_publication(scope)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("changed", ["observer", "publication", "attachment", "revision", "frame"])
+async def test_rail_refresh_does_not_accept_an_unrelated_publication(monkeypatch, changed):
+    screen, client, _ = _resumed_publication(monkeypatch)
+    scope = SimpleNamespace(
+        task=asyncio.current_task(), visit=client._visit, projection_view=client.projection_view,
+        revision=4, old_revision=3, attachment_id="actual-attachment",
+    )
+    client._attachment_id = scope.attachment_id
+    monkeypatch.setattr(execution_state, "selected_rail_publication", lambda *_: scope)
+    monkeypatch.setattr(execution_state, "_require_applied_rail_publication", lambda _: None)
+    if changed == "observer":
+        scope.task = object()
+        assert not execution_state._rail_source_refresh(screen, client)
+        return
+    if changed == "publication":
+        scope.projection_view = object()
+    elif changed == "attachment":
+        client._attachment_id = "replacement"
+    elif changed == "revision":
+        client._source_revision += 1
+    else:
+        client._projection.source_revision += 1
+    with pytest.raises(RuntimeError):
+        execution_state._rail_source_refresh(screen, client)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("changed", [None, "navigation", "marks", "source", "visit", "session"])
 async def test_explicit_return_waits_for_this_visits_checked_display(monkeypatch, changed):
     from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController

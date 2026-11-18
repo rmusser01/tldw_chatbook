@@ -317,6 +317,7 @@ class PermissionAction:
 class FenceSource:
     identity: ControlIdentity
     source: str
+    rail_update: Any = None
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -325,6 +326,7 @@ class SourceFence:
     revision: int
     previous_sources: Any = field(repr=False)
     _issuer: Any = field(repr=False)
+    rail_update: Any = field(default=None, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1609,12 +1611,15 @@ class ConsoleLocalControls:
         if type(command) is FenceSource:
             if command.source not in {"configuration", "workspace"}:
                 raise ValueError("Unsupported Console source fence")
+            if command.rail_update is not None and command.source != "configuration":
+                raise ValueError("Console rail update requires its configuration fence")
             with self._lock:
                 self._intake_open = False
                 self._effects_open = False
                 self._source_revision += 1
                 fence = SourceFence(
-                    command.source, self._source_revision, self._domain.sources, self
+                    command.source, self._source_revision, self._domain.sources, self,
+                    command.rail_update,
                 )
                 self._fence = fence
                 self._fence_drained = False

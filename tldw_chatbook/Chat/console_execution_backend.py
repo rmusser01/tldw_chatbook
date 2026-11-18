@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 from inspect import getattr_static
 from types import FunctionType
 
@@ -39,6 +40,8 @@ class ConsoleExecutionBackend:
         self.ready = False
         self._notices = []
         self._sequence = 0
+        self._rail_fence = None
+        self._rail_refresh = None
         self._loop = asyncio.get_running_loop()
 
     def start(self) -> None:
@@ -179,10 +182,23 @@ class ConsoleExecutionBackend:
         lifecycle entry separately require the owning event loop.
         """
         from tldw_chatbook import config
+
+        self._require_source_graph()
+        if (
+            not self.profile.selection_is_current()
+            or config.current_config_identity() != self.profile.configuration_identity
+        ):
+            raise RuntimeError("Console backend source association changed")
+
+    def _require_source_graph(self) -> None:
+        """Keep the original graph checks during a named configuration Apply."""
+        from tldw_chatbook import config
         from .console_domain_services import _definition_current
+        from tldw_chatbook.Utils.definition_records import definitions_current
 
         if (
             type(self) is not ConsoleExecutionBackend
+            or not definitions_current(_RAIL_DEFINITIONS)
             or not all(
                 getattr_static(self, name, None) is record[0]
                 and _definition_current(record)
@@ -193,8 +209,6 @@ class ConsoleExecutionBackend:
             or getattr_static(self.profile, "selection_is_current", None)
             is not _PROFILE_SELECTION[0]
             or not _definition_current(_PROFILE_SELECTION)
-            or not self.profile.selection_is_current()
-            or config.current_config_identity() != self.profile.configuration_identity
             or self.domain.sources.configuration is not self.profile.configuration
             or self.domain.sources.chat_database is not self.profile.storage.chachanotes
             or self.domain.sources.prompt_database is not self.profile.storage.prompts
@@ -202,6 +216,95 @@ class ConsoleExecutionBackend:
             or self.domain.sources.prompt_scope is not self.profile.prompt_scope
         ):
             raise RuntimeError("Console backend source association changed")
+
+    def _capture_rail_fence(self, command) -> None:
+        """Record the requested value and checked old source before any write."""
+        from .console_rail_state import serialize_console_rail_stored_preferences
+
+        update = command.rail_update
+        if (
+            self._rail_fence is not None or command.source != "configuration"
+            or update is None or not update["key"]
+            or dict(update["value"]) != serialize_console_rail_stored_preferences(update["value"])
+        ):
+            raise RuntimeError("Console rail fence request changed")
+        self._rail_fence = (
+            command, self.profile, deepcopy(self.profile._selection_cache),
+            deepcopy(self.profile.configuration), self.profile._selection_facts,
+        )
+
+    def _capture_rail_refresh(self, command) -> None:
+        """Retain the old checked source before the original explicit reload."""
+        from .console_rail_state import serialize_console_rail_stored_preferences
+
+        update = command.rail_update
+        if (
+            self._rail_refresh is not None or update is None
+            or not update["key"]
+            or dict(update["value"]) != serialize_console_rail_stored_preferences(update["value"])
+        ):
+            raise RuntimeError("Console rail publication request changed")
+        self.controls._require_source_publication(command.fence)
+        retained = self._rail_fence
+        if (
+            retained is None or retained[1] is not self.profile
+            or command.rail_update is not retained[0].rail_update
+            or command.fence.rail_update is not retained[0].rail_update
+            or command.fence.revision != retained[0].identity.source_revision + 1
+            or retained[4] != self.profile._selection_facts
+        ):
+            raise RuntimeError("Console rail refresh has no original write fence")
+        self._rail_refresh = (
+            command, *retained[1:],
+        )
+
+    def _require_rail_publication(self, publication) -> None:
+        """Accept only this fence's retired reload of its exact requested value."""
+        from tldw_chatbook import config
+        from .console_control_publication import ConsoleConfigurationPublication
+        from .console_execution_profile import _selection_facts
+
+        self._require_source_graph()
+        retained = self._rail_refresh
+        if retained is None or type(publication) is not ConsoleConfigurationPublication:
+            raise RuntimeError("Console rail publication was not retained")
+        command, profile, prior_raw, prior_settings, prior_facts = retained
+        self.controls._require_publication(publication)
+        update = command.rail_update
+        if (
+            profile is not self.profile
+            or publication.fence is not command.fence
+            or publication.rail_update is not update
+            or publication.previous_sources.configuration is not profile.configuration
+            or publication.selection_cache is not config._CONFIG_CACHE
+            or publication.selection_facts != _selection_facts()
+            or publication.selection_facts[1] != prior_facts[1]
+            or publication.selection_facts[3:] != prior_facts[3:]
+            or publication.original_result.caches_reloaded is not True
+            or publication.original_result.settings_view is not publication.sources.configuration
+        ):
+            raise RuntimeError("Console rail publication source changed")
+        for previous, current in (
+            (prior_raw, publication.selection_cache),
+            (prior_settings, publication.sources.configuration),
+        ):
+            expected = deepcopy(previous)
+            expected.setdefault("console", {}).setdefault("rail_state", {})[update["key"]] = dict(update["value"])
+            if expected != current:
+                raise RuntimeError("Console rail publication contains another change")
+
+    def _apply_rail_profile(self, publication) -> None:
+        """Advance the same acquired profile; its physical cleanup owner survives."""
+        for name, value in (
+            ("configuration", publication.sources.configuration),
+            ("configuration_identity", publication.config_identity),
+            ("_selection_cache", publication.selection_cache),
+            ("_selection_facts", publication.selection_facts),
+        ):
+            object.__setattr__(self.profile, name, value)
+        self._rail_refresh = None
+        self._rail_fence = None
+        self.require_sources()
 
     def is_ready(self) -> bool:
         """Expose only the actual service's completed initialization state."""
@@ -220,7 +323,6 @@ class ConsoleExecutionBackend:
     def dispatch(self, message: ConsoleWireMessage):
         """Enter the existing local controls once for an exact channel command."""
         self._require_owner_loop()
-        self.require_sources()
         if (
             type(message) is not ConsoleWireMessage
             or message.kind != "command"
@@ -229,11 +331,29 @@ class ConsoleExecutionBackend:
             or message.identity.sequence != self._sequence + 1
         ):
             raise ConsoleProtocolError("backend_command_order_changed")
-        self._sequence = message.identity.sequence
         command = self.adapter.command(message)
+        from .console_control_dispatch import FenceSource
+        from .console_control_publication import ApplySourceRevision, RefreshConfiguration
+
+        rail_apply = (
+            type(command) is ApplySourceRevision
+            and getattr(command.publication, "rail_update", None) is not None
+        )
+        if rail_apply:
+            self._require_rail_publication(command.publication)
+        else:
+            self.require_sources()
+        if type(command) is FenceSource and command.rail_update is not None:
+            self._capture_rail_fence(command)
+        if type(command) is RefreshConfiguration:
+            self._capture_rail_refresh(command)
+        self._sequence = message.identity.sequence
         checkpoint = self.presentation.admit_view_checkpoint(message)
         try:
             receipt = self.controls.dispatch(command)
+            if rail_apply:
+                receipt.applied.result()
+                self._apply_rail_profile(command.publication)
         except BaseException:
             self.presentation.release_view_checkpoint(message.identity, checkpoint)
             raise
@@ -323,8 +443,14 @@ class ConsoleExecutionBackend:
 
 from .console_domain_services import _definition
 from .console_execution_profile import ConsoleBackendProfile
+from . import console_execution_profile as _profile_source, console_rail_state as _rail_source
+from tldw_chatbook.Utils.definition_records import capture_definitions
 
 _PROFILE_SELECTION = _definition(ConsoleBackendProfile.selection_is_current)
+_RAIL_DEFINITIONS = capture_definitions((
+    (_profile_source, "_selection_facts", _profile_source._selection_facts),
+    (_rail_source, "serialize_console_rail_stored_preferences", _rail_source.serialize_console_rail_stored_preferences),
+))
 
 _DEFINITIONS = tuple(
     (name, _definition(value))

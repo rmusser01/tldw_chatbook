@@ -188,6 +188,7 @@ _OPERATIONS = {
     controls.Shutdown: "Shutdown",
     controls.ApplySourceRevision: "ApplySourceRevision",
     controls.FenceSource: "FenceSource",
+    controls.RefreshConfiguration: "RefreshConfiguration",
     controls.SetWorkspaceBindingAccess: "SetWorkspaceBindingAccess",
     controls.ApplySettings: "ApplySettings",
 }
@@ -254,6 +255,13 @@ def encode_control_applied(
         if result.source != command.source:
             _fail("fence result does not match original command")
         payload = {"source": result.source, "revision": result.revision}
+    elif type(command) is controls.RefreshConfiguration:
+        from .console_control_publication import ConsoleConfigurationPublication
+
+        _exact(result, ConsoleConfigurationPublication)
+        if result.fence is not command.fence or result.rail_update is not command.rail_update:
+            _fail("configuration publication does not match original command")
+        payload = {"source_revision": result.fence.revision}
     elif type(command) is controls.ApplySettings:
         payload = _live_commit(command, result)
     elif type(command) is controls.SetWorkspaceBindingAccess:
