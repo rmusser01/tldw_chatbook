@@ -637,12 +637,13 @@ _CREATED_TREE_ROOT_OWNERS = frozenset(
         "eval.definitions",
         "persona.actor_packs",
         "persona.visual_identity",
+        "chatbooks.archives",
     }
 )
 # Single-file owners whose file a restore may create, and a later rollback may
 # retire after the same proof as a created root (TASK-41113 for the persona
-# store, TASK-41521 for the rest). Each is a `_Definition` but the chatbook
-# registry, which is its own `_Definition` subclass.
+# store, TASK-41521 for the rest). A SQLite owner's -wal/-shm sidecars retire
+# with its database (_known_absences).
 _CREATED_FILE_OWNERS = frozenset(
     {
         "personas",
@@ -654,8 +655,94 @@ _CREATED_FILE_OWNERS = frozenset(
         "chatbooks.registry",
         "feedback",
         "notes.templates",
+        "db.scheduled_tasks",
+        "db.subscriptions",
+        "kanban.local",
+        "notifications.client",
+        "runtime.event_state",
+        "runtime.sync_state",
+        "config.history",
+        "db.prompts.primary",
+        "db.agent_runs",
+        "notes.file_notes",
+        "tts.profile_store",
+        "db.dreams",
+        "db.guardian",
+        "rag.definitions",
+        "mcp.local",
+        "mcp.targets",
+        "mcp.context",
+        "mcp.permissions",
+        "mcp.history",
+        "db.media.primary",
+        "db.library_collections",
+        "db.library_ingest_jobs",
+        "db.evals",
+        "research.local",
+        "writing.local",
+        "db.rag_indexing",
     }
 )
+# The installed declaration class each created root, nested folder or file
+# owner must have (TASK-41521). The proof models exactly these declarations,
+# so a substituted adapter is refused. Module paths are under tldw_chatbook.
+_CREATED_OWNER_CLASSES = {
+    "persona.visual_identity_builtin": ("Persona_Visual.recovery", "_Assets"),
+    "persona.assets": ("Persona_Visual.recovery", "_Assets"),
+    "persona.actor_packs": ("Persona_Visual.recovery", "_Assets"),
+    "persona.visual_identity": ("Persona_Visual.recovery", "_Assets"),
+    "eval.definitions": ("Evals.recovery", "_DefinitionsAdapter"),
+    "personas": ("Backup_Recovery.config_adapter", "_Definition"),
+    "audio.history": ("Backup_Recovery.config_adapter", "_Definition"),
+    "chat.dictionary_history": ("Backup_Recovery.config_adapter", "_Definition"),
+    "chat.grammars": ("Backup_Recovery.config_adapter", "_Definition"),
+    "chat.prompt_history": ("Backup_Recovery.config_adapter", "_Definition"),
+    "chat.rag_context": ("Backup_Recovery.config_adapter", "_Definition"),
+    "feedback": ("Backup_Recovery.config_adapter", "_Definition"),
+    "notes.templates": ("Backup_Recovery.config_adapter", "_Definition"),
+    "chatbooks.registry": ("Backup_Recovery.config_adapter", "_ChatbookRegistry"),
+    "chatbooks.archives": ("Backup_Recovery.config_adapter", "_ChatbookArchives"),
+    "config.history": ("Backup_Recovery.config_adapter", "_History"),
+    "db.prompts.primary": ("DB.recovery_core", "_CoreAdapter"),
+    "db.agent_runs": ("DB.recovery_operations", "_AgentRunsAdapter"),
+    "notes.file_notes": ("Notes.recovery", "_FileNotesAdapter"),
+    "tts.profile_store": ("TTS.recovery", "_Profiles"),
+    "db.dreams": ("DB.recovery_dreams_guardian", "_DreamsAdapter"),
+    "db.guardian": ("DB.recovery_dreams_guardian", "_GuardianAdapter"),
+    "rag.definitions": ("Backup_Recovery.rag_inventory", "_Definitions"),
+    "mcp.local": ("MCP.recovery", "_Store"),
+    "mcp.targets": ("MCP.recovery", "_Store"),
+    "mcp.context": ("MCP.recovery", "_Store"),
+    "mcp.permissions": ("MCP.recovery", "_Store"),
+    "mcp.history": ("MCP.recovery", "_Store"),
+    "db.media.primary": ("DB.recovery_core", "_CoreAdapter"),
+    "db.library_collections": ("DB.recovery_core", "_CoreAdapter"),
+    "db.library_ingest_jobs": ("DB.recovery_core", "_CoreAdapter"),
+    "db.evals": ("Evals.recovery", "_Adapter"),
+    "research.local": ("Research_Interop.recovery", "_Adapter"),
+    "writing.local": ("Writing_Interop.recovery", "_Adapter"),
+    "db.rag_indexing": ("Backup_Recovery.rag_indexing", "_Indexing"),
+    "db.scheduled_tasks": ("Scheduling.recovery", "_ScheduledTasksAdapter"),
+    "db.subscriptions": ("DB.recovery_operations", "_SubscriptionsAdapter"),
+    "kanban.local": ("Kanban_Interop.recovery", "_KanbanAdapter"),
+    "notifications.client": ("Notifications.recovery", "_NotificationsAdapter"),
+    "runtime.event_state": ("Notifications.recovery", "_EventsAdapter"),
+    "runtime.sync_state": ("Sync_Interop.recovery", "_SyncAdapter"),
+}
+# Owners whose rows share a created owner's database file (TASK-41521).
+_CREATED_FILE_SHARERS = {"tts.profile_store": frozenset({"tts.references"})}
+# Files a restore may write outside every profile, shared by all of them. A
+# later rollback names them and never manages them (TASK-41521, coordinator).
+_CREATED_SHARED_FILE_OWNERS = frozenset({"tamagotchi.config"})
+
+
+def _created_owner_class(owner_id):
+    from importlib import import_module
+
+    module, name = _CREATED_OWNER_CLASSES[owner_id]
+    return getattr(import_module("tldw_chatbook." + module), name)
+
+
 # Artwork tree owners whose existing root a restore may add a nested pack
 # folder to, which a later rollback may retire again (TASK-41113 for the
 # Actor Pack and reaction trees).
@@ -682,12 +769,29 @@ def _stage_read_sources(plan):
         if (
             item.owner in _CREATED_FILE_OWNERS
             and item.status == "included"
-            and item.metadata is not None
-            and item.metadata.kind == "file"
-            and item.metadata.root_id == item.logical_id
+            # A SQLite declaration's inventory row carries no file metadata.
+            and (
+                item.metadata is None
+                or item.metadata.kind == "file"
+                and item.metadata.root_id == item.logical_id
+            )
             and retired.get(item.logical_id) == item.path
         ):
             sources[item.logical_id] = item
+            # The created-file proof re-reads its owner's discovery through
+            # the profile's config (TASK-41521).
+            parts = item.logical_id.split(":")
+            config_key = f"profile:{parts[1]}:config" if len(parts) > 2 else None
+            configs = [
+                row
+                for row in plan.target.items
+                if row.logical_id == config_key
+                and row.owner == "config"
+                and row.status == "included"
+            ]
+            if len(configs) != 1:
+                raise ValueError("local_snapshot_created_scope_unverified")
+            sources[config_key] = configs[0]
     roots = {
         item.logical_id: item
         for item in plan.target.items
@@ -1428,11 +1532,7 @@ def _created_destination_target(
     created by this copy."""
     from pydantic import TypeAdapter
 
-    from tldw_chatbook.Evals.recovery import _DefinitionsAdapter
-    from tldw_chatbook.Persona_Visual.recovery import _Assets
-
     from .activation import ActivationStore, _private
-    from .config_adapter import _ChatbookRegistry, _Definition
     from .generation_witnesses import _witnesses
     from .models import DISCOVERY_CONTEXT_KEY, DiscoveryContext
     from .owner_registry import install_adapters
@@ -1441,6 +1541,9 @@ def _created_destination_target(
     from .storage_admission import (
         _contains_owned_path,
         _digest_recovery_file,
+        _RAW_RECOVERY_LIMITS,
+        _preview_reads,
+        _read_recovery_file,
         acquire_storage,
     )
 
@@ -1459,6 +1562,7 @@ def _created_destination_target(
     if not artifacts or rows[-1].event != "committed":
         return target, {}, {}
     document, _ = _created_manifest(journal, original, prepared, rows)
+    synthetic_roots = {row.logical_id for row in document.directories if row.synthetic}
     limits = ArchiveLimits()
     saved = _items(document, original)
     saved.update(_retained_config_items(original, document))
@@ -1467,6 +1571,8 @@ def _created_destination_target(
     mapped_roots, observations, active_ancestors = {}, [], {}
     for artifact in artifacts:
         item = saved.get(artifact.logical_id)
+        if item is not None and item.owner in _CREATED_SHARED_FILE_OWNERS:
+            raise ValueError("local_snapshot_created_file_shared_outside_profile")
         active_persona = (
             item is not None
             and item.owner in _NESTED_CREATED_OWNERS
@@ -1475,7 +1581,8 @@ def _created_destination_target(
             and item.metadata.kind == "directory"
             and item.metadata.parent_id is not None
         )
-        # An archived single file sits directly under its synthetic archive root.
+        # An archived single file sits directly under its synthetic archive
+        # root; a file in a declared tree is not one (TASK-41521).
         created_file = (
             item is not None
             and item.owner in _CREATED_FILE_OWNERS
@@ -1483,6 +1590,7 @@ def _created_destination_target(
             and item.metadata is not None
             and item.metadata.kind == "file"
             and item.metadata.parent_id == item.metadata.root_id
+            and item.metadata.root_id in synthetic_roots
             and item.metadata.relative_path == item.path.name
         )
         if (
@@ -1496,17 +1604,14 @@ def _created_destination_target(
         ):
             raise ValueError("local_snapshot_absence_unclassified")
         owner = owners.get(item.owner)
-        if not (
-            item.owner in _CREATED_TREE_ROOT_OWNERS
-            and type(owner) is (
-                _DefinitionsAdapter if item.owner == "eval.definitions" else _Assets
+        if (
+            not (
+                active_persona
+                or created_file
+                or item.owner in _CREATED_TREE_ROOT_OWNERS
             )
-            or active_persona
-            and type(owner) is _Assets
-            or created_file
-            and type(owner) is (
-                _ChatbookRegistry if item.owner == "chatbooks.registry" else _Definition
-            )
+            or item.owner not in _CREATED_OWNER_CLASSES
+            or type(owner) is not _created_owner_class(item.owner)
         ):
             raise ValueError("local_snapshot_absence_unclassified")
         members = [item] if created_file else [
@@ -1586,6 +1691,19 @@ def _created_destination_target(
                 or not any(_contains_owned_path(path, item.path) for path in physical)
             ):
                 raise ValueError("local_snapshot_created_scope_unverified")
+            if (
+                created_file
+                and item.path.parent == config.path.parent
+                and any(
+                    Path(row["selector"]).parent == config.path.parent
+                    and row is not binding
+                    for row in profiles
+                )
+            ):
+                # A file beside the config belongs to every profile whose config
+                # shares the folder, as publication and the config files rule
+                # (TASK-41521 review).
+                raise ValueError("local_snapshot_created_config_folder_shared")
             if lease is not None:
                 if generation not in _witnesses(item.path, lease):
                     raise ValueError("local_snapshot_created_scope_unverified")
@@ -1629,12 +1747,33 @@ def _created_destination_target(
                     raise ValueError("local_snapshot_created_scope_unverified")
                 continue
             context = DiscoveryContext(config.path, config.logical_id.split(":", 2)[1])
-            declaration = _RawDeclaration(item.owner)
-            entries = (
-                (declaration._item({DISCOVERY_CONTEXT_KEY: context}, item.path),)
-                if created_file
-                else declaration._tree({DISCOVERY_CONTEXT_KEY: context}, item.path)
-            )
+            if created_file and item.owner in _RAW_RECOVERY_LIMITS:
+                # Re-read through the owner's own discovery, keyed by path, so a
+                # file keeps its installed logical ID (a sibling's suffix, a
+                # path-keyed history copy) and its live status (TASK-41521).
+                data = tomllib.loads(
+                    _read_recovery_file(
+                        "config", config.path, max_bytes=16 * 1024**2
+                    ).decode("utf-8")
+                )
+                data[DISCOVERY_CONTEXT_KEY] = context
+                with _preview_reads() if session is None else nullcontext():
+                    entries = tuple(
+                        row for row in owner.discover(data) if row.path == item.path
+                    )
+            elif created_file:
+                # A database is not opened here: opening it rewrites its -shm,
+                # which the reviewed plan's fingerprint covers. Its row is the
+                # reviewed inventory's own, discovered and validated there.
+                entries = tuple(
+                    row
+                    for row in target.items
+                    if row.path == item.path and row.owner == item.owner
+                )
+            else:
+                entries = _RawDeclaration(item.owner)._tree(
+                    {DISCOVERY_CONTEXT_KEY: context}, item.path
+                )
             if {(row.path, row.status) for row in entries} != {
                 (row.path, row.status) for row in members
             } or any(
@@ -1643,22 +1782,53 @@ def _created_destination_target(
                 raise ValueError("local_snapshot_created_members_changed")
             for row in entries:
                 if row.status == "included":
-                    if owner.validate(row.path):
-                        raise ValueError("local_snapshot_created_member_invalid")
-                    observations.append(
-                        (
-                            str(row.path),
-                            _digest_recovery_file(
-                                item.owner, row.path, max_bytes=limits.member_bytes
+                    if item.owner in _RAW_RECOVERY_LIMITS or not created_file:
+                        if owner.validate(row.path):
+                            raise ValueError("local_snapshot_created_member_invalid")
+                    if item.owner in _RAW_RECOVERY_LIMITS:
+                        observed = _digest_recovery_file(
+                            item.owner,
+                            row.path,
+                            max_bytes=min(
+                                limits.member_bytes, _RAW_RECOVERY_LIMITS[item.owner]
                             ),
                         )
-                    )
+                    else:
+                        # A live database is observed by identity only: its WAL
+                        # and its writers may still change its bytes, size and
+                        # time; the safety copy keeps them (TASK-41521).
+                        info = os.stat(row.path, follow_symlinks=False)
+                        observed = [info.st_dev, info.st_ino]
+                    observations.append((str(row.path), observed))
+            # Another owner's row on the same database file, in the shared group
+            # the inventory gave the file, stays; it retires with the file. The
+            # re-read row takes that inventory group (TASK-41521).
+            own = [
+                row
+                for row in updated
+                if row.path == item.path and row.owner == item.owner
+            ]
+            group = own[0].shared_group if len(own) == 1 else None
+            sharers = [
+                row
+                for row in updated
+                if created_file
+                and group is not None
+                and row.path == item.path
+                and row.owner in _CREATED_FILE_SHARERS.get(item.owner, ())
+                and row.shared_group == group
+            ]
+            if sharers:
+                entries = tuple(replace(row, shared_group=group) for row in entries)
             by_path = {row.path: row for row in entries}
             replaced = [
                 row
                 for row in updated
-                if row.path in by_path
-                or row.logical_id in {entry.logical_id for entry in entries}
+                if row not in sharers
+                and (
+                    row.path in by_path
+                    or row.logical_id in {entry.logical_id for entry in entries}
+                )
             ]
             if any(
                 row.path not in by_path
@@ -1983,6 +2153,14 @@ def _known_absences(plan, original, prepared, created=None, *, active_ancestors=
                 and entry.path
                 in {path.with_name(path.name + suffix) for suffix in ("-wal", "-shm")}
                 and entry.path.exists()
+                # A declared sharer's row on the same database file (TASK-41521).
+                or created_key is not None
+                and entry.path == path
+                and entry.owner in _CREATED_FILE_SHARERS.get(item.owner, ())
+                and entry.status == "included"
+                and entry.shared_group is not None
+                and entry.shared_group == item.shared_group
+                and entry.logical_id not in plan.safety_scope
             ]
         retained_ancestors = set()
         for key, ancestor, device, inode in (active_ancestors or {}).get(

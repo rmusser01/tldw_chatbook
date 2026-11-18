@@ -1503,6 +1503,16 @@ def _prepare(
                 left, right = aliases[key], aliases[repeated["logical_id"]]
                 if (
                     left.owner != "sqlite.transient"
+                    and right.owner != "sqlite.transient"
+                    and left.path == right.path
+                    and left.shared_group
+                    and left.shared_group == right.shared_group
+                ):
+                    # Two owners' rows on one shared database file retire once
+                    # (the TTS profile store and its reference audio, TASK-41521).
+                    continue
+                if (
+                    left.owner != "sqlite.transient"
                     or right.owner != "sqlite.transient"
                 ):
                     raise ValueError("duplicate_retirement_target")

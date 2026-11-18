@@ -200,6 +200,12 @@ Confirm the reviewed consequences, re-enter the old password, and provide matchi
 passwords for the new safety copy before executing later rollback. A refused
 review is not a completed rollback; retain the existing copy and operation records.
 
+Files and databases the restore created where the profile had none are removed
+again by later rollback (a database with its `-wal` and `-shm` files). The review
+refuses instead, and leaves the file, when such a file was replaced after the
+restore, when it sits beside a configuration file that another profile's
+configuration now shares, or when it lives outside every profile.
+
 ## Manage recovered media
 
 Open **Restored profiles → Recovered media details** for the current profile.
