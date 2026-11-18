@@ -185,6 +185,16 @@ The two Console readers that take the first primary run now ask the stock AgentR
 
 The historical display now fetches only the newest primary run's own eligible children from the original AgentRuns query. Their existing steps, status and ordering are preserved. A custom reader on a stock database keeps its original call signature. Nineteen Windows database and Console history tests passed. The Windows metadata collector also indexes exact live handle records within each operation. In the 32-sibling fixture this removed all 11,834 comparisons of unrelated records. All 82 native metadata, custody and original hook controls passed. These are component results outside the frozen pair batch.
 
+The saved edit could fail before its first provider request when a preparation
+read observed another caller's still-open SQLite connection on the shared
+executor. The common handoff now isolates stock file-backed reads owned by
+the contained turn. The original retirement check still refuses an uncertain
+close. Twelve native tests passed, covering the saved Library binding,
+independent transaction, cancellation, failed submission and display owners.
+The [ADR-126 handoff decision](../decisions/126-complete-local-backup-and-recovery.md#sqlite-ownership-during-received-turn-preparation)
+and [Windows timing record](../../Docs/Development/task-40608-recovery/windows-journey-timings.md#where-the-time-goes)
+describe the two observed failures. The new handoff requires a fresh journey measurement.
+
 <!-- SECTION:NOTES:END -->
 
 Measured follow-up under the same [ADR-126 bounded configuration-read amendment](../decisions/126-complete-local-backup-and-recovery.md#task-40608--bounded-sensitive-database-path-configuration-reads): qualify the original sensitive container-reader cohort, then group its admissions without changing readers, overrides or refusal checks. The measured 0.218-second component is separate from the unresolved planning delay; final three-pair acceptance remains open.

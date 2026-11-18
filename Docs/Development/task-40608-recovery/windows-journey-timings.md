@@ -26,6 +26,24 @@ the guard did not certify shutdown. The original `qa1c3` and `g57s` waits
 were still polling during this separate diagnostic. The retirement receipt
 has SHA-256 `3e86ea5b5d702c5bc5d57685f5c7ef12a104c52725fb791d8a09cc0f48d979e2`.
 
+The next diagnostic, `g59f` on `db67b4ccea`, isolated final configuration
+capture on a fresh worker. README verified after five provider requests.
+Send to persisted reply took 26.2488 s raw and 23.9844 s after the original
+wait deductions. First HTTP arrived at 11.0856 s. The next four requests
+arrived 1.7149, 1.5249, 5.4101 and 4.5661 s apart. The loopback server
+spent 0.0155 s servicing the five requests.
+
+Edit reached Applied and failed before its first HTTP request. The sixth
+registered read observed one still-open connection and zero new storage
+acquisitions. Its callback and handoff had finished. The diagnostic could
+identify the controller, but its callback was outside the pinned source list.
+A focused saved-chat test with the original workspace Library binding
+reproduced the same sixth-read refusal during the Library policy lookup.
+Both application processes exited. The guard did not certify shutdown.
+The receipt has SHA-256
+`48db0b9fd48bd3803b67474e0df23ef8b8347eaf8ad8dfb0fd3d94df7d7ce73f`.
+The earlier failed `g57s` fixture was still polling during this diagnostic.
+
 The latest completed candidate in batch `qa`, `qa1c2` on frozen `e4fa0ea67d`, provides these raw intervals on the original Send clock. Each arrow subtracts its two adjacent recorded timestamps; intervals containing approvals include those waits. The application-time gate uses the fixture’s separately recorded disclosure and approval waits. Exact `fs_edit` invocation and approval stages from the instrumented run are [below](#completed-instrumented-windows-journeys-g47d).
 
 ```mermaid

@@ -7,6 +7,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Coroutine
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar, copy_context
 from dataclasses import dataclass, field
@@ -225,8 +226,9 @@ async def run_preparation_read[Result](
         source: Opaque captured source available only inside the worker scope.
         submission_slot: Optional display permit held from submission through
             physical return. Queued reads retain observers without a worker.
-        executor: Optional existing owner-selected executor. None preserves the
-            original default executor; handoff and retirement are unchanged.
+        executor: Optional existing owner-selected executor. A registered stock
+            received-turn read without one owns a fresh worker; other reads keep
+            the original default executor. Handoff and retirement are unchanged.
 
     Returns:
         Original callback result after its native scope has exited.
@@ -257,6 +259,7 @@ async def run_preparation_read[Result](
     slot_acquired = False
     retirement = sys.modules.get("tldw_chatbook.Chat.console_execution_retirement")
     observation = None
+    owned_executor = None
 
     def invoke():
         # An enqueue-then-raise submission may leave a work item behind.
@@ -288,6 +291,13 @@ async def run_preparation_read[Result](
     try:
         if retirement is not None:
             observation = retirement.register_preparation_read(read)
+            if executor is None and retirement.received_read_needs_private_worker(
+                observation
+            ):
+                # A pooled worker can retain another caller's SQLite handle.
+                # Keep its ownership intact and give this physically observed
+                # callback an empty thread-local repository cache instead.
+                owned_executor = executor = ThreadPoolExecutor(max_workers=1)
         if submission_slot is not None:
             await submission_slot.acquire()
             slot_acquired = True
@@ -333,8 +343,15 @@ async def run_preparation_read[Result](
             if retirement is not None:
                 retirement.finish_preparation_read(observation, sys.exc_info()[1])
         finally:
-            if slot_acquired:
-                submission_slot.release()
+            try:
+                if owned_executor is not None:
+                    # Issued work has already been joined above, including
+                    # cancellation/error. An enqueue-then-raise submission is
+                    # released by submit_resolved and cannot enter the callback.
+                    owned_executor.shutdown(wait=True)
+            finally:
+                if slot_acquired:
+                    submission_slot.release()
 
 
 async def drain_preparation_reads(

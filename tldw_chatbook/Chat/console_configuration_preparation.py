@@ -1971,7 +1971,7 @@ async def capture_console_turn_configuration_owned(
         ):
             raise RecoveryRequired("console_snapshot_owner_changed")
 
-    async def run_native(callback, *, executor=None):
+    async def run_native(callback):
         require_current()
         result = await run_preparation_read(
             callback,
@@ -1980,7 +1980,6 @@ async def capture_console_turn_configuration_owned(
             reads=reads,
             observers=observers,
             require_current=current,
-            executor=executor,
         )
         require_current()
         return result
@@ -2155,39 +2154,7 @@ async def capture_console_turn_configuration_owned(
                 )
             return result
 
-    from .console_control_dispatch import _CommandSource, _command_source
-    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-
-    command_source = _command_source.get()
-    if (
-        type(command_source) is _CommandSource
-        and command_source.turn_retirement is not None
-        and all(
-            database is None
-            or (
-                type(database) in (CharactersRAGDB, WorkspaceDB)
-                and not database.is_memory_db
-            )
-            for database in (
-                refs.chat_database,
-                refs.prompt_database,
-                refs.visual_database,
-                refs.workspace_database,
-                refs.persona_database,
-            )
-        )
-    ):
-        from concurrent.futures import ThreadPoolExecutor
-
-        # A received read must retire every enrolled native connection. The
-        # default executor may hold another caller's cached SQLite handle,
-        # which operation_owned_connection must correctly leave untouched.
-        # Own this one callback's thread instead; its original read joins the
-        # producer and physical cleanup before the executor can be shut down.
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            result = await run_native(capture, executor=executor)
-    else:
-        result = await run_native(capture)
+    result = await run_native(capture)
     current()
     if stock_mcp and not _composition_mcp_capture_current(creator, refs.mcp):
         raise RecoveryRequired("console_snapshot_owner_changed")

@@ -282,6 +282,59 @@ def finish_preparation_read(
         raise RuntimeError("Console preparation native retirement is unproven")
 
 
+def received_read_needs_private_worker(observation: object) -> bool:
+    """Select fresh thread-local storage only for registered stock turn reads."""
+    if type(observation) is not _ReadResources:
+        return False
+    invocation = observation.invocation
+    if type(invocation) is not ConsoleTurnRetirement:
+        return False
+    if not _definitions_current():
+        raise RuntimeError("Console turn retirement definitions changed")
+    invocation.require_source(invocation.source)
+    if (
+        observation not in invocation.reads
+        or observation.read.task is not invocation.task
+        or asyncio.current_task() is not invocation.task
+        or not any(
+            observation.read.creator is owner
+            for owner in (invocation.controls._controller, invocation.controls._runtime)
+        )
+    ):
+        return False
+    invocation.controls._require_graph()
+    invocation.controls._domain.require_current(invocation.source.sources)
+
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
+    from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Character_Chat.local_character_persona_service import (
+        LocalCharacterPersonaService,
+    )
+    from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+
+    sources = invocation.source.sources
+    databases = [sources.chat_database, sources.prompt_database]
+    for repository, expected in (
+        (sources.workspace_registry, LocalWorkspaceRegistryService),
+        (sources.visual_repository, VisualIdentityRepository),
+        (sources.persona_service, LocalCharacterPersonaService),
+    ):
+        if repository is not None:
+            if type(repository) is not expected:
+                return False
+            databases.append(repository.db)
+    return type(sources.chat_database) is CharactersRAGDB and all(
+        database is None
+        or (
+            type(database) in (CharactersRAGDB, PromptsDatabase, WorkspaceDB)
+            and not database.is_memory_db
+        )
+        for database in databases
+    )
+
+
 def retain_ordinary_tree(controller: object, tree: object) -> None:
     """Keep an actual admitted tree before the original submission removes it."""
     from .console_control_dispatch import _CommandSource, _command_source
@@ -376,7 +429,9 @@ class ConsoleTurnRetirement:
             physical = effect.physically_retired if done else None
             outcome = effect.completed.result() if done and physical else None
             last_effect = (done, physical, outcome)
-            return checked(f"effect_{index}_{effect.kind}", done and physical and outcome is True)
+            return checked(
+                f"effect_{index}_{effect.kind}", done and physical and outcome is True
+            )
 
         try:
             for tree in self.trees:
@@ -430,7 +485,8 @@ class ConsoleTurnRetirement:
                             or pending.projection.ordinal != ordinal
                             or pending.projection.received_request_id
                             != self.identity.request_id
-                            or pending.state not in {"finished", "abandoned", "conflict"}
+                            or pending.state
+                            not in {"finished", "abandoned", "conflict"}
                         ):
                             raise RuntimeError("Console retired plan owner changed")
                         replacements.append(
@@ -454,7 +510,11 @@ class ConsoleTurnRetirement:
 
                 logger.warning(
                     "Console turn retirement unconfirmed; last_check={} effect_facts={} error_type={} reads={} trees={}",
-                    last_check, last_effect, error_type, len(self.reads), len(self.trees),
+                    last_check,
+                    last_effect,
+                    error_type,
+                    len(self.reads),
+                    len(self.trees),
                 )
             if not self.retired.done():
                 self.retired.set_result(bool(confirmed))
@@ -485,6 +545,7 @@ _DEFINITIONS = capture_definitions(
                 "_independent_display_read",
                 "register_preparation_read",
                 "finish_preparation_read",
+                "received_read_needs_private_worker",
                 "retain_ordinary_tree",
             )
         ),
@@ -532,6 +593,7 @@ _DOMAIN_SOURCE_DEFINITIONS = tuple(
         "_independent_display_read",
         "register_preparation_read",
         "finish_preparation_read",
+        "received_read_needs_private_worker",
         "retain_ordinary_tree",
     )
 )

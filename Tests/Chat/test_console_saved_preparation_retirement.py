@@ -7,7 +7,7 @@ import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
-from types import CodeType, FunctionType
+from types import CodeType
 
 import pytest
 
@@ -32,6 +32,8 @@ async def _routing(monkeypatch, loop, callback, monitor):
         (True, None),
         (True, "cancel"),
         (True, "source-change"),
+        (True, "submit-failure"),
+        (True, "enqueue-failure"),
     ],
 )
 async def test_saved_preparations_retire_on_reused_original_worker(
@@ -55,6 +57,9 @@ async def test_saved_preparations_retire_on_reused_original_worker(
         capture_console_turn_configuration_owned,
     )
     from tldw_chatbook.Chat.console_execution_retirement import _native
+    from tldw_chatbook.Chat.console_library_policy_coordinator import (
+        ConsoleLibraryPolicyCoordinator,
+    )
     from tldw_chatbook.Chat.prompt_history import PromptHistory
 
     case = domain_case
@@ -82,6 +87,9 @@ async def test_saved_preparations_retire_on_reused_original_worker(
         conversation_title="Reused preparation worker"
     )
     case.store.publish_first_persisted_conversation(case.session.id, conversation_id)
+    # Match an actually opened saved session's durable Library-policy binding;
+    # first-persistence publication alone does not load that coordinator.
+    await case.store.library_policy_coordinator.load(case.session.id, conversation_id)
     await (
         case.runtime._execution_service.ensure_permission_operations().set_kill_switch(
             False
@@ -109,12 +117,19 @@ async def test_saved_preparations_retire_on_reused_original_worker(
         for code in capture_console_turn_configuration_owned.__code__.co_consts
         if type(code) is CodeType and code.co_name == "capture"
     )
+    library_code = next(
+        code
+        for code in ConsoleLibraryPolicyCoordinator._run_repository_call.__code__.co_consts
+        if type(code) is CodeType and code.co_name == "owned_call"
+    )
     entered, release = threading.Event(), threading.Event()
     held = []
+    submissions = []
+    submit_error = RuntimeError("Original worker submission failed")
 
     def hold_capture(frame):
         observation = getattr(_native, "read", None)
-        if stop is None or observation is None or held:
+        if stop not in {"cancel", "source-change"} or observation is None or held:
             return
         if observation.read.callback.__code__ is not capture_code:
             return
@@ -159,24 +174,32 @@ async def test_saved_preparations_retire_on_reused_original_worker(
 
         def route_original_read(selected, callback, *args):
             source = _command_source.get()
-            if selected is None and source is not None and source.controls is controls:
-                if not borrowed:
-                    selected = executor
-                elif args and type(args[0]) is FunctionType:
-                    invoke = args[0]
-                    captured = dict(
-                        zip(
-                            invoke.__code__.co_freevars,
-                            (cell.cell_contents for cell in invoke.__closure__ or ()),
-                            strict=True,
-                        )
+            if (
+                stop in {"submit-failure", "enqueue-failure"}
+                and selected is not None
+                and source is not None
+                and source.controls is controls
+                and args
+            ):
+                invoke = args[0]
+                captured = dict(
+                    zip(
+                        invoke.__code__.co_freevars,
+                        (cell.cell_contents for cell in invoke.__closure__),
+                        strict=True,
                     )
-                    read = captured.get("read")
-                    if (
-                        getattr(getattr(read, "callback", None), "__code__", None)
-                        is capture_code
-                    ):
-                        selected = executor
+                )
+                read = captured.get("read")
+                if read is not None and read.callback.__code__ is capture_code:
+                    future = (
+                        original_submit(selected, callback, *args)
+                        if stop == "enqueue-failure"
+                        else None
+                    )
+                    submissions.append((selected, read, future))
+                    raise submit_error
+            if selected is None and source is not None and source.controls is controls:
+                selected = executor
             return original_submit(selected, callback, *args)
 
         async with (
@@ -208,6 +231,24 @@ async def test_saved_preparations_retire_on_reused_original_worker(
                 )
                 invocation = receipt.turn_retirement
                 try:
+                    if stop in {"submit-failure", "enqueue-failure"}:
+                        outcomes = await asyncio.gather(
+                            receipt.work, return_exceptions=True
+                        )
+                        assert outcomes == [submit_error]
+                        assert await asyncio.shield(receipt.retired) is True
+                        assert len(submissions) == 1
+                        executor_used, read, future = submissions[0]
+                        if future is not None:
+                            assert await asyncio.shield(future) is None
+                        assert read.retired.done() and not read.callback_returned
+                        assert all(
+                            not thread.is_alive() for thread in executor_used._threads
+                        )
+                        assert not any(
+                            plan.turn_id == turn_id for plan in controls.commit_plans
+                        )
+                        continue
                     if stop:
                         assert await _until(
                             lambda receipt=receipt: entered.is_set()
@@ -271,9 +312,18 @@ async def test_saved_preparations_retire_on_reused_original_worker(
                     )
                     assert capture_read.connections
                     assert not capture_read.creator[1].is_alive()
+                    library_read = next(
+                        read
+                        for read in reads
+                        if read.read.callback.__code__ is library_code
+                    )
+                    assert library_read.connections
+                    assert not library_read.creator[1].is_alive()
+                    assert capture_read.creator[1] is not library_read.creator[1]
                     assert all(
                         item[1] is not borrowed_connection
-                        for item in capture_read.connections
+                        for observed in (capture_read, library_read)
+                        for item in observed.connections
                     )
                     # Re-evaluate the original proof after all subsequent reads,
                     # including original commit reservation, have completed.

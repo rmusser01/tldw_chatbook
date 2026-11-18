@@ -2209,18 +2209,25 @@ The original FULL body, readiness, source checks, physical retirement and all ca
 
 The q91c2 correctness check reached the completed, painted and persisted README reply, but its original `list_runs` observation failed because the enclosing FULL readiness expired 16 ms before parent adoption. A fixed `ReadRunHistory` command may run the existing `ConsoleBackendRunHistoryRead` independently of FULL. It retains the original query, filters, limits, source definitions, actual AgentRunsDB and native-resource retirement. Admission captures the already-prepared visible checkpoint; the read rechecks that exact checkpoint, source, active session, incarnation and conversation before and after native work. Hidden or superseded visits refuse. The parent requires the original Received/Applied/positive Retired receipts and unchanged scope before returning detached history rows. It neither adopts a display nor renews readiness. Normal FULL remains complete, including its existing explicit history option; no expired display or stored history cache substitutes for a fresh query.
 
-#### SQLite ownership during received-turn configuration capture
+#### SQLite ownership during received-turn preparation
 
-In the contained Console, final configuration capture over the stock
-file-backed repositories runs on a worker owned by that one callback.
-An independent caller may own a registered SQLite connection on a shared
-worker. The ordinary database scope preserves that caller's transaction,
-while the accepted turn must prove physical closure of every connection it
-actually observes in its capture. A fresh worker lets both contracts hold.
-The original capture still opens and retires its repositories, checks its
-source and awaits its producer on cancellation. The executor is joined on
-exit. On Windows run `g58r`, the worker had returned but its second enrolled
-connection was still open when the original retirement check refused the edit.
+An accepted Console turn must prove physical closure of every SQLite
+connection that its preparation reads observe. A shared worker can already
+hold an independent caller's active transaction. The ordinary repository
+scope correctly preserves that connection. On Windows, the original
+retirement check refused the saved edit during final configuration capture
+in `g58r`. Isolating that callback exposed the same failure in a later
+read. The saved-session regression reproduces it while reading the
+workspace's Library policy.
+
+Assign a fresh worker at the common preparation-read handoff when the read
+is registered to the actual contained turn, its issuing task and its
+controller or runtime, and the current source graph has stock file-backed
+repositories. An explicit executor remains with its existing owner.
+The callback still runs its original queries, source checks and physical
+retirement checks. Cancellation waits for the submitted producer, and
+cleanup joins the worker before returning. The independently owned
+transaction survives. A failed or uncertain close still refuses the turn.
 
 #### Approval observers follow the checked decision publication
 
