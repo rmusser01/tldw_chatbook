@@ -35,6 +35,7 @@ from .console_display_phases import (
     ConsoleCharacterDisplayPhases,
     ConsoleDisplayPhaseRefused,
     ConsoleDisplaySessionChanged,
+    ConsoleDisplayVisibilityChanged,
     ConsoleDisplayPhysicalOwner,
 )
 from .console_preparation_reads import (
@@ -453,18 +454,22 @@ class ConsoleDomainDisplayOwner:
         # original character cache remains its sole value/TTL owner.
         self._character_reuse_checkpoint = None
         try:
-            await full.run()
-        finally:
-            if full.logical is None and not full.tasks and not full.retirements:
-                # Failure/cancellation before run's logical observer/producer
-                # entry. No native could have been issued: every issued phase
-                # is recorded before exposure and all producers are retained.
-                full.phase_issuance_closed = True
-            from .console_control_dispatch import finish_admitted_display
+            try:
+                await full.run()
+            finally:
+                if full.logical is None and not full.tasks and not full.retirements:
+                    # Failure/cancellation before run's logical observer/producer
+                    # entry. No native could have been issued: every issued phase
+                    # is recorded before exposure and all producers are retained.
+                    full.phase_issuance_closed = True
+                from .console_control_dispatch import finish_admitted_display
 
-            finish_admitted_display(full)
-            # Do NOT unconditionally clear self._full. Uncertain original
-            # owners remain retained by the effect/observer/parent registration.
+                finish_admitted_display(full)
+                # Do NOT unconditionally clear self._full. Uncertain original
+                # owners remain retained by the effect/observer/parent registration.
+        except ConsoleDisplayVisibilityChanged as error:
+            self._raise_retired_backend_visibility_change(full, error)
+            raise
         if (
             selection.backend_checkpoint is not None
             and full.effect.completed.result() is True
@@ -473,6 +478,60 @@ class ConsoleDomainDisplayOwner:
             )
         ):
             self._character_reuse_checkpoint = full.backend_character_key
+
+    def _raise_retired_backend_visibility_change(self, full, error) -> None:
+        """Classify only authentic supersession after this FULL's positive close."""
+        from inspect import getattr_static
+
+        from .console_backend_presentation import ConsoleBackendPresentation
+        from .console_backend_view_lifecycle import ConsoleBackendViewLifecycle, _METHODS
+        from .console_display_phases import require_display_phase_definitions
+        from .console_domain_services import _definition_current
+
+        self.require_current()
+        if type(full) is not ConsoleDisplayFull or type(error) is not ConsoleDisplayVisibilityChanged:
+            return
+        _require_definitions(full)
+        require_display_phase_definitions(full)
+        selection, effect, logical = full.selection, full.effect, full.logical
+        source = selection.command_source
+        if (
+            error.full is not full or full.owner is not self or full._failed is not error
+            or self._full is not None or not full.phase_issuance_closed
+            or not full.physically_retired or not all(task.done() for task in full.tasks.values())
+            or logical is None or logical.task is not selection.task
+            or logical.callback_returned or not logical.retired.done()
+            or logical.retired.cancelled() or logical.retired.exception() is not None
+            or logical.retired.result() is not None
+            or effect is None or not effect.completed.done() or effect.completed.cancelled()
+            or effect.completed.exception() is not None or effect.completed.result() is not True
+            or effect.physically_retired is not True or effect.owner.full is not full
+            or effect.owner.selection is not selection or selection.task is not asyncio.current_task()
+            or source is None or effect not in source.effects
+            or selection.controls._settings_command_tasks.get(selection.task) is not source
+            or source.controls is not selection.controls or source.sources is not self.sources
+            or self.runtime._execution_service._local_controls is not selection.controls
+            or selection.owner is not self or full.controls is not selection.controls
+            or selection.sources is not self.sources or selection.port is not self.domain.presentation
+            or full.store is not self.store or full.sources is not self.sources
+            or self.store._sessions.get(full.session.id) is not full.session
+            or full.session.incarnation_id != full.incarnation
+            or selection.backend_checkpoint is None or not full.reuse_backend_character
+            or type(selection.port) is not ConsoleBackendPresentation
+        ):
+            return  # Original failure and uncertainty remain failures.
+        # The original lifecycle validator distinguishes an authentic displaced
+        # checkpoint from changed definitions, owners, fields or copied tokens.
+        lifecycle = selection.port.view_lifecycle
+        record = dict(_METHODS)["_require_checkpoint"]
+        if (
+            type(lifecycle) is not ConsoleBackendViewLifecycle
+            or lifecycle.presentation is not selection.port
+            or getattr_static(lifecycle, "_require_checkpoint", None) is not record[0]
+            or not _definition_current(record)
+        ):
+            raise ConsoleDisplayPhaseRefused("Retired display visibility source changed")
+        record[0](lifecycle, selection.backend_checkpoint)
 
     def retired_session_change(self, entry: object, error: BaseException) -> bool:
         """Recognize a failed old-session FULL only after its actual settlement.
@@ -660,7 +719,7 @@ class ConsoleDisplayFull(ConsoleDisplayPhysicalOwner):
         if self.reuse_backend_character and not self.port.display_reuse_checkpoint_current(
             self.owner, self.selection.backend_checkpoint,
         ):
-            raise ConsoleDisplayPhaseRefused("Backend display visibility changed")
+            raise ConsoleDisplayVisibilityChanged(self)
 
     def require_phase_task(self) -> None:
         current = asyncio.current_task()

@@ -803,6 +803,7 @@ class ConsoleExecutionClient:
 
         previous = self._projection
         view, visit = self._view, self._visit
+        attachment, app = self._attachment_id, self._app
         if self._view_preparation is not _preparation:
             raise ConsoleChannelLost("Console target preparation is pending")
         if view is not None:
@@ -833,8 +834,11 @@ class ConsoleExecutionClient:
             session_id=session_id,
             incarnation_id=incarnation_id,
         )
+        failure = None
         try:
             await asyncio.shield(receipt.applied)
+        except ConsoleRemoteFailure as error:
+            failure = error
         finally:
             admission_refused = False
             try:
@@ -853,6 +857,31 @@ class ConsoleExecutionClient:
                     error = ConsoleChannelLost("Console projection retirement is unproven")
                     self._fail(error)
                     raise error
+        if failure is not None:
+            if (
+                type(failure) is ConsoleRemoteFailure
+                and failure.code == "view_checkpoint_superseded"
+                and failure.stage == "applied"
+                and not admission_refused
+                and receipt.received.exception() is None
+                and receipt.retired.result() is True
+                and view is not None and self._visit > visit
+                and self._attachment_id == attachment
+                and self._source_revision == binding[0]
+                and self._view_preparation is _preparation
+                and self._app is app
+                and getattr(app, "console_execution_client", None) is self
+                and getattr(app, "console_runtime", None) is None
+                and self._channel_error is None and not self._disposed
+                and self._shutdown_task is None
+                and self.projection_view is not None
+                and self.projection_view.active_session_id == session_id
+                and self.projection_view.session(session_id).incarnation_id == incarnation_id
+            ):
+                # The backend proved this original FULL's native retirement;
+                # only the actual ended parent visit may defer its display.
+                raise ConsoleChannelLost("Console display visit was superseded") from failure
+            raise failure
         if (
             self._channel_error is not None
             or self._source_revision != binding[0]

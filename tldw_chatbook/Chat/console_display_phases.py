@@ -42,6 +42,14 @@ class ConsoleDisplaySessionChanged(ConsoleDisplayPhaseRefused):
         self.full = full
 
 
+class ConsoleDisplayVisibilityChanged(ConsoleDisplayPhaseRefused):
+    """This exact display lost its authenticated backend visibility checkpoint."""
+
+    def __init__(self, full: object) -> None:
+        super().__init__("Backend display visibility changed")
+        self.full = full
+
+
 class ConsoleCharacterDisplayPhases:
     """Preserve the original pair/groups/pair algorithm across retired phases."""
 
@@ -307,7 +315,7 @@ class ConsoleDisplayPhysicalOwner:
                 "Display canceled after physical join"
             )
             raise
-        except ConsoleDisplaySessionChanged as error:
+        except (ConsoleDisplaySessionChanged, ConsoleDisplayVisibilityChanged) as error:
             self.refusal = error
             raise
         except BaseException as error:
@@ -359,6 +367,7 @@ _PHASE_DEFINITIONS = tuple(
         ConsoleCharacterDisplayPhases,
         ConsoleDisplayPhysicalOwner,
         ConsoleDisplaySessionChanged,
+        ConsoleDisplayVisibilityChanged,
     )
     for name, descriptor in vars(owner).items()
     for function in (

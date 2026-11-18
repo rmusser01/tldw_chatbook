@@ -829,7 +829,6 @@ class _BackendService:
 
             superseded = (
                 message.operation == "ReadProjection"
-                and "view_checkpoint" in message.payload
                 and type(error) is ConsoleBackendViewSuperseded
             )
             self._failure(message.operation, "applied", error)

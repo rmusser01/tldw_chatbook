@@ -456,6 +456,7 @@ class ConsoleLocalControls:
         self._capture_predecessors = {}
         self._capture_tasks = {}
         self._session_capture_tails: dict[str, asyncio.Future] = {}
+        self._projection_read_lock = asyncio.Lock()
         self._parent_settings_captures = {}
         self._lifecycle_tasks: set[asyncio.Task] = set()
         self._mcp_submissions = set()
@@ -474,6 +475,26 @@ class ConsoleLocalControls:
         self._gateway._console_local_controls = self
 
     async def _read_projection(self, identity):
+        from .console_backend_presentation import ConsoleBackendPresentation
+
+        sources, revision = self._domain.sources, self.source_revision
+        self._domain.require_current(sources)
+        presentation = self._domain.presentation
+        association = presentation.association
+        presentation.require_association(association)
+        if self._runtime.view is not None or type(presentation) is not ConsoleBackendPresentation:
+            return await self._read_projection_owned(identity)
+        # Hide/revoke immediately, even while an earlier FULL still owns
+        # native work. Only the subsequent display capture waits its turn.
+        await presentation.prepare_view_checkpoint(identity)
+        async with self._projection_read_lock:
+            self._domain.require_current(sources)
+            presentation.require_association(association)
+            if self.source_revision != revision:
+                raise RuntimeError("Console projection source changed while queued")
+            return await self._read_projection_owned(identity)
+
+    async def _read_projection_owned(self, identity):
         from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
         from tldw_chatbook.UI.Console_Modules import composer_run_controls
 
@@ -485,10 +506,6 @@ class ConsoleLocalControls:
         prepared_transcript = None
         run_history = None
         if view is None:
-            from .console_backend_presentation import ConsoleBackendPresentation
-
-            if type(self._domain.presentation) is ConsoleBackendPresentation:
-                await self._domain.presentation.prepare_view_checkpoint(identity)
             owner = self._runtime._execution_service.prepare_display_owner()
             owner.bind_original_graph()
             if owner._full is not None or owner.context.pending_key is not None:
@@ -2048,6 +2065,7 @@ _DISPLAY_CONTROL_READERS = tuple(
         "_retain_control_work",
         "_queue_session_capture",
         "_read_projection",
+        "_read_projection_owned",
         "dispatch",
     )
     for function in (vars(ConsoleLocalControls)[name],)
