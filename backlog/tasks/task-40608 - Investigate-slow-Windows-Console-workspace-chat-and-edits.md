@@ -141,6 +141,10 @@ On November 17, the Windows replay on `e776ef2aba` reproduced the README Send re
 
 The selected process also needs the original persisted-chat archive check for the second journey. The local path registers the conversation's pending Send on the app and brackets a retired database read with its archive generation. The backend has no app object and its custody record omitted the persisted conversation ID. Verification of the approved edit must include the real parent reservation, archive check, and release.
 
+The next three-pair sequence (`q2`) started on Windows 10 with candidate `6410d0489102e5a18ee934e9857dad77b50d65c8`. It uses the same baseline and original assertions as `q1`. The clean candidate manifest SHA-256 is `048a5a437bb7235e75436b24560f7ba7252ff60f29b2e8c18e87577443d97da2`; the frozen pair configuration SHA-256 is `fed6333e217c5057e13e588862599d00c8e3959c2deacc78dc760a17399f9a4d`. The candidate selects the process backend in the lab. Default app startup uses the local route.
+
+This candidate retains existing tab buttons during append-only session changes and queues New Chat behind the preceding workspace chat for the same source and visit. Its first focused Windows run passed 11 checks, including both display-overlap cases, stable tab input, archive protocol, and archive reservation settlement. The actual saved-chat archive test stopped before Send because the saved-session open did not publish its physical-retirement result. Commit `135616303b` exposes the result from the original effect owner. This later fix is outside the frozen `q2` input.
+
 <!-- SECTION:NOTES:END -->
 
 Measured follow-up under the same [ADR-126 bounded configuration-read amendment](../decisions/126-complete-local-backup-and-recovery.md#task-40608--bounded-sensitive-database-path-configuration-reads): qualify the original sensitive container-reader cohort, then group its admissions without changing readers, overrides or refusal checks. The measured 0.218-second component is separate from the unresolved planning delay; final three-pair acceptance remains open.
