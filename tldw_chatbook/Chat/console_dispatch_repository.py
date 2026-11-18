@@ -887,16 +887,21 @@ class ConsoleDispatchRepository:
             outcome = self._reconcile_pass(conversation_id, allow_writes=False)
             if not isinstance(outcome, _ReconcileWriteNeeded):
                 return outcome
-            outcome = self._reconcile_pass(conversation_id, allow_writes=True)
-            if isinstance(outcome, _ReconcileWriteNeeded):  # pragma: no cover
-                raise sqlite3.IntegrityError("Reconcile write pass refused to write.")
-            return outcome
+            return self.repair_session_checkpoint(conversation_id)
         except sqlite3.Error:
             return self._quarantined(
                 conversation_id,
                 "",
                 "checkpoint_reconcile_error",
             )
+
+    @dispatch_mutation
+    def repair_session_checkpoint(self, conversation_id: str) -> ConsoleDispatchRecoveryState | None:
+        """Re-read and repair this session's durable ownership in one fresh write transaction."""
+        outcome = self._reconcile_pass(conversation_id, allow_writes=True)
+        if isinstance(outcome, _ReconcileWriteNeeded):  # pragma: no cover
+            raise sqlite3.IntegrityError("Reconcile write pass refused to write.")
+        return outcome
 
     def _reconcile_pass(
         self,

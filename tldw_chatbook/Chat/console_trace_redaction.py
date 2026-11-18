@@ -800,3 +800,30 @@ class CredentialSanitizer:
             netloc = f"{host}:{port}" if port is not None else host
             value = urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
         return value
+
+
+# Keep the installed filter definitions at their defining module. A deferred
+# settlement can outlive its original sanitizer or the policy it was issued under.
+_WRITER_FILTER_METHODS = tuple(
+    (name, method, (method.__func__ if isinstance(method, staticmethod) else method).__code__)
+    for name, method in vars(CredentialSanitizer).items()
+    if isinstance(method, staticmethod) or hasattr(method, "__code__")
+)
+_WRITER_CREDENTIAL_PROJECTION = _CREDENTIAL_PROJECTIONS[CREDENTIAL_FILTER_VERSION]
+
+
+def is_stock_writer_sanitizer(value: object) -> bool:
+    """Whether a fresh default storage process can exactly reproduce this filter."""
+    return (
+        type(value) is CredentialSanitizer and value._known_credentials == ()
+        and value._max_depth == DEFAULT_CREDENTIAL_MAX_DEPTH
+        and value._max_nodes == DEFAULT_CREDENTIAL_MAX_NODES
+        and value._max_text_codepoints == DEFAULT_CREDENTIAL_MAX_TEXT_CODEPOINTS
+        and value._version == CREDENTIAL_FILTER_VERSION
+        and _CREDENTIAL_PROJECTIONS.get(value._version) is _WRITER_CREDENTIAL_PROJECTION
+        and all(
+            vars(CredentialSanitizer).get(name) is method
+            and (method.__func__ if isinstance(method, staticmethod) else method).__code__ is code
+            for name, method, code in _WRITER_FILTER_METHODS
+        )
+    )

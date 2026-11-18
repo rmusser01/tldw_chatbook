@@ -100,10 +100,17 @@ def _unpack(value, records=None):
     raise ValueError("Invalid tagged ChaChaNotes value.")
 
 
-def _client_profile(db) -> Path | None:
+def _client_repository(db):
     profile = getattr(db, "_profile_writer_profile", None)
     if profile is None:
         return None
+    from ..Backup_Recovery.bootstrap import RecoveryRequired
+    from ..Backup_Recovery.participants import core_access
+
+    if db.db_path != db._profile_writer_path or db.db_path_str != str(db.db_path):
+        raise RecoveryRequired("profile_writer_database_changed")
+    core_access(db)
+    retained = None
     conn = getattr(db._local, "conn", None)
     if conn is not None:
         try:
@@ -112,14 +119,14 @@ def _client_profile(db) -> Path | None:
             # A caller may have explicitly closed its previously cached handle.
             pass
         else:
-            from ..Backup_Recovery.bootstrap import RecoveryRequired
-            from .profile_writer_selection import writer_file_identity
-
-            if writer_file_identity(db.db_path) != db._local.profile_writer_file_identity:
-                raise RecoveryRequired("profile_writer_database_changed")
             if borrowed:
+                from .profile_writer_selection import writer_file_identity
+
+                if writer_file_identity(db.db_path) != db._local.profile_writer_file_identity:
+                    raise RecoveryRequired("profile_writer_database_changed")
                 return None
-    return None if db.managed_transaction_depth() else profile
+            retained = db
+    return None if db.managed_transaction_depth() else (profile, retained)
 
 
 def _database_request(db, parameters, records=None):
@@ -148,8 +155,11 @@ def initialize_profile_schema(db) -> bool:
     db._profile_writer_profile = profile
     if profile is None:
         return False
+    from ..Backup_Recovery.participants import core_access
     from .profile_writer import call_profile_writer
 
+    core_access(db)
+    db._profile_writer_path = db.db_path
     db._profile_writer_opener = uuid4().hex
     db._schema_initial_version = call_profile_writer(
         profile, "chacha.initialize", _database_request(db, {}),
@@ -158,7 +168,8 @@ def initialize_profile_schema(db) -> bool:
 
 
 def _domain_command(kind, function):
-    operation = f"chacha.{kind}.{function.__name__}"
+    name = function.__name__.lstrip("_") if kind == "trace" else function.__name__
+    operation = f"chacha.{kind}.{name}"
     signature = inspect.signature(function)
     _COMMANDS[operation] = (kind, function, signature)
     if sys.platform != "win32":
@@ -171,8 +182,14 @@ def _domain_command(kind, function):
         if kind in ("console", "dispatch"):
             from .profile_writer_console import source_database
 
-            db = source_database(kind, owner)
+            db = source_database(kind, function.__name__, owner)
             if db is None:
+                return function(owner, *args, **kwargs)
+        elif kind == "trace":
+            from .profile_writer_trace import stock_source
+
+            db = signature.bind(owner, *args, **kwargs).arguments["database"]
+            if not stock_source(owner, db):
                 return function(owner, *args, **kwargs)
         elif kind in ("file_import", "folder"):
             from .profile_writer_notes import source_database
@@ -189,9 +206,10 @@ def _domain_command(kind, function):
             db = owner.notes_db(bound.arguments["user_id"])
         else:
             db = owner
-        profile = _client_profile(db)
-        if profile is None:
+        selected = _client_repository(db)
+        if selected is None:
             return function(owner, *args, **kwargs)
+        profile, retained = selected
         parameters = dict(signature.bind(owner, *args, **kwargs).arguments)
         del parameters["self"]
         if function.__name__ == "upsert_trajectory_rows":
@@ -203,10 +221,11 @@ def _domain_command(kind, function):
             parameters["rows"] = [asdict(row) for row in rows]
         elif function.__name__ == "set_conversations_archived":
             parameters["conversation_ids"] = list(parameters["conversation_ids"])
-        from .profile_writer import call_profile_writer
+        from .profile_writer import call_bound_profile_writer
 
         records = None
         on_durable_commit = None
+        citation_repository = None
         if kind in ("console", "dispatch"):
             from .profile_writer_console import value_types, workspace_source
 
@@ -217,6 +236,24 @@ def _domain_command(kind, function):
                 on_durable_commit = parameters.pop("on_durable_commit", None)
             records = value_types()
             parameters = {"call": parameters, "workspace_client_id": workspace}
+            if function.__name__ == "update_message_content":
+                from .profile_writer_console import citation_source
+
+                citation_repository = owner.citation_repository
+                source = citation_source(citation_repository, db)
+                if source is False:
+                    return function(owner, *args, **kwargs)
+                parameters["citation_source"] = source
+        elif kind == "trace":
+            from .profile_writer_trace import settlement_request, value_types
+
+            del parameters["database"]
+            if "prepared" in parameters:
+                request = settlement_request(owner, parameters["prepared"])
+                if request is None:
+                    return function(owner, *args, **kwargs)
+                parameters["prepared"] = request
+            records = value_types()
         elif kind in ("file_import", "folder"):
             from .profile_writer_notes import prepare_iterables, value_types
 
@@ -230,7 +267,15 @@ def _domain_command(kind, function):
             if kind in ("file_import", "folder"):
                 return function(owner, **parameters)
             return function(owner, *args, **kwargs)
-        result = _unpack(call_profile_writer(profile, operation, request), records)
+        if citation_repository is not None:
+            # A client key may become ready asynchronously. Until the receipt, keep
+            # the same deferred key context that the original edit would observe.
+            with citation_repository._key_lock:
+                if (owner.citation_repository is citation_repository
+                    and citation_source(citation_repository, db) == parameters["citation_source"]):
+                    return _unpack(call_bound_profile_writer(retained, profile, operation, request), records)
+            return function(owner, *args, **kwargs)
+        result = _unpack(call_bound_profile_writer(retained, profile, operation, request), records)
         if on_durable_commit is not None:
             on_durable_commit()
         return result
@@ -266,6 +311,11 @@ def console_mutation(function):
 def dispatch_mutation(function):
     """Route a dispatch checkpoint or terminal settlement transaction."""
     return _domain_command("dispatch", function)
+
+
+def trace_mutation(function):
+    """Route an admitted, data-only trace lifecycle transaction."""
+    return _domain_command("trace", function)
 
 
 def _file_identity(path):
@@ -371,6 +421,8 @@ def execute_profile_writer_command(profile: Path, operation: str, arguments: dic
         from .profile_writer_console import execute_console_operation, value_types
     elif operation.startswith(("chacha.file_import.", "chacha.folder.")):
         from .profile_writer_notes import execute_notes_operation, value_types
+    elif operation.startswith("chacha.trace."):
+        from .profile_writer_trace import execute_trace_operation, value_types
     command = _COMMANDS.get(operation)
     if command is None and operation != "chacha.initialize":
         raise ValueError("Unknown ChaChaNotes writer command.")
@@ -384,7 +436,8 @@ def execute_profile_writer_command(profile: Path, operation: str, arguments: dic
         raise ValueError("Invalid ChaChaNotes writer identity.")
     console = command is not None and command[0] in ("console", "dispatch")
     local_notes = command is not None and command[0] in ("file_import", "folder")
-    records = value_types() if console or local_notes else None
+    trace = command is not None and command[0] == "trace"
+    records = value_types() if console or local_notes or trace else None
     parameters = _unpack(arguments["parameters"], records)
     if type(parameters) is not dict or any(parameters.get(key) is not None for key in _LOCAL_ARGUMENTS):
         raise ValueError("Invalid ChaChaNotes writer parameters.")
@@ -394,11 +447,16 @@ def execute_profile_writer_command(profile: Path, operation: str, arguments: dic
     else:
         kind, function, signature = command
         if console:
-            if set(parameters) != {"call", "workspace_client_id"} or type(parameters["call"]) is not dict:
+            keys = {"call", "workspace_client_id"}
+            if function.__name__ == "update_message_content":
+                keys.add("citation_source")
+            if set(parameters) != keys or type(parameters["call"]) is not dict:
                 raise ValueError("Invalid Console writer request.")
             if "on_durable_commit" in parameters["call"]:
                 raise ValueError("Publication belongs to the Console client.")
             signature.bind(None, **parameters["call"])
+        elif trace:
+            signature.bind(None, None, **parameters)
         else:
             signature.bind(None, **parameters)
         if kind == "notes" and parameters["user_id"].strip() != client_id:
@@ -413,6 +471,8 @@ def execute_profile_writer_command(profile: Path, operation: str, arguments: dic
             return _pack(execute_console_operation(kind, function, db, profile, parameters), records)
         if local_notes:
             return _pack(execute_notes_operation(kind, function, db, parameters), records)
+        if trace:
+            return _pack(execute_trace_operation(function, db, parameters), records)
         if kind == "notes":
             service = NotesInteropService(path.parent, client_id, global_db_to_use=db)
             # This command implements the original user's existing Notes DB.

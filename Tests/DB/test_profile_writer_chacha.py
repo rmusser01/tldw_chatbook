@@ -154,6 +154,46 @@ async def test_owner_reinitializes_after_replacement_config_change_and_restart(r
 
 @private_profile_test
 @pytest.mark.asyncio
+async def test_retained_reader_and_original_core_scope_cannot_write_another_database(request, monkeypatch):
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+    from tldw_chatbook.Backup_Recovery.participants import core_operation
+    from tldw_chatbook.config import get_chachanotes_db_path
+    from tldw_chatbook.DB import profile_writer
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    path = get_chachanotes_db_path()
+    db = CharactersRAGDB(path, "original")
+    other_opener = CharactersRAGDB(path, "another-opener")
+    replacement = CharactersRAGDB(path.with_name("incoming.sqlite"), "replacement")
+    try:
+        with core_operation(other_opener), pytest.raises(RecoveryRequired, match="operation_provenance_invalid"):
+            db.add_note("Wrong participant", "Rejected", "foreign-participant")
+        assert db.get_note_by_id("foreign-participant") is None
+        replacement.add_note("Replacement", "New file", "replacement")
+        replacement.close_connection()
+        original_call = profile_writer.call_bound_profile_writer
+
+        def replace_after_selection(bound, *arguments):
+            assert bound is db
+            # Finish the original Windows handle, then change the selected native file.
+            db.close_connection()
+            os.replace(replacement.db_path, path)
+            return original_call(bound, *arguments)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(profile_writer, "call_bound_profile_writer", replace_after_selection)
+            with pytest.raises(RecoveryRequired, match="profile_writer_database_changed"):
+                db.add_note("Replaced while being submitted", "Rejected", "wrong-file")
+        assert db.get_note_by_id("wrong-file") is None
+        assert db.get_note_by_id("replacement")
+    finally:
+        db.close_connection()
+        other_opener.close_connection()
+        replacement.close_connection()
+
+
+@private_profile_test
+@pytest.mark.asyncio
 async def test_large_semantic_attachment_remains_one_committed_message(request):
     from tldw_chatbook.config import get_chachanotes_db_path
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB

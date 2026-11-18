@@ -12,13 +12,13 @@ def _commit_workspace_prompt(project):
     from Tests.ChaChaNotesDB.test_console_dispatch_checkpoint_repository import _acceptance
     from Tests.uat_project_chat_support import MODEL
     from tldw_chatbook import config
-    from tldw_chatbook.Backup_Recovery.participants import core_operation
     from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
     from tldw_chatbook.Chat.console_dispatch_checkpoint import ConsoleDispatchCheckpointState, ConsoleEgressClass
     from tldw_chatbook.Chat.console_library_policy import ConsoleAutoRetrieve, ConsoleLibraryPolicyCandidate
+    from tldw_chatbook.Chat.console_native_commit import _ConsoleNativeBinding, _ConsolePlanNativeRetirement, _invoke_plan_native
     from tldw_chatbook.Chat.console_prompt_mixin_models import MixinAttemptSnapshot, MixinAttemptWrite
     from tldw_chatbook.Chat.console_prompt_mixin_service import MixinAttemptContribution
-    from tldw_chatbook.DB.base_db import operation_owned_connection
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
     from tldw_chatbook.DB.profile_writer import start_profile_writer
     from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
@@ -52,13 +52,21 @@ def _commit_workspace_prompt(project):
                 acceptance.attempt_id, acceptance.user_message_id, acceptance.assistant_message_id, MixinAttemptSnapshot(),
             )),),
         )
-        # _invoke_plan_native supplies both scopes in the real external Console.
-        with operation_owned_connection(database), core_operation(database):
-            checkpoint = service.commit_durable_turn(
+        # The accepted SQLite row and its positive physical retirement are separate facts.
+        retirement = _ConsolePlanNativeRetirement()
+        store = ConsoleChatStore(persistence=service)
+        native = _ConsoleNativeBinding(store, acceptance, service, database, retirement=retirement)
+
+        def commit():
+            return service.commit_durable_turn(
                 acceptance=acceptance,
                 policy_candidate=ConsoleLibraryPolicyCandidate(policy.auto_retrieve, policy.assistant_access),
                 conversation_kwargs={"scope_type": "workspace", "workspace_id": workspace.workspace_id},
             )
+
+        checkpoint = _invoke_plan_native(native, commit)
+        assert retirement.confirmed
+        assert retirement.operation is not None and retirement.operation.lease._key is None
         assert checkpoint.state is ConsoleDispatchCheckpointState.ACCEPTED
         assert database.get_message_by_id(acceptance.user_message_id)["content"] == acceptance.user_content
         assert database.get_conversation_by_id(acceptance.conversation_id)["workspace_id"] == workspace.workspace_id

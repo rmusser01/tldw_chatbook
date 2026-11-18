@@ -13,6 +13,9 @@ import sqlite3
 import threading
 from typing import Protocol
 
+from tldw_chatbook.DB.profile_writer_chacha import trace_mutation
+from tldw_chatbook.DB.store_errors import StoreMutationOutcomeUnknown
+
 from tldw_chatbook.Chat.console_semantic_revision import (
     SemanticRevisionCoordinator,
     TRACE_RESPONSE_PII_FIELD_PREFIX,
@@ -220,6 +223,7 @@ class ConsoleTraceSettlementCoordinator:
             )
         return self._mark_response_started(database, call_id, occurred_at)
 
+    @trace_mutation
     def _mark_response_started(self, database, call_id, occurred_at):
         from tldw_chatbook.Chat.console_trace_service import (
             trace_critical_write_checkpoint_policy,
@@ -355,7 +359,7 @@ class ConsoleTraceSettlementCoordinator:
             else:
                 with operation_owned_connection(database):
                     self._settle_prepared(database, prepared)
-        except (_SettlementConflict, TraceIdentityConflict):
+        except (_SettlementConflict, TraceIdentityConflict, StoreMutationOutcomeUnknown):
             with self._queue_lock:
                 self._inflight.pop(prepared.call_id, None)
             return False
@@ -368,6 +372,7 @@ class ConsoleTraceSettlementCoordinator:
             self._inflight.pop(prepared.call_id, None)
         return True
 
+    @trace_mutation
     def recover_open_calls(
         self,
         database: object,
@@ -582,6 +587,7 @@ class ConsoleTraceSettlementCoordinator:
             )
         return self._write_prepared(database, prepared)
 
+    @trace_mutation
     def _write_prepared(self, database, prepared):
         with database.transaction(immediate=True) as cursor:  # type: ignore[attr-defined]
             existing = self.repository.get_call(cursor, prepared.call_id)

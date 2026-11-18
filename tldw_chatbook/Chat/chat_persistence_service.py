@@ -1498,6 +1498,7 @@ class ChatPersistenceService:
             )
         raise AssertionError("Unreachable generation-settings retry state.")
 
+    @console_mutation
     def update_conversation_context_policy(
         self,
         *,
@@ -1762,6 +1763,7 @@ class ChatPersistenceService:
                 )
         return result.snapshot
 
+    @console_mutation
     def update_agent_handoff_launch(self, conversation_id: str, launch: Any) -> None:
         """Merge bounded display facts without changing draft custody or authority."""
         from dataclasses import asdict
@@ -3169,6 +3171,7 @@ class ChatPersistenceService:
             conversation_id, project_context_json
         )
 
+    @console_mutation
     def update_message_content(
         self,
         *,
@@ -3743,6 +3746,7 @@ class ChatPersistenceService:
         self._release_recovered_messages([row["message_id"] for row in rows])
         return rows
 
+    @console_mutation
     def restore_message_subtree(
         self,
         *,
