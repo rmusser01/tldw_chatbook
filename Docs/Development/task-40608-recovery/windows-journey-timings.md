@@ -119,8 +119,9 @@ Batch `qd` started on November 18 at 18:38 UTC. It compares the original local b
 | Completed pair | README baseline → candidate | Edit baseline → candidate |
 |---|---:|---:|
 | 1 | 306.1657 → 18.1591 s | 430.4508 → 20.8235 s |
+| 2 | 241.9415 → 18.5869 s | 341.3939 → 19.9024 s |
 
-Both sides of pair 1 passed the original assertions and shutdown. Before first HTTP the candidate took 8.5456 s on README and 5.3038 s on edit. Between the first and last HTTP receipts it took 8.1075 s and 13.0672 s after the original human-wait deductions. Both candidate turns exceeded five seconds. [Verified pairs, timing phases and original hashes](original-journey/qd-windows10-results.json)
+Both sides of the first two pairs passed the original assertions and shutdown. The candidates took 8.55–8.60 s before the first README request and 5.30–5.55 s before the first edit request. Between the first and last HTTP receipts the two edits took 12.56–13.07 s after the original human-wait deductions. All four candidate turns exceeded five seconds. [Verified pairs, timing phases and original hashes](original-journey/qd-windows10-results.json)
 
 ## Where the time goes
 

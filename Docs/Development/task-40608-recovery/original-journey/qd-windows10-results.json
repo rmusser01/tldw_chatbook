@@ -7,10 +7,10 @@
   "complete_eligible_sequence": false,
   "qualification_passed": false,
   "completed_pairs": [
-    1
+    1,
+    2
   ],
   "pending_pairs": [
-    2,
     3
   ],
   "truncated_ledger": false,
@@ -31,6 +31,18 @@
       "attempt": 1,
       "pair": 2,
       "side": "candidate",
+      "status": "eligible_paired"
+    },
+    {
+      "attempt": 1,
+      "pair": 2,
+      "side": "baseline",
+      "status": "eligible_paired"
+    },
+    {
+      "attempt": 1,
+      "pair": 3,
+      "side": "baseline",
       "status": "in_progress_or_interrupted"
     }
   ],
@@ -146,6 +158,118 @@
       "attempt": 1,
       "paired": true,
       "progress_sha256": "830b201a919af2626ee30797827d6872dc728a2194a8b57d06f4543f999f03a0"
+    },
+    {
+      "pair": 2,
+      "side": "candidate",
+      "receipt_sha256": "afd475fcdf00cd2933de2579ec2c9330b57d67343d043fdb01a9cc8fc7800f96",
+      "guard_and_retirement_verified": true,
+      "turns": {
+        "readme": {
+          "application_s": 18.586906000000013,
+          "raw_elapsed_s": 20.10703500000001,
+          "original_observed_human_wait_s": 1.5201289999999972,
+          "common_reply_seen_application_s": 18.586906000000013,
+          "original_completion_endpoint": "reply_seen",
+          "phases": [
+            {
+              "raw_s": 8.879093000000012,
+              "human_wait_s": 0.27450100000000077,
+              "adjusted_s": 8.604592000000011
+            },
+            {
+              "raw_s": 9.854253,
+              "human_wait_s": 1.2456279999999964,
+              "adjusted_s": 8.608625000000004
+            },
+            {
+              "raw_s": 1.3736889999999988,
+              "human_wait_s": 0.0,
+              "adjusted_s": 1.3736889999999988
+            }
+          ],
+          "provider_requests": 5,
+          "once_approvals": 2,
+          "parent_work_counts": {
+            "_acquire_storage": 92,
+            "_scope": 0,
+            "_reuse_evidence_hit": 92
+          }
+        },
+        "edit": {
+          "application_s": 19.902374999999992,
+          "raw_elapsed_s": 22.526645000000002,
+          "original_observed_human_wait_s": 2.62427000000001,
+          "common_reply_seen_application_s": 19.902374999999992,
+          "original_completion_endpoint": "reply_seen",
+          "phases": [
+            {
+              "raw_s": 5.551698999999999,
+              "human_wait_s": 0.0,
+              "adjusted_s": 5.551698999999999
+            },
+            {
+              "raw_s": 15.185249999999996,
+              "human_wait_s": 2.62427000000001,
+              "adjusted_s": 12.560979999999986
+            },
+            {
+              "raw_s": 1.7896960000000064,
+              "human_wait_s": 0.0,
+              "adjusted_s": 1.7896960000000064
+            }
+          ],
+          "provider_requests": 6,
+          "once_approvals": 3,
+          "parent_work_counts": {
+            "_acquire_storage": 32,
+            "_scope": 0,
+            "_reuse_evidence_hit": 32
+          }
+        }
+      },
+      "attempt": 1,
+      "paired": true,
+      "progress_sha256": "844c3c269a6852693d3b969778449cda59698075ce49334ead2f52a5684edb11"
+    },
+    {
+      "pair": 2,
+      "side": "baseline",
+      "receipt_sha256": "8323426052247594eb2c54a87a21ea713bf35104aa18a613a9ecef3eb2cd443d",
+      "guard_and_retirement_verified": true,
+      "turns": {
+        "readme": {
+          "application_s": 241.94154699999996,
+          "raw_elapsed_s": 249.43901899999997,
+          "original_observed_human_wait_s": 7.497472000000016,
+          "common_reply_seen_application_s": 242.63588899999996,
+          "original_completion_endpoint": "reply_completed",
+          "provider_requests": 5,
+          "once_approvals": 2,
+          "parent_work_counts": {
+            "_acquire_storage": 2171,
+            "_scope": 4342,
+            "_reuse_evidence_hit": 0
+          }
+        },
+        "edit": {
+          "application_s": 341.3938809999998,
+          "raw_elapsed_s": 353.480215,
+          "original_observed_human_wait_s": 12.086334000000193,
+          "common_reply_seen_application_s": 342.07720399999977,
+          "original_completion_endpoint": "reply_completed",
+          "provider_requests": 6,
+          "once_approvals": 3,
+          "parent_work_counts": {
+            "_acquire_storage": 2378,
+            "_scope": 4758,
+            "_reuse_evidence_hit": 0
+          }
+        }
+      },
+      "attempt": 1,
+      "paired": true,
+      "progress_sha256": "539d51162107da497b769cb8e97c43f8a17df7f4df0e5a2acd7666cbd9ab5cf7"
     }
   ],
   "readout_launched_workload": false,
