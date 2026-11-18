@@ -273,6 +273,20 @@ def _controller_rig(tmp_path, *, session_title="Research", ensure_run_hooks=None
     return chacha, app, runs_db, store, session, gateway, bridge, controller
 
 
+async def _close_controller_rig(chacha, runs_db, controller):
+    """Join this rig's wake finalization before retiring its databases."""
+    delivery_tasks = tuple(controller.fleet_wake._delivery_tasks)
+    await controller.shutdown()
+    await asyncio.gather(*delivery_tasks, return_exceptions=True)
+    try:
+        for task in delivery_tasks:
+            if not task.cancelled():
+                task.result()
+    finally:
+        runs_db.close()
+        chacha.close()
+
+
 class _RecordingBuddySink:
     """Content-free wake sink used to pin terminal coordinator fencing."""
 
@@ -789,7 +803,7 @@ async def test_a_wake_takes_no_mixin_anchor_from_an_earlier_unsaved_user_row(
         assert anchors == [], f"the wake recorded mix-in attempts: {anchors}"
         assert earlier.id not in str(gateway.payloads[0][-1])
     finally:
-        chacha.close()
+        await _close_controller_rig(chacha, runs_db, controller)
 
 
 @pytest.mark.asyncio
@@ -848,7 +862,7 @@ async def test_a_failed_wake_reply_is_saved_as_failed(tmp_path, request):
         ]
         assert offered == [("retry", "Retry")], offered
     finally:
-        chacha.close()
+        await _close_controller_rig(chacha, runs_db, controller)
 
 
 @pytest.mark.asyncio
@@ -905,7 +919,7 @@ async def test_a_wake_reply_is_the_durable_active_leaf(
             f"{leaf.role.value if leaf else None} {getattr(leaf, 'content', '')[:40]!r}"
         )
     finally:
-        chacha.close()
+        await _close_controller_rig(chacha, runs_db, controller)
 
 
 @pytest.mark.asyncio

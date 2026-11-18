@@ -465,7 +465,6 @@ async def test_parent_storage_lease_guard_selection_reaches_child_command(
     _watch_the_spawn(monkeypatch, seen, "raise SystemExit(3)")
     if selected is None:
         monkeypatch.delattr(request.config.option, "storage_lease_guard")
-        monkeypatch.delitem(request.config._opt2dest, "--storage-lease-guard")
         with pytest.raises(ValueError, match="no option named"):
             request.config.getoption("--storage-lease-guard")
     else:

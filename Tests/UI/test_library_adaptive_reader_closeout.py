@@ -1546,8 +1546,13 @@ async def _exercise_closeout_single_app_route_cycle(
     finally:
         if stale_service is not None:
             stale_service.release_first.set()
-        prompt_db.close()
-        autosave_patch.undo()
+        try:
+            await app._shutdown_notes_sync_runtime()
+            await app._shutdown_collections_capture_runtime()
+            await app._close_main_databases()
+        finally:
+            prompt_db.close()
+            autosave_patch.undo()
     assert facts is not None
     return facts, str(facts["compositor_text"]), svg
 
