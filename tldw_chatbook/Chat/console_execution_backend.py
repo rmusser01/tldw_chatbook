@@ -240,6 +240,14 @@ class ConsoleExecutionBackend:
         if message.operation == "Shutdown":
             self._shutdown_receipt = receipt
         self.adapter.retain(message, receipt, command)
+        if checkpoint is not None and receipt.work is not None:
+            # Drop only this request's inert token registration, including
+            # cancellation before coroutine entry. Resource retirement remains
+            # the original control/effect owner's independent obligation.
+            presentation = self.presentation
+            receipt.work.add_done_callback(
+                lambda _task: presentation.release_view_checkpoint(message.identity, checkpoint)
+            )
         return receipt
 
     async def _close(self) -> None:

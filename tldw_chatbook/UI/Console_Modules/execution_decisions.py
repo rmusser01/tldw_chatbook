@@ -141,17 +141,22 @@ async def present_selected_decision(screen, client, visit: int) -> bool:
     return shown
 
 
-def _current_head(client, visit):
+def _current_head(client, visit, *, allow_obsolete=False):
     head = client.decision_head
     frame = client._projection
+    if head is None and allow_obsolete:
+        return None
+    if type(head) is not ConsoleDecisionHead:
+        raise ConsoleChannelLost("Console decision publication is unavailable")
     if (
-        type(head) is not ConsoleDecisionHead
-        or (head.source_revision, head.session_id, head.incarnation_id,
+        (head.source_revision, head.session_id, head.incarnation_id,
             head.attachment_id, head.visit) != (
             client._source_revision, frame.session_id, frame.incarnation_id,
             client._attachment_id, visit,
         )
     ):
+        if allow_obsolete:
+            return None
         raise ConsoleChannelLost("Console decision publication scope changed")
     return head
 
@@ -272,7 +277,9 @@ def handle_selected_approval_event(screen, event) -> bool:
     _current(screen, client, client._visit)
     if type(event) is not ChatApprovalCard.ApprovalDecided:
         raise TypeError("Original Console approval decision event is required")
-    projection = _current_head(client, client._visit)
+    projection = _current_head(client, client._visit, allow_obsolete=True)
+    if projection is None:
+        return True  # A stale card cannot decide another scope's pending head.
     decision = projection.decision
     if (
         decision is None or decision.decision_type != "approval"

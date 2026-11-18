@@ -38,6 +38,10 @@ class ConsoleReadinessExpired(ConsoleChannelLost):
     """A retired display aged out or its display inputs changed before adoption."""
 
 
+class ConsoleDisplaySuperseded(ConsoleChannelLost):
+    """This view's authenticated modal/lifecycle now needs another display."""
+
+
 class ConsoleRemoteFailure(RuntimeError):
     """A fixed backend operation refused at its reported original stage."""
 
@@ -260,6 +264,7 @@ class ConsoleExecutionClient:
         self.project_head = None
         self.decision_head = None
         self._decision_head_sequence = 0
+        self._display_checkpoint = None
         self._project_modal = None
         self._decision_hint = None
         self._decision_rendered_hint = None
@@ -762,6 +767,10 @@ class ConsoleExecutionClient:
                     raise ConsoleChannelLost("Console queued projection changed")
                 if view is not None:
                     self.require_view(view, visit)
+                    from tldw_chatbook.UI.Console_Modules.execution_decisions import is_owned_project_modal
+
+                    if is_owned_project_modal(self, view, visit):
+                        raise ConsoleDisplaySuperseded("Console project modal defers FULL display")
                 return await self._read_projection_locked(
                     session_id, incarnation_id, _preparation=_preparation,
                     _checkpoint=_checkpoint,
@@ -907,6 +916,7 @@ class ConsoleExecutionClient:
             session_id=session_id,
             incarnation_id=incarnation_id,
         )
+        display_checkpoint = self._display_checkpoint
         failure = None
         try:
             await asyncio.shield(receipt.applied)
@@ -987,6 +997,60 @@ class ConsoleExecutionClient:
                 # The backend proved this original FULL's native retirement;
                 # only the actual ended parent visit may defer its display.
                 raise ConsoleChannelLost("Console display visit was superseded") from failure
+            latest = self._display_checkpoint
+            if (
+                type(failure) is ConsoleRemoteFailure
+                and failure.code == "view_checkpoint_superseded"
+                and failure.stage == "applied" and not admission_refused
+                and receipt.received.exception() is None and receipt.retired.result() is True
+                and latest is not None and latest is not display_checkpoint
+                and latest[0].identity.sequence > receipt.identity.sequence
+                and (
+                    self._requests.get(latest[0].identity.request_id) is latest[0]
+                    or (
+                        all(future.done() and not future.cancelled() and future.exception() is None
+                            for future in (latest[0].received, latest[0].applied, latest[0].retired))
+                        and latest[0].retired.result() is True
+                    )
+                )
+                and latest[1].identity is latest[0].identity
+                and latest[2] is view and latest[3] == visit
+                and view is not None and self._view is view and self._visit == visit
+                and self._attachment_id == attachment and self._source_revision == binding[0]
+                and self._view_preparation is _preparation and self._app is app
+                and getattr(app, "console_execution_client", None) is self
+                and getattr(app, "console_runtime", None) is None
+                and self._channel_error is None and not self._disposed and self._shutdown_task is None
+                and (latest[0].identity.source_revision, latest[0].identity.session_id,
+                     latest[0].identity.incarnation_id) == binding
+            ):
+                checkpoint_receipt, checkpoint_message, _, _ = latest
+                checkpoint_value = (
+                    checkpoint_message.payload.get("view_checkpoint")
+                    if checkpoint_message.operation == "ReadProjection"
+                    else checkpoint_message.payload
+                )
+                if (checkpoint_value is not None
+                    and (checkpoint_value["attachment_id"], checkpoint_value["visit"]) == (attachment, visit)):
+                    positive = False
+                    try:
+                        await asyncio.shield(checkpoint_receipt.received)
+                        await asyncio.shield(checkpoint_receipt.applied)
+                        positive = await asyncio.shield(checkpoint_receipt.retired) is True
+                    except ConsoleRemoteFailure:
+                        pass  # A failed checkpoint cannot explain away this FULL failure.
+                    if (positive and self._display_checkpoint is latest
+                        and self._source_revision == binding[0]
+                        and self._view_preparation is _preparation
+                        and self._attachment_id == attachment
+                        and self.projection_view is not None
+                        and self.projection_view.active_session_id == session_id
+                        and self.projection_view.session(session_id).incarnation_id == incarnation_id):
+                        self.require_view(view, visit)
+                        # The original bool result is retained: hidden may pause
+                        # visibility before a shown project timer exists. Only
+                        # the backend's typed old-token refusal proves displacement.
+                        raise ConsoleDisplaySuperseded("Console display checkpoint was superseded") from failure
             raise failure
         if (
             self._channel_error is not None
@@ -1359,6 +1423,10 @@ class ConsoleExecutionClient:
         except BaseException as error:
             self._fail(error)
             raise
+        if operation == "ProjectDecisionPresentation" or (
+            operation == "ReadProjection" and "view_checkpoint" in message.payload
+        ):
+            self._display_checkpoint = (receipt, message, self._view, self._visit)
         return receipt
 
     def _receive(self, message: ConsoleWireMessage) -> None:

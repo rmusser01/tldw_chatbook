@@ -499,10 +499,6 @@ class ConsoleDomainDisplayOwner:
             error.full is not full or full.owner is not self or full._failed is not error
             or self._full is not None or not full.phase_issuance_closed
             or not full.physically_retired or not all(task.done() for task in full.tasks.values())
-            or logical is None or logical.task is not selection.task
-            or logical.callback_returned or not logical.retired.done()
-            or logical.retired.cancelled() or logical.retired.exception() is not None
-            or logical.retired.result() is not None
             or effect is None or not effect.completed.done() or effect.completed.cancelled()
             or effect.completed.exception() is not None or effect.completed.result() is not True
             or effect.physically_retired is not True or effect.owner.full is not full
@@ -520,6 +516,21 @@ class ConsoleDomainDisplayOwner:
             or type(selection.port) is not ConsoleBackendPresentation
         ):
             return  # Original failure and uncertainty remain failures.
+        if logical is None:
+            # run's first currentness check precedes every observer/producer.
+            # The original effect finisher has positively sealed this no-entry
+            # case; an absent logical receipt alone never proves retirement.
+            if (
+                full.tasks or full.retirements or full.sections or full.phase_pending
+                or full._publication.done() or full._initial_phases.done()
+            ):
+                return
+        elif (
+            logical.task is not selection.task or logical.callback_returned
+            or not logical.retired.done() or logical.retired.cancelled()
+            or logical.retired.exception() is not None or logical.retired.result() is not None
+        ):
+            return
         # The original lifecycle validator distinguishes an authentic displaced
         # checkpoint from changed definitions, owners, fields or copied tokens.
         lifecycle = selection.port.view_lifecycle
@@ -996,7 +1007,13 @@ class ConsoleDisplayFull(ConsoleDisplayPhysicalOwner):
             self._release_publication_if_ready()
 
     async def run(self) -> None:
-        self.require_current()
+        try:
+            self.require_current()
+        except BaseException as error:
+            # Retain the actual initial refusal for owner.read's existing
+            # positive no-entry settlement, without creating native producers.
+            self._failed = error
+            raise
         task = asyncio.current_task()
         self.logical = ConsolePreparationRead(
             self.owner,

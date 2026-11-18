@@ -18,6 +18,7 @@ class ConsoleBackendProjectDecisions:
     def __init__(self, presentation) -> None:
         self.presentation = presentation
         self._shown = None
+        self._hidden_checkpoint = None
 
     def _require(self):
         presentation = self.presentation
@@ -66,6 +67,60 @@ class ConsoleBackendProjectDecisions:
             if self._shown is not None:
                 runtime._pause_project_dispatch_locked(self._shown[2])
                 self._shown = None
+            self._hidden_checkpoint = None
+
+    def _hide_console_view(self, attachment, head) -> None:
+        """Revoke the prepared Console token for this original modal owner."""
+        from .console_backend_view_lifecycle import ConsoleBackendViewLifecycle, _METHODS
+
+        runtime = self._require()
+        lifecycle = self.presentation.view_lifecycle
+        record = dict(_METHODS)["admit"]
+        if (
+            type(lifecycle) is not ConsoleBackendViewLifecycle
+            or lifecycle.presentation is not self.presentation
+            or getattr_static(lifecycle, "admit", None) is not record[0]
+            or not _definition_current(record)
+            or self.presentation.parent_attachment != attachment
+        ):
+            raise RuntimeError("Console project visibility owner changed")
+        retained = self._hidden_checkpoint
+        if (
+            retained is not None and retained[:2] == attachment
+            and retained[2] is head and retained[3] is lifecycle._current
+        ):
+            self.presentation.require_view_checkpoint(retained[3])
+        else:
+            self.presentation.require_view_checkpoint(lifecycle._current)
+            checkpoint = record[0](lifecycle, *attachment, "hidden")
+            self._hidden_checkpoint = (*attachment, head, checkpoint)
+        runtime._chat_controller.on_console_view_visibility_changed(False)
+        runtime._chat_controller.set_answerable_decision(head.session_id, None)
+
+    def require_modal_display_checkpoint(self, identity, attachment_id, visit, *, _captured=None):
+        """Qualify only resident decision reads for the actual shown modal."""
+        runtime = self._require()
+        attachment = (attachment_id, visit)
+        with runtime._project_decision_lock:
+            session = runtime._chat_store._sessions.get(identity.session_id)
+            retained = self._hidden_checkpoint
+            if (
+                session is None or session.incarnation_id != identity.incarnation_id
+                or runtime._chat_store.active_session_id != session.id
+                or identity.source_revision != self.presentation.backend.controls.source_revision
+                or not self.presentation.backend.controls._intake_open
+                or retained is None or retained[:2] != attachment
+                or retained[2].session_id != identity.session_id
+                or (_captured is None and self._shown != (*attachment, retained[2]))
+                or (_captured is not None and _captured is not retained[3])
+                or (self._shown is not None and self._shown != (*attachment, retained[2]))
+                or self.presentation.parent_attachment != attachment
+                or retained[3].action != "hidden"
+                or runtime._chat_controller._interrupt_host.view_visible is not False
+            ):
+                raise RuntimeError("Console project modal display scope changed")
+            self.presentation.require_view_checkpoint(retained[3])
+            return retained[3]
 
     def capture(self, identity) -> ConsoleProjectDecisionHead | None:
         """Capture the same active-session ordered head as the original view."""
@@ -111,6 +166,9 @@ class ConsoleBackendProjectDecisions:
         backend.domain.require_current(sources)
         lifecycle = presentation.view_lifecycle
         checkpoint = lifecycle.capture_display_checkpoint()
+        modal_checkpoint = None
+        if checkpoint is None:
+            modal_checkpoint = self.require_modal_display_checkpoint(identity, attachment_id, visit)
         host = runtime._chat_controller._interrupt_host
         if (
             type(attachment_id) is not str or not attachment_id
@@ -118,7 +176,7 @@ class ConsoleBackendProjectDecisions:
             or presentation.parent_attachment != (attachment_id, visit)
             or not backend.controls._intake_open
             or identity.source_revision != backend.controls.source_revision
-            or checkpoint is None or not lifecycle.display_checkpoint_current(checkpoint)
+            or (modal_checkpoint is None and not lifecycle.display_checkpoint_current(checkpoint))
             or type(host) is not InterruptRoundHost
             or any(
                 getattr_static(host, name) is not record[0]
@@ -134,9 +192,13 @@ class ConsoleBackendProjectDecisions:
         backend.require_sources()
         backend.domain.require_current(sources)
         self._require()
+        if modal_checkpoint is not None and self.require_modal_display_checkpoint(
+            identity, attachment_id, visit, _captured=modal_checkpoint,
+        ) is not modal_checkpoint:
+            raise RuntimeError("Console modal decision checkpoint changed")
         if (
             presentation.parent_attachment != (attachment_id, visit)
-            or not lifecycle.display_checkpoint_current(checkpoint)
+            or (modal_checkpoint is None and not lifecycle.display_checkpoint_current(checkpoint))
             or runtime._chat_controller._interrupt_host is not host
             or any(getattr_static(host, name) is not record[0]
                    or not _definition_current(record) for name, record in _HEAD_METHODS)
@@ -167,8 +229,7 @@ class ConsoleBackendProjectDecisions:
                     self.presentation.parent_attachment == attachment
                     and head is not None and head.decision_id == decision_id
                 ):
-                    runtime._chat_controller.on_console_view_visibility_changed(False)
-                    runtime._chat_controller.set_answerable_decision(identity.session_id, None)
+                    self._hide_console_view(attachment, head)
                 if self._shown is not None and (
                     self._shown[:2] == attachment
                     and self._shown[2].decision_id == decision_id
@@ -188,8 +249,9 @@ class ConsoleBackendProjectDecisions:
         if self.presentation.parent_attachment != attachment:
             return False
         checkpoint = self.presentation.view_lifecycle._current
-        if checkpoint is None or checkpoint.action == "hidden":
+        if checkpoint is None:
             return False
+        self.presentation.require_view_checkpoint(checkpoint)
         current = self.capture(identity)
         if current is None or current.decision_id != decision_id:
             return False
@@ -197,12 +259,18 @@ class ConsoleBackendProjectDecisions:
             head = self._head_locked(runtime, identity.session_id)
             if head is None or head.decision_id != decision_id:
                 return False
+            if checkpoint.action == "hidden" and (
+                self._hidden_checkpoint is None
+                or self._hidden_checkpoint[:2] != attachment
+                or self._hidden_checkpoint[2] is not head
+                or self._hidden_checkpoint[3] is not checkpoint
+            ):
+                return False
             if self._shown == (*attachment, head):
                 return True
             if self._shown is not None:
                 runtime._pause_project_dispatch_locked(self._shown[2])
-            runtime._chat_controller.on_console_view_visibility_changed(False)
-            runtime._chat_controller.set_answerable_decision(identity.session_id, None)
+            self._hide_console_view(attachment, head)
             self._shown = (*attachment, head)
             if type(head) is runtime_source._ProjectDispatchDecision:
                 head.answerable_since = time.monotonic()
@@ -227,5 +295,8 @@ _HEAD_METHODS = tuple(
 )
 _METHODS = tuple(
     (name, _definition(getattr(ConsoleBackendProjectDecisions, name)))
-    for name in ("_require", "_head_locked", "pause", "capture", "read_head", "present")
+    for name in (
+        "_require", "_head_locked", "pause", "capture", "read_head", "present",
+        "_hide_console_view", "require_modal_display_checkpoint",
+    )
 )

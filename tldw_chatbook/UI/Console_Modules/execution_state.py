@@ -297,7 +297,7 @@ def _defer_selected_refresh(screen, client, visit: int) -> bool:
 
 async def refresh_selected_view(screen: ChatScreen, *, checkpoint: str | None = None) -> bool:
     """Join a projection, deferring only an obsolete or genuinely covered visit."""
-    from ...Chat.console_execution_process import ConsoleChannelLost
+    from ...Chat.console_execution_process import ConsoleChannelLost, ConsoleDisplaySuperseded
 
     if getattr(screen, "_console_process_content_failed", False):
         return False
@@ -315,6 +315,12 @@ async def refresh_selected_view(screen: ChatScreen, *, checkpoint: str | None = 
     try:
         try:
             refreshed = await _refresh_current_selected_view(screen, client, visit, checkpoint)
+        except ConsoleDisplaySuperseded:
+            if client._source_revision != source:
+                raise
+            client.require_view(screen, visit)
+            screen._console_process_surface_reconciled = False
+            return False
         except ConsoleChannelLost:
             if client._source_revision == source and _defer_selected_refresh(screen, client, visit):
                 return False
@@ -332,6 +338,10 @@ async def refresh_selected_view(screen: ChatScreen, *, checkpoint: str | None = 
 async def _refresh_current_selected_view(screen, client, visit, checkpoint) -> bool:
     from .execution_projection import apply_console_process_projection
     from .execution_sessions import apply_console_process_sessions
+    from .execution_decisions import is_owned_project_modal
+
+    if is_owned_project_modal(client, screen, visit):
+        return False  # Only the finite decision head is eligible under this modal.
 
     row = client.projection_view.session(client.projection_view.active_session_id)
     projection = await client.read_view_display(
@@ -345,10 +355,8 @@ async def _refresh_current_selected_view(screen, client, visit, checkpoint) -> b
     if selected_client(screen) is not client:
         raise RuntimeError("Console refreshed publication changed")
     screen._console_process_projection_view = client.projection_view
-    from .execution_decisions import is_owned_project_modal
-
     if is_owned_project_modal(client, screen, visit):
-        return not _defer_selected_refresh(screen, client, visit)
+        return False
     from .execution_rail import replay_selected_rail_toggles
 
     replay_selected_rail_toggles(screen, client, visit)
@@ -636,11 +644,13 @@ def refresh_selected_when_due(screen: ChatScreen) -> None:
         return
     # A genuine decision change need not wait for an unrelated FULL read. It
     # still uses the same source-qualified channel and original UI owners.
-    start_selected_decision_refresh(screen)
     from .execution_decisions import is_owned_project_modal
 
     owner = screen.app_instance.console_execution_client
     modal_visible = owner is not None and is_owned_project_modal(owner, screen, owner._visit)
+    start_selected_decision_refresh(screen, force=modal_visible)
+    if modal_visible:
+        return  # The decision refresh above remains eligible; FULL is hidden.
     if (
         not screen.is_attached or (not screen.is_current and not modal_visible)
         or getattr(screen, "_console_sync_maintenance_paused", False)

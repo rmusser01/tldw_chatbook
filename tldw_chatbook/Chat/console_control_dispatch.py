@@ -519,12 +519,14 @@ class ConsoleLocalControls:
             return await self._read_projection_owned(identity)
         # Hide/revoke immediately, even while an earlier FULL still owns
         # native work. Only the subsequent display capture waits its turn.
-        await presentation.prepare_view_checkpoint(identity)
+        checkpoint = await presentation.prepare_view_checkpoint(identity)
         async with self._projection_read_lock:
             self._domain.require_current(sources)
             presentation.require_association(association)
             if self.source_revision != revision:
                 raise RuntimeError("Console projection source changed while queued")
+            if checkpoint is not None:
+                presentation.require_view_checkpoint(checkpoint)
             return await self._read_projection_owned(identity)
 
     async def _read_projection_owned(self, identity):

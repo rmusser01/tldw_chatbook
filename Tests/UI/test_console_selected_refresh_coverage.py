@@ -196,7 +196,7 @@ def test_current_passive_timers_keep_original_reads_and_failures(monkeypatch, ow
     scheduled = []
     screen.run_worker = lambda *args, **kwargs: scheduled.append((args, kwargs))
     execution_state.refresh_selected_when_due(screen)
-    assert len(scheduled) == 1
+    assert len(scheduled) == 1  # Owned modal uses only the independent decision read.
     reads = []
     rail = SimpleNamespace(
         is_attached=True, screen=screen,

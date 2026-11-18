@@ -51,15 +51,39 @@ class ConsoleBackendPresentation:
     def admit_view_checkpoint(self, message):
         """Register one closed parent lifecycle request before its task can await."""
         self.require_association(self.association)
-        if message.operation != "ReadProjection" or "view_checkpoint" not in message.payload:
+        if message.operation != "ReadProjection":
             return None
-        value = message.payload["view_checkpoint"]
-        checkpoint = self.view_lifecycle.admit(
-            value["attachment_id"], value["visit"], value["action"],
+        value = message.payload.get("view_checkpoint")
+        if value is None:
+            from .console_backend_view_lifecycle import ConsoleBackendViewLifecycle, _METHODS
+            from .console_domain_services import _definition_current
+
+            # Capture before exposing the actual control Task. A modal can
+            # revoke visibility before that already-received Task first runs.
+            lifecycle = self.view_lifecycle
+            record = dict(_METHODS)["capture_display_checkpoint"]
+            if (
+                type(lifecycle) is not ConsoleBackendViewLifecycle
+                or lifecycle.presentation is not self
+                or getattr_static(lifecycle, "capture_display_checkpoint", None) is not record[0]
+                or not _definition_current(record)
+            ):
+                raise RuntimeError("Console display checkpoint capture changed")
+            checkpoint = record[0](lifecycle)
+            if checkpoint is None:
+                current = self.view_lifecycle._current
+                if current is not None and current.action == "hidden":
+                    raise RuntimeError("Console hidden view cannot start a display read")
+                return None
+        else:
+            checkpoint = self.view_lifecycle.admit(
+                value["attachment_id"], value["visit"], value["action"],
+            )
+            if value["action"] in {"mount", "hidden"}:
+                self.project_decisions.pause()
+        self._view_checkpoints[message.identity.request_id] = (
+            message.identity, checkpoint, value is not None,
         )
-        if value["action"] in {"mount", "hidden"}:
-            self.project_decisions.pause()
-        self._view_checkpoints[message.identity.request_id] = (message.identity, checkpoint)
         return checkpoint
 
     def release_view_checkpoint(self, identity, checkpoint) -> None:
@@ -67,7 +91,24 @@ class ConsoleBackendPresentation:
         if entry is not None and entry[0] is identity and entry[1] is checkpoint:
             del self._view_checkpoints[identity.request_id]
 
-    async def prepare_view_checkpoint(self, identity) -> None:
+    def require_view_checkpoint(self, checkpoint) -> None:
+        """Validate this exact original token without renewing visibility."""
+        from .console_backend_view_lifecycle import ConsoleBackendViewLifecycle, _METHODS
+        from .console_domain_services import _definition_current
+
+        self.require_association(self.association)
+        lifecycle = self.view_lifecycle
+        record = dict(_METHODS)["_require_checkpoint"]
+        if (
+            type(lifecycle) is not ConsoleBackendViewLifecycle
+            or lifecycle.presentation is not self
+            or getattr_static(lifecycle, "_require_checkpoint", None) is not record[0]
+            or not _definition_current(record)
+        ):
+            raise RuntimeError("Console view checkpoint validator changed")
+        record[0](lifecycle, checkpoint)
+
+    async def prepare_view_checkpoint(self, identity):
         """Join only the exact request's original lifecycle producer."""
         self.require_association(self.association)
         entry = self._view_checkpoints.get(identity.request_id)
@@ -81,8 +122,12 @@ class ConsoleBackendPresentation:
         )):
             raise RuntimeError("Console view checkpoint identity changed")
         try:
-            await self.view_lifecycle.prepare(entry[1])
+            if entry[2]:
+                await self.view_lifecycle.prepare(entry[1])
+            else:
+                self.require_view_checkpoint(entry[1])
             self.require_association(self.association)
+            return entry[1]
         finally:
             self.release_view_checkpoint(entry[0], entry[1])
 

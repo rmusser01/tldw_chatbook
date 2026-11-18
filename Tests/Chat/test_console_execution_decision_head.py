@@ -143,10 +143,12 @@ async def test_original_decision_heads_bypass_full_lock_without_claiming_answera
             "decision_id": head.project.decision_id, "action": "mounted",
         })
         assert mount[1].payload["applied"] and original.answerable_since is not None
+        assert (await read()).project.decision_id == head.project.decision_id
         await command("ResolveDecision", {"decision": {
             "kind": "ProjectDispatchDecision", "decision_id": head.project.decision_id, "action": "proceed",
         }})
         assert await pending[0] == "proceed"
+        assert (await read()).project is None  # Discover completion under the actual old modal.
         await lifecycle.prepare(lifecycle.admit("actual-client", 1, "visible"))
         host = backend.controller._interrupt_host
         for index in range(2):
