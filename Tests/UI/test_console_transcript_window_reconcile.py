@@ -12,6 +12,8 @@ restore into a windowed-out selection, a config surface with a kill switch, and
 the load-shape pins that were written before either implementation existed.
 """
 
+from dataclasses import replace
+
 import pytest
 from textual.app import App, ComposeResult
 
@@ -23,6 +25,7 @@ from tldw_chatbook.Widgets.Console.console_transcript import (
     DEFAULT_INITIAL_WINDOW_LINES,
     DEFAULT_SCROLLBACK_CHUNK_LINES,
     ConsoleTranscript,
+    ConsoleTranscriptMessage,
     get_console_transcript_window_lines,
 )
 
@@ -75,6 +78,34 @@ def _mounted_message_ids(transcript: ConsoleTranscript) -> list[str]:
     return [row.message_id for row in transcript.query(".console-transcript-message")]
 
 
+def test_plain_streaming_update_keeps_existing_structure_and_current_messages():
+    history = _messages(1000)
+    history[-1].status = "streaming"
+    transcript = ConsoleTranscript()
+    transcript.set_messages(history, session_id="current")
+    spans = transcript._unit_spans_by_index
+    owners = transcript._ownership_by_message_id()
+    pruned = transcript._pruned_message_ids.copy()
+    transcript.selected_message_id = history[-2].id
+    snapshots = [replace(row) for row in history]
+    snapshots[-1].content += " streamed text"
+    snapshots[-2].content = "Changed user text"
+
+    transcript.set_messages(snapshots, session_id="current")
+
+    assert transcript._unit_spans_by_index is spans
+    assert transcript._ownership_by_message_id() is owners
+    assert transcript._pruned_message_ids == pruned
+    assert transcript.selected_message_id == snapshots[-2].id
+    assert transcript._messages[-2:] == snapshots[-2:]
+    assert transcript._unit_span_at(transcript._messages, 0) == spans[0]
+
+    snapshots[-1] = replace(snapshots[-1], status="stopped")
+    transcript.set_messages(snapshots, session_id="current")
+    assert transcript._unit_spans_by_index is not spans
+    assert transcript._messages[-1].status == "stopped"
+
+
 async def _wait_for(pilot, predicate, *, attempts: int = 80) -> bool:
     for _ in range(attempts):
         await pilot.pause()
@@ -86,6 +117,38 @@ async def _wait_for(pilot, predicate, *, attempts: int = 80) -> bool:
 async def _settle(pilot, *, times: int = 8) -> None:
     for _ in range(times):
         await pilot.pause()
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_plain_streaming_renders_new_content_in_the_existing_focused_window():
+    app = ReconcileHarness()
+    history = _messages(200)
+    history[-1].status = "streaming"
+    async with app.run_test(size=(100, 30)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        transcript.set_messages(history, session_id="active")
+        await transcript.refresh_messages()
+        await _settle(pilot)
+        tail = transcript.query_one("#console-message-m199", ConsoleTranscriptMessage)
+        mounted_ids = _mounted_message_ids(transcript)
+        assert len(mounted_ids) < len(history)
+        transcript.focus()
+        transcript.select_message(history[-1].id)
+        await _settle(pilot)
+        assert app.focused is transcript
+
+        streamed = replace(history[-1], content=history[-1].content + "\nNew token")
+        transcript.set_messages([*history[:-1], streamed], session_id="active")
+        await transcript.refresh_messages()
+        await _settle(pilot)
+
+        assert transcript.query_one("#console-message-m199") is tail
+        assert "New token" in tail.get_display_text()
+        assert tail.get_body_source_text() == streamed.content
+        assert transcript.selected_message_id == streamed.id
+        assert app.focused is transcript
+        assert _mounted_message_ids(transcript) == mounted_ids
 
 
 # ---------------------------------------------------------------------------

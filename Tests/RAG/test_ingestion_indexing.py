@@ -1136,6 +1136,32 @@ class TestBackfill:
         assert summary["status"] == "unavailable"
         assert summary["indexed"] == 0
 
+    def test_media_backfill_seeks_past_visited_rows_across_deletion(self, media_db):
+        ids = [
+            _add_media(media_db, title=f"Media {i}", content=f"Distinct text {i}")[0]
+            for i in range(4)
+        ]
+        entries = ingestion_indexing._iter_media_entries(media_db, page_size=2)
+        assert [next(entries).item_id, next(entries).item_id] == [
+            str(i) for i in ids[:2]
+        ]
+
+        assert media_db.soft_delete_media(ids[0])
+        assert [entry.item_id for entry in entries] == [str(i) for i in ids[2:]]
+
+        statements = []
+        conn = media_db.get_connection()
+        conn.set_trace_callback(statements.append)
+        try:
+            assert ingestion_indexing._active_media_ids(media_db, page_size=2) == {
+                str(i) for i in ids[1:]
+            }
+        finally:
+            conn.set_trace_callback(None)
+        scans = [sql for sql in statements if sql.startswith("SELECT id FROM Media")]
+        assert len(scans) == 2 and all("OFFSET" not in sql for sql in scans)
+        assert f"id > {ids[2]}" in scans[-1]
+
     def test_backfill_reconciles_tracked_media_deleted_while_hook_was_absent(
         self, media_db, tmp_path
     ):

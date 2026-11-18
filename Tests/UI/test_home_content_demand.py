@@ -2,6 +2,7 @@
 
 import asyncio
 import inspect
+from pathlib import Path
 import threading
 from types import MethodType, SimpleNamespace
 
@@ -115,3 +116,54 @@ async def test_unmounted_snapshot_builder_retains_direct_caller_behavior():
     await _refresh(owner)
     assert calls == ["readiness", "count", "notes", "conversations", "media", "paint"]
     assert owner._home_content_snapshot.note_count == 7
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("preview_failed", [False, True])
+async def test_native_home_notes_batch_preserves_count_and_retires_connection(
+    tmp_path, monkeypatch, preview_failed
+):
+    from tldw_chatbook.Backup_Recovery import storage_admission
+    from tldw_chatbook.DB import ChaChaNotes_DB as notes_db
+    from tldw_chatbook.Notes.Notes_Library import NotesInteropService
+    from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
+
+    database = notes_db.CharactersRAGDB(tmp_path / "home.db", "profile")
+    assert database.add_note("Recent note", "Home preview")
+    database.close_connection()
+    local = NotesInteropService(tmp_path, "home", database)
+    owner, *_ = _owner()
+    owner.app_instance.chachanotes_db = database
+    owner.app_instance.notes_scope_service = NotesScopeService(local, None)
+    opened = []
+    original_open = notes_db.connect_private_sqlite
+
+    def observe_open(store, path, **kwargs):
+        if Path(path) == database.db_path:
+            opened.append(threading.get_ident())
+        return original_open(store, path, **kwargs)
+
+    monkeypatch.setattr(notes_db, "connect_private_sqlite", observe_open)
+    if preview_failed:
+
+        def unavailable_preview(*args, **kwargs):
+            raise OSError("preview unavailable")
+
+        monkeypatch.setattr(notes_db.CharactersRAGDB, "list_notes", unavailable_preview)
+
+    try:
+        await _refresh(owner)
+        snapshot = owner._home_content_snapshot
+        assert snapshot.note_count == 1
+        assert snapshot.resume_title == ("" if preview_failed else "Recent note")
+        assert opened and threading.get_ident() not in opened
+        if not preview_failed:
+            assert len(opened) == 1
+        with storage_admission._lock:
+            assert not any(
+                lease.resource_path == database.db_path
+                for lease in storage_admission._live_leases
+            )
+    finally:
+        local.close_all_user_connections()
+        database.close_connection()

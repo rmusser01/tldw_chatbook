@@ -48,7 +48,7 @@ class ChatbookArtifactSnapshot:
 
     def __init__(self, records: list[dict[str, Any]]) -> None:
         self._records: dict[int, dict[str, Any]] = {}
-        self._windows: dict[ArtifactScope, tuple[ArtifactSummary, ...]] = {}
+        self._window_keys: dict[ArtifactScope, tuple[ArtifactOrderKey, ...]] = {}
         for record in records:
             raw_id = record.get("chatbook_id", record.get("id"))
             native_id = self._native_id(raw_id)
@@ -78,72 +78,87 @@ class ChatbookArtifactSnapshot:
             return "Console"
         return str(metadata.get("artifact_source") or "Registered Chatbook").strip()
 
-    def _rows(self, scope: ArtifactScope) -> tuple[ArtifactSummary, ...]:
+    @staticmethod
+    def _title(record: dict[str, Any]) -> str:
+        return str(record.get("name") or "").strip(" ") or "Untitled Chatbook"
+
+    @classmethod
+    def _matches(cls, record: dict[str, Any], query: str) -> bool:
+        if not query:
+            return True
+        searchable = (
+            cls._title(record),
+            cls._source_label(record),
+            str(record.get("description") or ""),
+            *(str(value) for value in record.get("tags") or []),
+            *(str(value) for value in record.get("categories") or []),
+        )
+        return any(query in _lower(value) for value in searchable)
+
+    @classmethod
+    def _order_key(
+        cls, scope: ArtifactScope, native_id: int, record: dict[str, Any]
+    ) -> ArtifactOrderKey:
+        order = (
+            _lower(cls._title(record))
+            if scope.sort == "title"
+            else _created_order(record.get("created_at"))
+        )
+        return (order, "chatbook", native_id)
+
+    def _ordered_keys(self, scope: ArtifactScope) -> tuple[ArtifactOrderKey, ...]:
         if scope.view not in ("chatbooks", "all") or scope.kept_only:
             return ()
-        if scope in self._windows:
-            return self._windows[scope]
-        rows = []
-        query = _lower(scope.query)
-        for native_id, record in self._records.items():
-            title = str(record.get("name") or "").strip(" ") or "Untitled Chatbook"
-            source = self._source_label(record)
-            searchable = (
-                title,
-                source,
-                str(record.get("description") or ""),
-                *(str(value) for value in record.get("tags") or []),
-                *(str(value) for value in record.get("categories") or []),
-            )
-            if not any(query in _lower(value) for value in searchable):
-                continue
-            metadata = record.get("metadata") or {}
-            saved = (
-                source == "Console"
-                and str(metadata.get("artifact_kind") or "").strip().lower()
-                == "assistant-response"
-            )
-            revision_metadata = {
-                name: record.get(name)
-                for name in (
-                    "name",
-                    "description",
-                    "tags",
-                    "categories",
-                    "created_at",
-                    "updated_at",
-                    "artifact_revision",
-                    "file_path",
-                )
-            }
-            revision_metadata["artifact_kind"] = metadata.get("artifact_kind")
-            revision_metadata["artifact_source"] = metadata.get("artifact_source")
-            revision = hashlib.sha256(
-                json.dumps(revision_metadata, sort_keys=True, default=str).encode(
-                    "utf-8"
-                )
-            ).hexdigest()
-            order = (
-                _lower(title)
-                if scope.sort == "title"
-                else _created_order(record.get("created_at"))
-            )
-            rows.append(
-                ArtifactSummary(
-                    key=ArtifactKey("chatbook", native_id),
-                    order_key=(order, "chatbook", native_id),
-                    title=title,
-                    source_label=source,
-                    copy_label="Saved response" if saved else "Registered",
-                    status="Saved" if saved else "Registered",
-                    type_label="Chatbook",
-                    revision=revision,
-                    created_at=str(record.get("created_at") or ""),
+        if scope not in self._window_keys:
+            query = _lower(scope.query)
+            self._window_keys[scope] = tuple(
+                sorted(
+                    self._order_key(scope, native_id, record)
+                    for native_id, record in self._records.items()
+                    if self._matches(record, query)
                 )
             )
-        result = tuple(sorted(rows, key=lambda row: row.order_key))
-        self._windows[scope] = result
-        return result
+        return self._window_keys[scope]
+
+    def _summary(self, order_key: ArtifactOrderKey) -> ArtifactSummary:
+        native_id = order_key[2]
+        record = self._records[native_id]
+        source = self._source_label(record)
+        metadata = record.get("metadata") or {}
+        saved = (
+            source == "Console"
+            and str(metadata.get("artifact_kind") or "").strip().lower()
+            == "assistant-response"
+        )
+        revision_metadata = {
+            name: record.get(name)
+            for name in (
+                "name",
+                "description",
+                "tags",
+                "categories",
+                "created_at",
+                "updated_at",
+                "artifact_revision",
+                "file_path",
+            )
+        }
+        revision_metadata["artifact_kind"] = metadata.get("artifact_kind")
+        revision_metadata["artifact_source"] = metadata.get("artifact_source")
+        revision = hashlib.sha256(
+            json.dumps(revision_metadata, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
+        return ArtifactSummary(
+            key=ArtifactKey("chatbook", native_id),
+            order_key=order_key,
+            title=self._title(record),
+            source_label=source,
+            copy_label="Saved response" if saved else "Registered",
+            status="Saved" if saved else "Registered",
+            type_label="Chatbook",
+            revision=revision,
+            created_at=str(record.get("created_at") or ""),
+        )
 
     def read_artifact_window(
         self,
@@ -154,12 +169,11 @@ class ChatbookArtifactSnapshot:
         limit: int,
         inclusive: bool = False,
     ) -> ArtifactSourceWindow:
-        """Filter and order the complete inventory before returning bounded rows."""
+        """Rank the inventory and construct only the selected summaries."""
         validate_artifact_window(scope, boundary, direction, limit, inclusive)
-        rows = self._rows(scope)
-        keys = [row.order_key for row in rows]
+        keys = self._ordered_keys(scope)
         if boundary is None:
-            before = len(rows) if direction == "before" else 0
+            before = len(keys) if direction == "before" else 0
             equal = 0
             edge = before
         else:
@@ -170,19 +184,30 @@ class ChatbookArtifactSnapshot:
                 direction == "after" and not inclusive
             ):
                 edge += equal
-        items = (
-            rows[max(0, edge - limit) : edge]
+        window = (
+            keys[max(0, edge - limit) : edge]
             if direction == "before"
-            else rows[edge : edge + limit]
+            else keys[edge : edge + limit]
         )
-        return ArtifactSourceWindow(items, len(rows), before, equal)
+        return ArtifactSourceWindow(
+            tuple(self._summary(key) for key in window), len(keys), before, equal
+        )
 
     def get_artifact_summary(
         self, scope: ArtifactScope, key: ArtifactKey
     ) -> ArtifactSummary | None:
         """Read one exact admitted identity from this same registry snapshot."""
         validate_artifact_window(scope, None, "after", 1)
-        return next((row for row in self._rows(scope) if row.key == key), None)
+        if (
+            scope.view not in ("chatbooks", "all")
+            or scope.kept_only
+            or key.source != "chatbook"
+        ):
+            return None
+        record = self._records.get(key.native_id)
+        if record is None or not self._matches(record, _lower(scope.query)):
+            return None
+        return self._summary(self._order_key(scope, key.native_id, record))
 
     def get_record(self, native_id: int) -> dict[str, Any] | None:
         """Return an isolated copy of the selected record, including saved content."""
