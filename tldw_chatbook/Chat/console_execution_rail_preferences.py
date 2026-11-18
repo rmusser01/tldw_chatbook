@@ -146,6 +146,9 @@ def _writer_retired(scope):
 def _write_rail_preference(scope):
     """Observe the original setter's exact config owner on its actual worker."""
     require_rail_publication(scope)
+    if (not _positive(scope.fence) or scope.client._source_revision != scope.revision
+        or scope.client._intake_open):
+        raise ConsoleChannelLost("Console rail writer has no retired source fence")
     if not config_participants.first_send_persistence_source_current(config):
         raise ConsoleChannelLost("Original Console rail writer changed")
     try:
@@ -171,6 +174,7 @@ async def publish_rail_preference(screen, key, value):
         or client._loop is not asyncio.get_running_loop()
         or client._shutdown_task is not None or client._workspace_operations
         or getattr(client, "_rail_publication", None) is not None
+        or client._project_modal is not None or client._project_modal_transition is not None
         or not client._intake_open
     ):
         raise ConsoleChannelLost("Console rail publication is unavailable")

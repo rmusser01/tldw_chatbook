@@ -671,11 +671,44 @@ def resume_selected_view(screen: ChatScreen) -> Awaitable[None] | None:
         screen.call_after_refresh(screen._start_console_attach_reconciliation)
 
 
+def _resumed_view_displaced(screen, client, visit: int) -> bool:
+    """Recognize an actual stack transfer without granting the old view access."""
+    from textual.screen import ModalScreen, Screen
+
+    _require_sources()
+    if type(screen) is not ChatScreen or type(client) is not ConsoleExecutionClient:
+        return False
+    _require_methods(client, _CLIENT_METHODS)
+    app = screen.app_instance
+    if (client._app is not app or app.console_execution_client is not client
+        or screen.app is not app
+        or getattr(app, "console_runtime", None) is not None
+        or client._channel_error is not None or client._disposed
+        or client._visit < visit
+        or (client._visit == visit and client._view is not screen)):
+        return False
+    stack = app.screen_stack
+    if not stack or app.screen is not stack[-1]:
+        return False
+    if app.screen is screen:
+        return client._view is screen and client._visit > visit
+    destination = stack[-1]
+    if (not isinstance(destination, Screen) or destination.app is not app
+        or not destination.is_attached or not destination.is_mounted):
+        return False
+    index = next((i for i, item in enumerate(stack) if item is screen), None)
+    if index is not None:
+        return all(isinstance(item, ModalScreen) for item in stack[index + 1:])
+    return client._view is screen or client._visit > visit
+
+
 def _awaiting_resume_publication(screen) -> bool:
     client = getattr(screen.app_instance, "console_execution_client", None)
     pending = getattr(screen, "_console_resuming_source", None)
     if pending is None or client is None or pending[0] is not client or pending[1] != client._visit:
         return False
+    if _resumed_view_displaced(screen, client, pending[1]):
+        return True
     client.require_view(screen, client._visit)
     return True
 
@@ -688,20 +721,41 @@ async def _publish_resumed_source(screen, client, visit, operation):
     pending = client, visit
     screen._console_resuming_source = pending
     try:
+        if _resumed_view_displaced(screen, client, visit):
+            return
         client.require_view(screen, visit)
         if operation is not None:
             if (operation is not client._workspace_binding_task
                 or operation not in client._workspace_operations):
                 raise RuntimeError("Console workspace publication owner changed")
             await asyncio.shield(operation)
+            if _resumed_view_displaced(screen, client, visit):
+                return
             client.require_view(screen, visit)
         if not _resumed_source_refresh(screen, client):
             selected_client(screen)
         else:
             row = client.projection_view.session(client.projection_view.active_session_id)
-            frame = await client.read_view_display(
-                screen, visit, row.id, row.incarnation_id, checkpoint="mount",
-            )
+            source, attachment = client._source_revision, client._attachment_id
+            from ...Chat.console_execution_process import ConsoleChannelLost
+
+            try:
+                frame = await client.read_view_display(
+                    screen, visit, row.id, row.incarnation_id, checkpoint="mount",
+                )
+            except ConsoleChannelLost:
+                # The retained transport still owns physical settlement. Only
+                # an unchanged healthy source displaced by actual navigation
+                # may end this screen observer without a fatal app exception.
+                if (client._source_revision == source
+                    and client._attachment_id == attachment
+                    and _resumed_view_displaced(screen, client, visit)):
+                    return
+                raise
+            if client._source_revision != source or client._attachment_id != attachment:
+                raise ConsoleChannelLost("Console resumed publication source changed")
+            if _resumed_view_displaced(screen, client, visit):
+                return
             client.require_view(screen, visit)
             if selected_client(screen) is not client or frame is not client._projection:
                 raise RuntimeError("Console resumed publication changed")
@@ -926,7 +980,8 @@ async def _refresh_selected_decisions(screen, client, visit: int) -> None:
         if _defer_selected_refresh(screen, client, visit):
             return
         client.require_view(screen, visit)
-        await present_selected_decision(screen, client, visit)
+        if await present_selected_decision(screen, client, visit) is None:
+            return  # An already registered rail writer precedes a new modal.
         if pending_project_visibility(client, screen, visit) is not None:
             return
         if _defer_selected_refresh(screen, client, visit):

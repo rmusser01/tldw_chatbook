@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from functools import partial
+
+from textual.worker import Worker, WorkerState
 
 from ...Chat.console_execution_process import ConsoleChannelLost, ConsoleExecutionClient
 from ...Chat.console_execution_decision_head import ConsoleDecisionHead
@@ -20,6 +23,7 @@ _SCREEN_METHODS = tuple(
     (name, _definition(getattr(ChatScreen, name)))
     for name in (
         "_set_console_pending_decision", "set_task_resume_state", "sync_task_resume_state",
+        "_save_console_rail_preferences",
     )
 )
 _CLIENT_METHODS = tuple(
@@ -121,7 +125,20 @@ def _current(screen, client, visit) -> None:
     _require_methods(client, _CLIENT_METHODS)
 
 
-async def present_selected_decision(screen, client, visit: int) -> bool:
+def _rail_save_precedes_modal(screen) -> bool:
+    """Honor an original save registered before its background thread starts."""
+    _require_methods(screen, _SCREEN_METHODS)
+    original = ChatScreen._save_console_rail_preferences.__wrapped__
+    return any(
+        type(worker) is Worker and worker._node is screen and worker._thread_worker
+        and worker._state in (WorkerState.PENDING, WorkerState.RUNNING)
+        and type(worker._work) is partial and worker._work.func is original
+        and worker._work.args and worker._work.args[0] is screen
+        for worker in screen.workers
+    )
+
+
+async def present_selected_decision(screen, client, visit: int) -> bool | None:
     """Render the exact published mixed head through the original task cards."""
     _current(screen, client, visit)
     projection = _current_head(client, visit)
@@ -163,6 +180,11 @@ async def present_selected_decision(screen, client, visit: int) -> bool:
         return shown  # Restore the actual Console before reading its next head.
     if head is None or not screen.is_current:
         return shown
+    if _rail_save_precedes_modal(screen):
+        # @work registers synchronously at the original save call. Do not
+        # mount an old-source modal in the gap before that writer's retained
+        # configuration publication starts. The existing hint stays owed.
+        return None
     modal = (
         ProjectInstructionNoticeModal(head.notice)
         if head.kind == "dispatch" else ProjectInstructionSetupModal(head.choices)

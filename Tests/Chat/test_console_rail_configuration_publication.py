@@ -253,3 +253,91 @@ async def test_rail_admission_refusal_does_not_invent_retirement():
     assert caught.value is failure
     assert receipt.applied.exception() is failure
     assert not receipt.retired.done()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("owner", ["_project_modal", "_project_modal_transition"])
+async def test_rail_save_refuses_preexisting_modal_before_any_command_or_write(owner):
+    """Transport refusal only; no fake storage or successful native receipt."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_execution_process import ConsoleChannelLost, ConsoleExecutionClient
+    from tldw_chatbook.Chat.console_execution_rail_preferences import publish_rail_preference
+
+    app = SimpleNamespace(console_runtime=None)
+    client = ConsoleExecutionClient(app)
+    app.console_execution_client = client
+    client._loop = asyncio.get_running_loop()
+    setattr(client, owner, object())
+    with pytest.raises(ConsoleChannelLost, match="unavailable"):
+        await publish_rail_preference(SimpleNamespace(app_instance=app), "scope", {"workspace_open": True})
+    assert not client._requests and not client._workspace_operations
+    assert getattr(client, "_rail_publication", None) is None
+    assert client._channel_error is None and client._source_revision == 0
+
+
+@private_profile_test
+@pytest.mark.asyncio
+async def test_original_parent_rail_worker_publishes_to_same_contained_backend(request):
+    """Exercise original writer, actual child replies and separate native proof."""
+    import threading
+
+    from Tests.Chat.test_console_control_trace import _observe
+    from tldw_chatbook import config
+    from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.Chat import console_execution_rail_preferences as rail
+    from tldw_chatbook.Chat.console_rail_state import (
+        build_console_rail_preference_key, serialize_console_rail_stored_preferences,
+    )
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    assert config.save_settings_to_cli_config({
+        "first_run": {"setup_completed": True},
+        "splash_screen": {"enabled": False},
+        "general": {"default_tab": "home"},
+        "chat_defaults": {"provider": "llama_cpp", "model": "local-model"},
+        "api_settings.llama_cpp": {
+            "api_url": "http://127.0.0.1:9099", "model": "local-model",
+        },
+    })
+    app = TldwCli(console_execution="process")
+    observed = []
+
+    def writer_entered(frame):
+        observed.append(frame.f_locals["scope"])
+
+    async with app.run_test(size=(120, 40)):
+        await app._initial_screen_setup_task
+        await app._console_execution_start_task
+        client = app.console_execution_client
+        assert app.console_runtime is None and client._view is None
+        original_process, original_tree = client._process, client._tree
+        original_revision = client._source_revision
+        screen = ChatScreen(app_instance=app)
+        key = build_console_rail_preference_key(layout_scope="global").value
+        value = serialize_console_rail_stored_preferences({"workspace_open": True})
+        with _observe(rail._write_rail_preference.__code__, sys.monitoring.events.PY_START, writer_entered):
+            worker = screen._save_console_rail_preferences(key, value)
+            await worker.wait()
+        assert len(observed) == 1
+        scope, = observed
+        assert scope.task.done() and scope.task.result() is True
+        assert scope.writer.done() and scope.writer.result() is True
+        assert scope.writer_retired and rail._writer_retired(scope)
+        assert scope.writer_state.thread is not threading.current_thread()
+        assert scope.writer_state.source is config
+        assert all(rail._positive(receipt) for receipt in (scope.fence, scope.refresh, scope.applied))
+        assert client._source_revision == original_revision + 1 and client._intake_open
+        assert getattr(client, "_rail_publication", None) is None
+        assert client._process is original_process and client._tree is original_tree
+        assert config.load_settings()["console"]["rail_state"][key] == value
+
+        # A fresh original command checks the child's newly associated source;
+        # no display read is issued while Home covers the unmounted Chat.
+        receipt = client.submit("PermissionAction", {
+            "operation": {"kind": "ReadPermissionSnapshot", "strict": True},
+        })
+        await receipt.received
+        await receipt.applied
+        assert await receipt.retired is True
+    assert await client.shutdown() is True

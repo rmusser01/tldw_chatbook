@@ -42,6 +42,7 @@ jobs:
           $checks = @(
             'Tests/Chat/test_console_rail_configuration_publication.py'
             'Tests/UI/test_console_resumed_source_publication.py'
+            'Tests/UI/test_console_rail_publication_order.py'
             'Tests/UI/test_console_execution_transcript_partial_mount.py'
             'Tests/UI/test_console_execution_rail_toggle.py'
             'Tests/UI/test_console_transcript_markdown_widget.py'
