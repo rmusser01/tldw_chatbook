@@ -57,14 +57,11 @@ async def test_preparing_defining_sources_decline_changed_callbacks(
                 # controller's registered provider, compared with ``==``, so
                 # its class method is wrapped only through the capture reader.
                 if name == "_build_console_turn_capture_selection":
+                    wrapped = functools.wraps(function)(
+                        lambda *args, _stock=function, **kwargs: _stock(*args, **kwargs)
+                    )
                     with monkeypatch.context() as changed:
-                        changed.setattr(
-                            type(owner),
-                            name,
-                            functools.wraps(function)(
-                                lambda *args, **kwargs: function(*args, **kwargs)
-                            ),
-                        )
+                        changed.setattr(type(owner), name, wrapped)
                         assert controls.preparing_poll_record(screen) is record, name
                     qualified.append((name, "wrapped_class_method"))
             else:
