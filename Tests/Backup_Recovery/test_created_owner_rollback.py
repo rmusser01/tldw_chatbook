@@ -334,6 +334,13 @@ try:
             subprocess.run([sys.executable,'-c',writer,str(paths[label]),BOARD_INSERT],check=True,timeout=60)
             assert Path(str(paths[label])+'-wal').stat().st_size>0,label
             assert Path(str(paths[label])+'-shm').exists(),label
+            # The board is in the -wal only: the main file alone lacks it.
+            import shutil,sqlite3
+            from contextlib import closing
+            main_only=Path.home()/(label+'-main-only.db')
+            shutil.copyfile(paths[label],main_only)
+            with closing(sqlite3.connect(main_only)) as db:
+                assert not db.execute("SELECT name FROM kanban_boards WHERE uuid='post-restore-board'").fetchall(),label
         if case.get('second_profile'):
             from tldw_chatbook.Backup_Recovery.control_records import bind_profile
             other=source.parent/'other.toml'

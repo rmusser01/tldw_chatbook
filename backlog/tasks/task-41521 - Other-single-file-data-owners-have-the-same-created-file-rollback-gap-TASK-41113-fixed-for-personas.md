@@ -27,7 +27,7 @@ Found by the actor stream (round 15). TASK-41113 fixed the later-rollback refusa
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 Every backup-enabled single-file owner is listed in the notes with whether a restore can create its file
-- [x] #2 Each owner that can is covered by a rollback test that fails before the fix, except those tracked in TASK-41705, TASK-41706 and TASK-41707
+- [x] #2 Each owner that can is covered by a rollback test that fails before the fix, except the Personal Context repository, archives added to an existing chatbooks folder, and MCP store fresh copies
 - [x] #3 The mid-session quarantine summary updates immediately, or the notes record why it stays
 <!-- AC:END -->
 
@@ -130,4 +130,9 @@ Red/green (load 55-80, `-n 2` unless noted):
 - **Minor 2.** `Docs/Backup-and-Recovery.md` names the shapes a later rollback still refuses: a Personal Context database, and Saved chatbook archives added to an existing chatbooks folder. The "outside every profile" clause went with Minor 3.
 - **Minor 3 (coordinator's call).** The `tamagotchi.config` special case is gone; the generic rule refuses it (`local_snapshot_absence_unclassified`), and the restore already refuses to write its folder. The owner table says so.
 - **AC#2 split.** AC#2 now excludes TASK-41705, TASK-41706 and TASK-41707, filed here (status To Do, labels follow-up and backup, depending on this task); with that, every creatable owner is covered and AC#2 is ticked.
+
+### Review r16rs-rev3, fix round 3
+
+- AC#2 names the excluded shapes instead of the higher-id tasks (CLAUDE.md section 2); TASK-41705, TASK-41706 and TASK-41707 track them and depend on this task.
+- The `[databases]` case now shows by itself that the board lived only in the `-wal`: after the writer and before the rollback, it copies the main database file alone and finds no board there. So the safety-copy check still guards the WAL path if preview or inventory ever checkpoints first. Control: with the writer running a passive checkpoint before it exits, the case failed at that assertion (`AssertionError: kanban.local`, 42 s). Green: 1 passed (102 s serial, load 7); preflight passed.
 
