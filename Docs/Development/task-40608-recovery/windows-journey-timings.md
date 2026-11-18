@@ -60,6 +60,14 @@ The separate backend observer stopped 11.299 s after README Send, 0.928 s before
 
 The corrected observer on `g66warm2` had no source refusal and one unfinished observation. The original UI timed out waiting 1,800 seconds for the project-disclosure button, with zero HTTP requests. The backend guard finished and the UI guard did not. The trace captured no underlying application exception. This run failed before either journey supplied a timing.
 
+### CPU use on the current product revision
+
+The guard-only process build at `4c2860349a` passed both original Windows 10 journeys in `g70c`. README took **20.3563 s** (8.7877 / 9.5933 / 1.9753 s across the adjusted intervals). Edit took **24.3292 s** (6.3657 / 16.2899 / 1.6736 s). The parent recorded 98 and 48 admissions, all reuse hits. The independent guards, five/six requests, two/three ordered Once decisions and shutdown passed. The original receipt SHA-256 is `6f9e93605fd96a3f7c2ae4649b05e4ac9e1e03ec617b4ca2cf35a2bd40047d34`. The same revision passed 632 hosted Windows tests and 22 subtests, with two skips. Ubuntu passed all 82 configuration, index, migration and recovery tests. [Hosted results](https://github.com/rmusser01/tldw_chatbook/actions/runs/44359551011)
+
+An external sampler measured actual UI and backend process CPU counters against the guard's original timestamps. Edit's first-to-last provider interval was **18.260 s raw**. The UI used **13.875–14.219 CPU-s**, including 0.781 kernel CPU-s. The backend used **16.109–16.484 CPU-s**, including 5.891–6.000 kernel CPU-s. The ranges enclose samples that straddled each boundary. These processes ran concurrently. Adding their CPU time would overstate elapsed time. The sample began after README Send and has no full-phase upper bound for that first interval.
+
+The sampler itself used **14.891 CPU-s over 70.751 s**. That load limits comparisons with unobserved runs. Use these counters to locate work in both processes and keep the original sequential pairs as the acceptance evidence. Raw numeric counter SHA-256: `4a487abc8f9abe4cd9aa99a58b71ef51f3ba070e84f8113a4ec8c3897cb5e78c`.
+
 ## Where the time goes
 
 On the separate Windows 10 diagnostic `g57s` (`5a8b730cfa`), README
