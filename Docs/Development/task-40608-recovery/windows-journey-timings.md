@@ -116,6 +116,12 @@ Sampled README screen trees contained 502–575 mounted objects, of which 360–
 
 Batch `qd` started on November 18 at 18:38 UTC. It compares the original local baseline `b6b53f084a` with the clean process candidate `5fd0c8cd5e` in B1/C1, C2/B2, B3/C3 order. Configuration SHA-256 is `0628029152ad522fa7328e44d76b520e0d051ed1e71661084e6034dbcfdd0479`. The candidate manifest SHA-256 is `a6808c9521e068d2d4587ac4d3eb9067651d8de0e50cae684b09132547204f62`. The driver records each original run and can retain completed pairs after interruption. [Driver and verification contract](original-journey/README.md)
 
+| Completed pair | README baseline → candidate | Edit baseline → candidate |
+|---|---:|---:|
+| 1 | 306.1657 → 18.1591 s | 430.4508 → 20.8235 s |
+
+Both sides of pair 1 passed the original assertions and shutdown. Before first HTTP the candidate took 8.5456 s on README and 5.3038 s on edit. Between the first and last HTTP receipts it took 8.1075 s and 13.0672 s after the original human-wait deductions. Both candidate turns exceeded five seconds. [Verified pairs, timing phases and original hashes](original-journey/qd-windows10-results.json)
+
 ## Where the time goes
 
 On the separate Windows 10 diagnostic `g57s` (`5a8b730cfa`), README
@@ -1099,6 +1105,10 @@ before the click. The region observer cannot verify the exact painted label.
 Receipts are in `original-journey-33470fmodelg47b/replay-runs/g47d`.
 
 ### A replacement design
+
+The measured workload has two different scaling costs. The mounted test queues one callback per widget per poll. Even the three-file fixture queued over 100,000 callbacks per turn. The backend also performs fresh storage observations at separate points within each provider/tool round. On the cleaned-up `5fd0c8cd5e` edit, the two discovery rounds before the first file approval took 2.063 and 1.500 seconds between HTTP receipts. A faster query over historical rows cannot eliminate those rounds in a new chat. [Original UI callback counts](original-journey/pilot/README.md) · [Current clean journey](original-journey/g72-windows10-activity-headers.json)
+
+For the UI, keep editable state and approval ownership in the model and mount expensive controls when they become interactive. Bringing an existing editor back must restore its contents, selection, focus and pending decision. Several hidden selectors currently serve live callers. The right rail's 90 hidden widgets give a concrete fixture for a prototype that opens the rail during a pending decision and verifies the same controls and state. Measure both ordinary repaint cost and the original journeys.
 
 Give the Console backend sole ownership of its run, permission and persistence
 state. At the end of each finite command, it can publish immutable results for

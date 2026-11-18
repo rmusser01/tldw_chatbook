@@ -1,0 +1,157 @@
+{
+  "batch": "qd",
+  "baseline_commit": "b6b53f084a63058ca4b4dac99e074cff42192f7e",
+  "candidate_commit": "5fd0c8cd5ef01789aa5ba935a242e27a204da618",
+  "config_sha256": "0628029152ad522fa7328e44d76b520e0d051ed1e71661084e6034dbcfdd0479",
+  "driver_sha256": "90c73da2939df0495f997a1eb50fb396136e7fa30b131a7571b155a4597262e9",
+  "complete_eligible_sequence": false,
+  "qualification_passed": false,
+  "completed_pairs": [
+    1
+  ],
+  "pending_pairs": [
+    2,
+    3
+  ],
+  "truncated_ledger": false,
+  "statuses": [
+    {
+      "attempt": 1,
+      "pair": 1,
+      "side": "baseline",
+      "status": "eligible_paired"
+    },
+    {
+      "attempt": 1,
+      "pair": 1,
+      "side": "candidate",
+      "status": "eligible_paired"
+    },
+    {
+      "attempt": 1,
+      "pair": 2,
+      "side": "candidate",
+      "status": "in_progress_or_interrupted"
+    }
+  ],
+  "runs": [
+    {
+      "pair": 1,
+      "side": "baseline",
+      "receipt_sha256": "fb7a8594b490cf4311448e0e3a8934c684e55fee2297338d073bdf1274314067",
+      "guard_and_retirement_verified": true,
+      "turns": {
+        "readme": {
+          "application_s": 306.16566,
+          "raw_elapsed_s": 316.622636,
+          "original_observed_human_wait_s": 10.456975999999997,
+          "common_reply_seen_application_s": 306.99462800000003,
+          "original_completion_endpoint": "reply_completed",
+          "provider_requests": 5,
+          "once_approvals": 2,
+          "parent_work_counts": {
+            "_acquire_storage": 2158,
+            "_scope": 4314,
+            "_reuse_evidence_hit": 0
+          }
+        },
+        "edit": {
+          "application_s": 430.4507759999999,
+          "raw_elapsed_s": 444.2753,
+          "original_observed_human_wait_s": 13.82452400000011,
+          "common_reply_seen_application_s": 431.1405689999999,
+          "original_completion_endpoint": "reply_completed",
+          "provider_requests": 6,
+          "once_approvals": 3,
+          "parent_work_counts": {
+            "_acquire_storage": 2552,
+            "_scope": 5106,
+            "_reuse_evidence_hit": 0
+          }
+        }
+      },
+      "attempt": 1,
+      "paired": true,
+      "progress_sha256": "864099c9abc92bc83664e1a5259a69bd6536ddedb256f0a2cb2228e5aaa1426d"
+    },
+    {
+      "pair": 1,
+      "side": "candidate",
+      "receipt_sha256": "bf22b3d283e9899abe173146ea2a7a062fc54a446b060c9bbe4469dcb97e0df2",
+      "guard_and_retirement_verified": true,
+      "turns": {
+        "readme": {
+          "application_s": 18.159061000000023,
+          "raw_elapsed_s": 19.94165600000001,
+          "original_observed_human_wait_s": 1.7825949999999864,
+          "common_reply_seen_application_s": 18.159061000000023,
+          "original_completion_endpoint": "reply_seen",
+          "phases": [
+            {
+              "raw_s": 8.733579000000006,
+              "human_wait_s": 0.1879419999999925,
+              "adjusted_s": 8.545637000000013
+            },
+            {
+              "raw_s": 9.702196,
+              "human_wait_s": 1.5946529999999939,
+              "adjusted_s": 8.107543000000007
+            },
+            {
+              "raw_s": 1.5058810000000022,
+              "human_wait_s": 0.0,
+              "adjusted_s": 1.5058810000000022
+            }
+          ],
+          "provider_requests": 5,
+          "once_approvals": 2,
+          "parent_work_counts": {
+            "_acquire_storage": 95,
+            "_scope": 0,
+            "_reuse_evidence_hit": 95
+          }
+        },
+        "edit": {
+          "application_s": 20.82348800000001,
+          "raw_elapsed_s": 24.01418600000001,
+          "original_observed_human_wait_s": 3.1906979999999976,
+          "common_reply_seen_application_s": 20.82348800000001,
+          "original_completion_endpoint": "reply_seen",
+          "phases": [
+            {
+              "raw_s": 5.303758000000002,
+              "human_wait_s": 0.0,
+              "adjusted_s": 5.303758000000002
+            },
+            {
+              "raw_s": 16.257940000000005,
+              "human_wait_s": 3.1906979999999976,
+              "adjusted_s": 13.067242000000007
+            },
+            {
+              "raw_s": 2.4524880000000024,
+              "human_wait_s": 0.0,
+              "adjusted_s": 2.4524880000000024
+            }
+          ],
+          "provider_requests": 6,
+          "once_approvals": 3,
+          "parent_work_counts": {
+            "_acquire_storage": 40,
+            "_scope": 0,
+            "_reuse_evidence_hit": 40
+          }
+        }
+      },
+      "attempt": 1,
+      "paired": true,
+      "progress_sha256": "830b201a919af2626ee30797827d6872dc728a2194a8b57d06f4543f999f03a0"
+    }
+  ],
+  "readout_launched_workload": false,
+  "windows_build": 19045,
+  "routes": {
+    "baseline": "local",
+    "candidate": "opt-in process"
+  }
+}
