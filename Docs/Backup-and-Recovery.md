@@ -200,6 +200,14 @@ Confirm the reviewed consequences, re-enter the old password, and provide matchi
 passwords for the new safety copy before executing later rollback. A refused
 review is not a completed rollback; retain the existing copy and operation records.
 
+Files and databases the restore created where the profile had none are removed
+again by later rollback (a database with its `-wal` and `-shm` files). The review
+refuses instead, and leaves the file, when such a file was replaced after the
+restore or sits beside a configuration file that another profile's configuration
+now shares. Two kinds of created data are not removed yet, so the review refuses
+when a restore created them: a Personal Context database, and Saved chatbook
+archives the restore added to an existing chatbooks folder.
+
 ## Manage recovered media
 
 Open **Restored profiles → Recovered media details** for the current profile.
@@ -373,8 +381,11 @@ active RAG profile selected and any draft changes saved or discarded:
    part of another restored profile, the review names that profile's generation:
    its model files need their own **Approve model files** too, or RAG stays off.
 2. Choose **Review recovery**, inspect the RAG owners, sources, and prerequisites,
-   then choose **Approve RAG owners**. Model permission and RAG permission are
-   separate; neither approval completes index validation.
+   then choose **Approve RAG owners**. The review lists the owners it approves
+   (Retrieval definitions, Retrieval indexes and Retrieval indexing records),
+   and the message that follows names the ones it approved: "Approved RAG
+   owners: …". Model permission and RAG permission are separate; neither
+   approval completes index validation.
 3. When the required local sources and model are available, choose
    **Reconcile / rebuild** and confirm that action. This explicitly rebuilds and
    verifies the index before recovered semantic retrieval can become available.

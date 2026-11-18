@@ -76,8 +76,8 @@ class Host(App):
   screen=SettingsScreen(instance)
   screen.active_category=SettingsCategoryId.LIBRARY_RAG.value
   self.push_screen(screen)
-async def wait_for(predicate):
- async with asyncio.timeout(12):
+async def wait_for(predicate,limit=12):
+ async with asyncio.timeout(limit):
   while not predicate():await asyncio.sleep(.02)
 async def main():
  host=Host()
@@ -164,7 +164,13 @@ async def main():
    projections.reconcile_projection=original_reconcile
    screen.query_one('#settings-library-rag-recovery-review',Button).press()
    await wait_for(lambda:isinstance(host.screen,ConfirmationDialog) and host.screen.query('#confirm-button'))
+   names='Retrieval indexing records, Retrieval definitions, Retrieval indexes'
+   assert 'Owners: '+names+'\n' in host.screen.message,host.screen.message
    host.screen.query_one('#confirm-button',Button).press()
+   # TASK-41513: the dialog's callback starts the approval worker after this
+   # press, so wait for its outcome; checking at once raced the worker.
+   await wait_for(lambda:any(m.startswith(('Approved RAG owners','Recovery review is unavailable')) for m in host.messages),120)
+   assert any(m.startswith('Approved RAG owners: '+names+'.') for m in host.messages),host.messages
    await host.workers.wait_for_complete();await pilot.pause()
    assert all(store.allowed(witness['generation'],owner) for owner in ('rag.definitions','rag.projections','db.rag_indexing'))
    assert not store.allowed(witness['generation'],'config')
@@ -208,9 +214,16 @@ def test_settings_model_review_boundaries(tmp_path, mode):
 
 
 def _run_ui(tmp_path, mode):
+    # TASK-41513: the mounted Settings child outgrows the isolated child's
+    # 25 s budget at load 30 and up ([rebuild] timed out at base, load 31-33).
+    # _run's 240 s backstop counts from the outer child's start, so the outer
+    # setup before this child also comes out of it; _run's 60 s idle check
+    # still catches a hang. Both edits must apply, or the run is not this one.
+    loop, budget = "for mode in ('approve','reopen'):", "timeout=25)"
+    assert loop in _ISOLATED and budget in _ISOLATED
     script = "CHILD=" + repr(_UI) + "\n" + _ISOLATED.replace(
-        "for mode in ('approve','reopen'):", "for mode in (sys.argv[1],):"
-    )
+        loop, "for mode in (sys.argv[1],):"
+    ).replace(budget, "timeout=200)")
     _run(tmp_path, mode, "local", script=script, timeout=60)
 
 

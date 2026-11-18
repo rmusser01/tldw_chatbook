@@ -117,6 +117,24 @@ indexing is unavailable (missing embeddings extras, or disabled in config)." ·
 "No local databases are available to backfill." Failure toasts stay plain
 language; per-item error detail lands in the log, never in the toast.
 
+### After a restore
+
+Below **Backfill**, three buttons serve a profile restored from a backup. The
+first two only review or approve; neither loads a model or touches the index.
+**Reconcile / rebuild** does that.
+
+- **Review local model** records a review of the active profile's local
+  embedding model files ("Record review").
+- **Review recovery** lists the restored RAG owners, sources and prerequisites,
+  and **Approve RAG owners** approves them. The message then names what it
+  approved, as in "Approved RAG owners: Retrieval indexing records, Retrieval
+  definitions, Retrieval indexes."
+- **Reconcile / rebuild** rebuilds and verifies the index once those approvals
+  and the model are ready.
+
+The full order, including **Approve model files** in Backup & Restore, is in
+[Backup and recovery](../../Backup-and-Recovery.md).
+
 ### The first-run starter panel
 
 On a fresh install — still on a built-in, no profile of your own, no index —

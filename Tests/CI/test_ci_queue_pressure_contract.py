@@ -648,6 +648,8 @@ RECOVERED_SUITES_TARGETS = (
     # TASK-41112: the Actor Pack export goldens, red on dev in no lane before.
     # Sandboxed, ~83 s serial; with the sandboxed suites.
     "Tests/Actor_Packs/test_actor_pack_export.py",
+    # TASK-41521: the persona coordinator file (sandboxed, 10-15 s serial).
+    "Tests/Actor_Packs/test_persona_actor_pack_coordinator.py",
     # TASK-39142: bootstrap_profile since TASK-38111. TASK-39049's keyword-leg
     # pool retirement file runs beside its four siblings.
     "Tests/Prompt_Management/test_prompt_improvement_service.py",
@@ -728,6 +730,7 @@ RECOVERED_SUITES_DESELECTED = (
 BACKUP_OWNER_SUITE_TARGETS = (
     "Tests/Backup_Recovery/test_builtin_later_snapshot.py",
     "Tests/Backup_Recovery/test_created_persona_subtree_rollback.py",
+    "Tests/Backup_Recovery/test_created_owner_rollback.py",  # TASK-41521
     "Tests/Backup_Recovery/test_complete_roundtrip.py",
     "Tests/Backup_Recovery/test_later_rollback_credential_ui.py",
     "Tests/Backup_Recovery/test_restore_plan.py",
