@@ -10255,6 +10255,7 @@ async def test_library_media_edit_save_stays_gated_through_detail_refresh() -> N
             assert len(service.update_calls) == 1
 
             service.detail_release.set()
+            controller = screen._library_media_browse_controller
             # TASK-41532: the release starts the page and facet refreshes on
             # their own workers, so wait for both calls, not just the flag.
             await _wait_for_condition(
@@ -10263,6 +10264,8 @@ async def test_library_media_edit_save_stays_gated_through_detail_refresh() -> N
                     not screen._media_state.bulk_delete_in_flight
                     and len(service.search_calls) > initial_searches
                     and len(service.type_calls) > initial_facets
+                    and controller.freshness == "fresh"
+                    and not controller.facet_loading
                 ),
                 message=lambda: (
                     "Media edit never released into its refresh: in flight "
@@ -21025,6 +21028,8 @@ class _TouchingNotesScopeService(StaticLibraryNotesScopeService):
                 else note
                 for note in self.notes
             )
+            if isinstance(result, dict):
+                result = {**result, "last_modified": stamp}
         return result
 
 

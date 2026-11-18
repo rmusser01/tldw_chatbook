@@ -333,6 +333,11 @@ def private_profile_test(function):
                 f"--timeout={child_timeout}",
                 f"--basetemp={work / 'pytest'}",
                 f"--junitxml={report}",
+                *(
+                    ["--storage-lease-guard"]
+                    if request.config.getoption("--storage-lease-guard", default=False)
+                    else []
+                ),
                 *coverage_args,
                 cwd=Path(__file__).resolve().parents[1],
                 env=environment,

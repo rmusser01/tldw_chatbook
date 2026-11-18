@@ -1,4 +1,4 @@
-# Development, nightly and release CI (TASK-41564 / ADR-360)
+# Development, nightly and release CI (TASK-41564 / ADR-366)
 
 This policy is **prepared, not activated**. `CI_TIERED_ENABLED` must remain unset
 until the rollout checks below pass. Execution uses GitHub-hosted runners. The owner

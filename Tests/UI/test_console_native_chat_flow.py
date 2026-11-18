@@ -429,10 +429,12 @@ async def test_conversation_settings_return_claims_exact_revision_and_restores_m
         ),
     ),
 )
+@private_profile_test
 async def test_conversation_settings_return_terminal_rejection_consumes_once(
     rejection,
     expected_copy,
     monkeypatch,
+    request,
 ):
     app = _build_test_app()
     _configure_native_ready_console(app)

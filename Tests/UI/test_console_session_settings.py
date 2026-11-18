@@ -3632,8 +3632,10 @@ def test_first_chat_failed_acknowledgement_rolls_back_and_requeues(
     assert _pending_first_chat(app) == intent
 
 
+@private_profile_test
 def test_first_chat_ack_exception_rolls_back_create_and_survives_release_error(
     monkeypatch,
+    request,
 ) -> None:
     app = _build_test_app()
     console = ChatScreen(app)
