@@ -2172,6 +2172,8 @@ The contained rail preference write also advances the config identity recorded b
 
 The isolated Windows file worker resolves the installed lock dependency for an edit, patch or conditional write. It inherits the selected installation’s package directories and verifies the module locations before loading the fixed worker. The process keeps isolated, no-site startup and the original exclusive lock, expected digest, atomic replace and containment checks. Read-only requests continue to use the product and standard-library roots.
 
+An ordinary warm lease checks its calling operation and native provenance before it can increment the live hold. Inside this same coordinator-lock acquisition it refuses thread-local maintenance, verifies the exact serving hold, evidence and epoch, and counts the lease. An empty intervening lock release would force another observation of the same repository path without admitting any additional work. The original post-count Windows namespace, registry, metadata and final provenance observations run at their existing boundaries. Any failure releases the counted lease.
+
 Within one Windows admission observation, construct the set of named ancestors once. If a path joins a previously visited ancestor, compare the full original spelling, including the case of every non-drive component, before reusing that lexical prefix. The native reader continues to validate every component before opening anything and to check each named association in both directions. The set of path names exists only while building that observation.
 
 #### Passive management of an unused project index

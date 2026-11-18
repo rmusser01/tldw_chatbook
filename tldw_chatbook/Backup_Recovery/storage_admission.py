@@ -1580,10 +1580,8 @@ def _reuse_evidence(root, selector, path, related_paths, checked, execution_sele
     if os.name != "nt" and _mount_read_only(root.parent):
         return None
     with checked(provenance=True):
-        pass
-    if getattr(_local, "admitted", False):
-        raise bootstrap.RecoveryRequired("maintenance_requires_owner_capability")
-    with checked(provenance=True):
+        if getattr(_local, "admitted", False):
+            raise bootstrap.RecoveryRequired("maintenance_requires_owner_capability")
         if (
             _holds.get(key) is not hold
             or not _hold_serving(hold)
