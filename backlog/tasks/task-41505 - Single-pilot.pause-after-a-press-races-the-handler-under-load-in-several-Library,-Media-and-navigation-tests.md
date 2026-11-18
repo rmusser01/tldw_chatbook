@@ -37,3 +37,7 @@ Each of these waits one `pilot.pause()` after `Button.press` (or after a flag) a
 - [ ] #3 `test_actual_handler_review_wake_waits_for_pinned_capacity_and_finishes` has its cause identified, as timing or as a defect
 - [ ] #4 `Tests/Workspaces/test_native_confirmed_undo.py` passes 10 of 10 at `-n 4`, with the cause of each of its two failure shapes named
 <!-- AC:END -->
+
+## Implementation Notes
+
+- `Tests/UI/test_library_shell.py::test_library_media_edit_save_stays_gated_through_detail_refresh` had this cause (it waited for the interlock flag, then asserted the page and facet refresh calls its release starts on workers) and was fixed under TASK-41532.
