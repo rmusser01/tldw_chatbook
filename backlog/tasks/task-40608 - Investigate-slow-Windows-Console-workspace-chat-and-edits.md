@@ -245,6 +245,14 @@ stored message and workspace association. A clock-only poll also preserves the
 published workspace, composition, Inspector and prompt history objects through
 positive retirement.
 
+The next original README accepted its turn but lost the runtime's configuration
+source. The writer admitted a file the runtime had just parsed for the rail save
+and replaced the live config object. At `498cba77b6`, a matching read of the
+same native file preserves that source. Replacing the file still invalidates it.
+Both original journeys and shutdown passed in the resulting diagnostic.
+Adjusted times were 27.5362 s for README and 34.7203 s for approved edit.
+[Windows measurement](../../Docs/Development/task-40608-recovery/windows-journey-timings.md#first-completed-diagnostic-with-the-default-windows-runtime-and-shared-writer)
+
 <!-- SECTION:NOTES:END -->
 
 Measured follow-up under the same [ADR-126 bounded configuration-read amendment](../decisions/126-complete-local-backup-and-recovery.md#task-40608--bounded-sensitive-database-path-configuration-reads): qualify the original sensitive container-reader cohort, then group its admissions without changing readers, overrides or refusal checks. The measured 0.218-second component is separate from the unresolved planning delay; final three-pair acceptance remains open.

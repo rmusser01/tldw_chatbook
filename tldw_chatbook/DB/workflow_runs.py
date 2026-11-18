@@ -62,7 +62,7 @@ class _WindowUnpublished:
 @writer_work_store(
     "workflow", "create", "save_plan", "set_status", "record_attempt", "record_retirement",
     "reserve_result", "publish_result", "remove_payloads", "save_decision",
-    "baseline_change_window", "unused_change_window", "publish_change_window",
+    "baseline_change_window", "unused_change_window", "publish_change_window", "close_unstarted_task",
 )
 class WorkflowRunsStore:
     """Storage only: construction and reads never recover, admit or dispatch work."""
@@ -465,6 +465,24 @@ class WorkflowRunsStore:
             "UPDATE workflow_task_attempts SET retirement=? WHERE id=?",
             ("drained" if drained else "unknown", attempt_id),
         )
+
+    def close_unstarted_task(self, workflow_id: str, attempt_id: str, *, launch_run_id: str) -> None:
+        """Release the original unused reservation only while its claimed run is absent."""
+        with self.db.automatic_work.transaction() as conn:
+            claim = conn.execute(
+                "SELECT t.workflow_id,t.run_id,c.launch_run_id FROM workflow_task_attempts t "
+                "JOIN workflow_task_claims c ON c.task_attempt_id=t.id WHERE t.id=?",
+                (attempt_id,),
+            ).fetchone()
+            if (claim is None or tuple(claim) != (workflow_id, None, launch_run_id)
+                or conn.execute("SELECT 1 FROM agent_runs WHERE id=?", (launch_run_id,)).fetchone()):
+                raise ValueError("workflow_native_launch_changed")
+            conn.execute(
+                "UPDATE workflow_task_attempts SET status='closed',retirement='drained' "
+                "WHERE id=? AND run_id IS NULL",
+                (attempt_id,),
+            )
+            self._release_unused_result(conn, workflow_id, attempt_id)
 
     @staticmethod
     def _never_run_task(conn, workflow_id, attempt_id):

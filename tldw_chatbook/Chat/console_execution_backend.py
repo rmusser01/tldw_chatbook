@@ -42,6 +42,7 @@ class ConsoleExecutionBackend:
         self.ready = False
         self._notices = []
         self._sequence = 0
+        self._refused_requests = set()
         self._rail_fence = None
         self._rail_refresh = None
         self._loop = asyncio.get_running_loop()
@@ -358,6 +359,13 @@ class ConsoleExecutionBackend:
             or message.identity.sequence != self._sequence + 1
         ):
             raise ConsoleProtocolError("backend_command_order_changed")
+        # The UI has spent this wire sequence even if admission refuses. A
+        # later command still has to pass every original source and domain
+        # check, and cannot replay this request under a fresh sequence.
+        self._sequence = message.identity.sequence
+        if message.identity.request_id in self._refused_requests:
+            raise ConsoleProtocolError("backend_request_already_refused")
+        self._refused_requests.add(message.identity.request_id)
         command = self.adapter.command(message)
         from .console_control_dispatch import FenceSource
         from .console_control_publication import ApplySourceRevision, RefreshConfiguration
@@ -374,7 +382,6 @@ class ConsoleExecutionBackend:
             self._capture_rail_fence(command)
         if type(command) is RefreshConfiguration:
             self._capture_rail_refresh(command)
-        self._sequence = message.identity.sequence
         association = self.presentation.association
         if rail_apply:
             # The exact retired publication above authorizes this source
@@ -404,6 +411,8 @@ class ConsoleExecutionBackend:
             receipt.work.add_done_callback(
                 lambda _task: presentation.release_view_checkpoint(message.identity, checkpoint)
             )
+        # The original controls now own duplicate-request detection for this ID.
+        self._refused_requests.remove(message.identity.request_id)
         return receipt
 
     async def _close(self) -> None:

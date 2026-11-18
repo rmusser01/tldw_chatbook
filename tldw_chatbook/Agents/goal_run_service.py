@@ -116,23 +116,7 @@ class GoalRunService:
     @goal_storage_operation
     def checkpoint_failed(self, goal_id: str) -> GoalSnapshot:
         """Fence an already drained increment when checkpoint durability is uncertain."""
-        with self.db.automatic_work.transaction() as conn:
-            goal = self.get(goal_id)
-            if goal.status in {"completed", "removed", "closed"}:
-                return goal
-            conn.execute(
-                "UPDATE automatic_work_chains SET status='review_required',pause_reason='checkpoint_unavailable' WHERE id=?",
-                (goal.chain_id,),
-            )
-            conn.execute(
-                "UPDATE automatic_wake_attempts SET state='review_required' WHERE id IN (SELECT attempt_id FROM goal_iterations WHERE goal_id=?) AND state IN ('prepared','accepted')",
-                (goal_id,),
-            )
-            conn.execute(
-                "UPDATE goal_runs SET status='recovery_required',pause_reason='checkpoint_unavailable',revision=revision+1 WHERE id=?",
-                (goal_id,),
-            )
-            return self.get(goal_id)
+        return self.db.goal_runs.checkpoint_failed(goal_id)
 
     @goal_storage_operation
     def completion_check(
@@ -186,8 +170,6 @@ class GoalRunService:
     @goal_storage_operation
     def defer(self, goal_id: str, *, reason: str, delay: float) -> GoalSnapshot:
         """Persist one bounded retry time inside the original chain deadline."""
-        import time
-
         from tldw_chatbook.Agents.automatic_work_budget import (
             AutomaticWorkLimits,
             AutomaticWorkRefused,
@@ -203,32 +185,11 @@ class GoalRunService:
             )
         except AutomaticWorkRefused as exc:
             return self._state(goal, "paused", exc.reason)
-        if (
-            reason not in {"primary_capacity", "pre_effect_rate_limit"}
-            or not 0 < delay <= 30
-        ):
-            raise ValueError("invalid_goal_retry")
-        with self.db.automatic_work.transaction() as conn:
-            goal = self.get(goal_id)
-            if goal.status != "ready":
-                return goal
-            when = time.time() + delay
-            if goal.accounting.deadline_at is not None:
-                when = min(when, goal.accounting.deadline_at)
-            conn.execute(
-                "INSERT INTO goal_waits VALUES (?,?,?) ON CONFLICT(goal_id) DO UPDATE SET retry_at=excluded.retry_at,reason=excluded.reason",
-                (goal_id, when, reason),
-            )
-            conn.execute(
-                "UPDATE goal_runs SET pause_reason=?,revision=revision+1 WHERE id=?",
-                (reason, goal_id),
-            )
-            return self.get(goal_id)
+        return self.db.goal_runs.defer_ready(goal_id, reason=reason, delay=delay)
 
     @goal_storage_operation
     def clear_wait(self, goal_id: str) -> None:
-        with self.db.automatic_work.transaction() as conn:
-            conn.execute("DELETE FROM goal_waits WHERE goal_id=?", (goal_id,))
+        return self.db.goal_runs.clear_wait(goal_id)
 
     @goal_storage_operation
     def project_recovery(
@@ -343,21 +304,7 @@ class GoalRunService:
         self, goal_id: str, *, expected_revision: int, resolution: RecoveryResolution
     ) -> GoalSnapshot:
         """Close an interruption conservatively; no human assertion certifies effects."""
-        from tldw_chatbook.Agents.goal_models import RecoveryResolution
-
-        if type(resolution) is not RecoveryResolution:
-            raise TypeError("typed recovery resolution required")
-        with self.db.automatic_work.transaction() as conn:
-            goal = self.get(goal_id)
-            if goal.revision != expected_revision:
-                raise ValueError("revision_conflict")
-            if goal.status != "recovery_required":
-                raise ValueError("recovery_unavailable")
-            conn.execute(
-                "UPDATE goal_runs SET status='closed',pause_reason='closed_uncertain',revision=revision+1 WHERE id=?",
-                (goal_id,),
-            )
-            return self.get(goal_id)
+        return self.db.goal_runs.resolve_recovery(goal_id, expected_revision=expected_revision, resolution=resolution)
 
     @goal_storage_operation
     def remove_payloads(self, goal_id: str) -> GoalSnapshot:

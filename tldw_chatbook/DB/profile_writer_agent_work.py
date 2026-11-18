@@ -70,6 +70,8 @@ def _client_database(kind, owner):
     db = owner._db if kind in ("ledger", "worktree") else owner.db
     if type(db) is not AgentRunsDB or db._writer_profile is None or not _original_store(kind, owner):
         return None
+    if kind == "goal" and owner.payload_limit != owner._DEFAULT_PAYLOAD_LIMIT:
+        return None
     conn = getattr(db._thread_local, "conn", None)
     if conn is not None:
         try:
@@ -106,6 +108,13 @@ def _routed(kind, name, method):
         signature, request, result_type = _run_contract(method)
         values = dict(signature.bind(owner, *args, **kwargs).arguments)
         del values["self"]
+        exact_model = {
+            "create": "request", "set_provisioning": "snapshot",
+            "resolve_recovery": "resolution", "save_plan": "plan",
+        }.get(name)
+        if exact_model is not None and type(values[exact_model]) is not request.model_fields[exact_model].annotation:
+            # Run the original exact-class refusal. JSON would erase a subtype.
+            return method(owner, *args, **kwargs)
         if kind == "workflow" and name == "baseline_change_window":
             values["roots"] = tuple(str(root) for root in values["roots"])
         if kind == "workflow" and name == "publish_change_window":

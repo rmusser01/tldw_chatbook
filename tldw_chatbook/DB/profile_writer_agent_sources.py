@@ -21,11 +21,11 @@ _SITES = {
     ),
     ("tldw_chatbook.DB.goal_runs", "GoalRunsStore"): (
         "goal_store",
-        "create control settle_control set_provisioning remove_payloads",
+        "create control settle_control set_provisioning remove_payloads checkpoint_failed defer_ready resolve_recovery",
     ),
     ("tldw_chatbook.DB.workflow_runs", "WorkflowRunsStore"): (
         "workflow_store",
-        "create save_plan set_status publish_result remove_payloads save_decision open_change_window",
+        "create save_plan set_status publish_result remove_payloads save_decision open_change_window anchor_change_window",
     ),
     ("tldw_chatbook.Agents.goal_run_service", "GoalRunService"): (
         "goal_service",
@@ -36,6 +36,9 @@ _SITES = {
         "checkpoint_task settle_execution_phase project_recovery resume review_quality "
         "record_returned_planning resolve_recovery",
     ),
+    ("tldw_chatbook.Chat.console_goal_runs", "GoalIterationAuthorization"): (
+        "goal_iteration", "record_outcome",
+    ),
 }
 _PLANNING = "workflow_preparation.abort_planning"
 AGENT_LOCAL_GRANT_KINDS = frozenset(
@@ -45,11 +48,18 @@ AGENT_LOCAL_GRANT_KINDS = frozenset(
 ) | {_PLANNING}
 _methods = {}
 _planning = None
+_ledger_entries = ()
 
 
 def register_agent_grant_sources(cls):
     """Capture the installed method, receiver class and actual transaction code."""
+    global _ledger_entries
     prefix, names = _SITES[(cls.__module__, cls.__name__)]
+    if prefix == "ledger":
+        _ledger_entries = tuple(
+            (name, vars(cls)[name], vars(cls)[name].__code__)
+            for name in ("transaction", "_admission_transaction")
+        )
     for name in names.split():
         descriptor = vars(cls)[name]
         original = inspect.unwrap(descriptor)
@@ -82,8 +92,11 @@ def local_ledger_transaction(ledger, frame):
     caller = sys._getframe(1)
     if (type(ledger) is not AutomaticWorkLedger or db.automatic_work is not ledger
         or caller.f_back is not frame or caller.f_locals.get("self") is not ledger
-        or caller.f_code not in (AutomaticWorkLedger.transaction.__code__,
-                                 AutomaticWorkLedger._admission_transaction.__code__)):
+        or not any(
+            caller.f_code is code and method.__code__ is code
+            and vars(AutomaticWorkLedger).get(name) is method and name not in vars(ledger)
+            for name, method, code in _ledger_entries
+        )):
         raise RecoveryRequired("profile_writer_grant_source_changed")
     if _planning is not None and frame.f_code is _planning[1]:
         original, code = _planning
@@ -100,8 +113,12 @@ def local_ledger_transaction(ledger, frame):
         owner = frame.f_locals.get("self")
         if (type(owner) is not cls or name in vars(owner) or vars(cls).get(name) is not descriptor
             or type(original) is not FunctionType or original.__code__ is not frame.f_code
-            or frame.f_globals is not original.__globals__
-            or (owner is not ledger and getattr(owner, "db", None) is not db)):
+            or frame.f_globals is not original.__globals__):
+            raise RecoveryRequired("profile_writer_grant_source_changed")
+        if kind == "goal_iteration.record_outcome":
+            if owner.context.ledger is not ledger or owner._coordinator.service.db is not db:
+                raise RecoveryRequired("profile_writer_grant_source_changed")
+        elif owner is not ledger and getattr(owner, "db", None) is not db:
             raise RecoveryRequired("profile_writer_grant_source_changed")
     connection = getattr(db._thread_local, "conn", None)
     if connection is not None:

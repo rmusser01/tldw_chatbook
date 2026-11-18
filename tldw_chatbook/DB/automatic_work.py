@@ -13,8 +13,8 @@ import sqlite3
 import sys
 import threading
 import time
-from collections.abc import Callable, Iterator, Sequence
-from contextlib import contextmanager, nullcontext
+from collections.abc import Callable, Sequence
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import asdict
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal
@@ -64,9 +64,14 @@ def _native_step(grant, operation, *args):
     """A failed native call can report an error after SQLite has applied it."""
     try:
         return operation(*args)
-    except BaseException:
+    except BaseException as error:
         if grant is not None:
             grant.uncertain()
+        elif sys.platform == "win32":
+            from .profile_writer import ProfileWriterOutcomeUnknown, in_profile_writer
+
+            if in_profile_writer():
+                raise ProfileWriterOutcomeUnknown("SQLite FULL transaction outcome unconfirmed") from error
         raise
 
 
@@ -246,13 +251,16 @@ class AutomaticWorkLedger:
         ):
             raise AutomaticWorkRefused("settlement_unconfirmed")
 
-    def transaction(self, *, _native=None) -> Iterator[sqlite3.Connection]:
+    def transaction(self, *, _native=None) -> AbstractContextManager[sqlite3.Connection]:
         """Commit an execution fence durably; restore policy on every exit.
 
         Nested transactions are rejected before changing the connection. Catch
         BaseException too: cancellation must never leave a fence half-open.
         """
-        custody = local_ledger_transaction(self, sys._getframe(1)) if _native is None else None
+        custody = (
+            local_ledger_transaction(self, sys._getframe(1))
+            if _native is None and self._db._writer_profile is not None else None
+        )
         return self._transaction(custody, _native=_native)
 
     @contextmanager
@@ -292,9 +300,12 @@ class AutomaticWorkLedger:
 
     def _admission_transaction(
         self, chain_id: str, *, _native=None
-    ) -> Iterator[sqlite3.Connection]:
+    ) -> AbstractContextManager[sqlite3.Connection]:
         """Roll back refused work, retaining clock observations and its pause."""
-        custody = local_ledger_transaction(self, sys._getframe(1)) if _native is None else None
+        custody = (
+            local_ledger_transaction(self, sys._getframe(1))
+            if _native is None and self._db._writer_profile is not None else None
+        )
         return self._admission_scope(chain_id, _native=_native, custody=custody)
 
     @contextmanager

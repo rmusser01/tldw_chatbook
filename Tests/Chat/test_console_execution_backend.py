@@ -11,6 +11,45 @@ from Tests.private_profile import private_profile_test
 
 @private_profile_test
 @pytest.mark.asyncio
+async def test_refused_wire_command_consumes_its_sequence_without_granting_admission(request, monkeypatch):
+    from Tests.Chat.test_console_execution_profile import _settled_profile
+    from tldw_chatbook import config
+    from tldw_chatbook.Chat.console_execution_backend import ConsoleExecutionBackend
+    from tldw_chatbook.Chat.console_execution_profile import open_console_backend_profile
+    from tldw_chatbook.Chat.console_execution_protocol import ConsoleProtocolError, ConsoleWireMessage, WireIdentity
+
+    path, directory, *_ = _settled_profile()
+    profile = open_console_backend_profile(expected_config_path=path, expected_data_directory=directory)
+    backend = ConsoleExecutionBackend(profile, profile_epoch="profile", service_epoch="runtime")
+
+    def read(sequence, request_id):
+        return ConsoleWireMessage(
+            WireIdentity("profile", "runtime", sequence, request_id), "command",
+            "PermissionAction", {"operation": {"kind": "ReadKillSwitch"}},
+        )
+
+    try:
+        backend.start()
+        with monkeypatch.context() as changed:
+            changed.setattr(config, "_CONFIG_CACHE", dict(config._CONFIG_CACHE))
+            with pytest.raises(RuntimeError, match="source association changed"):
+                backend.dispatch(read(1, "refused"))
+        assert "refused" not in backend.adapter._receipts
+        with pytest.raises(ConsoleProtocolError, match="backend_command_order_changed"):
+            backend.dispatch(read(1, "refused"))
+        with pytest.raises(ConsoleProtocolError, match="backend_command_order_changed"):
+            backend.dispatch(read(3, "skipped"))
+        with pytest.raises(ConsoleProtocolError):
+            backend.dispatch(read(2, "refused"))
+        receipt = backend.dispatch(read(3, "fresh"))
+        assert type(await receipt.applied) is bool
+        assert await receipt.retired is True
+    finally:
+        await backend.aclose()
+
+
+@private_profile_test
+@pytest.mark.asyncio
 async def test_backend_constructs_one_original_graph_and_permission_owner(request):
     from Tests.Chat.test_console_execution_profile import _settled_profile
     from tldw_chatbook.Chat.console_execution_backend import ConsoleExecutionBackend

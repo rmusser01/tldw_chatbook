@@ -517,6 +517,12 @@ identify the allowed cases.
 | Workflow interval settlement, task binding and planning return | The original dispatch, drain, cancellation or planning proof must agree with the recorded phase, task and interval. The same rule applies to workflow quality review and recovery closure while claims might still be live. |
 | Store mutations that return a live accounting snapshot | The original coordinator can have installed a clock validator that reads the active native SQLite transaction. Those branches use the original validator against that connection. |
 
+Native Workflow phase execution currently requires POSIX process groups with
+`os.killpg`. Windows can store and inspect Workflow history. The source-checked
+phase and child-commit boundaries preserve the existing execution qualification.
+Goal outcome publication and Workflow change-window anchoring also retain the
+original in-process run authorization or worktree owner.
+
 A grant starts at the bounded SQLite operation and ends after commit or rollback,
 restoration of the previous synchronous policy and retirement of the original
 operation. An independently owned pre-existing handle may remain idle. A new

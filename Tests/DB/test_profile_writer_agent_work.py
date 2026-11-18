@@ -122,3 +122,129 @@ def test_unacknowledged_worktree_claim_is_never_completed_a_second_time(monkeypa
         assert repository.get_for_conversation("run", "scope")["mutation_state"] == "applying"
     finally:
         db.close()
+
+
+@pytest.mark.asyncio
+async def test_lost_goal_checkpoint_does_not_submit_a_second_mutation():
+    import asyncio
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_goal_runs import ConsoleGoalCoordinator
+    from tldw_chatbook.DB.store_errors import StoreMutationOutcomeUnknown
+
+    def checkpoint(_):
+        raise StoreMutationOutcomeUnknown("native checkpoint receipt was lost")
+
+    async def invoke(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    async def dispatch(_):
+        return SimpleNamespace(reason_code=None, attempt_id="accepted")
+
+    coordinator = SimpleNamespace(
+        _closed=False, _owner_id="owner", _wake=asyncio.Event(),
+        ledger=SimpleNamespace(read_goal_attempt=lambda *_args, **_kwargs: SimpleNamespace(state="accepted")),
+        service=SimpleNamespace(
+            call=invoke, get=lambda _: SimpleNamespace(status="ready", retry_at=None),
+            checkpoint=checkpoint, checkpoint_failed=lambda _: pytest.fail("unknown checkpoint was rewritten"),
+        ),
+        dispatch_once=dispatch, notify_goal_changed=lambda _: None,
+    )
+    with pytest.raises(StoreMutationOutcomeUnknown, match="receipt was lost"):
+        await ConsoleGoalCoordinator._continue(coordinator, "goal")
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="native Windows profile writer")
+def test_goal_service_uses_writer_for_wait_and_recovery_rows(monkeypatch):
+    from types import SimpleNamespace
+
+    from Tests.Agents.test_goal_models import request
+    from tldw_chatbook import config
+    from tldw_chatbook.Agents.goal_models import RecoveryResolution
+    from tldw_chatbook.Agents.goal_run_service import GoalRunService
+    from tldw_chatbook.DB import profile_writer
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    profile = config.get_user_data_dir()
+    db = AgentRunsDB(profile / "agent_runs.db", reconcile_on_init=False)
+    operations = []
+    submit = profile_writer.call_bound_profile_writer
+
+    def checked(db, profile, name, arguments):
+        operations.append(name)
+        return submit(db, profile, name, arguments)
+
+    monkeypatch.setattr(profile_writer, "call_bound_profile_writer", checked)
+    try:
+        service = GoalRunService(db, SimpleNamespace())
+        starting = db.goal_runs.create(request(), launch_id="service-wait")
+        goal = db.goal_runs.set_provisioning(starting, status="ready")
+        deferred = service.defer(goal.id, reason="primary_capacity", delay=1)
+        assert deferred.retry_reason == "primary_capacity" and deferred.retry_at > 0
+        service.clear_wait(goal.id)
+        assert service.get(goal.id).retry_at is None
+        fenced = service.checkpoint_failed(goal.id)
+        assert fenced.status == "recovery_required"
+        with pytest.raises(TypeError, match="typed recovery resolution required"):
+            service.resolve_recovery(goal.id, expected_revision=fenced.revision, resolution="close_uncertain")
+        closed = service.resolve_recovery(
+            goal.id, expected_revision=fenced.revision, resolution=RecoveryResolution.CLOSE_UNCERTAIN,
+        )
+        assert closed.status == "closed" and closed.accounting.uncertain
+        assert {
+            "agent_runs.work.goal.defer_ready", "agent_runs.work.goal.clear_wait",
+            "agent_runs.work.goal.checkpoint_failed", "agent_runs.work.goal.resolve_recovery",
+        }.issubset(operations)
+    finally:
+        db.close()
+        profile_writer.drain_profile_writer(profile)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="native Windows profile writer")
+def test_unstarted_workflow_close_rechecks_the_claim_and_run_before_releasing_capacity(monkeypatch):
+    from types import SimpleNamespace
+
+    from Tests.DB.test_workflow_attempts import prepare
+    from Tests.DB.test_workflow_runs import planned
+    from tldw_chatbook import config
+    from tldw_chatbook.DB import profile_writer
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    monkeypatch.setenv("TLDW_AGENTS_WORKFLOW_RUNS_ENABLED", "true")
+    profile = config.get_user_data_dir()
+    db = AgentRunsDB(profile / "agent_runs.db", reconcile_on_init=False)
+    try:
+        # Workflow history stores a POSIX locator. The storage fixture does
+        # not launch a process or open the retained Workspace.
+        location = SimpleNamespace(resolve=lambda: "/tmp/retained-workflow")
+        db.automatic_work.recover(current_owner_id="owner")
+        workflow = planned(db, location)
+        phase = prepare(db, workflow)
+        assert db.automatic_work.accept_workflow_phase(phase.id, owner_id="owner")
+        claim = db.automatic_work.claim_workflow_task(phase.id, task_id="task-1", owner_id="owner")
+
+        def rows():
+            with db.connection() as connection:
+                return tuple(connection.execute(
+                    "SELECT t.status,t.retirement,p.state FROM workflow_task_attempts t "
+                    "JOIN workflow_payload_reservations p ON p.attempt_id=t.id WHERE t.id=?",
+                    (claim.id,),
+                ).fetchone())
+
+        before = rows()
+        assert before[2] == "reserved"
+        with pytest.raises(ValueError, match="workflow_native_launch_changed"):
+            db.workflow_runs.close_unstarted_task(workflow.id, claim.id, launch_run_id="unrelated")
+        assert rows() == before
+        db.workflow_runs.close_unstarted_task(workflow.id, claim.id, launch_run_id=claim.launch_run_id)
+        assert rows() == ("closed", "drained", "removed")
+        db.create_run(
+            conversation_id=workflow.request.conversation_id, work_chain_id=workflow.chain_id,
+            agent_kind="subagent", run_id=claim.launch_run_id,
+        )
+        with pytest.raises(ValueError, match="workflow_native_launch_changed"):
+            db.workflow_runs.close_unstarted_task(workflow.id, claim.id, launch_run_id=claim.launch_run_id)
+        assert rows() == ("closed", "drained", "removed")
+    finally:
+        db.close()
+        profile_writer.drain_profile_writer(profile)

@@ -31,6 +31,8 @@ from tldw_chatbook.Agents.goal_models import (
 from tldw_chatbook.Agents.goal_storage_lifetime import goal_authority_operation
 from tldw_chatbook.Agents.run_log import setting as _setting
 from tldw_chatbook.Chat.console_provider_endpoints import goal_provider_ref
+from tldw_chatbook.DB.profile_writer_agent_sources import register_agent_grant_sources
+from tldw_chatbook.DB.store_errors import StoreMutationOutcomeUnknown
 from tldw_chatbook.Skills_Interop.skill_script_runner import ScriptRunResult
 
 if TYPE_CHECKING:
@@ -46,6 +48,7 @@ if TYPE_CHECKING:
 _KEY = object()
 
 
+@register_agent_grant_sources
 class GoalIterationAuthorization:
     """One coordinator-issued capability bound to exact durable authority."""
 
@@ -715,7 +718,9 @@ class ConsoleGoalCoordinator:
                     if attempt.state in {"accepted", "review_required"}:
                         try:
                             await self.service.call(self.service.checkpoint, result)
-                        except Exception:  # noqa: BLE001 - never replay to replace a lost checkpoint
+                        except StoreMutationOutcomeUnknown:
+                            raise
+                        except Exception:  # noqa: BLE001 - fence an unsuccessful checkpoint
                             return await self.service.call(
                                 self.service.checkpoint_failed, goal_id
                             )

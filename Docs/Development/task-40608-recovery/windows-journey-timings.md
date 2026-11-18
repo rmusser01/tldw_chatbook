@@ -2,7 +2,13 @@
 
 TASK-40608 measures from Send to the persisted reply, subtracting only the original measured disclosure and approval waits. Each of three sequential baseline/candidate pairs must preserve all original journey assertions. Every candidate README and approved edit must finish in under 5 seconds, with at least a 30% median reduction for each journey. The measurements below come from Windows 10 and the scripted loopback provider. [Task and benchmark contract](../../../backlog/tasks/task-40608%20-%20Investigate-slow-Windows-Console-workspace-chat-and-edits.md) · [Original timing observer](original-journey/task40608_trace.py)
 
-The latest three sequential Windows 10 pairs used the original local baseline and the opt-in process candidate at `5fd0c8cd5e`. Median README time fell **254.99 → 18.59 s (92.71%)**. Median approved edit time fell **361.64 → 20.80 s (94.25%)**. All twelve turns and shutdown checks passed. **0 of 6** candidate turns finished under five seconds. Regular startup still selects the local backend. [Verified results and original receipt hashes](original-journey/qd-windows10-results.json)
+The latest three sequential Windows 10 pairs used the original local baseline and the opt-in process candidate at `5fd0c8cd5e`. Median README time fell **254.99 → 18.59 s (92.71%)**. Median approved edit time fell **361.64 → 20.80 s (94.25%)**. All twelve turns and shutdown checks passed. **0 of 6** candidate turns finished under five seconds. Regular startup selected the local backend at that revision. [Verified results and original receipt hashes](original-journey/qd-windows10-results.json)
+
+### First completed diagnostic with the default Windows runtime and shared writer
+
+Both original journeys passed on `498cba77b6`, including two README approvals, three edit approvals, all eleven loopback requests and shutdown. The additional writer guard recorded two elected writers serving and retiring, with zero blocked destinations. The original timer reported **27.5362 s for README** and **34.7203 s for approved edit** after subtracting the recorded human waits. The run was a single diagnostic while other development tests were active. The earlier matched results above refer to a different candidate.
+
+README took 14.4103 s from Send to first HTTP, including 0.6645 s of measured disclosure wait. Edit took 9.1038 s to first HTTP. Provider response handling totaled 0.0326 s and 0.0132 s respectively. The database held eleven normalized trace calls and eleven response links after verification. The frozen source manifest was `a1e034270127cdae3da2801d8d3dd0fd2fc2a8d1fb169624b45579a63d2997c8`. [Runtime and writer ownership](../../../backlog/decisions/126-complete-local-backup-and-recovery.md#task-40608-external-console-runtime-and-profile-writer)
 
 ## Remaining time on the latest fully paired candidate
 
