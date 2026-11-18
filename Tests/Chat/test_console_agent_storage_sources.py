@@ -513,23 +513,87 @@ async def test_sources_changed_observes_the_named_service(tmp_path):
     assert sources_changed(captured)
 
 
+def _ordered_source_checks(text):
+    """Line numbers where ``==``/``!=`` compares a ``captured_sources`` call.
+
+    ``set(...)``/``frozenset(...)`` operands are the order-free form that
+    ``sources_changed`` itself uses. A value assigned first and compared on a
+    later line is not followed.
+    """
+    import ast
+
+    tree = ast.parse(text)
+    names = {"captured_sources"} | {
+        alias.asname
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+        if alias.name == "captured_sources" and alias.asname
+    }
+
+    def ordered(node):
+        if isinstance(node, ast.Call):
+            func = node.func
+            name = getattr(func, "id", getattr(func, "attr", None))
+            if isinstance(func, ast.Name) and name in {"set", "frozenset"}:
+                return False
+            if name in names:
+                return True
+        return any(ordered(child) for child in ast.iter_child_nodes(node))
+
+    return [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Compare)
+        and any(isinstance(op, (ast.Eq, ast.NotEq)) for op in node.ops)
+        and any(ordered(side) for side in (node.left, *node.comparators))
+    ]
+
+
+@pytest.mark.parametrize(
+    "text,line",
+    [
+        ("flag = (\n    captured_sources(bridge)\n    != sources\n)\n", 2),
+        ("flag = captured_sources(self.bridge()) != sources\n", 1),
+        ("flag = sources != activation.captured_sources(None)\n", 1),
+        (
+            "from tldw_chatbook.Agents.activation import captured_sources as observe\n"
+            "flag = observe(None) != sources\n",
+            2,
+        ),
+        ("flag = tuple(captured_sources(bridge)) != sources\n", 1),
+        ("flag = _guard.captured_sources(None) == self.sources\n", 1),
+    ],
+)
+async def test_ordered_source_census_flags_each_form(text, line):
+    assert _ordered_source_checks(text) == [line]
+
+
+async def test_ordered_source_census_passes_the_set_forms():
+    text = (
+        "flag = sources_changed(sources, bridge)\n"
+        "flag = set(captured_sources(None)) != set(sources)\n"
+        "sources = captured_sources(bridge)\n"
+    )
+    assert _ordered_source_checks(text) == []
+
+
 async def test_no_source_check_compares_captured_sources_in_order():
     """Admitted sources are a set; an ordered check refuses a reordered nest."""
-    import re
     from pathlib import Path
 
     import tldw_chatbook
 
-    ordered = re.compile(
-        r"captured_sources\([^()]*\)\s*[!=]=|[!=]=\s*(?:_guard\.)?captured_sources\("
-    )
     root = Path(tldw_chatbook.__file__).parent
-    hits = [
-        f"{path.relative_to(root)}:{number}"
-        for path in sorted(root.rglob("*.py"))
-        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
-        if ordered.search(line)
-    ]
+    hits = []
+    for path in sorted(root.rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        # Every form the census follows, aliases included, names the function.
+        if "captured_sources" in text:
+            hits += [
+                f"{path.relative_to(root)}:{line}"
+                for line in _ordered_source_checks(text)
+            ]
     assert not hits, f"use activation.sources_changed(): {hits}"
 
 

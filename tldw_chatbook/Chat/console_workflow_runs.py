@@ -117,7 +117,11 @@ async def _accept_remaining_workflow_phase(
     """
     import asyncio
 
-    from tldw_chatbook.Agents.activation import captured_sources, execution, sources_changed
+    from tldw_chatbook.Agents.activation import (
+        captured_sources,
+        execution,
+        sources_changed,
+    )
     from tldw_chatbook.Agents.execution_capacity import CapacityRefused, WorkOrigin
     from tldw_chatbook.Agents.goal_storage_lifetime import owned_goal_storage
     from tldw_chatbook.Agents.workflow_models import WorkflowDecision
@@ -888,7 +892,11 @@ class ConsoleWorkflowCoordinator:
         """Sequence the same native read and its host return without another task."""
         import asyncio
 
-        from tldw_chatbook.Agents.activation import captured_sources, sources_changed, worker_guard
+        from tldw_chatbook.Agents.activation import (
+            captured_sources,
+            sources_changed,
+            worker_guard,
+        )
         from tldw_chatbook.Agents.goal_storage_lifetime import owned_goal_storage
         from tldw_chatbook.Agents.workflow_run_service import WorkflowRunService
 
@@ -2220,7 +2228,11 @@ class ConsoleWorkflowCoordinator:
         """Track the original control's complete worker and reader return."""
         import asyncio
 
-        from tldw_chatbook.Agents.activation import captured_sources, sources_changed, worker_guard
+        from tldw_chatbook.Agents.activation import (
+            captured_sources,
+            sources_changed,
+            worker_guard,
+        )
         from tldw_chatbook.Agents.goal_storage_lifetime import owned_goal_storage
 
         from . import console_preparation_reads as native
