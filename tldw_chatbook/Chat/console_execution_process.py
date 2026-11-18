@@ -959,12 +959,9 @@ class ConsoleExecutionClient:
         """Adopt one exact retired projection without constructing a local store."""
         requested_at = time.monotonic()
         from .console_execution_projection_result import (
-            decode_projection_payload,
-            decode_projection_view,
-            decode_projection_readiness,
+            decode_projection_adoption,
             projection_key,
         )
-        from .console_execution_composition_values import decode_session_composition
 
         previous = self._projection
         published = self.projection_view
@@ -1165,27 +1162,12 @@ class ConsoleExecutionClient:
         if message is None:
             raise ConsoleProtocolError("projection_message_missing")
         payload = encode_message(message)["payload"]
-        value = decode_projection_payload(payload, previous=previous)
-        projection_view = decode_projection_view(payload, value)
-        from .console_execution_workspace_values import decode_workspace_surface
-        from .console_execution_session_surface import decode_session_surface_projection
-
-        workspace_surface = decode_workspace_surface(payload["session_view"]["workspace"])
-        session_surface = decode_session_surface_projection(
-            projection_view, payload["session_view"]["session_surface"],
-        )
-        decoded_readiness = decode_projection_readiness(
-            payload, projection_view
+        value, projection_view, workspace_surface, session_surface, decoded_readiness, composition = (
+            decode_projection_adoption(payload, previous=previous)
         )
         if len(decoded_readiness) == 11:
             decoded_readiness = (*decoded_readiness, None)
         effective, readiness, provider, model, remaining, captured_at, provider_chip, context_summary, agent_rail, prompt_history, send_selection, project_head = decoded_readiness
-        composition = (
-            decode_session_composition(
-                payload["session_view"]["composition"],
-                projection_view.session(projection_view.active_session_id),
-            ) if projection_view.active_session_id is not None else None
-        )
         deadline = _projection_readiness_deadline(
             requested_at, captured_at, remaining, time.monotonic(),
         )

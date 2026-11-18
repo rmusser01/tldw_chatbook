@@ -127,7 +127,7 @@ def _session_view(payload: dict) -> tuple:
     for row in rows:
         if not row.id or not row.incarnation_id or row.id in identities:
             raise ConsoleProtocolError("invalid_projection_view_session")
-        identities[row.id] = row.incarnation_id
+        identities[row.id] = row
     active = value["active_session_id"]
     if active is not None and (type(active) is not str or active not in identities):
         raise ConsoleProtocolError("invalid_projection_view_active")
@@ -154,7 +154,8 @@ def _session_view(payload: dict) -> tuple:
         fingerprints.append((session_id, numbers))
     if (
         seen != identities.keys()
-        or identities.get(payload["session_id"]) != payload["incarnation_id"]
+        or payload["session_id"] not in identities
+        or identities[payload["session_id"]].incarnation_id != payload["incarnation_id"]
     ):
         raise ConsoleProtocolError("projection_view_session_changed")
     pressed = value["pressed_inputs"]
@@ -167,7 +168,7 @@ def _session_view(payload: dict) -> tuple:
         != pressed["attachment_ids"]
     ):
         raise ConsoleProtocolError("projection_pressed_inputs_changed")
-    current_row = next(row for row in rows if row.id == payload["session_id"])
+    current_row = identities[payload["session_id"]]
     if (
         pressed["draft"] != current_row.draft
         or pressed["settings_revision"] != current_row.settings_revision
@@ -179,16 +180,18 @@ def _session_view(payload: dict) -> tuple:
         )
     ):
         raise ConsoleProtocolError("projection_input_row_changed")
+    sections = None
     if "readiness" in value:
-        _readiness(value["readiness"], current_row)
+        readiness = _readiness(value["readiness"], current_row)
         from .console_execution_composition_values import decode_session_composition
 
+        composition = None
         if active is None:
             if value["composition"] is not None:
                 raise ConsoleProtocolError("projection_composition_without_active_session")
         else:
-            decode_session_composition(
-                value["composition"], next(row for row in rows if row.id == active)
+            composition = decode_session_composition(
+                value["composition"], identities[active]
             )
         from .console_execution_workspace_values import decode_workspace_surface
         from .console_execution_projection_view import ConsoleProjectionView
@@ -201,8 +204,9 @@ def _session_view(payload: dict) -> tuple:
         row_view = ConsoleProjectionView(
             payload["source_revision"], rows, active, tuple(fingerprints), (),
         )
-        decode_session_surface_projection(row_view, value["session_surface"])
-    return rows, active, tuple(fingerprints)
+        session_surface = decode_session_surface_projection(row_view, value["session_surface"])
+        sections = surface, session_surface, readiness, composition
+    return rows, active, tuple(fingerprints), sections
 
 
 def _readiness(value, row) -> tuple:
@@ -348,14 +352,40 @@ def decode_projection_view(
     payload: dict, projection: ConsoleProjection
 ) -> ConsoleProjectionView:
     """Build the finite read-only view from this exact retired frame and rows."""
+    return _decode_projection_view(payload, projection)[0]
+
+
+def _decode_projection_view(payload: dict, projection: ConsoleProjection) -> tuple:
     from .console_execution_projection_view import ConsoleProjectionView
 
     if "session_view" not in payload:
         raise ConsoleProtocolError("projection_view_missing")
-    rows, active, fingerprints = _session_view(payload)
-    return ConsoleProjectionView(
+    rows, active, fingerprints, sections = _session_view(payload)
+    view = ConsoleProjectionView(
         projection.source_revision, rows, active, fingerprints, (projection,)
     )
+    return view, sections
+
+
+def decode_projection_adoption(
+    payload: dict, *, previous: ConsoleProjection | None = None,
+) -> tuple:
+    """Decode one detached client payload, retaining its checked display sections.
+
+    Wire validation remains separate. No decoded section supplies execution or
+    freshness authority; the client still checks its receipt and current visit.
+    """
+    from dataclasses import replace
+
+    projection = decode_projection_payload(payload, previous=previous)
+    view, sections = _decode_projection_view(payload, projection)
+    if sections is None:
+        # Legacy views remain valid through the public view decoder, but cannot
+        # supply the workspace required by the original client adoption path.
+        raise KeyError("workspace")
+    workspace, session_surface, readiness, composition = sections
+    session_surface = replace(session_surface, view=view)
+    return projection, view, workspace, session_surface, readiness, composition
 
 
 def decode_projection_payload(
