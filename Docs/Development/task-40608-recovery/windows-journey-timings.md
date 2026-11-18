@@ -37,9 +37,18 @@ The first README interval deducts only the original painted disclosure to click.
 
 The paired receipts assign elapsed time to the arrows and tool rounds. They do not divide that time among Python execution, lock waits, the Windows scheduler, native calls or independent display work. In particular, the `g62` passive-display overlap spans **9.402 / 10.260 s** during a turn that can make foreground progress concurrently. Counting that overlap as recoverable latency would double-count time. The 2,000-row index test and the faster warm-lease component test measure separate workloads. [History query](#source-checks-during-both-completed-windows-turns)
 
-### Next matched original-journey experiment
+### Matched Windows scheduling experiment
 
-On the same Windows 10 host, compare the stock guarded backend with a disposable backend that requests 1 ms Windows wait resolution and a 1 ms CPython switch interval. Use the same application bytes, original fixture, scripted provider, UI clock, checks and shutdown. Run both arms sequentially from fresh profiles and report the three nonoverlapping intervals above, physical admissions when observed, five/six request counts, two/three ordered approvals and both adjusted end-to-end times. Retire the process's timer request and restore its interpreter setting on exit. A functional failure invalidates the arm. The isolated stress test motivates this comparison. Only a fast clean product candidate advances to three fresh baseline/candidate pairs. [Windows timer resolution and power trade-off](https://learn.microsoft.com/en-us/windows/win32/api/timeapi/nf-timeapi-timebeginperiod)
+On November 18, `g69d` and `g69t` ran sequentially on Windows 10 build 19045. Both used the same `b334c52d7e` product, original QA, loopback provider and fresh profiles. The treatment changed only the backend's Windows wait resolution and CPython switch interval to 1 ms. All four turns passed the original assertions and shutdown, including five/six requests and two/three ordered Once decisions. Both backends restored their settings. [Matched numeric results and source hashes](original-journey/g69-windows10-scheduling.json) · [Reproduction method](original-journey/DIAGNOSTICS.md#g69-backend-scheduling-experiment-recovery)
+
+| Arm and journey | Send → first receipt | First → last receipt | Last receipt → persisted reply | Adjusted total | Parent admissions / reuse hits |
+|---|---:|---:|---:|---:|---:|
+| Stock README | 8.937 s | 9.230 s | 1.589 s | **19.757 s** | 91 / 91 |
+| 1 ms README | 8.868 s | 8.607 s | 2.210 s | **19.684 s** | 91 / 91 |
+| Stock edit | 5.588 s | 12.901 s | 1.681 s | **20.170 s** | 33 / 33 |
+| 1 ms edit | 6.184 s | 13.532 s | 1.888 s | **21.604 s** | 47 / 47 |
+
+README improved by 0.073 s (0.37%) and edit regressed by 1.434 s (7.11%). The large synthetic warm-lease gain did not carry over to the original turns. Keep the stock settings. One matched diagnostic does not establish a scheduling effect across hosts. Parent admission counts exclude the backend. [Windows timer resolution and power trade-off](https://learn.microsoft.com/en-us/windows/win32/api/timeapi/nf-timeapi-timebeginperiod)
 
 Later runs `g62`, `g63` and `g66` are individual diagnostics. Their clocks and application revisions are separate from the three paired candidates in the diagram.
 
@@ -48,6 +57,8 @@ Later runs `g62`, `g63` and `g66` are individual diagnostics. Their clocks and a
 On `g66warm1` (`b334c52d7e`), the original fixture passed both turns and shutdown. README took 25.5269 s (11.8570 / 10.9154 / 2.7545 s over the three adjusted intervals above). Edit took 26.1026 s (8.0841 / 15.0171 / 3.0014 s). The parent reported 96 and 50 storage admissions, all with reusable evidence. Five and six provider requests and all two and three Once approvals arrived in order. Original receipt SHA-256: `5499176db2b4c0653249c5816441e3baa49fe92554ad17f8b16e758f962f326b`.
 
 The separate backend observer stopped 11.299 s after README Send, 0.928 s before the first HTTP receipt. Its exact-code guard encountered a second nested function with the same qualified name. Four calls were unfinished. Across 189 completed admissions in the covered prefix, taking the union of overlapping intervals gives 4.041 s in input checks, including 2.507 s in metadata. Forty-two pairs of inputs overlapped. None had a second client already waiting when the first began. This trace supports investigating how concurrent checks interact with Windows scheduling. It provides neither an edit profile nor measured savings from sharing an in-flight check. Numeric stream SHA-256: `866430551dd6bac93cb920f2856a4d22a9f9d1dfe2fde21d34d98622e5a8740f`.
+
+The corrected observer on `g66warm2` had no source refusal and one unfinished observation. The original UI timed out waiting 1,800 seconds for the project-disclosure button, with zero HTTP requests. The backend guard finished and the UI guard did not. The trace captured no underlying application exception. This run failed before either journey supplied a timing.
 
 ## Where the time goes
 

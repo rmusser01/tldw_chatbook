@@ -1,0 +1,116 @@
+{
+  "experiment": "Matched backend scheduling, stock then 1 ms",
+  "acceptance_pair": false,
+  "windows_build": 19045,
+  "intervals": [
+    "Send to first provider receipt",
+    "First to last provider receipt",
+    "Last provider receipt to persisted reply"
+  ],
+  "arms": {
+    "default": {
+      "run": "g69d",
+      "product_commit": "b334c52d7e3c2e69957158632e8c696982132e11",
+      "original_qa_sha256": "448015c99604ce96754436c7dc4f784daed6241bed99062cb8d6ab6e66cbe850",
+      "original_receipt_sha256": "9a26d4f17c92e4ba3c2a7a33cfbf967b5d058f2d14e970b0a2fe2e2b3b3fca63",
+      "timings_sha256": "06c1ec02570211a8c16f752f963c1c1d64bddc853c24f4db9b37b5ae7605548f",
+      "progress_sha256": "90642384d83df868edf9c153f225390b446f7828332c36fbc46ebe65f20b3323",
+      "scheduling_receipt_sha256": "100c5d454e7a8a2d143796cf40088bc1b72d9a69be2cb2734ab4e32bdc4f1883",
+      "backend_switch_interval_s": 0.005,
+      "backend_timer_requested": false,
+      "backend_timer_ended": false,
+      "backend_settings_restored": true,
+      "original_journeys_passed": true,
+      "independent_process_guards_passed": true,
+      "turns": {
+        "readme": {
+          "application_s": 19.757117,
+          "adjusted_phases_s": [
+            8.937286,
+            9.230418,
+            1.589413
+          ],
+          "loopback_handler_s": 0.01914699999998959,
+          "parent_acquisitions": 91,
+          "parent_reuse": 91,
+          "original_requests": 5,
+          "ordered_approvals": [
+            "fs_list",
+            "fs_read"
+          ]
+        },
+        "edit": {
+          "application_s": 20.170326,
+          "adjusted_phases_s": [
+            5.588173,
+            12.900739,
+            1.681414
+          ],
+          "loopback_handler_s": 0.0065949999999901365,
+          "parent_acquisitions": 33,
+          "parent_reuse": 33,
+          "original_requests": 6,
+          "ordered_approvals": [
+            "fs_read",
+            "fs_edit",
+            "git_diff"
+          ]
+        }
+      }
+    },
+    "1ms": {
+      "run": "g69t",
+      "product_commit": "b334c52d7e3c2e69957158632e8c696982132e11",
+      "original_qa_sha256": "448015c99604ce96754436c7dc4f784daed6241bed99062cb8d6ab6e66cbe850",
+      "original_receipt_sha256": "465e848ab36c5cd4acd0de167825bdae30582fbdef4ffcef52bafcf5f54924f1",
+      "timings_sha256": "d25864e2777b37851352366652f60a541f88771c35b434a91084a238b581c24d",
+      "progress_sha256": "73246f8e5eb1d96f3fa114fbab0539ed9fa10b57f47f92c7974c5cff454d8120",
+      "scheduling_receipt_sha256": "4542b0050020ad59c797ecb003f6adfebf3d86eb12ec44ab631c411a60bd3634",
+      "backend_switch_interval_s": 0.001,
+      "backend_timer_requested": true,
+      "backend_timer_ended": true,
+      "backend_settings_restored": true,
+      "original_journeys_passed": true,
+      "independent_process_guards_passed": true,
+      "turns": {
+        "readme": {
+          "application_s": 19.684386,
+          "adjusted_phases_s": [
+            8.867824,
+            8.607046,
+            2.209516
+          ],
+          "loopback_handler_s": 0.015079000000014275,
+          "parent_acquisitions": 91,
+          "parent_reuse": 91,
+          "original_requests": 5,
+          "ordered_approvals": [
+            "fs_list",
+            "fs_read"
+          ]
+        },
+        "edit": {
+          "application_s": 21.603991,
+          "adjusted_phases_s": [
+            6.184046,
+            13.53226,
+            1.887685
+          ],
+          "loopback_handler_s": 0.04599300000000994,
+          "parent_acquisitions": 47,
+          "parent_reuse": 47,
+          "original_requests": 6,
+          "ordered_approvals": [
+            "fs_read",
+            "fs_edit",
+            "git_diff"
+          ]
+        }
+      }
+    }
+  },
+  "change_pct": {
+    "readme": -0.368,
+    "edit": 7.108
+  }
+}
