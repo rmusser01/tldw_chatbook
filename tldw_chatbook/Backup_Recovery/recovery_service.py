@@ -103,6 +103,66 @@ _OWNER_LABELS = {
     "plugins": "Plugins",
     "db.library_collections": "Library collections",
     "db.library_ingest_jobs": "Library imports",
+    # TASK-41111: every other installed owner (an architecture pin keeps this
+    # complete), and the credential material include-mode capture adds.
+    "recovery.credentials": "Credentials",
+    "actor_packs.import_staging": "Actor Pack import scratch files",
+    "agents.history": "Agent run logs",
+    "audio.history": "Audio history",
+    "cache.model_catalog": "Model catalog cache",
+    "chat.dictionary_history": "Chat dictionary history",
+    "chat.grammars": "Generation grammars",
+    "chat.prompt_history": "Prompt history",
+    "chat.prompts": "Prompt templates",
+    "chat.rag_context": "Chat retrieval context",
+    "chatbooks.archives": "Saved chatbooks",
+    "chatbooks.registry": "Chatbook registry",
+    "chunking.templates": "Chunking templates",
+    "collections.archives": "Collection archives",
+    "db.dreams": "Dreams",
+    "db.guardian": "Guardian rules and alerts",
+    "db.rag_indexing": "Retrieval indexing records",
+    "db.workspace_project_index": "Workspace project index",
+    "diagnostics.logs": "Diagnostic logs",
+    "feedback": "Response feedback",
+    "generation.assets": "Generated media",
+    "generation.styles": "Image generation styles",
+    "hooks.permissions": "Hook permissions",
+    "kanban.local": "Kanban boards",
+    "mcp.context": "MCP context",
+    "mcp.history": "MCP execution history",
+    "mcp.local": "MCP definitions",
+    "mcp.permissions": "MCP permissions",
+    "models.artifacts": "Model files",
+    "notes.file_notes": "File notes",
+    "notes.sync_state": "Note sync status",
+    "notes.templates": "Note templates",
+    "personal_context.interview_drafts": "Personal Context interview drafts",
+    "personal_context.repository": "Personal Context profile",
+    "personas": "Personas",
+    "rag.definitions": "Retrieval definitions",
+    "rag.projections": "Retrieval indexes",
+    "recovered.media": "Recovered media",
+    "research.local": "Research projects",
+    "research.paste_staging": "Research paste scratch files",
+    "runtime.chatbook_scratch": "Chatbook scratch files",
+    "runtime.config_lock": "Settings lock file",
+    "runtime.crash_forensics": "Crash log",
+    "runtime.event_state": "Event history",
+    "runtime.instance_lock": "App instance lock",
+    "runtime.scheduler_heartbeat": "Scheduler heartbeat",
+    "runtime.sync_state": "Server sync state",
+    "skills": "Skills",
+    "subscriptions.assets": "Briefing audio",
+    "tamagotchi.config": "Pet settings",
+    "tokenizers.custom": "Custom tokenizers",
+    "tts.profile_store": "Voice profiles",
+    "tts.references": "Voice reference audio",
+    "tts.voices": "Saved voices",
+    "ui.emoji_recents": "Recent emoji",
+    "ui.themes": "Themes",
+    "workspaces.change_tracking": "Workspace change history",
+    "writing.local": "Writing projects",
 }
 
 
@@ -260,6 +320,51 @@ def _verify_personal_context(service, operation, plan) -> None:
     issues = verify_restored_keys(plan)
     if issues:
         service._update(operation, issues=issues)
+
+
+def retains_only_installed_keys(scopes, records, issues) -> bool:
+    """TASK-41124: every credential a replace restore keeps in its encrypted
+    archive is a Personal Context key the same restore installs, so none needs
+    manual recovery. ``scopes`` is the staged descriptor's ``credential_scopes``,
+    ``records`` the staged credential material, ``issues`` the plan's issues; a
+    locked Personal Context line means that key is not installed."""
+    import json
+
+    kinds = {record["id"]: record["kind"] for record in records}
+    retained = {
+        kinds.get(key)
+        for key, value in scopes.items()
+        if json.loads(value)["action"] == "retain"
+    }
+    return retained == {"personal_context"} and not any(
+        issue.startswith("personal_context_restore_locked:") for issue in issues
+    )
+
+
+def _retention_installs_keys(candidate, plan) -> bool:
+    """Classify a staged candidate's retention review; unknown reads as manual.
+
+    Reads only ``candidate.json`` and the staged credential material, pinned and
+    private. Nothing is hashed to choose review copy (``publication._descriptor``
+    would re-hash every staged file), and ``credentials._material`` would go
+    through storage admission, where a candidate's work folder is not enrolled.
+    """
+    from .bootstrap import _read
+    from .limits import RECOVERY_RECORD_BYTES
+
+    try:
+        with pinned_directory(candidate) as fd:
+            descriptor = _read(fd, "candidate.json", max_bytes=RECOVERY_RECORD_BYTES)
+            material = _read(fd, "credential-recovery.json", max_bytes=16 * 1024**2)
+        if descriptor["archive_digest"] != plan.archive_digest or descriptor[
+            "issues"
+        ] != list(plan.issues):
+            return False
+        return retains_only_installed_keys(
+            descriptor["credential_scopes"], material["records"], plan.issues
+        )
+    except Exception:  # noqa: BLE001 - a failed check never replaces the review
+        return False
 
 
 def issue_message(code: str) -> str:
@@ -856,8 +961,21 @@ class RecoveryService:
                         rollback_password=rollback_password,
                         cancel=cancel,
                     )
-                except Exception:
+                except Exception as error:
                     self._link_pending_candidate(operation, candidate)
+                    if getattr(error, "issues", None) == (
+                        "credential_isolated_retention_required",
+                    ) and _retention_installs_keys(candidate, plan):
+                        # TASK-41124: the review says the restore installs it.
+                        # Merged, so a result already recorded is kept (RLock).
+                        with self._lock:
+                            self._update(
+                                operation,
+                                result={
+                                    **self._states[operation]["result"],
+                                    "personal_context_keys_installed": True,
+                                },
+                            )
                     raise
                 result = {
                     "journal_operation_id": journal_operation,
@@ -1166,14 +1284,13 @@ class RecoveryService:
         except (OSError, ValueError, RuntimeError):
             return MappingProxyType(unknown)
 
-    def approve_config(self, generation):
-        """Approve only `config` for the reviewed current generation (TASK-40711).
-
-        This turns model-catalog auto-refresh and workspace change tracking
-        back on. It never approves `runtime.sync_state`: server sync waits for
-        the sync-identity review (TASK-40139; owner ruling of 2026-11-12 in
-        TASK-40137).
-        """
+    @contextmanager
+    def _reviewed_generation(self, generation, owners, changed):
+        """Hold the selected profile's lease and yield the activation store of
+        the reviewed current generation, refusing with ``changed`` unless that
+        generation is still current, requires ``owners`` and is a live paired
+        witness. Approval is per generation, so it covers every profile that
+        recovery restored."""
         from . import bootstrap
         from .activation import ActivationStore
         from .generation_witnesses import _witnesses
@@ -1194,11 +1311,49 @@ class RecoveryService:
             if (
                 witness is None
                 or witness["generation"] != generation
-                or "config" not in witness["owners"]
+                or not set(owners) <= set(witness["owners"])
                 or witness not in _witnesses(selected, lease)
             ):
-                raise ValueError("config_review_changed")
-            ActivationStore(Path(witness["store_root"])).approve(generation, "config")
+                raise ValueError(changed)
+            yield ActivationStore(Path(witness["store_root"]))
+
+    def approve_config(self, generation):
+        """Approve only `config` for the reviewed current generation (TASK-40711).
+
+        This turns model-catalog auto-refresh and workspace change tracking
+        back on. It never approves `runtime.sync_state`: server sync waits for
+        the sync-identity review (TASK-40139; owner ruling of 2026-11-12 in
+        TASK-40137).
+        """
+        with self._reviewed_generation(
+            generation, ("config",), "config_review_changed"
+        ) as store:
+            store.approve(generation, "config")
+
+    def approve_models(self, generation):
+        """Approve only `models.artifacts` for the reviewed current generation
+        (TASK-41301; owner decision 2026-11-16, "Separate model-files review").
+
+        The one approver of restored model files: local model downloads,
+        installs and activation, speech start-up and a restored local embedding
+        model (which also keeps its own exact-files receipt) all use it.
+        """
+        with self._reviewed_generation(
+            generation, ("models.artifacts",), "models_review_changed"
+        ) as store:
+            store.approve(generation, "models.artifacts")
+
+    def approve_speech(self, generation):
+        """Approve only the restored voices and voice profiles (TASK-41119).
+
+        Speech start-up also needs `config` and `models.artifacts`, which keep
+        their own reviews; this approves neither.
+        """
+        with self._reviewed_generation(
+            generation, ("tts.profile_store", "tts.voices"), "speech_review_changed"
+        ) as store:
+            store.approve(generation, "tts.profile_store")
+            store.approve(generation, "tts.voices")
 
     @staticmethod
     def _sync_state_path():

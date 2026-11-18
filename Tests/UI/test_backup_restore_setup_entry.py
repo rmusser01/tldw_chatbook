@@ -796,7 +796,8 @@ async def test_restored_profiles_settings_review_approves_config_alone(
             assert approved == ["generation-1"]
             assert not screen.query("#backup-approve-config")
             summary = _text(screen, "#backup-current-requirements")
-            assert "• runtime / sync state" in summary and "• config" not in summary
+            # TASK-41302: named through owner_label, not the owner id.
+            assert "• Server sync state" in summary and "• Profile settings" not in summary
             assert "Server sync stays off." in message
     finally:
         service.close()
@@ -994,3 +995,330 @@ async def test_an_unreadable_sync_state_never_crashes_restored_profiles(
     finally:
         service.close()
 
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("installed", [True, False])
+async def test_restore_retention_review_says_when_the_restore_installs_the_key(
+    tmp_path, installed
+):
+    """TASK-41124: a replace restore retains a Personal Context key it then
+    installs itself (TASK-40135), so when that is the only retained credential
+    the retention review does not ask for manual recovery. Any other retained
+    credential keeps the manual-recovery copy. ``start_restore`` records the
+    case in the review's result (pinned for real in the Personal Context
+    restore end-to-end test, Tests/Backup_Recovery/test_restore_data_groups.py).
+    """
+    import asyncio
+
+    from textual.widgets import Checkbox, Select
+
+    from tldw_chatbook.Backup_Recovery.capture import CaptureReviewRequired
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+
+    retention = "credential_isolated_retention_required"
+    service = RecoveryService(tmp_path / "control")
+
+    def refused(operation, cancel):
+        if installed:
+            service._update(
+                operation, result={"personal_context_keys_installed": True}
+            )
+        raise CaptureReviewRequired((retention,))
+
+    app = _harness(service)
+    try:
+        async with app.run_test(size=(110, 40)) as pilot:
+            screen = app.screen
+            screen._show_mode("inspect")
+            screen._inspection_id = "fixture-inspection"
+            screen._inspection_summary = {"destination_slots": (), "profile_ids": ()}
+            screen.query_one("#backup-restore-mode", Select).value = "replace"
+            screen.query_one("#backup-restore-form").display = True
+            await pilot.pause()
+            operation = service._start("restore", refused)
+            screen._requested_restore_operation = operation
+            await asyncio.to_thread(service.wait, operation, timeout=10)
+            screen._refresh_status()
+            area = screen.query_one("#backup-restore-credential-review")
+            async with asyncio.timeout(10):
+                while not area.query(Checkbox):
+                    await pilot.pause(0.02)
+            copy = _text(area, "Static")
+            box = area.query_one(Checkbox)
+            assert box.name == retention
+            if installed:
+                assert "manual" not in copy and "manual" not in str(box.label)
+                assert "installs Personal Context's key" in copy
+                assert "encrypted archive" in copy
+                assert str(box.label) == "Accept encrypted retention"
+            else:
+                assert copy.startswith(
+                    "Some incoming credentials need manual recovery"
+                ), copy
+                assert str(box.label) == "Accept encrypted manual retention"
+    finally:
+        await asyncio.to_thread(service.close)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["approved", "changed"])
+async def test_restored_profiles_speech_review_approves_voices_alone(
+    tmp_path, monkeypatch, outcome
+):
+    """TASK-41119: while the current generation's speech owners await review,
+    Restored profiles says speech start-up stays off, names the two other
+    reviews speech needs, and offers Approve voices. The button approves the
+    shown generation through ``approve_speech``; then the review goes and the
+    settings review stays. ``changed``: a stale generation is refused and the
+    review stays. The real approval is pinned against an actual activation
+    binding in Tests/Architecture/test_backup_owner_inventory.py.
+    """
+    import asyncio
+    from types import MappingProxyType
+
+    from textual.widgets import Button
+
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+
+    pending = ["config", "tts.profile_store", "tts.voices"]
+    approved = []
+
+    def current_requirements():
+        return MappingProxyType(
+            {
+                "config": str(tmp_path / "config.toml"),
+                "operation_id": "restore",
+                "generation": "generation-1",
+                "required_owners": ("config", "tts.profile_store", "tts.voices"),
+                "pending_owners": tuple(pending),
+                "requirements_checked": True,
+                "needs_setup": bool(pending),
+                "status": "requirements_checked",
+            }
+        )
+
+    def approve_speech(generation):
+        if outcome == "changed":
+            raise ValueError("speech_review_changed")
+        approved.append(generation)
+        pending.remove("tts.profile_store")
+        pending.remove("tts.voices")
+
+    service = RecoveryService(tmp_path / "control")
+    monkeypatch.setattr(service, "current_requirements", current_requirements)
+    monkeypatch.setattr(service, "profiles", lambda: ())
+    monkeypatch.setattr(service, "approve_speech", approve_speech)
+    app = _harness(service)
+    try:
+        async with app.run_test(size=(100, 36)) as pilot:
+            screen = app.screen
+            await pilot.click("#backup-open-profiles")
+            async with asyncio.timeout(10):
+                while not screen.query("#backup-current-requirements"):
+                    await pilot.pause(0.02)
+            assert screen.query("#backup-speech-review"), "no speech review"
+            review = _text(screen, "#backup-speech-review")
+            assert review.startswith("Speech review")
+            assert "speech start-up stays off" in review
+            assert "covers every profile this recovery restored" in review
+            assert "Approve settings" in review and "Approve model files" in review
+            assert "Review local model" not in review  # TASK-41301
+            button = screen.query_one("#backup-approve-speech", Button)
+            assert str(button.label) == "Approve voices"
+            button.press()
+            async with asyncio.timeout(10):
+                while not _text(screen, "#backup-message"):
+                    await pilot.pause(0.02)
+            message = _text(screen, "#backup-message")
+            if outcome == "changed":
+                assert message == (
+                    "Speech review unavailable: the current profile changed. "
+                    "Review it again."
+                )
+                assert pending == ["config", "tts.profile_store", "tts.voices"]
+                # Review r15br-rev1: the refreshed list offers the review again.
+                async with asyncio.timeout(10):
+                    while not (
+                        screen.query("#backup-speech-review")
+                        and screen.query("#backup-approve-speech")
+                        and not screen.query_one(
+                            "#backup-approve-speech", Button
+                        ).disabled
+                    ):
+                        await pilot.pause(0.02)
+                return
+            # The refreshed list: speech review gone, settings review still there.
+            async with asyncio.timeout(10):
+                while screen.query(
+                    "#backup-speech-review, #backup-approve-speech"
+                ) or not screen.query("#backup-config-review"):
+                    await pilot.pause(0.02)
+            assert approved == ["generation-1"]
+            assert message.startswith("Voices approved.")
+    finally:
+        service.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["approved", "changed"])
+async def test_restored_profiles_model_files_review_approves_models_alone(
+    tmp_path, monkeypatch, outcome
+):
+    """TASK-41301 (owner, 2026-11-16: "Separate model-files review"): while
+    `models.artifacts` awaits review, Restored profiles says what stays off and
+    offers Approve model files, which approves the shown generation through
+    ``approve_models``; then that review goes and the speech review stays.
+    ``changed``: a stale generation is refused and the review comes back. The
+    real approval is pinned against an actual binding in
+    Tests/Architecture/test_backup_owner_inventory.py.
+    """
+    import asyncio
+    from types import MappingProxyType
+
+    from textual.widgets import Button
+
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+
+    pending = ["models.artifacts", "tts.profile_store", "tts.voices"]
+    approved = []
+
+    def current_requirements():
+        return MappingProxyType(
+            {
+                "config": str(tmp_path / "config.toml"),
+                "operation_id": "restore",
+                "generation": "generation-1",
+                "required_owners": tuple(pending),
+                "pending_owners": tuple(pending),
+                "requirements_checked": True,
+                "needs_setup": bool(pending),
+                "status": "requirements_checked",
+            }
+        )
+
+    def approve_models(generation):
+        if outcome == "changed":
+            raise ValueError("models_review_changed")
+        approved.append(generation)
+        pending.remove("models.artifacts")
+
+    service = RecoveryService(tmp_path / "control")
+    monkeypatch.setattr(service, "current_requirements", current_requirements)
+    monkeypatch.setattr(service, "profiles", lambda: ())
+    monkeypatch.setattr(service, "approve_models", approve_models)
+    app = _harness(service)
+    try:
+        async with app.run_test(size=(100, 36)) as pilot:
+            screen = app.screen
+            await pilot.click("#backup-open-profiles")
+            async with asyncio.timeout(10):
+                while not screen.query("#backup-current-requirements"):
+                    await pilot.pause(0.02)
+            assert screen.query("#backup-models-review"), "no model files review"
+            review = _text(screen, "#backup-models-review")
+            assert review.startswith("Model files review")
+            assert "speech start-up" in review and "stay off" in review
+            assert "covers every profile this recovery restored" in review
+            button = screen.query_one("#backup-approve-models", Button)
+            assert str(button.label) == "Approve model files"
+            button.press()
+            async with asyncio.timeout(10):
+                while not _text(screen, "#backup-message"):
+                    await pilot.pause(0.02)
+            message = _text(screen, "#backup-message")
+            if outcome == "changed":
+                assert message == (
+                    "Model files review unavailable: the current profile changed. "
+                    "Review it again."
+                )
+                assert pending == ["models.artifacts", "tts.profile_store", "tts.voices"]
+                async with asyncio.timeout(10):
+                    while not (
+                        screen.query("#backup-models-review")
+                        and screen.query("#backup-approve-models")
+                        and not screen.query_one(
+                            "#backup-approve-models", Button
+                        ).disabled
+                    ):
+                        await pilot.pause(0.02)
+                return
+            async with asyncio.timeout(10):
+                while screen.query(
+                    "#backup-models-review, #backup-approve-models"
+                ) or not screen.query("#backup-speech-review"):
+                    await pilot.pause(0.02)
+            assert approved == ["generation-1"]
+            assert message.startswith("Model files approved.")
+    finally:
+        service.close()
+
+
+@pytest.mark.asyncio
+async def test_restored_profiles_needs_setup_names_owners_by_their_labels(
+    tmp_path, monkeypatch
+):
+    """TASK-41302: Current profile and each restored profile list pending
+    owners under Needs setup by the names every other review uses
+    (`owner_label`, TASK-41111), not by internal ids such as `tts / voices`."""
+    import asyncio
+    from types import MappingProxyType
+
+    from textual.widgets import Static
+
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+
+    def requirements(pending):
+        return {
+            "generation": "generation-1",
+            "required_owners": pending,
+            "pending_owners": pending,
+            "requirements_checked": True,
+            "needs_setup": True,
+        }
+
+    service = RecoveryService(tmp_path / "control")
+    monkeypatch.setattr(
+        service,
+        "current_requirements",
+        lambda: MappingProxyType(
+            {
+                "config": str(tmp_path / "config.toml"),
+                "operation_id": "restore",
+                "status": "requirements_checked",
+                **requirements(("models.artifacts", "tts.voices")),
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        service,
+        "profiles",
+        lambda: (
+            MappingProxyType(
+                {
+                    "profile_id": "restored-1",
+                    "config": str(tmp_path / "restored" / "config.toml"),
+                    "data": str(tmp_path / "restored" / "data"),
+                    "status": "restoration_validated",
+                    **requirements(("ui.themes",)),
+                }
+            ),
+        ),
+    )
+    app = _harness(service)
+    try:
+        async with app.run_test(size=(100, 36)) as pilot:
+            screen = app.screen
+            await pilot.click("#backup-open-profiles")
+            async with asyncio.timeout(10):
+                while not screen.query(".backup-open-profile"):
+                    await pilot.pause(0.02)
+            current = _text(screen, "#backup-current-requirements")
+            assert "• Model files\n• Saved voices" in current, current
+            text = "\n".join(
+                str(widget.render()) for widget in screen.query("#backup-list Static")
+            )
+            assert "• Themes" in text, text
+            assert " / " not in current and "• ui" not in text
+    finally:
+        service.close()

@@ -29805,7 +29805,8 @@ class SettingsScreen(BaseAppScreen):
         )
 
     async def _prepare_local_model_review(self, token) -> None:
-        from ...RAG_Search.model_recovery import preview_local_embedding
+        from ...RAG_Search.model_recovery import (
+            local_embedding_review_text, preview_local_embedding)
         from ...RAG_Search.simplified.active_config import resolve_active_rag_config
         from ...TTS._async_lifecycle import join_retained_task
 
@@ -29827,19 +29828,13 @@ class SettingsScreen(BaseAppScreen):
             return
         if not self._local_model_review_current(token) or self.app.screen is not self:
             return
-        message = (
-            f"Model directory: {review.model_path}\nFiles: {review.file_count}\n"
-            f"Generations: {', '.join(review.generations)}\n\n"
-            "Allow this local embedding model for the reviewed generation? "
-            "No model will load or download. RAG review and Reconcile / rebuild "
-            "are separate actions."
-        )
+        message = local_embedding_review_text(review)  # TASK-41301 copy
         self._local_model_review_prompt_open = True
         self.app.push_screen(
             ConfirmationDialog(
                 title="Review restored local embedding model",
                 message=message,
-                confirm_label="Approve local model",
+                confirm_label="Record review",
             ),
             lambda accepted: self._confirm_local_model_review(token, review, accepted),
         )
@@ -29866,7 +29861,8 @@ class SettingsScreen(BaseAppScreen):
         def approve():
             return approve_local_embedding(resolve_active_rag_config(), fingerprint)
 
-        message = "Local model review recorded. No model loaded and no index rebuilt."
+        message = ("Local model review recorded. No model loaded and no index rebuilt. "
+                   "Approve model files in Backup & Restore > Restored profiles too, if pending.")
         try:
             task = asyncio.create_task(asyncio.to_thread(approve))
             await join_retained_task(task)

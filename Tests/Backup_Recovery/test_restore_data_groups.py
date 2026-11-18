@@ -512,10 +512,15 @@ def succeeded(operation):
     assert result['state'] == 'succeeded', dict(result)
     return result
 
+RETENTION = []
+
 def reviewed(start, acknowledged=(), state='succeeded'):
     """Run one operation; an unacknowledged credential review aborts and retries."""
     result = service.wait(start(acknowledged))
     new = set(result['review_issues']) - set(acknowledged)
+    if result['kind'] == 'restore' and 'credential_isolated_retention_required' in new:
+        # TASK-41124: whether the review may say this restore installs the key.
+        RETENTION.append(result['result'].get('personal_context_keys_installed', False))
     if result['state'] != 'succeeded' and new:
         pending = result['result'].get('journal_operation_id')
         if pending:
@@ -614,6 +619,7 @@ try:
         assert current['device'].values == before
         assert tables(live) == archived
         assert status(live) == ['True', reason]
+        assert RETENTION == [False], RETENTION  # a locked key is not installed
         credentials._credential_store = store
         assert 'personal_context_restore_readable:' + next(
             key for key, path in plan_for().restore if path == live) in plan_for().issues
@@ -621,6 +627,7 @@ try:
             inspection, plan_for(ack), rollback_password=ROLLBACK))
         assert account(live).startswith('personal-context:recovery_')
         assert records(live) == ['record-device-only']
+        assert RETENTION == [False, True], RETENTION
         print('retired and reopened')
         raise SystemExit(0)
     if SCENARIO == 'other_device':
@@ -703,6 +710,8 @@ try:
     restored = reviewed(lambda ack: service.start_restore(
         inspection, plan_for(ack), rollback_password=ROLLBACK))
     assert 'personal_context_key_unverified' not in restored['issues']
+    # TASK-41124: the only retained credential is the key this restore installs.
+    assert RETENTION == ([True] if MODE == 'include' else []), RETENTION
     # AC#1/#2/#4/#11: readable, from a new account; every earlier entry unchanged.
     restored_account = account(target)
     assert restored_account.startswith('personal-context:recovery_')

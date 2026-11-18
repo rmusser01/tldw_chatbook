@@ -163,6 +163,12 @@ replacement** before returning to inspection, choosing the explicit omission
 acknowledgements, and creating a fresh reviewed plan. Do not treat an omission as
 covered by the credential-recovery guarantee.
 
+A **Replace** restore keeps credentials it cannot install in an encrypted archive and
+asks you to accept that retention before anything is replaced. When the only such
+credential is a Personal Context key that the restore installs itself, the review
+says so instead of asking for manual recovery; a copy of the key also stays in the
+encrypted archive.
+
 Target changes invalidate review. Re-inspect and review the actual current state
 instead of trying to reuse a stale confirmation.
 
@@ -257,7 +263,7 @@ corresponding capability inactive.
 
 Restored settings have their own review. Until you approve them, model-catalog
 auto-refresh and workspace change tracking stay off: **Current profile** lists
-`config` under **Needs setup**, followed by a **Settings review** note and
+**Profile settings** under **Needs setup**, followed by a **Settings review** note and
 **Approve settings**. Approving records the review for the generation shown, which
 covers every profile that recovery restored, and turns both back on: workspace change
 tracking at once, model-catalog auto-refresh from the next start. Local model files
@@ -268,6 +274,23 @@ sync: sync calls stay refused (`sync_activation_required`) until the restored sy
 identity is reviewed separately. If the current profile changed after the summary was
 shown, approval is refused; open **Restored profiles** again and review the new
 summary.
+
+Restored voices and voice profiles have their own review as well. Until you approve
+them, speech start-up stays off: **Current profile** lists **Voice profiles** and
+**Saved voices** under **Needs setup**, followed by a **Speech review** note and
+**Approve voices**. Approving records the review for the generation shown, which
+covers every profile that recovery restored, and approves only those two. Speech
+also needs the restored settings (**Approve settings**) and model files (**Approve
+model files**) approved; it starts from the next start once all three are.
+
+Restored model files have their own review too. Until you approve them, local model
+files (downloading, installing, activating or using them), speech start-up and a
+restored local embedding model stay off: **Current profile** lists
+**Model files** under **Needs setup**, followed by a **Model files review** note
+and **Approve model files**. Approving records the review for the generation shown,
+which covers every profile that recovery restored, and approves only the model files.
+A local embedding model for RAG also keeps its own review in **Settings →
+Library/RAG** (below), which checks its exact files; RAG needs both.
 
 Server sync has its own review too, beside **Approve settings**. A restore brings
 back the old device's sync identity, so server sync (Notes, Chat and Personal
@@ -343,8 +366,12 @@ For an existing local HF embedding model, use **Settings → Library/RAG** with 
 active RAG profile selected and any draft changes saved or discarded:
 
 1. Choose **Review local model**. Check the displayed model directory, file count,
-   and recovery generations, then choose **Approve local model**. This records
-   only the model review; it does not load or download a model or rebuild an index.
+   and recovery generations, then choose **Record review**. This records only the
+   review of that model's exact files; it does not load or download a model or
+   rebuild an index. The restored model files also need **Approve model files** in
+   **Backup & Restore → Restored profiles**, in either order. If the folder is also
+   part of another restored profile, the review names that profile's generation:
+   its model files need their own **Approve model files** too, or RAG stays off.
 2. Choose **Review recovery**, inspect the RAG owners, sources, and prerequisites,
    then choose **Approve RAG owners**. Model permission and RAG permission are
    separate; neither approval completes index validation.

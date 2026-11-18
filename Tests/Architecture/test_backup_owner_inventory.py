@@ -1485,6 +1485,108 @@ def test_actor_pack_and_reaction_trees_have_their_own_review_labels():
     assert len(set(labels)) == len(persona), labels
 
 
+def test_every_installed_backup_owner_has_its_own_review_label():
+    """TASK-41111: every installed owner can reach a review (archive Contents,
+    dependency groups, portable relocation), so each has its own name there;
+    ``recovery.credentials`` is the credential material include-mode capture
+    adds. A newly installed owner fails here until it is named."""
+    from tldw_chatbook.Backup_Recovery.owner_registry import install_adapters
+    from tldw_chatbook.Backup_Recovery.recovery_service import _OWNER_LABELS
+
+    owners = [adapter.owner_id for adapter in install_adapters()]
+    owners.append("recovery.credentials")
+    assert [owner for owner in owners if owner not in _OWNER_LABELS] == []
+    labels = [_OWNER_LABELS[owner] for owner in owners]
+    assert len(set(labels)) == len(labels), sorted(labels)
+
+
+@pytest.mark.parametrize(
+    ("retained", "issues", "expected"),
+    [
+        (("personal_context",), ("personal_context_restore_readable:pc",), True),
+        # A server credential the restore remaps is installed, not retained.
+        (("personal_context", "server:create"), (), True),
+        (("personal_context", "generation"), (), False),
+        (("server", "personal_context"), (), False),
+        (
+            ("personal_context",),
+            ("personal_context_restore_locked:personal_context_key_install_unavailable:pc",),
+            False,
+        ),
+        ((), (), False),
+    ],
+)
+def test_retention_review_names_only_keys_the_restore_installs(
+    retained, issues, expected
+):
+    """TASK-41124: the retention review drops "manual recovery" only when every
+    retained scope is a Personal Context key and no Personal Context line in the
+    plan is locked (a locked key is not installed)."""
+    import json
+
+    from tldw_chatbook.Backup_Recovery.recovery_service import (
+        retains_only_installed_keys,
+    )
+
+    records, scopes = [], {}
+    for index, entry in enumerate(retained):
+        kind, _, action = entry.partition(":")
+        records.append({"id": f"r{index}", "kind": kind})
+        scopes[f"r{index}"] = json.dumps({"action": action or "retain"})
+    assert retains_only_installed_keys(scopes, records, issues) is expected
+
+
+def test_retention_classification_reads_without_hashing_staged_files(
+    tmp_path, monkeypatch
+):
+    """TASK-41124 review r15br-rev1: choosing the review's copy reads only the
+    candidate's ``candidate.json`` and credential material. It never re-hashes
+    staged payloads (``publication._descriptor`` hashes every one, twice), and a
+    candidate made for another plan reads as manual."""
+    import json
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Backup_Recovery import archive_reader, journal, publication
+    from tldw_chatbook.Backup_Recovery.recovery_service import (
+        _retention_installs_keys,
+    )
+
+    calls = []
+    for module, name in (
+        (publication, "observe_artifact"),
+        (journal, "observe_artifact"),
+        (archive_reader, "_hash"),
+    ):
+        monkeypatch.setattr(module, name, lambda *a, _n=name, **k: calls.append(_n))
+    candidate = tmp_path / "candidate"
+    candidate.mkdir(mode=0o700)
+    issues = ["personal_context_restore_readable:pc"]
+    for name, document in (
+        (
+            "candidate.json",
+            {
+                "version": 1,
+                "archive_digest": "digest",
+                "issues": issues,
+                "credential_scopes": {"r0": json.dumps({"action": "retain"})},
+                "artifacts": [{"candidate": str(candidate / "payload")}],
+            },
+        ),
+        (
+            "credential-recovery.json",
+            {"version": 1, "records": [{"id": "r0", "kind": "personal_context"}]},
+        ),
+    ):
+        (candidate / name).write_text(json.dumps(document))
+        (candidate / name).chmod(0o600)
+    (candidate / "payload").write_bytes(b"x" * 1024)
+    plan = SimpleNamespace(archive_digest="digest", issues=tuple(issues))
+    assert _retention_installs_keys(candidate, plan) is True
+    assert calls == []
+    other = SimpleNamespace(archive_digest="other", issues=tuple(issues))
+    assert _retention_installs_keys(candidate, other) is False
+
+
 # TASK-40134: the Personal Context repository is a captured backup owner. These
 # fixtures use the in-memory key protector; no test here reaches an OS keyring.
 
@@ -1741,17 +1843,33 @@ def test_no_reviewer_approves_the_shared_sync_owners():
             ("tldw_chatbook/Personal_Context/recovery.py", "OWNER"): 1,
             ("tldw_chatbook/Plugins/backup.py", "OWNER"): 1,
             ("tldw_chatbook/RAG_Search/activation.py", "owner"): 1,
-            ("tldw_chatbook/RAG_Search/model_recovery.py", "'models.artifacts'"): 1,
             ("tldw_chatbook/Skills_Interop/recovery_activation.py", "'skills'"): 1,
             # TASK-40711: Backup & Restore's settings review, `config` only.
             ("tldw_chatbook/Backup_Recovery/recovery_service.py", "'config'"): 1,
             # TASK-40139: the sync-identity review, the only approver of
             # `runtime.sync_state`; it clears the restored identity first.
             ("tldw_chatbook/Sync_Interop/recovery.py", "owner"): 1,
+            # TASK-41119: Backup & Restore's speech review, the only approver
+            # of the two speech owners speech start-up admits through.
+            ("tldw_chatbook/Backup_Recovery/recovery_service.py", "'tts.profile_store'"): 1,
+            ("tldw_chatbook/Backup_Recovery/recovery_service.py", "'tts.voices'"): 1,
+            # TASK-41301 (owner, 2026-11-16): Backup & Restore's model-files
+            # review is the one approver of `models.artifacts`; RAG's local
+            # model review now records only its exact-files receipt.
+            ("tldw_chatbook/Backup_Recovery/recovery_service.py", "'models.artifacts'"): 1,
         }
     )
     assert {"config", "runtime.sync_state"}.isdisjoint(
         {*mcp_owners, personal_context_owner, plugins_owner, *rag_owners}
+    )
+    assert {"tts.profile_store", "tts.voices", "models.artifacts"}.isdisjoint(
+        {
+            *mcp_owners,
+            personal_context_owner,
+            plugins_owner,
+            *rag_owners,
+            *sync_identity_owners,
+        }
     )
     assert sync_identity_owners == ("config", "runtime.sync_state")
 
@@ -1951,3 +2069,235 @@ def test_only_the_settings_review_calls_approve_config():
             if isinstance(node, ast.Attribute) and node.attr == "approve_config":
                 uses[path.relative_to(ROOT).as_posix()] += 1
     assert uses == Counter({"tldw_chatbook/UI/Screens/backup_restore_screen.py": 1})
+
+
+_SPEECH_REVIEW = r"""
+import asyncio, os, sys
+from pathlib import Path
+from types import SimpleNamespace
+from Tests.network_guard import install, blocked_attempts
+install()
+import keyring
+from keyring.backends.null import Keyring
+keyring.set_keyring(Keyring())
+from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storage
+from tldw_chatbook.Backup_Recovery.activation import ActivationStore, bind_activation
+from tldw_chatbook.Backup_Recovery.control_records import admission_authority, register_pending
+from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+# Imported before binding, as the app is: config computes its client id on import.
+from tldw_chatbook import app_speech
+state = sys.argv[1]
+selector = Path(os.environ['TLDW_CONFIG_PATH'])
+data = selector.parent.parent / 'data'
+selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir="' + str(data) + '"\n')
+selector.chmod(0o600)
+root = bootstrap.default_bootstrap_root()
+startup = storage._startups.pop((os.getpid(), str(root)), None)
+if startup: startup.close()
+authority = admission_authority(root)
+authority.register('profile', (selector.parent, data))
+control = selector.parent.parent / 'operation'
+control.mkdir(mode=0o700)
+register_pending(root, 'restore', ('profile',), control, (selector,))
+# Exactly the owners speech start-up admits through (app_speech.py).
+OWNERS = ('config', 'models.artifacts', 'tts.profile_store', 'tts.voices')
+with authority.maintenance(('profile',), 2) as session:
+    bind_activation(root, 'restore', selector, 'generation', OWNERS, session=session)
+(root / ('pending-' + bootstrap._key('restore') + '.json')).unlink()
+store = ActivationStore(control / 'activation')
+SPEECH = ('tts.profile_store', 'tts.voices')
+REVIEWS = {'speech': (SPEECH, 'approve_speech', 'speech_review_changed'),
+           'models': (('models.artifacts',), 'approve_models', 'models_review_changed')}
+done = {'pending': (), 'speech': ('speech',), 'models': ('models',),
+        'both': ('speech', 'models')}[state]
+service = RecoveryService(selector.parent.parent / 'jobs')
+try:
+    service.approve_config('generation')  # the settings review (TASK-40711)
+    before = service.current_requirements()
+    assert before['pending_owners'] == ('models.artifacts', *SPEECH), dict(before)
+    for review in done:
+        _, approve, changed = REVIEWS[review]
+        try:
+            getattr(service, approve)('another-generation')
+        except ValueError as error:
+            assert str(error) == changed, error
+        else:
+            raise AssertionError('a stale review approved ' + review)
+        getattr(service, approve)('generation')
+    after = service.current_requirements()
+finally:
+    service.close()
+approved = {owner for review in done for owner in REVIEWS[review][0]}
+assert after['pending_owners'] == tuple(
+    owner for owner in ('models.artifacts', *SPEECH) if owner not in approved
+), dict(after)
+for owner in ('models.artifacts', *SPEECH):
+    assert store.allowed('generation', owner) == (owner in approved), owner
+approved = state == 'both'
+
+# Speech start-up: the admitted initializer runs only once speech is approved.
+effects = []
+async def initialize():
+    effects.append('speech started')
+    return 'handler'
+app = SimpleNamespace(_speech_initialization_allowed=lambda kind: True)
+for kind in ('tts', 'stts'):
+    result = asyncio.run(app_speech._run_speech_initialization(app, kind, initialize))
+    assert result == ('handler' if approved else None), (kind, result)
+assert effects == (['speech started'] * 2 if approved else []), effects
+assert not blocked_attempts(), blocked_attempts()
+print('retired and reopened')
+"""
+
+
+@pytest.mark.parametrize("state", ["pending", "speech", "models", "both"])
+def test_the_speech_review_turns_speech_start_up_back_on(tmp_path, state):
+    """TASK-41119 / TASK-41301: speech start-up admits through `config`,
+    `models.artifacts`, `tts.profile_store` and `tts.voices`. With the settings
+    review done, speech stays off until both Backup & Restore's speech review
+    (`approve_speech`, the two speech owners) and its model-files review
+    (`approve_models`, `models.artifacts`, no local embedding model needed)
+    approve the reviewed generation, then starts; each refuses a stale
+    generation and approves only its own owners."""
+    from Tests.Backup_Recovery.test_home_citation_retirement import _run
+
+    _run(tmp_path, state, "speech_review", script=_SPEECH_REVIEW, timeout=90)
+
+
+@pytest.mark.parametrize("approval", ["approve_speech", "approve_models"])
+def test_only_backup_and_restore_calls_its_owner_reviews(approval):
+    """TASK-41119 / TASK-41301: like `approve_config`, `approve_speech` and
+    `approve_models` approve their owners for every profile their generation
+    restored, so only Backup & Restore's reviewed **Approve voices** and
+    **Approve model files** may call them."""
+    uses = Counter()
+    for path in sorted((ROOT / "tldw_chatbook").rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        if approval not in text:
+            continue
+        for node in ast.walk(ast.parse(text)):
+            if isinstance(node, ast.Attribute) and node.attr == approval:
+                uses[path.relative_to(ROOT).as_posix()] += 1
+    assert uses == Counter({"tldw_chatbook/UI/Screens/backup_restore_screen.py": 1})
+
+
+_ELSEWHERE_MODEL = r"""
+import os, sys
+from pathlib import Path
+from Tests.network_guard import install, blocked_attempts
+install()
+import keyring
+from keyring.backends.null import Keyring
+keyring.set_keyring(Keyring())
+from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storage
+from tldw_chatbook.Backup_Recovery.activation import ActivationStore, bind_activation
+from tldw_chatbook.Backup_Recovery.control_records import admission_authority, register_pending
+from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+# Imported before binding, as the app is: config computes its client id on import.
+from tldw_chatbook.Embeddings.Embeddings_Lib import HFModelCfg
+from tldw_chatbook.RAG_Search import model_recovery as recovery
+from tldw_chatbook.RAG_Search.activation import require_local_model_construction
+from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
+state = sys.argv[1]
+base = Path(os.environ['TLDW_CONFIG_PATH']).parent.parent
+profiles = {}
+for name in ('current', 'other'):
+    folder = base / name
+    (folder / 'config').mkdir(parents=True, mode=0o700)
+    (folder / 'data').mkdir(mode=0o700)
+    selector = folder / 'config' / 'config.toml'
+    selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir="'
+                        + str(folder / 'data') + '"\n')
+    selector.chmod(0o600)
+    profiles[name] = selector
+selector = Path(os.environ['TLDW_CONFIG_PATH'])
+selector.write_text(profiles['current'].read_text())
+selector.chmod(0o600)
+profiles['current'] = selector
+# A local model directory in the current profile's data that the OTHER
+# restored profile's roots also cover (its recovery restored that folder).
+shared = base / 'current' / 'data' / 'models'
+shared.mkdir(mode=0o700)
+model = shared / 'local-model'
+model.mkdir(mode=0o700)
+(model / 'config.json').write_text('{}')
+(model / 'model.safetensors').write_bytes(b'weights')
+root = bootstrap.default_bootstrap_root()
+startup = storage._startups.pop((os.getpid(), str(root)), None)
+if startup: startup.close()
+authority = admission_authority(root)
+authority.register('current', (selector.parent, base / 'current' / 'data'))
+authority.register('other', (profiles['other'].parent, shared))
+stores = {}
+for name, generation in (('current', 'generation'), ('other', 'other-generation')):
+    control = base / ('operation-' + name)
+    control.mkdir(mode=0o700)
+    register_pending(root, name, (name,), control, (profiles[name],))
+    with authority.maintenance((name,), 2) as session:
+        bind_activation(root, name, profiles[name], generation,
+                        ('config', 'models.artifacts'), session=session)
+    (root / ('pending-' + bootstrap._key(name) + '.json')).unlink()
+    stores[generation] = ActivationStore(control / 'activation')
+config = RAGConfig.from_dict({
+    'embedding': {'model': str(model), 'device': 'cpu'},
+    'vector_store': {'persist_directory': str(base / 'current' / 'data' / 'vectors')}})
+service = RecoveryService(base / 'jobs')
+try:
+    service.approve_models('generation')  # the current profile's Approve model files
+finally:
+    service.close()
+if state == 'approved':  # the other profile's own Approve model files
+    stores['other-generation'].approve('other-generation', 'models.artifacts')
+review = recovery.preview_local_embedding(config)
+assert set(review.generations) == {'generation', 'other-generation'}, review
+assert review.elsewhere_pending == (
+    () if state == 'approved' else ('other-generation',)), review
+recovery.approve_local_embedding(config, review.fingerprint)
+try:
+    require_local_model_construction(config)
+except (OSError, ValueError, RuntimeError):
+    allowed = False
+else:
+    allowed = True
+assert allowed == (state == 'approved'), (state, allowed)
+assert not blocked_attempts(), blocked_attempts()
+print('retired and reopened')
+"""
+
+
+@pytest.mark.parametrize("state", ["pending", "approved"])
+def test_local_model_review_names_another_restored_generation(tmp_path, state):
+    """TASK-41301 review r15br-rev2: a RAG model directory inside another
+    restored profile carries that profile's generation, and RAG needs
+    `models.artifacts` approved for every generation it touches. The current
+    profile's Approve model files covers only its own, so the review names the
+    other generation still pending (``elsewhere_pending``) instead of leaving
+    RAG off silently; once that profile's model files are approved, nothing is
+    named and the model is admitted."""
+    from Tests.Backup_Recovery.test_home_citation_retirement import _run
+
+    _run(tmp_path, state, "elsewhere_model", script=_ELSEWHERE_MODEL, timeout=120)
+
+
+@pytest.mark.parametrize("elsewhere", [(), ("other-generation",)])
+def test_local_model_review_copy_records_files_and_names_the_model_files_review(
+    elsewhere,
+):
+    """TASK-41301 review r15br-rev2: Settings' local model dialog no longer says
+    it allows the model. Confirming records the review of these exact files,
+    the copy names Backup & Restore's Approve model files, and any other
+    restored generation still pending is named."""
+    from tldw_chatbook.RAG_Search.model_recovery import (
+        LocalEmbeddingReview,
+        local_embedding_review_text,
+    )
+
+    text = local_embedding_review_text(
+        LocalEmbeddingReview("f", "/models/m", 3, ("generation",), elsewhere)
+    )
+    assert "Record the review of these exact files?" in text
+    assert "Approve model files in Backup & Restore > Restored profiles" in text
+    assert "Allow" not in text
+    assert ("another restored profile (generation other-generation)" in text) is bool(
+        elsewhere
+    )
