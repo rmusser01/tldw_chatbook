@@ -285,6 +285,31 @@ edit fixtures. Each side must finish both journeys and pass shutdown to count.
 |---|---:|---:|---|
 | 1 | 341.4389 s / 28.5447 s | 461.5773 s / 28.0529 s | Both sides passed. Candidate first HTTP arrived at 14.5345 s and 9.2941 s. |
 | 2 | 340.8681 s / 33.2691 s | 486.3288 s / 40.9775 s | Both sides passed. Candidate first HTTP arrived at 13.4365 s and 10.1955 s. |
+| 3 | 309.5547 s / 24.9988 s | 381.9837 s / 24.5348 s | Both sides passed. Candidate first HTTP arrived at 11.8796 s and 7.0852 s. |
+| Median | **340.8681 s / 28.5447 s** | **461.5773 s / 28.0529 s** | Elapsed time fell **91.63%** and **93.92%** respectively. All six candidate turns exceeded five seconds. |
+
+The driver completed all six runs in the designated order on one Windows 10
+host. Each README made five provider requests and required two approval
+clicks. Each edit made six requests and required three clicks. The following
+counts come from the original parent-process observer. The candidate moved
+storage work into the opt-in backend, whose admission counts were unobserved
+in this batch. These figures therefore describe only the parent. Regular
+Windows startup still selects the local route.
+
+| Pair | Parent README admissions, baseline / candidate | Parent edit admissions, baseline / candidate |
+|---|---:|---:|
+| 1 | 2,288 / 100 | 2,485 / 54 |
+| 2 | 2,286 / 101 | 2,587 / 71 |
+| 3 | 2,228 / 95 | 2,413 / 50 |
+
+Every counted candidate parent admission reused checked evidence. The baseline
+recorded zero reuse hits. Even in the fastest pair, adjusted time before
+the first HTTP request was 11.535 s for README and 7.085 s for edit. The
+remaining application time after that request was 13.464 s and 17.450 s.
+Together, the loopback handlers consumed 0.016 s and 0.010 s respectively.
+Both sides of the first request need improvement to reach five seconds.
+The archived report revalidates all six original receipts and input hashes.
+[Numeric report and source pins](original-journey/qb-windows10-results.json)
 
 The original receipt SHA-256 values for pair 1 are
 `37cd15b0121e8547b5345e68f471d22f039fdf73daa3fc7bdf8abff4ca2feb21`
@@ -295,6 +320,10 @@ The pair 2 receipt SHA-256 values are
 `1db0f406bc3d37008b81c4b496d85bc7c090c722bba2bfc7d5326ee956373f08`
 (candidate) and `202134845ed03df558c2e65bcad680506c00dc6dbd310f11c5a9a59354c52c00`
 (baseline).
+The pair 3 receipt SHA-256 values are
+`43d781691d5c0a3b4acc6811719f334c2def7374eb2edf41e1cd609002c183d6`
+(baseline) and `4eee5909be99626d916e7861eca0276521320eb38a2c1432e25143d6ee916b38`
+(candidate).
 
 Batch `q5` started its first clean baseline on Windows 10 at 07:59 UTC on November 18. The driver pinned candidate `a3bf91340319ad7ad60177a37a537ca46364c2e3` and configuration SHA-256 `6af37c73d99d05badc21dc5b570104a3b513414cd213af8cc9464df362f62f93`. Its order is B1/C1, C2/B2, B3/C3. The earlier q4 plan never launched. A separate native component test accepted the corrected rail Apply, then the mounted-writer test failed in its subsequent visible read. Those tests contribute no journey times.
 

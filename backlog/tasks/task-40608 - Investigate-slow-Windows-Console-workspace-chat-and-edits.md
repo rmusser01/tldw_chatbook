@@ -193,7 +193,14 @@ close. Twelve native tests passed, covering the saved Library binding,
 independent transaction, cancellation, failed submission and display owners.
 The [ADR-126 handoff decision](../decisions/126-complete-local-backup-and-recovery.md#sqlite-ownership-during-received-turn-preparation)
 and [Windows timing record](../../Docs/Development/task-40608-recovery/windows-journey-timings.md#where-the-time-goes)
-describe the two observed failures. The new handoff requires a fresh journey measurement.
+describe the two observed failures. The November 18 paired measurement includes this handoff.
+
+On November 18 the frozen process candidate `41a4d02006` passed the original
+README, approved edit and shutdown checks in all three sequential Windows 10
+pairs. Median README time fell from 340.8681 to 28.5447 seconds (91.63%),
+and median edit time fell from 461.5773 to 28.0529 seconds (93.92%).
+All six candidate turns exceeded five seconds. AC5 remains open. Regular
+Windows startup still selects the local route. [Paired timings and work counts](../../Docs/Development/task-40608-recovery/windows-journey-timings.md#qualifying-pairs)
 
 <!-- SECTION:NOTES:END -->
 
