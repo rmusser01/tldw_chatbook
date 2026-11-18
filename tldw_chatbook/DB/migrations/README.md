@@ -73,8 +73,29 @@ packaging derivation in step 3 with it.
    commit.** See below — this is the step that keeps getting missed.
 6. **If it contains `CREATE INDEX`, add the index to
    `EXPECTED_CHACHANOTES_INDEXES` in `Tests/ChaChaNotesDB/test_index_census.py`.**
-7. Run `./scripts/preflight.sh`. It checks 5 and reports exactly what to paste.
-8. **Requalify the backup/restore policy for the new version.** The recovery
+7. **If it creates a table or adds a column (`CREATE TABLE`, `ALTER TABLE ...
+   ADD COLUMN`), declare it in `EXPECTED_TABLE_COLUMNS` in
+   `Tests/ChaChaNotesDB/expected_table_columns.py`.** Copy the column names
+   from the migration's SQL, not from a live database: the literal exists to
+   disagree with the chain. `test_historical_bootstrap.py` checks it, and an
+   undeclared table fails every one of its cases.
+8. **If it creates, drops or rewrites a trigger (including `DROP TRIGGER` +
+   `CREATE TRIGGER` of an existing name), update `EXPECTED_CHACHANOTES_TRIGGERS`
+   in `Tests/ChaChaNotesDB/test_trigger_census.py`.** A pin's digest is the
+   sha256 of the `CREATE TRIGGER ... END` text, without the trailing `;`, with
+   every run of whitespace collapsed to one space: `hashlib.sha256(" ".join(
+   stmt.split()).encode()).hexdigest()`. The failing census prints
+   ready-to-paste pins read from the live schema. Before pasting, recompute
+   each digest from the statement in your `.sql` file; the two must match.
+   A rewritten body changes its digest even when the name stays.
+
+   Steps 7 and 8 were missing until TASK-41653/41655 (2026-11-18). Four
+   migrations (v80->v81, v82->v84, v84->v85, v85->v86) followed steps 5-6 and
+   skipped both literals. Every historical-bootstrap case went red, and so did
+   the trigger census. Neither file ran on a CI lane, so nobody saw it for
+   five weeks.
+9. Run `./scripts/preflight.sh`. It checks 5 and reports exactly what to paste.
+10. **Requalify the backup/restore policy for the new version.** The recovery
    layer pins each store's current version and an exact copy of its schema, and
    refuses to back up or restore a database that does not match
    (`unsupported_schema_version`). For ChaChaNotes that is three places:
