@@ -18818,13 +18818,13 @@ class ChatScreen(BaseAppScreen):
         if self._console_pending_image_attachment() is None:
             return ""
         effective_settings, _readiness = self._active_console_settings_readiness()
-        from ..Console_Modules.execution_state import selected_client
+        from ..Console_Modules.execution_state import selected_vision_capability
 
-        client = selected_client(self)
-        if client is not None and client.session_composition.vision_capable is not None:
+        vision = selected_vision_capability(self)
+        if vision is not None:
             return vision_block_reason(
                 effective_settings.provider, effective_settings.model,
-                is_capable=lambda _provider, _model: client.session_composition.vision_capable,
+                is_capable=lambda _provider, _model: vision,
             ) or ""
         return (
             vision_block_reason(effective_settings.provider, effective_settings.model)

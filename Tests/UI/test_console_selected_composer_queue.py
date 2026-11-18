@@ -93,20 +93,28 @@ def test_selected_image_gate_reuses_only_captured_vision_and_keeps_unknown_fallb
     settings = ConsoleSessionSettings(
         provider="openai", model="actual-model", source="user"
     )
-    client = SimpleNamespace(session_composition=SimpleNamespace(vision_capable=False))
+    client = SimpleNamespace(
+        _readiness_deadline=float("inf"),
+        session_composition=SimpleNamespace(vision_capable=False),
+    )
     screen = SimpleNamespace(
         _console_pending_image_attachment=lambda: object(),
         _active_console_settings_readiness=lambda: (settings, None),
     )
     reads = []
     monkeypatch.setattr(execution_state, "selected_client", lambda _: client)
-    monkeypatch.setattr(
-        attachment_core, "is_vision_capable", lambda p, m: reads.append((p, m)) or True
-    )
     blocked = ChatScreen._console_attachment_blocked_reason(screen)
     assert "actual-model can't accept images" in blocked and not reads
     client.session_composition.vision_capable = True
     assert ChatScreen._console_attachment_blocked_reason(screen) == "" and not reads
     client.session_composition.vision_capable = None
+    monkeypatch.setattr(
+        attachment_core, "is_vision_capable", lambda p, m: reads.append((p, m)) or True
+    )
     assert ChatScreen._console_attachment_blocked_reason(screen) == ""
     assert reads == [("openai", "actual-model")]
+    client.session_composition.vision_capable = True
+    monkeypatch.setattr(attachment_core, "is_vision_capable", lambda *_: False)
+    assert "can't accept images" in ChatScreen._console_attachment_blocked_reason(
+        screen
+    )

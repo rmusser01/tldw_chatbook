@@ -776,3 +776,37 @@ def selected_queue_presentation(screen: ChatScreen, *, sending: bool, collapsed:
     ):
         raise RuntimeError("Console queue presentation changed")
     return value, _QUEUE_PRESENTATION[0](value, sending=sending, collapsed=collapsed)
+
+
+from ...Chat import attachment_core as _attachment_gate
+from ... import model_capabilities as _capabilities
+
+_VISION_CHECK = _definition(_capabilities.is_vision_capable)
+_VISION_LOOKUP = _definition(_capabilities.get_model_capabilities)
+_VISION_METHOD = _capabilities.ModelCapabilities.is_vision_capable
+_VISION_BODY = _definition(_VISION_METHOD.__wrapped__)
+_VISION_CAPS = _definition(_capabilities.ModelCapabilities.get_model_capabilities)
+
+
+def selected_vision_capability(screen: ChatScreen) -> bool | None:
+    """Reuse the matched native fact only for the unchanged original predicate."""
+    from ...Chat.console_domain_services import _definition_current
+
+    client = selected_client(screen)
+    if client is None:
+        return None
+    if time.monotonic() >= client._readiness_deadline:
+        raise ConsoleDisplayExpired("Console attachment presentation expired")
+    if (
+        _attachment_gate.is_vision_capable is not _VISION_CHECK[0]
+        or _capabilities.is_vision_capable is not _VISION_CHECK[0]
+        or _capabilities.get_model_capabilities is not _VISION_LOOKUP[0]
+        or _capabilities.ModelCapabilities.is_vision_capable is not _VISION_METHOD
+        or _VISION_METHOD.__wrapped__ is not _VISION_BODY[0]
+        or _capabilities.ModelCapabilities.get_model_capabilities is not _VISION_CAPS[0]
+        or any(not _definition_current(record) for record in (
+            _VISION_CHECK, _VISION_LOOKUP, _VISION_BODY, _VISION_CAPS,
+        ))
+    ):
+        return None
+    return client.session_composition.vision_capable
