@@ -95,19 +95,55 @@ async def test_selected_process_home_to_chat_composes_original_surface(request):
                         import inspect
 
                         selected_screen = app.screen
+
+                        def task_frames(task):
+                            current = task.get_coro() if type(task) is asyncio.Task else None
+                            frames = []
+                            for _ in range(24):
+                                if inspect.iscoroutine(current):
+                                    frame, following = current.cr_frame, current.cr_await
+                                elif inspect.isgenerator(current):
+                                    frame, following = current.gi_frame, current.gi_yieldfrom
+                                else:
+                                    break
+                                if frame is not None:
+                                    frames.append((frame.f_globals.get("__name__"), frame.f_code.co_name, frame.f_lineno))
+                                current = following
+                            return frames
+
+                        # Pilot's barrier includes the App and every child pump,
+                        # even when the selected Screen itself is already idle.
+                        pumps = [app, *selected_screen.walk_children(with_self=True)]
+                        nonidle_pumps = []
+                        nonidle_count = 0
+                        for pump in pumps:
+                            pump_task = getattr(pump, "_task", None)
+                            pump_frames = task_frames(pump_task)
+                            locations = [frame[:2] for frame in pump_frames]
+                            idle = any(
+                                left == ("textual.message_pump", "_process_messages_loop")
+                                and right == ("textual.message_pump", "_get_message")
+                                for left, right in zip(locations, locations[1:], strict=False)
+                            )
+                            queued = pump.message_queue_size
+                            if idle and not queued:
+                                continue
+                            nonidle_count += 1
+                            if len(nonidle_pumps) < 8:
+                                nonidle_pumps.append({
+                                    "owner_type": type(pump).__name__,
+                                    "is_app": pump is app,
+                                    "is_screen": pump is selected_screen,
+                                    "task_done": pump_task.done() if type(pump_task) is asyncio.Task else None,
+                                    "closing": bool(pump._closing),
+                                    "closed": bool(pump._closed),
+                                    "queued": queued,
+                                    "frames": pump_frames[-16:],
+                                    "frames_omitted": max(0, len(pump_frames) - 16),
+                                })
                         task = getattr(selected_screen, "_task", None)
-                        current = task.get_coro() if type(task) is asyncio.Task else None
-                        frames = []
-                        for _ in range(24):
-                            if inspect.iscoroutine(current):
-                                frame, following = current.cr_frame, current.cr_await
-                            elif inspect.isgenerator(current):
-                                frame, following = current.gi_frame, current.gi_yieldfrom
-                            else:
-                                break
-                            if frame is not None:
-                                frames.append((frame.f_globals.get("__name__"), frame.f_code.co_name, frame.f_lineno))
-                            current = following
+                        composers = tuple(selected_screen.query("#console-native-composer"))
+                        reconcile_worker = getattr(selected_screen, "_console_attach_reconcile_worker", None)
                         diagnostic = {
                             "app_exception": type(getattr(app, "_exception", None)).__name__,
                             "screen": type(selected_screen).__name__,
@@ -119,9 +155,24 @@ async def test_selected_process_home_to_chat_composes_original_surface(request):
                             "compose_exception": type(getattr(selected_screen, "_console_process_compose_error", None)).__name__,
                             "channel_exception": type(client._channel_error).__name__,
                             "screen_task_done": task.done() if type(task) is asyncio.Task else None,
+                            "screen_mounted": selected_screen.is_mounted,
+                            "screen_attached": selected_screen.is_attached,
+                            "selected_view_matches_screen": client._view is selected_screen,
+                            "composer_count": len(composers),
+                            "composer_mounted": any(composer.is_mounted for composer in composers),
+                            "surface_reconciled": bool(getattr(selected_screen, "_console_process_surface_reconciled", False)),
+                            "attach_reconciled": bool(getattr(selected_screen, "_console_attach_reconciled", False)),
+                            "attach_reconcile_running": bool(getattr(selected_screen, "_console_attach_reconcile_running", False)),
+                            "reconcile_worker_running": reconcile_worker.is_running if reconcile_worker is not None else None,
+                            "reconcile_worker_finished": reconcile_worker.is_finished if reconcile_worker is not None else None,
+                            "prepare_failed": bool(getattr(selected_screen, "_console_process_prepare_failed", False)),
+                            "content_failed": bool(getattr(selected_screen, "_console_process_content_failed", False)),
                             "projection_available": client.projection_view is not None,
                             "projection_reads_pending": sum(not read.done() for read in client._projection_reads),
-                            "frames": frames,
+                            "frames": task_frames(task),
+                            "pump_count": len(pumps),
+                            "nonidle_pump_count": nonidle_count,
+                            "nonidle_pumps": nonidle_pumps,
                             "request_count": len(client._requests),
                             "requests": [
                                 (item.operation, item.received.done(), item.applied.done(), item.retired.done())
