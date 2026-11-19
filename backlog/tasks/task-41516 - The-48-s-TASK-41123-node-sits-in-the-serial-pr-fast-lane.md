@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-17 05:27
-updated_date: 2026-11-18 19:41
+updated_date: 2026-11-19 14:56
 labels:
 - follow-up
 - tests
@@ -29,7 +29,7 @@ Also: `Tests/Chat/test_fleet_wake_retry.py` is named by no PR lane; TASK-41138 o
 <!-- AC:BEGIN -->
 - [ ] #1 The node runs on a lane that is not the serial pr-fast-lane, with before and after fast-lane times recorded
 - [x] #2 The node is still run by at least one PR lane
-- [x] #3 `Tests/Chat/test_fleet_wake_retry.py` runs on a PR lane, with its time recorded
+- [ ] #3 `Tests/Chat/test_fleet_wake_retry.py` runs on a PR lane, with its time recorded
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -60,3 +60,5 @@ The whole file moves, not only the node. The recovered-suites contract refuses a
 Both stayed red until TASK-41521's branch added those lines. After the 2026-11-18 rebase onto ffdf0c5472 they pass: `Tests/CI` gives 1746 passed, 1 skipped (`-n 4`).
 
 **Files.** `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`.
+
+**Held, 2026-11-19 (round-16 coordinator).** Both lane changes are taken out of this branch: the skills recovery controls file stays in pr-fast-lane, and `test_fleet_wake_retry.py` gets no lane yet. Each change added to the recovered-suites job, which on dev d34c16fa8c, after #3533, hits its 20-minute timeout at about 99%. `test_recovered_suites_lane_is_one_serial_guarded_minimal_python_312_job` pins that timeout and the lane's single serial job as an owner decision (2026-11-06). The arch-review session (tldw-chatbook-2e) is putting the options to the owner: shard the lane, raise the bound, or move nodes out. The measurements and the change described above stand ready. Once the owner decides, they land on whichever lane the decision names. AC#3 is unticked again, and AC#2 still holds, because the file stays in pr-fast-lane.

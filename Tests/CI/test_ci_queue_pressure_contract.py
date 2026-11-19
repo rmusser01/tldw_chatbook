@@ -271,6 +271,10 @@ FAST_LANE_TARGETS = (
     # provider-selection tests, each in its own private-profile child (three
     # app mounts, ~30 s).
     "Tests/ProductionApp/test_provider_selection_ownership.py",
+    # TASK-33641.7 (ledger R11): the mounted Library Skills recovery controls,
+    # each case in a subprocess host that resolves the theme guards (13 cases,
+    # ~40 s).
+    "Tests/Backup_Recovery/test_skills_recovery_controls.py",
     # Phase 9 Task 17 (TASK-33001.14, TASK-33641.11, TASK-33641.10): a summary
     # sends the key readiness resolves; the legacy [API] bridge honours a
     # recorded credential_source; analyze() hands each provider every argument
@@ -651,11 +655,6 @@ RECOVERED_SUITES_TARGETS = (
     "Tests/Actor_Packs/test_actor_pack_export.py",
     # TASK-41521: the persona coordinator file (sandboxed, 10-15 s serial).
     "Tests/Actor_Packs/test_persona_actor_pack_coordinator.py",
-    # TASK-33641.7 (ledger R11): the mounted Library Skills recovery controls,
-    # each case in a subprocess host that resolves the theme guards. Sandboxed,
-    # 14 tests; TASK-41516 moved them here from pr-fast-lane (TASK-41123's
-    # node alone is 21 s in CI, the file 78 s).
-    "Tests/Backup_Recovery/test_skills_recovery_controls.py",
     # TASK-39142: bootstrap_profile since TASK-38111. TASK-39049's keyword-leg
     # pool retirement file runs beside its four siblings.
     "Tests/Prompt_Management/test_prompt_improvement_service.py",
@@ -680,9 +679,6 @@ RECOVERED_SUITES_TARGETS = (
     "Tests/Chat/test_console_fleet_wake.py::test_a_wake_takes_no_mixin_anchor_from_an_earlier_unsaved_user_row",
     "Tests/Chat/test_console_fleet_wake.py::test_a_failed_wake_reply_is_saved_as_failed",
     "Tests/Chat/test_console_fleet_wake.py::test_a_wake_reply_is_the_durable_active_leaf",
-    # TASK-41138's refused-wake retry file (3 private-profile tests), on no
-    # lane before TASK-41516.
-    "Tests/Chat/test_fleet_wake_retry.py",
     # TASK-39168: the goal-dispatch file whole (bootstrap_profile), in place of
     # TASK-39119's three goal-iteration reply-pin nodes.
     "Tests/Chat/test_console_goal_dispatch.py",
