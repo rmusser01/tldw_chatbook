@@ -1150,7 +1150,8 @@ _BUDGETS: dict[str, int] = {
     # like the card's Cancel, so the turn and attachments return to the draft.
     # 2026-11-12: re-measured after rebasing onto dev 4b90eb860b (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 7014 -> 7008.
     # 2026-11-12: re-measured after rebasing onto dev 26b2e677dd (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 7009 -> 7008.
-    "tldw_chatbook/UI/Console_Modules/session.py": 7008,
+    # 2026-11-19: re-measured after rebasing onto dev a6df4d8d48 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 7008 -> 7012.
+    "tldw_chatbook/UI/Console_Modules/session.py": 7012,
     "tldw_chatbook/DB/Subscriptions_DB.py": 6996,
     "tldw_chatbook/Media/local_media_reading_service.py": 6911,
     # 2026-10-31: re-measured after rebasing onto dev 198eca8b93 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 6686 -> 6701.
